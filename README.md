@@ -24,7 +24,7 @@ Python 3.10 or newer is required.
 from watcherobot import WatcheRobot
 
 with WatcheRobot.connect(pairing_code="123456") as robot:
-    job = robot.behavior.play("greeting", repeat=1)
+    job = robot.behavior.play("happy", repeat=1)
     job.wait(timeout=5)
 
     robot.motion.move_to(pan_deg=110, tilt_deg=120, duration=0.5).wait(timeout=2)
