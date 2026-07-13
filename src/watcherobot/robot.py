@@ -1,0 +1,355 @@
+from __future__ import annotations
+
+import queue
+import re
+import threading
+import time
+from typing import Any
+
+from .errors import WatcheRobotError
+from .job import Job, JobState
+from .media import AudioFormat, ImageFrame, MicrophoneSession
+from .protocol import DISCOVERY_PORT, FLAG_LAST, FRAME_AUDIO, FRAME_IMAGE, WEBSOCKET_PORT, BinaryFrame
+from .transport import BackgroundTransport
+
+
+class _Domain:
+    def __init__(self, robot: WatcheRobot) -> None:
+        self._robot = robot
+
+
+class BehaviorDomain(_Domain):
+    def play(self, behavior_id: str, *, repeat: int = 1) -> Job:
+        if not behavior_id or repeat <= 0:
+            raise ValueError("behavior_id and a positive repeat are required")
+        return self._robot._start_job("ctrl.behavior.play", {"behavior_id": behavior_id, "repeat": repeat})
+
+    def stop(self) -> None:
+        self._robot._command("ctrl.behavior.stop", {})
+
+
+class AnimationDomain(_Domain):
+    def play(self, animation_id: str) -> Job:
+        if not animation_id:
+            raise ValueError("animation_id is required")
+        return self._robot._start_job("ctrl.animation.play", {"animation_id": animation_id})
+
+    def stop(self) -> None:
+        self._robot._command("ctrl.animation.stop", {})
+
+
+class MotionDomain(_Domain):
+    def move_to(
+        self,
+        *,
+        pan_deg: int,
+        tilt_deg: int,
+        duration: float,
+        profile: str = "ease_in_out",
+    ) -> Job:
+        if duration <= 0:
+            raise ValueError("duration must be positive")
+        return self._robot._start_job(
+            "ctrl.motion.move_to",
+            {
+                "pan_deg": int(pan_deg),
+                "tilt_deg": int(tilt_deg),
+                "duration_ms": max(1, round(duration * 1000)),
+                "profile": profile,
+            },
+        )
+
+    def set_target(self, *, pan_deg: int | None = None, tilt_deg: int | None = None) -> None:
+        if pan_deg is None and tilt_deg is None:
+            raise ValueError("pan_deg or tilt_deg is required")
+        data = {}
+        if pan_deg is not None:
+            data["pan_deg"] = int(pan_deg)
+        if tilt_deg is not None:
+            data["tilt_deg"] = int(tilt_deg)
+        self._robot._command("ctrl.motion.set_target", data)
+
+    def play_action(self, action_id: str) -> Job:
+        if not action_id:
+            raise ValueError("action_id is required")
+        return self._robot._start_job("ctrl.motion.action.play", {"action_id": action_id})
+
+    def stop(self) -> None:
+        self._robot._command("ctrl.motion.stop", {})
+
+
+class AudioDomain(_Domain):
+    def play(self, sound_id: str) -> Job:
+        if not sound_id:
+            raise ValueError("sound_id is required")
+        return self._robot._start_job("ctrl.audio.play", {"sound_id": sound_id})
+
+    def stop(self) -> None:
+        self._robot._command("ctrl.audio.stop", {})
+
+
+class LightsDomain(_Domain):
+    def set_color(self, color: str, *, brightness: float = 1.0, zone: str = "all") -> None:
+        _validate_light(color, brightness)
+        self._robot._command(
+            "ctrl.light.set", {"color": color.upper(), "brightness": brightness, "zone": zone}
+        )
+
+    def play_effect(
+        self,
+        effect: str,
+        *,
+        color: str = "#FFFFFF",
+        brightness: float = 1.0,
+        zone: str = "all",
+        period: float = 0.5,
+        repeat: int = 0,
+    ) -> Job:
+        _validate_light(color, brightness)
+        if not effect or period < 0 or repeat < 0:
+            raise ValueError("invalid light effect options")
+        return self._robot._start_job(
+            "ctrl.light.effect.play",
+            {
+                "effect": effect,
+                "color": color.upper(),
+                "brightness": brightness,
+                "zone": zone,
+                "period_ms": round(period * 1000),
+                "repeat": repeat,
+            },
+        )
+
+    def off(self) -> None:
+        self._robot._command("ctrl.light.off", {})
+
+
+class MicrophoneDomain(_Domain):
+    def open(self, *, queue_size: int = 32) -> MicrophoneSession:
+        return self._robot._open_microphone(queue_size=queue_size)
+
+
+class CameraDomain(_Domain):
+    def capture(
+        self,
+        *,
+        width: int = 0,
+        height: int = 0,
+        quality: int = 0,
+        timeout: float = 5.0,
+    ) -> ImageFrame:
+        return self._robot._capture_image(width=width, height=height, quality=quality, timeout=timeout)
+
+
+def _validate_light(color: str, brightness: float) -> None:
+    if re.fullmatch(r"#[0-9A-Fa-f]{6}", color) is None:
+        raise ValueError("color must use #RRGGBB")
+    if not 0.0 <= brightness <= 1.0:
+        raise ValueError("brightness must be between 0 and 1")
+
+
+class WatcheRobot:
+    def __init__(self, transport: Any) -> None:
+        self._transport = transport
+        self._jobs: dict[int, Job] = {}
+        self._pending_job_events: dict[int, tuple[str, int | None]] = {}
+        self._jobs_lock = threading.Lock()
+        self._microphone: MicrophoneSession | None = None
+        self._microphone_opening = False
+        self._pending_audio_frames: list[tuple[bytes, int, int]] = []
+        self._media_lock = threading.Lock()
+        self._image_queue: queue.Queue[ImageFrame] = queue.Queue(maxsize=1)
+        self._closed = False
+        self.behavior = BehaviorDomain(self)
+        self.animation = AnimationDomain(self)
+        self.motion = MotionDomain(self)
+        self.audio = AudioDomain(self)
+        self.lights = LightsDomain(self)
+        self.microphone = MicrophoneDomain(self)
+        self.camera = CameraDomain(self)
+        transport.set_callbacks(self._on_message, self._on_binary, self._on_disconnect)
+
+    @classmethod
+    def connect(
+        cls,
+        *,
+        pairing_code: str,
+        discovery_port: int = DISCOVERY_PORT,
+        websocket_port: int = WEBSOCKET_PORT,
+        timeout: float = 15.0,
+        host: str = "0.0.0.0",
+    ) -> WatcheRobot:
+        transport = BackgroundTransport(
+            discovery_port=discovery_port,
+            websocket_port=websocket_port,
+            host=host,
+        )
+        robot = cls(transport)
+        try:
+            transport.start(pairing_code, timeout=timeout)
+        except Exception:
+            robot.close()
+            raise
+        return robot
+
+    @classmethod
+    def _from_transport(cls, transport: Any) -> WatcheRobot:
+        return cls(transport)
+
+    @property
+    def capabilities(self) -> tuple[str, ...]:
+        return tuple(self._transport.capabilities)
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        return dict(self._transport.device_info)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        microphone = self._microphone
+        if microphone is not None and not microphone.closed:
+            try:
+                microphone.close()
+            except Exception:
+                pass
+        self._closed = True
+        self._transport.close()
+
+    def __enter__(self) -> WatcheRobot:
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
+
+    def _command(self, message_type: str, data: dict, timeout: float | None = None) -> dict:
+        if self._closed:
+            raise WatcheRobotError("robot connection is closed")
+        return self._transport.send_command(message_type, data, timeout=timeout)
+
+    def _start_job(self, message_type: str, data: dict) -> Job:
+        response = self._command(message_type, data)
+        operation_id = response.get("data", {}).get("operation_id")
+        if not isinstance(operation_id, int) or operation_id <= 0:
+            raise WatcheRobotError(f"{message_type} ACK did not include operation_id")
+        job = Job(operation_id, self._transport)
+        with self._jobs_lock:
+            self._jobs[operation_id] = job
+            pending_event = self._pending_job_events.pop(operation_id, None)
+        if pending_event is not None:
+            job._update(pending_event[0], pending_event[1])
+        return job
+
+    def _open_microphone(self, *, queue_size: int) -> MicrophoneSession:
+        if self._microphone is not None and not self._microphone.closed:
+            raise WatcheRobotError("a microphone session is already open")
+        with self._media_lock:
+            self._microphone_opening = True
+            self._pending_audio_frames.clear()
+        try:
+            response = self._command("ctrl.microphone.open", {"sample_rate_hz": 16000})
+        except Exception:
+            with self._media_lock:
+                self._microphone_opening = False
+                self._pending_audio_frames.clear()
+            raise
+        session_id = response.get("data", {}).get("session_id")
+        if not isinstance(session_id, int) or session_id <= 0:
+            with self._media_lock:
+                self._microphone_opening = False
+                self._pending_audio_frames.clear()
+            raise WatcheRobotError("microphone ACK did not include session_id")
+        session = MicrophoneSession(self, session_id, audio_format=AudioFormat(), queue_size=queue_size)
+        with self._media_lock:
+            self._microphone = session
+            buffered_frames = self._pending_audio_frames
+            self._pending_audio_frames = []
+            self._microphone_opening = False
+        for payload, sequence, flags in buffered_frames:
+            if payload:
+                session._push(payload, sequence)
+            if flags & FLAG_LAST:
+                session._mark_remote_closed()
+        return session
+
+    def _close_microphone(self, session_id: int) -> None:
+        try:
+            self._command("ctrl.microphone.close", {"session_id": session_id})
+        finally:
+            if self._microphone is not None and self._microphone.id == session_id:
+                self._microphone = None
+
+    def _capture_image(self, *, width: int, height: int, quality: int, timeout: float) -> ImageFrame:
+        while True:
+            try:
+                self._image_queue.get_nowait()
+            except queue.Empty:
+                break
+        self._command(
+            "ctrl.camera.capture",
+            {"width": int(width), "height": int(height), "quality": int(quality)},
+            timeout=timeout,
+        )
+        try:
+            return self._image_queue.get(timeout=timeout)
+        except queue.Empty as error:
+            raise TimeoutError("camera did not return a JPEG before timeout") from error
+
+    def _on_message(self, message: dict[str, Any]) -> None:
+        if message.get("type") != "evt.sdk.operation":
+            return
+        data = message.get("data", {})
+        operation_id = data.get("operation_id")
+        if not isinstance(operation_id, int):
+            return
+        state = data.get("state", "failed")
+        error_code = data.get("error_code")
+        with self._jobs_lock:
+            job = self._jobs.get(operation_id)
+            if job is None:
+                if len(self._pending_job_events) >= 32:
+                    self._pending_job_events.pop(next(iter(self._pending_job_events)))
+                self._pending_job_events[operation_id] = (state, error_code)
+        if job is None:
+            return
+        try:
+            job._update(state, error_code)
+        except ValueError:
+            job._update(JobState.FAILED)
+
+    def _on_binary(self, frame: BinaryFrame) -> None:
+        if frame.frame_type == FRAME_AUDIO:
+            with self._media_lock:
+                microphone = self._microphone
+                if microphone is None and self._microphone_opening:
+                    if len(self._pending_audio_frames) >= 4:
+                        self._pending_audio_frames.pop(0)
+                    self._pending_audio_frames.append((frame.payload, frame.sequence, frame.flags))
+                    return
+            if microphone is not None:
+                if frame.payload:
+                    microphone._push(frame.payload, frame.sequence)
+                if frame.flags & FLAG_LAST:
+                    microphone._mark_remote_closed()
+            return
+        if frame.frame_type == FRAME_IMAGE and frame.payload:
+            image = ImageFrame(frame.payload, frame.sequence, time.time())
+            try:
+                self._image_queue.put_nowait(image)
+            except queue.Full:
+                try:
+                    self._image_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                self._image_queue.put_nowait(image)
+
+    def _on_disconnect(self) -> None:
+        with self._jobs_lock:
+            jobs = list(self._jobs.values())
+            self._pending_job_events.clear()
+        for job in jobs:
+            if not job.state.terminal:
+                job._update(JobState.FAILED)
+        microphone = self._microphone
+        if microphone is not None:
+            microphone._mark_remote_closed()
