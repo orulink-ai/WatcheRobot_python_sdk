@@ -61,6 +61,8 @@ The firmware must use the same discovery port. The WebSocket port is announced d
 - `move_to`, `play_action`, `play`, and finite light effects return a `Job`.
 - `set_target` is a latest-wins real-time command and does not return a `Job`.
 - `Job.wait()` observes the device terminal event; an ACK alone does not mean playback completed.
+- `move_to` completes from the matching STM32 execution event. It confirms execution-timeline completion, not
+  physical position-feedback convergence.
 - `robot.microphone.open()` exposes PCM S16LE, 16 kHz, mono frames. Its bounded queue drops the oldest frame when
   the consumer is slow and increments `dropped_frames`.
 - `robot.camera.capture()` returns one JPEG `ImageFrame`; continuous video is outside v1.
@@ -82,4 +84,3 @@ Protocol details are in [docs/protocol-v1.md](docs/protocol-v1.md).
 python -m pytest
 python -m build
 ```
-

@@ -74,6 +74,15 @@ Successful acceptance:
 States are `starting`, `running`, `completed`, `failed`, and `cancelled`. A failed event may include `error_code`.
 Commands are deduplicated by `command_id` in a bounded device cache.
 
+The device validates v1 commands strictly. Identifiers that exceed the fixed protocol limits are rejected rather
+than truncated, the pairing code must be exactly six digits, and numeric/enum fields must be within their documented
+ranges. A correlatable malformed command receives `invalid_argument`; an unknown command type receives
+`unsupported_command`; a saturated device command queue receives `command_queue_full`.
+
+For `ctrl.motion.move_to`, `completed` means the STM32 reported `MOTION_DONE` for the matching command sequence.
+`stopped` or `interrupted` maps to `cancelled`; MCU rejection, fault, or terminal-event timeout maps to `failed`.
+This is execution-timeline completion, not physical position-feedback convergence.
+
 ## Commands
 
 | Type | Key data | Result |
@@ -109,5 +118,6 @@ ESP32-to-Python media currently uses the compatible 14-byte little-endian header
 | 10 | 4 | payload length |
 
 The Python parser also accepts the current 16-byte header containing a two-byte `stream_id` before `sequence`.
-Audio is PCM S16LE/16 kHz/mono. A camera capture returns one complete JPEG image frame.
-
+When present, that ID is matched to the acknowledged microphone/camera session so delayed frames from an older
+session are ignored. The 14-byte compatibility header has implicit stream ID `0`. Audio is PCM S16LE/16 kHz/mono.
+A camera capture returns one complete JPEG image frame.

@@ -153,12 +153,14 @@ class WatcheRobot:
         self._transport = transport
         self._jobs: dict[int, Job] = {}
         self._pending_job_events: dict[int, tuple[str, int | None]] = {}
+        self._terminal_job_ids: dict[int, None] = {}
         self._jobs_lock = threading.Lock()
         self._microphone: MicrophoneSession | None = None
         self._microphone_opening = False
-        self._pending_audio_frames: list[tuple[bytes, int, int]] = []
+        self._pending_audio_frames: list[tuple[bytes, int, int, int]] = []
         self._media_lock = threading.Lock()
         self._image_queue: queue.Queue[ImageFrame] = queue.Queue(maxsize=1)
+        self._camera_lock = threading.Lock()
         self._closed = False
         self.behavior = BehaviorDomain(self)
         self.animation = AnimationDomain(self)
@@ -215,6 +217,7 @@ class WatcheRobot:
                 pass
         self._closed = True
         self._transport.close()
+        self._fail_all_jobs()
 
     def __enter__(self) -> WatcheRobot:
         return self
@@ -238,7 +241,17 @@ class WatcheRobot:
             pending_event = self._pending_job_events.pop(operation_id, None)
         if pending_event is not None:
             job._update(pending_event[0], pending_event[1])
+            if job.state.terminal:
+                with self._jobs_lock:
+                    if self._jobs.get(operation_id) is job:
+                        self._jobs.pop(operation_id, None)
+                    self._remember_terminal_job_locked(operation_id)
         return job
+
+    def _remember_terminal_job_locked(self, operation_id: int) -> None:
+        if len(self._terminal_job_ids) >= 64:
+            self._terminal_job_ids.pop(next(iter(self._terminal_job_ids)))
+        self._terminal_job_ids[operation_id] = None
 
     def _open_microphone(self, *, queue_size: int) -> MicrophoneSession:
         if self._microphone is not None and not self._microphone.closed:
@@ -265,7 +278,10 @@ class WatcheRobot:
             buffered_frames = self._pending_audio_frames
             self._pending_audio_frames = []
             self._microphone_opening = False
-        for payload, sequence, flags in buffered_frames:
+        expected_stream_id = session_id & 0xFFFF
+        for payload, sequence, flags, stream_id in buffered_frames:
+            if stream_id not in (0, expected_stream_id):
+                continue
             if payload:
                 session._push(payload, sequence)
             if flags & FLAG_LAST:
@@ -280,20 +296,35 @@ class WatcheRobot:
                 self._microphone = None
 
     def _capture_image(self, *, width: int, height: int, quality: int, timeout: float) -> ImageFrame:
-        while True:
-            try:
-                self._image_queue.get_nowait()
-            except queue.Empty:
-                break
-        self._command(
-            "ctrl.camera.capture",
-            {"width": int(width), "height": int(height), "quality": int(quality)},
-            timeout=timeout,
-        )
-        try:
-            return self._image_queue.get(timeout=timeout)
-        except queue.Empty as error:
-            raise TimeoutError("camera did not return a JPEG before timeout") from error
+        with self._camera_lock:
+            while True:
+                try:
+                    self._image_queue.get_nowait()
+                except queue.Empty:
+                    break
+            response = self._command(
+                "ctrl.camera.capture",
+                {"width": int(width), "height": int(height), "quality": int(quality)},
+                timeout=timeout,
+            )
+            session_id = response.get("data", {}).get("session_id")
+            if not isinstance(session_id, int) or session_id <= 0:
+                raise WatcheRobotError("camera ACK did not include session_id")
+            expected_stream_id = session_id & 0xFFFF
+            deadline = time.monotonic() + max(timeout, 0)
+            while True:
+                try:
+                    image = self._image_queue.get_nowait()
+                except queue.Empty:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("camera did not return a JPEG before timeout")
+                    try:
+                        image = self._image_queue.get(timeout=remaining)
+                    except queue.Empty as error:
+                        raise TimeoutError("camera did not return a JPEG before timeout") from error
+                if image.session_id in (0, expected_stream_id):
+                    return image
 
     def _on_message(self, message: dict[str, Any]) -> None:
         if message.get("type") != "evt.sdk.operation":
@@ -305,6 +336,8 @@ class WatcheRobot:
         state = data.get("state", "failed")
         error_code = data.get("error_code")
         with self._jobs_lock:
+            if operation_id in self._terminal_job_ids:
+                return
             job = self._jobs.get(operation_id)
             if job is None:
                 if len(self._pending_job_events) >= 32:
@@ -316,6 +349,11 @@ class WatcheRobot:
             job._update(state, error_code)
         except ValueError:
             job._update(JobState.FAILED)
+        if job.state.terminal:
+            with self._jobs_lock:
+                if self._jobs.get(operation_id) is job:
+                    self._jobs.pop(operation_id, None)
+                self._remember_terminal_job_locked(operation_id)
 
     def _on_binary(self, frame: BinaryFrame) -> None:
         if frame.frame_type == FRAME_AUDIO:
@@ -324,16 +362,20 @@ class WatcheRobot:
                 if microphone is None and self._microphone_opening:
                     if len(self._pending_audio_frames) >= 4:
                         self._pending_audio_frames.pop(0)
-                    self._pending_audio_frames.append((frame.payload, frame.sequence, frame.flags))
+                    self._pending_audio_frames.append(
+                        (frame.payload, frame.sequence, frame.flags, frame.stream_id)
+                    )
                     return
             if microphone is not None:
+                if frame.stream_id not in (0, microphone.id & 0xFFFF):
+                    return
                 if frame.payload:
                     microphone._push(frame.payload, frame.sequence)
                 if frame.flags & FLAG_LAST:
                     microphone._mark_remote_closed()
             return
         if frame.frame_type == FRAME_IMAGE and frame.payload:
-            image = ImageFrame(frame.payload, frame.sequence, time.time())
+            image = ImageFrame(frame.payload, frame.sequence, time.time(), session_id=frame.stream_id)
             try:
                 self._image_queue.put_nowait(image)
             except queue.Full:
@@ -344,12 +386,21 @@ class WatcheRobot:
                 self._image_queue.put_nowait(image)
 
     def _on_disconnect(self) -> None:
-        with self._jobs_lock:
-            jobs = list(self._jobs.values())
-            self._pending_job_events.clear()
-        for job in jobs:
-            if not job.state.terminal:
-                job._update(JobState.FAILED)
+        was_closed = self._closed
+        self._fail_all_jobs()
         microphone = self._microphone
         if microphone is not None:
             microphone._mark_remote_closed()
+        self._closed = True
+        if not was_closed:
+            self._transport.close()
+
+    def _fail_all_jobs(self) -> None:
+        with self._jobs_lock:
+            jobs = list(self._jobs.values())
+            self._jobs.clear()
+            self._pending_job_events.clear()
+            self._terminal_job_ids.clear()
+        for job in jobs:
+            if not job.state.terminal:
+                job._update(JobState.FAILED)

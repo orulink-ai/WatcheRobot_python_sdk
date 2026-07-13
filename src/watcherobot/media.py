@@ -31,6 +31,7 @@ class ImageFrame:
     sequence: int
     timestamp: float
     content_type: str = "image/jpeg"
+    session_id: int = 0
 
 
 class MicrophoneSession:
@@ -112,4 +113,3 @@ class MicrophoneSession:
     def _mark_remote_closed(self) -> None:
         with self._lock:
             self._closed = True
-
