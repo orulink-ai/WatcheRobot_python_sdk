@@ -29,6 +29,7 @@ Issues = "https://github.com/orulink-ai/WatcheRobot_python_sdk/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
+hardware = ["pyserial>=3.5"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/watcherobot"]

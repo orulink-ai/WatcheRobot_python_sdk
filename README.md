@@ -80,6 +80,17 @@ Protocol details are in [docs/protocol-v1.md](docs/protocol-v1.md).
 
 ## Development
 
+For unattended bench smoke tests, build the firmware with `CONFIG_WATCHER_DEBUG_CLI_ENABLE=y`, connect its debug
+UART, and run:
+
+```bash
+pip install -e ".[hardware]"
+python examples/hardware_smoke.py --auto-pair-port COM5 --all --websocket-port 18766
+```
+
+The debug firmware opens `sdk.control.app` over the serial CLI and prints the temporary code for the test runner.
+Production firmware keeps this option disabled and never writes pairing codes to UART.
+
 ```bash
 python -m pytest
 python -m build

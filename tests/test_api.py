@@ -1,6 +1,7 @@
 import threading
 
 from watcherobot import Job, WatcheRobot
+from watcherobot.errors import CommandError
 from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_AUDIO, FRAME_IMAGE, BinaryFrame
 
 
@@ -169,3 +170,32 @@ def test_camera_waits_for_the_acknowledged_session_frame():
 
     assert image.data == b"current"
     assert image.session_id == 100
+
+
+def test_camera_retries_transient_busy_until_capture_timeout():
+    class BusyOnceCameraTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.capture_attempts = 0
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.camera.capture":
+                self.capture_attempts += 1
+                if self.capture_attempts == 1:
+                    raise CommandError(message_type, "busy")
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture":
+                session_id = response["data"]["session_id"]
+                threading.Timer(
+                    0.01,
+                    lambda: self.binary_callback(
+                        BinaryFrame(FRAME_IMAGE, FLAG_FIRST | FLAG_LAST, session_id, 1, b"jpeg")
+                    ),
+                ).start()
+            return response
+
+    transport = BusyOnceCameraTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    assert robot.camera.capture(timeout=0.5).data == b"jpeg"
+    assert transport.capture_attempts == 2

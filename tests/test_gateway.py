@@ -4,11 +4,52 @@ import threading
 
 import websockets
 
+from watcherobot.errors import ConnectionTimeoutError
 from watcherobot.transport import BackgroundTransport
 
 
 def test_gateway_pairs_and_correlates_command_ack():
     asyncio.run(_gateway_round_trip())
+
+
+def test_gateway_reports_authentication_response_timeout():
+    asyncio.run(_gateway_authentication_timeout())
+
+
+async def _gateway_authentication_timeout():
+    transport = BackgroundTransport(discovery_port=0, websocket_port=0, command_timeout=0.05)
+    start_error = []
+
+    def start_transport():
+        try:
+            transport.start("123456", timeout=1)
+        except Exception as error:  # pragma: no cover - asserted below
+            start_error.append(error)
+
+    starter = threading.Thread(target=start_transport)
+    starter.start()
+    assert await asyncio.to_thread(transport._started_event.wait, 1)
+
+    async with websockets.connect(f"ws://127.0.0.1:{transport.websocket_port}") as websocket:
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "sys.client.hello",
+                    "code": 0,
+                    "data": {"device_id": "watcher-test", "fw_version": "V1.0"},
+                }
+            )
+        )
+        await websocket.recv()
+        authenticate = json.loads(await websocket.recv())
+        assert authenticate["type"] == "sys.sdk.authenticate"
+        await asyncio.to_thread(starter.join, 1)
+
+    assert not starter.is_alive()
+    assert len(start_error) == 1
+    assert isinstance(start_error[0], ConnectionTimeoutError)
+    assert "SDK authentication response" in str(start_error[0])
+    await asyncio.to_thread(transport.close)
 
 
 async def _gateway_round_trip():
@@ -108,4 +149,3 @@ async def _gateway_round_trip():
 
     assert await asyncio.to_thread(disconnected.wait, 1)
     await asyncio.to_thread(transport.close)
-

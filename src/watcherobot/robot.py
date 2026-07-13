@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Any
 
-from .errors import WatcheRobotError
+from .errors import CommandError, WatcheRobotError
 from .job import Job, JobState
 from .media import AudioFormat, ImageFrame, MicrophoneSession
 from .protocol import DISCOVERY_PORT, FLAG_LAST, FRAME_AUDIO, FRAME_IMAGE, WEBSOCKET_PORT, BinaryFrame
@@ -302,16 +302,31 @@ class WatcheRobot:
                     self._image_queue.get_nowait()
                 except queue.Empty:
                     break
-            response = self._command(
-                "ctrl.camera.capture",
-                {"width": int(width), "height": int(height), "quality": int(quality)},
-                timeout=timeout,
-            )
+            deadline = time.monotonic() + max(timeout, 0)
+            first_attempt = True
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 and not first_attempt:
+                    raise TimeoutError("camera remained busy before capture timeout")
+                try:
+                    response = self._command(
+                        "ctrl.camera.capture",
+                        {"width": int(width), "height": int(height), "quality": int(quality)},
+                        timeout=max(remaining, 0),
+                    )
+                    break
+                except CommandError as error:
+                    first_attempt = False
+                    if error.reason != "busy":
+                        raise
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("camera remained busy before capture timeout") from error
+                    time.sleep(min(0.1, remaining))
             session_id = response.get("data", {}).get("session_id")
             if not isinstance(session_id, int) or session_id <= 0:
                 raise WatcheRobotError("camera ACK did not include session_id")
             expected_stream_id = session_id & 0xFFFF
-            deadline = time.monotonic() + max(timeout, 0)
             while True:
                 try:
                     image = self._image_queue.get_nowait()

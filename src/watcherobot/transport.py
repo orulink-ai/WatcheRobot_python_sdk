@@ -194,7 +194,10 @@ class BackgroundTransport:
         self._websocket = websocket
         ready = False
         try:
-            raw_hello = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+            try:
+                raw_hello = await asyncio.wait_for(websocket.recv(), timeout=self.command_timeout)
+            except asyncio.TimeoutError as error:
+                raise ConnectionTimeoutError("Timed out waiting for the robot hello message") from error
             if not isinstance(raw_hello, str):
                 raise ProtocolError("expected sys.client.hello text frame")
             hello = parse_json_message(raw_hello)
@@ -228,7 +231,12 @@ class BackgroundTransport:
             authenticated = False
             announced_ready = False
             while not (authenticated and announced_ready):
-                raw = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                try:
+                    raw = await asyncio.wait_for(websocket.recv(), timeout=self.command_timeout)
+                except asyncio.TimeoutError as error:
+                    raise ConnectionTimeoutError(
+                        "Timed out waiting for the robot SDK authentication response"
+                    ) from error
                 if isinstance(raw, bytes):
                     self._dispatch_binary(raw)
                     continue
@@ -305,4 +313,3 @@ class BackgroundTransport:
         except ProtocolError:
             return
         self._binary_callback(frame)
-
