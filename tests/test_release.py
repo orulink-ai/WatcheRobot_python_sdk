@@ -17,6 +17,7 @@ def test_package_version_has_one_alpha_source() -> None:
 def test_publish_workflow_separates_test_and_production_indexes() -> None:
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
+    assert "pull_request:" in workflow
     assert "workflow_dispatch:" in workflow
     assert "release:" in workflow
     assert "types: [published]" in workflow
