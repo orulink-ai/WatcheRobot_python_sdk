@@ -9,19 +9,36 @@
 
 ## 安装
 
+当前公开测试版本为 TestPyPI 上的 `0.1.0a1`。TestPyPI 不保证包含完整依赖，因此先从正式 PyPI
+安装依赖，再从 TestPyPI 安装 SDK 本身：
+
+```bash
+python -m pip install "websockets>=12,<16"
+python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a1
+```
+
 从源码仓库开发或试用：
 
 ```bash
 python -m pip install -e .
 ```
 
-正式发布到 PyPI 后可使用：
+正式 PyPI 版本尚未发布。正式发布后可使用：
 
 ```bash
 python -m pip install watcherobot
 ```
 
 需要 Python 3.10 或更高版本。
+
+## 兼容性
+
+| Python SDK | 协议 | 已验证 ESP32 固件 | Python | 发布状态 |
+|---|---|---|---|---|
+| `0.1.0a1` | `1.0` | `V3.1`，包含 SDK Control App | `>=3.10`（当前 CI：3.12） | Alpha / TestPyPI |
+
+连接后应读取 `robot.device_info` 和 `robot.capabilities`，以设备实际协商结果为准。当前尚未承诺低于
+`V3.1` 的固件兼容性。
 
 ## 第一次连接
 
@@ -74,6 +91,9 @@ with WatcheRobot.connect(pairing_code="123456") as robot:
 
 有限操作返回 `Job` 或兼容 `Job` 的 `AudioPlayback`。ACK 只表示设备已经接收命令；使用
 `Job.wait()` 才能等待设备上报最终执行结果。
+
+当前固件中可直接尝试的资源 ID 见 [出厂资源说明](docs/resources.md)。遇到配对、`not_found`、超时、
+音频格式或媒体丢帧问题时，见 [常见故障排查](docs/troubleshooting.md)。
 
 ## 维护者硬件验收
 

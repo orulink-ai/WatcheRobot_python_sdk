@@ -1,5 +1,8 @@
 from pathlib import Path
 
+from watcherobot import __version__
+from watcherobot.protocol import PROTOCOL_VERSION
+
 
 ROOT = Path(__file__).parents[1]
 PUBLIC_METHODS = (
@@ -41,3 +44,39 @@ def test_readmes_contain_a_complete_supported_api_table() -> None:
         assert "|" in readme
         for method in PUBLIC_METHODS:
             assert f"`{method}" in readme, f"{name} does not document {method}"
+
+
+def test_readmes_link_alpha_install_compatibility_resources_and_troubleshooting() -> None:
+    for name in ("README.md", "README.zh-CN.md"):
+        readme = (ROOT / name).read_text(encoding="utf-8")
+
+        assert "https://test.pypi.org/simple/" in readme
+        assert f"watcherobot=={__version__}" in readme
+        assert f"`{PROTOCOL_VERSION}`" in readme
+        assert "`V3.1`" in readme
+        assert "docs/resources.md" in readme
+        assert "docs/troubleshooting.md" in readme
+
+
+def test_resource_guide_marks_verified_ids_and_catalog_limit() -> None:
+    guide = (ROOT / "docs" / "resources.md").read_text(encoding="utf-8")
+
+    for resource_id in ("happy", "smile", "blink", "breathing", "rainbow", "status_pulse"):
+        assert f"`{resource_id}`" in guide
+    assert "robot.capabilities" in guide
+    assert "not_found" in guide
+    assert "not exhaustive" in guide.lower()
+
+
+def test_troubleshooting_guide_covers_common_failures() -> None:
+    guide = (ROOT / "docs" / "troubleshooting.md").read_text(encoding="utf-8")
+
+    for failure in (
+        "ConnectionTimeoutError",
+        "AuthenticationError",
+        "protocol_version_mismatch",
+        "not_found",
+        "TimeoutError",
+        "dropped_frames",
+    ):
+        assert failure in guide

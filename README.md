@@ -10,19 +10,36 @@ WebSocket gateway; the robot's **SDK Control App** discovers it and connects bac
 
 ## Install
 
+The current public preview is `0.1.0a1` on TestPyPI. TestPyPI does not mirror every dependency, so install the
+runtime dependency from PyPI first and the SDK itself from TestPyPI without dependency resolution:
+
+```bash
+python -m pip install "websockets>=12,<16"
+python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a1
+```
+
 For development or evaluation from this repository:
 
 ```bash
 python -m pip install -e .
 ```
 
-After a PyPI release, install with:
+The stable PyPI package has not been published yet. After its release, install with:
 
 ```bash
 python -m pip install watcherobot
 ```
 
 Python 3.10 or newer is required.
+
+## Compatibility
+
+| Python SDK | Protocol | Verified ESP32 firmware | Python | Release status |
+|---|---|---|---|---|
+| `0.1.0a1` | `1.0` | `V3.1` with SDK Control App | `>=3.10` (current CI: 3.12) | Alpha / TestPyPI |
+
+After connecting, inspect `robot.device_info` and `robot.capabilities`; the negotiated device response is the source
+of truth. Firmware older than `V3.1` is not currently covered by the compatibility promise.
 
 ## First connection
 
@@ -76,6 +93,9 @@ directory. See [examples/README.md](examples/README.md).
 
 Finite operations return a `Job` or the Job-compatible `AudioPlayback`. An ACK only means that the device accepted
 the command; call `Job.wait()` to wait for the device's terminal result.
+
+See [factory resource IDs](docs/resources.md) for safe examples on the current firmware. For pairing, `not_found`,
+timeouts, audio validation, and dropped media frames, see [troubleshooting](docs/troubleshooting.md).
 
 ## Maintainer hardware checks
 
