@@ -54,20 +54,26 @@ with WatcheRobot.connect(pairing_code="123456") as robot:
 拍照和录音会先提示用户确认，结果统一写入被 Git 忽略的 `artifacts/`。详细说明见
 [examples/README.md](examples/README.md)。
 
-## API 模型
+## 当前支持的功能
 
-- `robot.behavior.play(...)` 播放机器人上已安装的多轨 Behavior。
-- `robot.animation`、`robot.motion`、`robot.audio`、`robot.lights` 提供单领域直接控制。
-- `robot.motion.move_to(..., duration_ms=1000)` 的动作时长统一使用整数毫秒。
-- `robot.audio.play(sound_id)` 播放内置资源；`robot.audio.play_file(path)` 传输电脑 WAV。
-- 有限操作返回 `Job`；`Job.wait()` 等待设备终态，ACK 本身不等于执行完成。
-- `motion.set_target(...)` 是 latest-wins 实时命令，不返回 Job。
-- `robot.microphone.open()` 提供 PCM S16LE、16 kHz、单声道帧和丢帧统计。
-- `robot.microphone.record(duration=5)` 直接返回可保存的 `AudioRecording`。
-- `robot.camera.capture()` 返回单张 JPEG `ImageFrame`。
-- `AudioRecording.save(path)` 和 `ImageFrame.save(path)` 负责创建目录并保存标准文件。
+| 能力 | SDK 函数 | 返回值 / 执行方式 | v1 说明 |
+|---|---|---|---|
+| 连接与关闭 | `WatcheRobot.connect(...)`<br>`robot.close()` | `WatcheRobot` / 立即执行 | 启动局域网 Discovery 与 WebSocket 网关；同一实例控制一台机器人 |
+| Behavior | `robot.behavior.play(id, repeat=1)`<br>`robot.behavior.stop()` | `Job` / 立即执行 | 播放机器人中已安装的多轨 Behavior |
+| 动画 | `robot.animation.play(id)`<br>`robot.animation.stop()` | `Job` / 立即执行 | 动画资源必须已安装在机器人中 |
+| 定点动作 | `robot.motion.move_to(pan_deg=..., tilt_deg=..., duration_ms=...)` | `Job` | `duration_ms` 使用 `1..65535` 的整数毫秒 |
+| 实时动作 | `robot.motion.set_target(pan_deg=..., tilt_deg=...)` | 立即执行 | latest-wins，不等待动作完成 |
+| 命名动作 | `robot.motion.play_action(id)`<br>`robot.motion.stop()` | `Job` / 立即执行 | 命名动作必须已安装在机器人中 |
+| 内置音效 | `robot.audio.play(sound_id)` | `Job` | 音效资源必须已安装在机器人中 |
+| 电脑音频 | `robot.audio.play_file(path)`<br>`robot.audio.play_pcm(data, ...)`<br>`robot.audio.stop()` | `AudioPlayback` / 立即执行 | PCM S16LE、24 kHz、单声道；单次最多 4 MB |
+| 灯光 | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(...)`<br>`robot.lights.off()` | 立即执行 / `Job` / 立即执行 | 颜色使用 `#RRGGBB`，亮度范围 `0..1` |
+| 麦克风会话 | `robot.microphone.open()` | `MicrophoneSession` | 使用 `read(timeout=...)` 读取 PCM 帧；当前默认 16 kHz、16-bit、单声道 |
+| 便捷录音 | `robot.microphone.record(duration=...)`<br>`AudioRecording.save(path)` | `AudioRecording` / `Path` | `duration` 使用秒；保存为标准 WAV |
+| 摄像头拍照 | `robot.camera.capture(...)`<br>`ImageFrame.save(path)` | `ImageFrame` / `Path` | 单张 JPEG；连续视频流不属于 v1 |
+| Job 生命周期 | `Job.wait(timeout=...)`<br>`Job.cancel()` | `Job` / 立即请求取消 | `STARTING → RUNNING → COMPLETED / FAILED / CANCELLED` |
 
-`play_file()` 在 v1 接受 PCM S16LE、24 kHz、单声道 WAV，单个音频流最大 4 MB。
+有限操作返回 `Job` 或兼容 `Job` 的 `AudioPlayback`。ACK 只表示设备已经接收命令；使用
+`Job.wait()` 才能等待设备上报最终执行结果。
 
 ## 维护者硬件验收
 

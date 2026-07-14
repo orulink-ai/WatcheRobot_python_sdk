@@ -56,20 +56,26 @@ with WatcheRobot.connect(pairing_code="123456") as robot:
 Camera and microphone examples ask for confirmation first. Generated files go to the Git-ignored `artifacts/`
 directory. See [examples/README.md](examples/README.md).
 
-## API model
+## Supported capabilities
 
-- `robot.behavior.play(...)` plays an installed multi-track Behavior.
-- `robot.animation`, `robot.motion`, `robot.audio`, and `robot.lights` provide direct domain control.
-- `robot.motion.move_to(..., duration_ms=1000)` uses an integer duration in milliseconds.
-- `robot.audio.play(sound_id)` plays an installed resource; `robot.audio.play_file(path)` transfers a host WAV.
-- Finite operations return a `Job`; `Job.wait()` observes the device terminal event, not merely the ACK.
-- `motion.set_target(...)` is a latest-wins real-time command and does not return a Job.
-- `robot.microphone.open()` exposes PCM S16LE, 16 kHz, mono frames and dropped-frame statistics.
-- `robot.microphone.record(duration=5)` returns a saveable `AudioRecording` directly.
-- `robot.camera.capture()` returns one JPEG `ImageFrame`.
-- `AudioRecording.save(path)` and `ImageFrame.save(path)` create parent directories and save standard files.
+| Capability | SDK functions | Return / execution | v1 notes |
+|---|---|---|---|
+| Connect and close | `WatcheRobot.connect(...)`<br>`robot.close()` | `WatcheRobot` / immediate | Starts LAN Discovery and the WebSocket gateway; one robot per SDK instance |
+| Behavior | `robot.behavior.play(id, repeat=1)`<br>`robot.behavior.stop()` | `Job` / immediate | Plays a multi-track Behavior already installed on the robot |
+| Animation | `robot.animation.play(id)`<br>`robot.animation.stop()` | `Job` / immediate | Animation resources must already be installed on the robot |
+| Point-to-point motion | `robot.motion.move_to(pan_deg=..., tilt_deg=..., duration_ms=...)` | `Job` | `duration_ms` is an integer from `1..65535` milliseconds |
+| Real-time motion | `robot.motion.set_target(pan_deg=..., tilt_deg=...)` | immediate | Latest-wins command; does not wait for motion completion |
+| Named motion | `robot.motion.play_action(id)`<br>`robot.motion.stop()` | `Job` / immediate | Named actions must already be installed on the robot |
+| Installed sound | `robot.audio.play(sound_id)` | `Job` | Sound resources must already be installed on the robot |
+| Host audio | `robot.audio.play_file(path)`<br>`robot.audio.play_pcm(data, ...)`<br>`robot.audio.stop()` | `AudioPlayback` / immediate | PCM S16LE, 24 kHz, mono; maximum 4 MB per stream |
+| Lights | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(...)`<br>`robot.lights.off()` | immediate / `Job` / immediate | Colors use `#RRGGBB`; brightness is from `0..1` |
+| Microphone session | `robot.microphone.open()` | `MicrophoneSession` | Read PCM frames with `read(timeout=...)`; current default is 16 kHz, 16-bit, mono |
+| Convenience recording | `robot.microphone.record(duration=...)`<br>`AudioRecording.save(path)` | `AudioRecording` / `Path` | `duration` is in seconds; saves a standard WAV file |
+| Camera capture | `robot.camera.capture(...)`<br>`ImageFrame.save(path)` | `ImageFrame` / `Path` | One JPEG frame; continuous video is outside v1 |
+| Job lifecycle | `Job.wait(timeout=...)`<br>`Job.cancel()` | `Job` / immediate cancel request | `STARTING → RUNNING → COMPLETED / FAILED / CANCELLED` |
 
-In v1, `play_file()` accepts PCM S16LE, 24 kHz, mono WAV files up to 4 MB.
+Finite operations return a `Job` or the Job-compatible `AudioPlayback`. An ACK only means that the device accepted
+the command; call `Job.wait()` to wait for the device's terminal result.
 
 ## Maintainer hardware checks
 
