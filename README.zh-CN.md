@@ -96,3 +96,6 @@ python tools/hardware_smoke.py --auto-pair-port COM5 --all --non-interactive
 python -m pytest
 python -m build
 ```
+
+维护者发布流程见 [docs/releasing.md](docs/releasing.md)。项目使用 GitHub Actions 与 PyPI Trusted
+Publishing，不保存长期上传 Token。

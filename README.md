@@ -99,3 +99,6 @@ Protocol details are in [docs/protocol-v1.md](docs/protocol-v1.md).
 python -m pytest
 python -m build
 ```
+
+Maintainers should follow [docs/releasing.md](docs/releasing.md). Releases use GitHub Actions and PyPI Trusted
+Publishing without a long-lived upload token.
