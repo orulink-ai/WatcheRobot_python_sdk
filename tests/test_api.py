@@ -5,8 +5,15 @@ from concurrent.futures import Future
 import pytest
 
 from watcherobot import Job, WatcheRobot
-from watcherobot.errors import CommandError
-from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_AUDIO, FRAME_IMAGE, BinaryFrame
+from watcherobot.errors import CommandError, WatcheRobotError
+from watcherobot.protocol import (
+    FLAG_FIRST,
+    FLAG_FRAGMENT,
+    FLAG_LAST,
+    FRAME_AUDIO,
+    FRAME_IMAGE,
+    BinaryFrame,
+)
 
 
 class FakeTransport:
@@ -56,6 +63,12 @@ class FakeTransport:
         future.set_result(None)
         return future
 
+    def send_command_nowait(self, message_type, data):
+        self.commands.append((message_type, data))
+        future = Future()
+        future.set_result({"type": "sys.ack", "code": 0, "data": {}})
+        return future
+
 
 def test_public_namespaces_build_protocol_commands():
     transport = FakeTransport()
@@ -98,6 +111,15 @@ def test_public_namespaces_build_protocol_commands():
             },
         ),
     ]
+
+
+def test_robot_supports_negotiated_capabilities():
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    assert robot.supports("camera.capture")
+    assert not robot.supports("video.stream")
+    with pytest.raises(ValueError, match="capability must be a non-empty string"):
+        robot.supports("")
 
 
 @pytest.mark.parametrize("duration_ms", [0, -1, 1.5, True, 65536])
@@ -184,7 +206,12 @@ def test_audio_play_pcm_streams_binary_and_completes_from_device_status():
 
 
 def test_audio_playback_write_failure_is_a_terminal_failure():
-    transport = FakeTransport()
+    class PendingAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            self.future = Future()
+            return self.future
+
+    transport = PendingAudioTransport()
     robot = WatcheRobot._from_transport(transport)
     playback = robot.audio.play_pcm(b"\x01\x00")
 
@@ -200,6 +227,86 @@ def test_audio_playback_write_failure_is_a_terminal_failure():
     )
 
     assert playback.state.value == "failed"
+    assert playback.reason == "playback_write_failed"
+    assert transport.future.cancelled()
+
+
+def test_rejected_audio_stop_keeps_the_host_sender_alive():
+    class RejectingStopTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            self.future = Future()
+            return self.future
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.audio.stop":
+                raise CommandError(message_type, "busy")
+            return super().send_command(message_type, data, timeout)
+
+    transport = RejectingStopTransport()
+    robot = WatcheRobot._from_transport(transport)
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    with pytest.raises(CommandError, match="busy"):
+        robot.audio.stop()
+
+    assert not transport.future.cancelled()
+    assert playback.state.value == "starting"
+
+
+def test_audio_sender_failure_stops_device_and_releases_current_playback():
+    class FailingAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            self.future = Future()
+            return self.future
+
+    transport = FailingAudioTransport()
+    robot = WatcheRobot._from_transport(transport)
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    transport.future.set_exception(OSError("socket write failed"))
+
+    assert playback.state.value == "failed"
+    assert playback.reason == "audio_send_failed"
+    assert robot._audio_playback is None
+    assert robot._audio_send_future is None
+    assert transport.commands[-1] == ("ctrl.audio.stop", {})
+
+
+def test_audio_sender_start_failure_stops_the_authorized_device_stream():
+    class BrokenAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            raise OSError("cannot schedule sender")
+
+    transport = BrokenAudioTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(OSError, match="cannot schedule sender"):
+        robot.audio.play_pcm(b"\x01\x00")
+
+    assert robot._audio_playback is None
+    assert transport.commands[-1] == ("ctrl.audio.stop", {})
+
+
+def test_rejected_installed_sound_keeps_existing_host_sender_alive():
+    class RejectingAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            self.future = Future()
+            return self.future
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.audio.play":
+                raise CommandError(message_type, "not_found")
+            return super().send_command(message_type, data, timeout)
+
+    transport = RejectingAudioTransport()
+    robot = WatcheRobot._from_transport(transport)
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    with pytest.raises(CommandError, match="not_found"):
+        robot.audio.play("missing")
+
+    assert not transport.future.cancelled()
+    assert playback.state.value == "starting"
 
 
 def test_new_audio_stream_cancels_previous_host_sender_before_replacement():
@@ -243,6 +350,81 @@ def test_audio_playback_cancel_stops_sender_and_device():
     assert transport.commands[-1] == ("ctrl.audio.stop", {})
 
 
+def test_rejected_audio_playback_cancel_keeps_sender_and_playback_active():
+    class RejectingStopTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            self.future = Future()
+            return self.future
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.audio.stop":
+                raise CommandError(message_type, "busy")
+            return super().send_command(message_type, data, timeout)
+
+    transport = RejectingStopTransport()
+    robot = WatcheRobot._from_transport(transport)
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    with pytest.raises(CommandError, match="busy"):
+        playback.cancel()
+
+    assert not transport.future.cancelled()
+    assert playback.state.value == "starting"
+    assert robot._audio_playback is playback
+
+
+def test_old_sender_failure_during_successful_replacement_does_not_stop_new_stream():
+    class BlockingReplacementTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.begin_count = 0
+            self.replacement_started = threading.Event()
+            self.release_replacement = threading.Event()
+            self.futures = []
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.audio.stream.begin":
+                self.begin_count += 1
+                if self.begin_count == 2:
+                    self.replacement_started.set()
+                    assert self.release_replacement.wait(1)
+            return super().send_command(message_type, data, timeout)
+
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            future = Future()
+            self.futures.append(future)
+            return future
+
+    transport = BlockingReplacementTransport()
+    robot = WatcheRobot._from_transport(transport)
+    first = robot.audio.play_pcm(b"\x01\x00")
+    replacements = []
+    errors = []
+
+    def replace_audio():
+        try:
+            replacements.append(robot.audio.play_pcm(b"\x02\x00"))
+        except Exception as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    replacement_thread = threading.Thread(target=replace_audio)
+    replacement_thread.start()
+    assert transport.replacement_started.wait(1)
+    transport.futures[0].set_exception(OSError("old sender failed"))
+    transport.release_replacement.set()
+    replacement_thread.join(1)
+
+    assert not replacement_thread.is_alive()
+    assert errors == []
+    assert first.state.value == "failed"
+    assert len(replacements) == 1
+    assert replacements[0].state.value == "starting"
+    assert [command[0] for command in transport.commands] == [
+        "ctrl.audio.stream.begin",
+        "ctrl.audio.stream.begin",
+    ]
+
+
 def test_operation_event_arriving_immediately_after_ack_is_not_lost():
     class EarlyEventTransport(FakeTransport):
         def send_command(self, message_type, data, timeout=None):
@@ -274,6 +456,7 @@ def test_disconnect_releases_tracked_jobs_after_failing_them():
     transport.disconnect_callback()
 
     assert job.state.value == "failed"
+    assert job.reason == "disconnected"
     assert robot._jobs == {}
     assert robot._closed
     assert transport.closed
@@ -303,7 +486,115 @@ def test_media_frame_arriving_before_open_ack_is_buffered():
 
     microphone = robot.microphone.open(queue_size=1)
     assert microphone.read(timeout=0).data == b"pcm"
-    assert robot.camera.capture(timeout=0).data == b"jpeg"
+    assert robot.camera.capture(timeout=0.1).data == b"jpeg"
+
+
+@pytest.mark.parametrize("timeout", [0, -1])
+def test_camera_rejects_non_positive_timeout(timeout):
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(ValueError, match="timeout must be positive"):
+        robot.camera.capture(timeout=timeout)
+
+
+def test_camera_reassembles_fragmented_jpeg_before_returning_it():
+    class FragmentedCameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.camera.capture":
+                self.binary_callback(
+                    BinaryFrame(FRAME_IMAGE, FLAG_FIRST | FLAG_FRAGMENT, 0, 10, b"jpeg-")
+                )
+                self.binary_callback(BinaryFrame(FRAME_IMAGE, FLAG_FRAGMENT, 0, 11, b"middle-"))
+                self.binary_callback(BinaryFrame(FRAME_IMAGE, FLAG_FRAGMENT, 0, 12, b"end"))
+                self.binary_callback(
+                    BinaryFrame(FRAME_IMAGE, FLAG_LAST | FLAG_FRAGMENT, 0, 13, b"")
+                )
+            return super().send_command(message_type, data, timeout)
+
+    robot = WatcheRobot._from_transport(FragmentedCameraTransport())
+
+    image = robot.camera.capture(timeout=0.1)
+
+    assert image.data == b"jpeg-middle-end"
+    assert image.sequence == 13
+
+
+def test_concurrent_microphone_open_is_rejected_before_a_second_command():
+    class BlockingMicrophoneTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.open_started = threading.Event()
+            self.release_open = threading.Event()
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.microphone.open":
+                self.open_started.set()
+                assert self.release_open.wait(1)
+            return super().send_command(message_type, data, timeout)
+
+    transport = BlockingMicrophoneTransport()
+    robot = WatcheRobot._from_transport(transport)
+    opened = []
+    opener = threading.Thread(target=lambda: opened.append(robot.microphone.open()))
+    opener.start()
+    assert transport.open_started.wait(1)
+
+    with pytest.raises(WatcheRobotError, match="microphone session is already open or opening"):
+        robot.microphone.open()
+
+    transport.release_open.set()
+    opener.join(1)
+    assert not opener.is_alive()
+    assert len(opened) == 1
+    assert [command[0] for command in transport.commands].count("ctrl.microphone.open") == 1
+
+
+def test_microphone_open_does_not_publish_a_session_after_robot_close():
+    class BlockingMicrophoneTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.open_started = threading.Event()
+            self.release_open = threading.Event()
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.microphone.open":
+                self.open_started.set()
+                assert self.release_open.wait(1)
+            return super().send_command(message_type, data, timeout)
+
+    transport = BlockingMicrophoneTransport()
+    robot = WatcheRobot._from_transport(transport)
+    opened = []
+    errors = []
+
+    def open_microphone():
+        try:
+            opened.append(robot.microphone.open())
+        except Exception as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    opener = threading.Thread(target=open_microphone)
+    opener.start()
+    assert transport.open_started.wait(1)
+    robot.close()
+    transport.release_open.set()
+    opener.join(1)
+
+    assert not opener.is_alive()
+    assert opened == []
+    assert len(errors) == 1
+    assert isinstance(errors[0], WatcheRobotError)
+    assert "closed while opening microphone" in str(errors[0])
+    assert robot._microphone is None
+    assert not robot._microphone_opening
+
+
+def test_microphone_open_rejects_an_already_closed_robot():
+    robot = WatcheRobot._from_transport(FakeTransport())
+    robot.close()
+
+    with pytest.raises(WatcheRobotError, match="robot connection is closed"):
+        robot.microphone.open()
 
 
 def test_microphone_rejects_frames_from_another_session():

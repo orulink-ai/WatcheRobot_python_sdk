@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .job import Job, JobState
+from .job import CommandTransport, Job, JobState
 from .media import AudioFormat
 
 OUTPUT_AUDIO_FORMAT = AudioFormat(
@@ -44,7 +44,7 @@ class AudioPlayback(Job):
     def __init__(
         self,
         stream_id: int,
-        transport,
+        transport: CommandTransport,
         expected_sha256: str,
         cancel_callback: Callable[[AudioPlayback], None],
     ) -> None:

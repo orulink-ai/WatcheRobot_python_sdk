@@ -18,6 +18,8 @@ def test_quickstart_directly_demonstrates_the_main_sdk_domains() -> None:
     assert "audio.play_file" in source
     assert "camera.capture" in source
     assert "microphone.record" in source
+    assert "required_capabilities" in source
+    assert "robot.supports(capability)" in source
 
 
 def test_hello_robot_remains_the_minimal_first_connection() -> None:
@@ -39,6 +41,12 @@ def test_capability_examples_are_separate_from_the_quickstart() -> None:
 
     assert expected <= {path.name for path in (ROOT / "examples").glob("*.py")}
     assert (ROOT / "tools" / "hardware_smoke.py").is_file()
+
+
+def test_interactive_examples_use_bilingual_prompts() -> None:
+    for path in (ROOT / "examples").glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        assert "Six-digit code shown by SDK Control App" in source
 
 
 def test_runtime_artifacts_are_ignored() -> None:

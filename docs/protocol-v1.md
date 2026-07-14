@@ -74,8 +74,10 @@ The current little-endian header is 16 bytes:
 | 12 | 4 | payload length |
 
 The parser also accepts the legacy 14-byte header with implicit stream ID zero for compatible device-to-host media.
-Microphone audio is PCM S16LE/16 kHz/mono. Camera capture returns one JPEG and is correlated to its acknowledged
-session ID.
+Microphone audio is PCM S16LE/16 kHz/mono. Camera capture returns one JPEG. Current 16-byte frames correlate it to
+the acknowledged session ID; legacy stream-zero frames remain compatible but cannot strongly reject a late image
+from a timed-out capture. A JPEG may be carried in one frame or in ordered frames marked with `fragment`; fragmented
+images use `first`/`last`, are reassembled with an 8 MiB bound, and are discarded on sequence gaps.
 
 ### Host-to-robot audio
 

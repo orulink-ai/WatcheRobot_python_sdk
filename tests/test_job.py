@@ -27,9 +27,13 @@ def test_job_wait_follows_operation_lifecycle():
 
 def test_job_wait_reports_failure_and_cancel():
     failed = Job(3, FakeTransport())
-    failed._update(JobState.FAILED, error_code=17)
-    with pytest.raises(JobFailedError, match="17"):
+    failed._update(JobState.FAILED, error_code=17, reason="servo_stalled")
+    with pytest.raises(JobFailedError, match="servo_stalled") as failure:
         failed.wait(timeout=0)
+    assert failed.reason == "servo_stalled"
+    assert failure.value.job_id == 3
+    assert failure.value.error_code == 17
+    assert failure.value.reason == "servo_stalled"
 
     cancelled = Job(4, FakeTransport())
     cancelled._update(JobState.CANCELLED)
@@ -47,3 +51,11 @@ def test_job_cancel_is_idempotent_after_terminal_state():
 
     assert transport.commands == [("ctrl.job.cancel", {"operation_id": 11}, None)]
 
+
+def test_job_rejects_a_backward_state_transition():
+    job = Job(12, FakeTransport())
+    job._update(JobState.RUNNING)
+
+    job._update(JobState.STARTING)
+
+    assert job.state is JobState.RUNNING

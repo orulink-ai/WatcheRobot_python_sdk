@@ -3,10 +3,11 @@ import json
 import threading
 
 import websockets
+import pytest
 
 from watcherobot.errors import ConnectionTimeoutError
-from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_AUDIO, parse_wspk
-from watcherobot.transport import BackgroundTransport
+from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_AUDIO, ProtocolError, parse_wspk
+from watcherobot.transport import BackgroundTransport, _parse_capabilities
 
 
 def test_gateway_pairs_and_correlates_command_ack():
@@ -23,6 +24,23 @@ def test_audio_stream_uses_ordered_wspk_chunks():
 
 def test_audio_stream_waits_for_device_buffer_credit():
     asyncio.run(_audio_stream_backpressure())
+
+
+def test_command_timeout_preserves_explicit_zero():
+    transport = BackgroundTransport(command_timeout=5.0)
+
+    assert transport._effective_timeout(None) == 5.0
+    assert transport._effective_timeout(0) == 0
+
+
+def test_ready_capabilities_require_a_list_of_non_empty_strings():
+    assert _parse_capabilities(["behavior", "camera.capture"]) == (
+        "behavior",
+        "camera.capture",
+    )
+    for invalid in ("behavior", ["behavior", 7], ["behavior", ""]):
+        with pytest.raises(ProtocolError, match="capabilities"):
+            _parse_capabilities(invalid)
 
 
 async def _audio_stream_chunks():
