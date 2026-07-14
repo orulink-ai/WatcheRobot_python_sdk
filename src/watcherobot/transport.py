@@ -10,6 +10,7 @@ from typing import Any, Callable
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from ._internal.audio_status import AudioStatusKind, classify_audio_status
 from .errors import AuthenticationError, CommandError, ConnectionTimeoutError, WatcheRobotError
 from .protocol import (
     DISCOVERY_PORT,
@@ -18,6 +19,10 @@ from .protocol import (
     BinaryFrame,
     ProtocolError,
     build_command,
+    build_wspk,
+    FLAG_FIRST,
+    FLAG_LAST,
+    FRAME_AUDIO,
     parse_json_message,
     parse_wspk,
 )
@@ -86,6 +91,10 @@ class BackgroundTransport:
         self._binary_callback: BinaryCallback = lambda frame: None
         self._disconnect_callback: DisconnectCallback = lambda: None
         self._was_ready = False
+        self._audio_credit_condition: asyncio.Condition | None = None
+        self._audio_flow_stream_id = 0
+        self._audio_credits = 0
+        self._audio_flow_error: str | None = None
 
     def set_callbacks(
         self,
@@ -129,6 +138,22 @@ class BackgroundTransport:
             raise WatcheRobotError("robot is not connected")
         future = asyncio.run_coroutine_threadsafe(self._send_command(message_type, data, timeout), self._loop)
         return future.result(timeout=(timeout or self.command_timeout) + 1.0)
+
+    def send_audio_stream(
+        self,
+        pcm: bytes,
+        *,
+        stream_id: int,
+        chunk_bytes: int = 4096,
+    ):
+        if self._loop is None or self._websocket is None or not self._ready_event.is_set():
+            raise WatcheRobotError("robot is not connected")
+        if chunk_bytes <= 0 or chunk_bytes > 32768 or chunk_bytes % 2 != 0:
+            raise ValueError("chunk_bytes must be an even value between 2 and 32768")
+        return asyncio.run_coroutine_threadsafe(
+            self._send_audio_stream(bytes(pcm), stream_id, chunk_bytes),
+            self._loop,
+        )
 
     def close(self) -> None:
         loop = self._loop
@@ -194,7 +219,10 @@ class BackgroundTransport:
         self._websocket = websocket
         ready = False
         try:
-            raw_hello = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+            try:
+                raw_hello = await asyncio.wait_for(websocket.recv(), timeout=self.command_timeout)
+            except asyncio.TimeoutError as error:
+                raise ConnectionTimeoutError("Timed out waiting for the robot hello message") from error
             if not isinstance(raw_hello, str):
                 raise ProtocolError("expected sys.client.hello text frame")
             hello = parse_json_message(raw_hello)
@@ -228,7 +256,12 @@ class BackgroundTransport:
             authenticated = False
             announced_ready = False
             while not (authenticated and announced_ready):
-                raw = await asyncio.wait_for(websocket.recv(), timeout=5.0)
+                try:
+                    raw = await asyncio.wait_for(websocket.recv(), timeout=self.command_timeout)
+                except asyncio.TimeoutError as error:
+                    raise ConnectionTimeoutError(
+                        "Timed out waiting for the robot SDK authentication response"
+                    ) from error
                 if isinstance(raw, bytes):
                     self._dispatch_binary(raw)
                     continue
@@ -285,9 +318,91 @@ class BackgroundTransport:
             raise CommandError(message_type, response.get("data", {}).get("reason", "unknown"))
         return response
 
+    async def _send_audio_stream(self, pcm: bytes, stream_id: int, chunk_bytes: int) -> None:
+        websocket = self._websocket
+        if websocket is None:
+            raise WatcheRobotError("robot is not connected")
+        if self._audio_credit_condition is None:
+            self._audio_credit_condition = asyncio.Condition()
+        async with self._audio_credit_condition:
+            self._audio_flow_stream_id = stream_id
+            self._audio_credits = 4
+            self._audio_flow_error = None
+        sequence = 0
+        try:
+            for offset in range(0, len(pcm), chunk_bytes):
+                await self._take_audio_credit(stream_id)
+                payload = pcm[offset : offset + chunk_bytes]
+                flags = FLAG_FIRST if offset == 0 else 0
+                if offset + len(payload) >= len(pcm):
+                    flags |= FLAG_LAST
+                await websocket.send(build_wspk(FRAME_AUDIO, flags, stream_id, sequence, payload))
+                sequence += 1
+        finally:
+            async with self._audio_credit_condition:
+                if self._audio_flow_stream_id == stream_id:
+                    self._audio_flow_stream_id = 0
+                    self._audio_credits = 0
+
+    async def _take_audio_credit(self, stream_id: int) -> None:
+        condition = self._audio_credit_condition
+        if condition is None:
+            raise WatcheRobotError("audio flow control is not initialized")
+
+        async def wait_for_credit() -> None:
+            async with condition:
+                await condition.wait_for(
+                    lambda: self._audio_flow_stream_id != stream_id
+                    or self._audio_credits > 0
+                    or self._audio_flow_error is not None
+                )
+                if self._audio_flow_stream_id != stream_id:
+                    raise WatcheRobotError("audio stream was replaced")
+                if self._audio_flow_error is not None:
+                    raise WatcheRobotError(f"audio stream failed: {self._audio_flow_error}")
+                self._audio_credits -= 1
+
+        try:
+            await asyncio.wait_for(wait_for_credit(), timeout=self.command_timeout)
+        except asyncio.TimeoutError as error:
+            raise WatcheRobotError("timed out waiting for robot audio buffer credit") from error
+
+    async def _update_audio_flow(self, data: dict[str, Any]) -> None:
+        condition = self._audio_credit_condition
+        if condition is None:
+            return
+        stream_id = data.get("stream_id")
+        reason = data.get("reason", "")
+        async with condition:
+            if stream_id != self._audio_flow_stream_id:
+                return
+            if classify_audio_status(reason) is AudioStatusKind.FAILED:
+                self._audio_flow_error = reason
+            else:
+                pending_frames = data.get("pending_frames")
+                free_frames = data.get("free_frames")
+                queue_depth = data.get("queue_depth")
+                if (
+                    isinstance(pending_frames, int)
+                    and pending_frames >= 0
+                    and isinstance(queue_depth, int)
+                    and queue_depth > 0
+                ):
+                    target_pending = max(4, queue_depth // 2)
+                    available_slots = max(0, target_pending - pending_frames)
+                    # One 4096-byte WSPK packet is delivered to the ESP-IDF
+                    # callback in roughly three 2 KiB fragments. Convert the
+                    # device's internal-slot credit back to host packets.
+                    self._audio_credits = min(8, (available_slots + 2) // 3)
+                elif isinstance(free_frames, int) and free_frames > 0:
+                    self._audio_credits = min(free_frames, 8)
+            condition.notify_all()
+
     async def _dispatch_message(self, message: dict[str, Any]) -> None:
         message_type = message["type"]
         data = message.get("data", {})
+        if message_type == "evt.audio.buffer_status":
+            await self._update_audio_flow(data)
         if message_type in ("sys.ack", "sys.nack"):
             command_id = data.get("command_id")
             future = self._pending.get(command_id)
@@ -305,4 +420,3 @@ class BackgroundTransport:
         except ProtocolError:
             return
         self._binary_callback(frame)
-

@@ -44,6 +44,29 @@ def build_command(message_type: str, data: Mapping[str, Any], command_id: str) -
     )
 
 
+def build_wspk(
+    frame_type: int,
+    flags: int,
+    stream_id: int,
+    sequence: int,
+    payload: bytes,
+) -> bytes:
+    """Build the current 16-byte WSPK binary frame."""
+    if not 0 <= frame_type <= 0xFF or not 0 <= flags <= 0xFF:
+        raise ValueError("frame_type and flags must fit in one byte")
+    if not 0 < stream_id <= 0xFFFF:
+        raise ValueError("stream_id must be between 1 and 65535")
+    if not 0 <= sequence <= 0xFFFFFFFF:
+        raise ValueError("sequence must fit in uint32")
+    payload_bytes = bytes(payload)
+    return (
+        b"WSPK"
+        + bytes((frame_type, flags))
+        + struct.pack("<HII", stream_id, sequence, len(payload_bytes))
+        + payload_bytes
+    )
+
+
 def parse_json_message(raw: str) -> dict[str, Any]:
     try:
         message = json.loads(raw)
@@ -72,4 +95,3 @@ def parse_wspk(packet: bytes) -> BinaryFrame:
     if payload_size != len(packet) - 14:
         raise ProtocolError("WSPK payload length mismatch")
     return BinaryFrame(frame_type, flags, 0, sequence, packet[14:])
-

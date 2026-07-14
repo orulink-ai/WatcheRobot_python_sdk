@@ -10,6 +10,7 @@ from watcherobot.protocol import (
     FLAG_LAST,
     ProtocolError,
     build_command,
+    build_wspk,
     parse_wspk,
 )
 
@@ -53,7 +54,18 @@ def test_parse_current_wspk_image_frame():
     assert frame.payload == payload
 
 
+def test_build_current_wspk_audio_frame_round_trips():
+    packet = build_wspk(FRAME_AUDIO, FLAG_FIRST | FLAG_LAST, 23, 7, b"pcm")
+
+    frame = parse_wspk(packet)
+
+    assert frame.frame_type == FRAME_AUDIO
+    assert frame.flags == FLAG_FIRST | FLAG_LAST
+    assert frame.stream_id == 23
+    assert frame.sequence == 7
+    assert frame.payload == b"pcm"
+
+
 def test_parse_wspk_rejects_corrupt_lengths():
     with pytest.raises(ProtocolError):
         parse_wspk(b"WSPK" + bytes([FRAME_AUDIO, 0]) + struct.pack("<II", 1, 99) + b"short")
-

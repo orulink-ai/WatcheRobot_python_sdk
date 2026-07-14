@@ -1,78 +1,95 @@
 # WatcheRobot Python SDK
 
-`watcherobot` is the synchronous desktop/LAN SDK for WatcheRobot. It starts a small UDP discovery service and
-WebSocket gateway on your computer; the robot's **Python SDK** app discovers it and connects back to it.
+English | [简体中文](README.zh-CN.md)
 
-> v0.1 is intended for trusted local networks. It uses plain `ws://`, one temporary pairing session, and one robot
-> per SDK instance.
+`watcherobot` is the synchronous desktop/LAN SDK for WatcheRobot. The computer starts a UDP discovery service and
+WebSocket gateway; the robot's **SDK Control App** discovers it and connects back.
+
+> v0.1 targets trusted local networks. It uses plain `ws://`, a temporary six-digit pairing code, and one robot per
+> SDK instance.
 
 ## Install
 
+For development or evaluation from this repository:
+
 ```bash
-pip install watcherobot
+python -m pip install -e .
+```
+
+After a PyPI release, install with:
+
+```bash
+python -m pip install watcherobot
 ```
 
 Python 3.10 or newer is required.
 
-## Quick start
+## First connection
 
-1. Connect the computer and WatcheRobot to the same LAN.
-2. Open **Python SDK** from the robot launcher. A new six-digit code appears.
-3. Run:
+1. Connect the computer and robot to the same LAN.
+2. Open **SDK Control App** from the robot launcher.
+3. Note the temporary six-digit code shown on the robot.
+4. Run the minimal connection example:
+
+```bash
+python examples/hello_robot.py
+```
+
+The minimal example connects, prints device information, and plays the factory `happy` Behavior:
 
 ```python
 from watcherobot import WatcheRobot
 
 with WatcheRobot.connect(pairing_code="123456") as robot:
-    job = robot.behavior.play("greeting", repeat=1)
-    job.wait(timeout=5)
-
-    robot.motion.move_to(pan_deg=110, tilt_deg=120, duration=0.5).wait(timeout=2)
-    robot.motion.set_target(pan_deg=105)
-    robot.animation.play("smile")
-    robot.audio.play("confirm")
-    robot.lights.set_color("#4DA3FF", brightness=0.7)
-
-    with robot.microphone.open() as microphone:
-        frame = microphone.read(timeout=1)
-        print(frame.data, microphone.dropped_frames)
-
-    image = robot.camera.capture(timeout=5)
-    with open("capture.jpg", "wb") as output:
-        output.write(image.data)
+    print(robot.device_info)
+    robot.behavior.play("happy", repeat=1).wait(timeout=20)
 ```
 
-The default discovery and WebSocket ports are `37021/UDP` and `8766/TCP`. They can be changed when ports conflict:
+## Capability examples
 
-```python
-robot = WatcheRobot.connect(
-    pairing_code="123456",
-    discovery_port=37022,
-    websocket_port=8767,
-)
-```
+- `examples/quickstart.py`: directly call the main SDK domains in one file, with confirmation before motion,
+  camera, and microphone access.
+- `examples/play_audio_file.py`: transfer a host WAV file and play it on the robot.
+- `examples/capture_photo.py`: capture one JPEG.
+- `examples/record_microphone.py`: record five seconds from the robot microphone.
 
-The firmware must use the same discovery port. The WebSocket port is announced dynamically during discovery.
+Camera and microphone examples ask for confirmation first. Generated files go to the Git-ignored `artifacts/`
+directory. See [examples/README.md](examples/README.md).
 
 ## API model
 
-- `robot.behavior.play(...)`: plays a named, installed device-side multi-track Behavior.
-- `robot.animation`, `robot.motion`, `robot.audio`, `robot.lights`: direct domain control.
-- `move_to`, `play_action`, `play`, and finite light effects return a `Job`.
-- `set_target` is a latest-wins real-time command and does not return a `Job`.
-- `Job.wait()` observes the device terminal event; an ACK alone does not mean playback completed.
-- `robot.microphone.open()` exposes PCM S16LE, 16 kHz, mono frames. Its bounded queue drops the oldest frame when
-  the consumer is slow and increments `dropped_frames`.
-- `robot.camera.capture()` returns one JPEG `ImageFrame`; continuous video is outside v1.
+- `robot.behavior.play(...)` plays an installed multi-track Behavior.
+- `robot.animation`, `robot.motion`, `robot.audio`, and `robot.lights` provide direct domain control.
+- `robot.motion.move_to(..., duration_ms=1000)` uses an integer duration in milliseconds.
+- `robot.audio.play(sound_id)` plays an installed resource; `robot.audio.play_file(path)` transfers a host WAV.
+- Finite operations return a `Job`; `Job.wait()` observes the device terminal event, not merely the ACK.
+- `motion.set_target(...)` is a latest-wins real-time command and does not return a Job.
+- `robot.microphone.open()` exposes PCM S16LE, 16 kHz, mono frames and dropped-frame statistics.
+- `robot.microphone.record(duration=5)` returns a saveable `AudioRecording` directly.
+- `robot.camera.capture()` returns one JPEG `ImageFrame`.
+- `AudioRecording.save(path)` and `ImageFrame.save(path)` create parent directories and save standard files.
 
-Direct control cancels a running Behavior first. A new direct command replaces an older command in the same domain,
-while different direct domains may run together.
+In v1, `play_file()` accepts PCM S16LE, 24 kHz, mono WAV files up to 4 MB.
+
+## Maintainer hardware checks
+
+The complete light, animation, audio, Behavior, motion, camera, and microphone bench check is intentionally kept out
+of the public quickstart:
+
+```bash
+python -m pip install -e ".[hardware]"
+python tools/hardware_smoke.py --auto-pair-port COM5 --all --non-interactive
+```
+
+Serial auto-pairing requires a development firmware built with `CONFIG_WATCHER_DEBUG_CLI_ENABLE`. Production
+firmware must keep it disabled. See [docs/hardware-testing.md](docs/hardware-testing.md).
 
 ## v1 boundaries
 
-- Behaviors and media resources must already be installed on the robot.
-- No resource upload, inline Behavior timeline, continuous video, public async API, TLS, or remote wake-up.
-- Closing the SDK, closing the robot app, or losing the connection causes device-side cancellation and safe cleanup.
+- Behaviors, animations, and `audio.play(sound_id)` must already be installed on the robot.
+- Host WAV playback is temporary; arbitrary persistent resource upload is not supported.
+- Continuous video, inline Python Behaviors, a public async API, TLS, and remote wake-up are outside v1.
+- Closing the SDK, robot app, or connection cancels device jobs, media, and outputs and releases resources.
 
 Protocol details are in [docs/protocol-v1.md](docs/protocol-v1.md).
 
@@ -82,4 +99,3 @@ Protocol details are in [docs/protocol-v1.md](docs/protocol-v1.md).
 python -m pytest
 python -m build
 ```
-
