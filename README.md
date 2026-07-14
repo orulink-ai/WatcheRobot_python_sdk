@@ -10,12 +10,12 @@ WebSocket gateway; the robot's **SDK Control App** discovers it and connects bac
 
 ## Install
 
-The current public preview is `0.1.0a1` on TestPyPI. TestPyPI does not mirror every dependency, so install the
+The current public preview is `0.1.0a2` on TestPyPI. TestPyPI does not mirror every dependency, so install the
 runtime dependency from PyPI first and the SDK itself from TestPyPI without dependency resolution:
 
 ```bash
 python -m pip install "websockets>=12,<16"
-python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a1
+python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a2
 ```
 
 For development or evaluation from this repository:
@@ -36,7 +36,7 @@ Python 3.10 or newer is required.
 
 | Python SDK | Protocol | Verified ESP32 firmware | Python | Release status |
 |---|---|---|---|---|
-| `0.1.0a1` | `1.0` | `V3.1` with SDK Control App | `>=3.10` (current CI: 3.12) | Alpha / TestPyPI |
+| `0.1.0a2` | `1.0` | `V3.1` with SDK Control App | `>=3.10` (CI: 3.10 / 3.11 / 3.12) | Alpha / TestPyPI |
 
 After connecting, inspect `robot.device_info` and `robot.capabilities`; the negotiated device response is the source
 of truth. Firmware older than `V3.1` is not currently covered by the compatibility promise.
@@ -85,7 +85,7 @@ directory. See [examples/README.md](examples/README.md).
 | Named motion | `robot.motion.play_action(id)`<br>`robot.motion.stop()` | `Job` / immediate | Named actions must already be installed on the robot |
 | Installed sound | `robot.audio.play(sound_id)` | `Job` | Sound resources must already be installed on the robot |
 | Host audio | `robot.audio.play_file(path)`<br>`robot.audio.play_pcm(data, ...)`<br>`robot.audio.stop()` | `AudioPlayback` / immediate | PCM S16LE, 24 kHz, mono; maximum 4 MB per stream |
-| Lights | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(...)`<br>`robot.lights.off()` | immediate / `Job` / immediate | Colors use `#RRGGBB`; brightness is from `0..1`; `period` is currently in seconds |
+| Lights | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(..., period_ms=500)`<br>`robot.lights.off()` | immediate / `Job` / immediate | Colors use `#RRGGBB`; brightness is from `0..1`; `period_ms` is an integer from `0..65535` milliseconds |
 | Microphone session | `robot.microphone.open()`<br>`MicrophoneSession.read(timeout=...)`<br>`MicrophoneSession.close()` | `MicrophoneSession` / `AudioFrame` / immediate | Current default is PCM 16 kHz, 16-bit, mono; the bounded queue tracks dropped frames |
 | Convenience recording | `robot.microphone.record(duration=...)`<br>`AudioRecording.save(path)` | `AudioRecording` / `Path` | `duration` is in seconds; saves a standard WAV file |
 | Camera capture | `robot.camera.capture(...)`<br>`ImageFrame.save(path)` | `ImageFrame` / `Path` | One JPEG frame; continuous video is outside v1 |

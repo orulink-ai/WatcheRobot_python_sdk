@@ -9,12 +9,12 @@
 
 ## 安装
 
-当前公开测试版本为 TestPyPI 上的 `0.1.0a1`。TestPyPI 不保证包含完整依赖，因此先从正式 PyPI
+当前公开测试版本为 TestPyPI 上的 `0.1.0a2`。TestPyPI 不保证包含完整依赖，因此先从正式 PyPI
 安装依赖，再从 TestPyPI 安装 SDK 本身：
 
 ```bash
 python -m pip install "websockets>=12,<16"
-python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a1
+python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a2
 ```
 
 从源码仓库开发或试用：
@@ -35,7 +35,7 @@ python -m pip install watcherobot
 
 | Python SDK | 协议 | 已验证 ESP32 固件 | Python | 发布状态 |
 |---|---|---|---|---|
-| `0.1.0a1` | `1.0` | `V3.1`，包含 SDK Control App | `>=3.10`（当前 CI：3.12） | Alpha / TestPyPI |
+| `0.1.0a2` | `1.0` | `V3.1`，包含 SDK Control App | `>=3.10`（CI：3.10 / 3.11 / 3.12） | Alpha / TestPyPI |
 
 连接后应读取 `robot.device_info` 和 `robot.capabilities`，以设备实际协商结果为准。当前尚未承诺低于
 `V3.1` 的固件兼容性。
@@ -83,7 +83,7 @@ with WatcheRobot.connect(pairing_code="123456") as robot:
 | 命名动作 | `robot.motion.play_action(id)`<br>`robot.motion.stop()` | `Job` / 立即执行 | 命名动作必须已安装在机器人中 |
 | 内置音效 | `robot.audio.play(sound_id)` | `Job` | 音效资源必须已安装在机器人中 |
 | 电脑音频 | `robot.audio.play_file(path)`<br>`robot.audio.play_pcm(data, ...)`<br>`robot.audio.stop()` | `AudioPlayback` / 立即执行 | PCM S16LE、24 kHz、单声道；单次最多 4 MB |
-| 灯光 | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(...)`<br>`robot.lights.off()` | 立即执行 / `Job` / 立即执行 | 颜色使用 `#RRGGBB`，亮度范围 `0..1`；`period` 当前使用秒 |
+| 灯光 | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(..., period_ms=500)`<br>`robot.lights.off()` | 立即执行 / `Job` / 立即执行 | 颜色使用 `#RRGGBB`，亮度范围 `0..1`；`period_ms` 使用 `0..65535` 的整数毫秒 |
 | 麦克风会话 | `robot.microphone.open()`<br>`MicrophoneSession.read(timeout=...)`<br>`MicrophoneSession.close()` | `MicrophoneSession` / `AudioFrame` / 立即执行 | 当前默认 PCM 16 kHz、16-bit、单声道；有界队列会统计丢帧 |
 | 便捷录音 | `robot.microphone.record(duration=...)`<br>`AudioRecording.save(path)` | `AudioRecording` / `Path` | `duration` 使用秒；保存为标准 WAV |
 | 摄像头拍照 | `robot.camera.capture(...)`<br>`ImageFrame.save(path)` | `ImageFrame` / `Path` | 单张 JPEG；连续视频流不属于 v1 |

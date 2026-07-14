@@ -56,6 +56,8 @@ def test_readmes_link_alpha_install_compatibility_resources_and_troubleshooting(
         assert "`V3.1`" in readme
         assert "docs/resources.md" in readme
         assert "docs/troubleshooting.md" in readme
+        assert "period_ms" in readme
+        assert "3.10 / 3.11 / 3.12" in readme
 
 
 def test_resource_guide_marks_verified_ids_and_catalog_limit() -> None:
@@ -80,3 +82,10 @@ def test_troubleshooting_guide_covers_common_failures() -> None:
         "dropped_frames",
     ):
         assert failure in guide
+
+
+def test_release_guide_uses_the_current_package_version() -> None:
+    guide = (ROOT / "docs" / "releasing.md").read_text(encoding="utf-8")
+
+    assert f"watcherobot=={__version__}" in guide
+    assert f"v{__version__}" in guide
