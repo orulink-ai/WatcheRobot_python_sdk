@@ -28,7 +28,7 @@ Documentation = "https://github.com/orulink-ai/WatcheRobot_python_sdk#readme"
 Issues = "https://github.com/orulink-ai/WatcheRobot_python_sdk/issues"
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+test = ["mypy>=1.10,<2", "pytest>=8"]
 hardware = ["pyserial>=3.5"]
 
 [tool.hatch.build.targets.wheel]
@@ -41,3 +41,10 @@ path = "src/watcherobot/__init__.py"
 testpaths = ["tests"]
 addopts = "-q"
 pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/watcherobot"]
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_unused_ignores = true

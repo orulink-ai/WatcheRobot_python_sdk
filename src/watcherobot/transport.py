@@ -5,6 +5,7 @@ import json
 import re
 import threading
 import uuid
+from concurrent.futures import Future
 from typing import Any, Callable
 
 import websockets
@@ -30,6 +31,14 @@ from .protocol import (
 MessageCallback = Callable[[dict[str, Any]], None]
 BinaryCallback = Callable[[BinaryFrame], None]
 DisconnectCallback = Callable[[], None]
+
+
+def _parse_capabilities(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(
+        not isinstance(capability, str) or not capability for capability in value
+    ):
+        raise ProtocolError("evt.sdk.ready capabilities must be a list of non-empty strings")
+    return tuple(value)
 
 
 class DiscoveryProtocol(asyncio.DatagramProtocol):
@@ -137,7 +146,28 @@ class BackgroundTransport:
         if self._loop is None or self._websocket is None or not self._ready_event.is_set():
             raise WatcheRobotError("robot is not connected")
         future = asyncio.run_coroutine_threadsafe(self._send_command(message_type, data, timeout), self._loop)
-        return future.result(timeout=(timeout or self.command_timeout) + 1.0)
+        return future.result(timeout=self._effective_timeout(timeout) + 1.0)
+
+    def send_command_nowait(self, message_type: str, data: dict) -> Future[dict[str, Any]]:
+        """Schedule a best-effort command without blocking the transport loop thread."""
+        if self._loop is None or self._websocket is None or not self._ready_event.is_set():
+            raise WatcheRobotError("robot is not connected")
+        future = asyncio.run_coroutine_threadsafe(
+            self._send_command(message_type, data, self.command_timeout),
+            self._loop,
+        )
+
+        def consume_result(completed: Future[dict[str, Any]]) -> None:
+            try:
+                completed.result()
+            except Exception:
+                pass
+
+        future.add_done_callback(consume_result)
+        return future
+
+    def _effective_timeout(self, timeout: float | None) -> float:
+        return self.command_timeout if timeout is None else timeout
 
     def send_audio_stream(
         self,
@@ -145,7 +175,7 @@ class BackgroundTransport:
         *,
         stream_id: int,
         chunk_bytes: int = 4096,
-    ):
+    ) -> Future[None]:
         if self._loop is None or self._websocket is None or not self._ready_event.is_set():
             raise WatcheRobotError("robot is not connected")
         if chunk_bytes <= 0 or chunk_bytes > 32768 or chunk_bytes % 2 != 0:
@@ -194,7 +224,7 @@ class BackgroundTransport:
             ping_timeout=20,
             max_size=8 * 1024 * 1024,
         )
-        bound_port = websocket_server.sockets[0].getsockname()[1]
+        bound_port = next(iter(websocket_server.sockets)).getsockname()[1]
         self.websocket_port = bound_port
         discovery_transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
             lambda: DiscoveryProtocol(bound_port),
@@ -274,7 +304,7 @@ class BackgroundTransport:
                 elif message["type"] == "evt.sdk.ready":
                     if data.get("protocol_version") != PROTOCOL_VERSION:
                         raise AuthenticationError("protocol_version_mismatch")
-                    self.capabilities = tuple(data.get("capabilities", ()))
+                    self.capabilities = _parse_capabilities(data.get("capabilities"))
                     self.device_info.update(data)
                     announced_ready = True
 
@@ -311,7 +341,10 @@ class BackgroundTransport:
         self._pending[command_id] = response_future
         try:
             await websocket.send(build_command(message_type, data, command_id))
-            response = await asyncio.wait_for(response_future, timeout=timeout or self.command_timeout)
+            response = await asyncio.wait_for(
+                response_future,
+                timeout=self._effective_timeout(timeout),
+            )
         finally:
             self._pending.pop(command_id, None)
         if response["type"] == "sys.nack":

@@ -38,6 +38,7 @@ class Job:
         self._transport = transport
         self._state = initial_state
         self._error_code: int | None = None
+        self._reason: str | None = None
         self._condition = threading.Condition()
         self._cancel_requested = False
 
@@ -55,6 +56,11 @@ class Job:
         with self._condition:
             return self._error_code
 
+    @property
+    def reason(self) -> str | None:
+        with self._condition:
+            return self._reason
+
     def wait(self, timeout: float | None = None) -> Job:
         deadline = None if timeout is None else time.monotonic() + max(timeout, 0)
         with self._condition:
@@ -64,10 +70,19 @@ class Job:
                     raise TimeoutError(f"Job {self._id} did not finish before timeout")
                 self._condition.wait(remaining)
             if self._state is JobState.FAILED:
-                detail = f" (error_code={self._error_code})" if self._error_code is not None else ""
-                raise JobFailedError(f"Job {self._id} failed{detail}")
+                raise JobFailedError(
+                    self._id,
+                    reason=self._reason,
+                    error_code=self._error_code,
+                    state="failed",
+                )
             if self._state is JobState.CANCELLED:
-                raise JobCancelledError(f"Job {self._id} was cancelled")
+                raise JobCancelledError(
+                    self._id,
+                    reason=self._reason,
+                    error_code=self._error_code,
+                    state="was cancelled",
+                )
             return self
 
     def cancel(self) -> None:
@@ -82,12 +97,19 @@ class Job:
                 self._cancel_requested = False
             raise
 
-    def _update(self, state: JobState | str, error_code: int | None = None) -> None:
+    def _update(
+        self,
+        state: JobState | str,
+        error_code: int | None = None,
+        reason: str | None = None,
+    ) -> None:
         next_state = state if isinstance(state, JobState) else JobState(state)
         with self._condition:
             if self._state.terminal:
                 return
+            if self._state is JobState.RUNNING and next_state is JobState.STARTING:
+                return
             self._state = next_state
             self._error_code = error_code
+            self._reason = reason
             self._condition.notify_all()
-

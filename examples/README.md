@@ -1,39 +1,42 @@
 # WatcheRobot Python SDK examples
 
-运行前，请先让电脑和机器人连接同一局域网，并在机器人 Launcher 中打开 **SDK Control App**。
+Before running an example, connect the computer and robot to the same LAN and open **SDK Control App** from the
+robot Launcher. / 运行前，请先让电脑和机器人连接同一局域网，并在 Launcher 中打开 **SDK Control App**。
 
-| 示例 | 用途 | 本地产物 |
+| Example / 示例 | Purpose / 用途 | Local output / 本地产物 |
 |---|---|---|
-| `hello_robot.py` | 最小连接与 `happy` Behavior | 无 |
-| `quickstart.py` | 直接调用 Behavior、动画、灯光、动作、主机音频、拍照和录音 | `artifacts/quickstart/` |
-| `play_audio_file.py` | 传输并播放 `assets/sample_speech.wav` | 无 |
-| `capture_photo.py` | 拍摄单张 JPEG | `artifacts/camera.jpg` |
-| `record_microphone.py` | 录制五秒 PCM WAV | `artifacts/microphone.wav` |
+| `hello_robot.py` | Minimal connection and `happy` Behavior / 最小连接与 `happy` Behavior | None / 无 |
+| `quickstart.py` | Behavior, animation, lights, motion, host audio, photo, and recording / 主要能力导览 | `artifacts/quickstart/` |
+| `play_audio_file.py` | Transfer and play `assets/sample_speech.wav` / 传输并播放 WAV | None / 无 |
+| `capture_photo.py` | Capture one JPEG / 拍摄单张 JPEG | `artifacts/camera.jpg` |
+| `record_microphone.py` | Record five-second PCM WAV / 录制五秒 PCM WAV | `artifacts/microphone.wav` |
 
-安装源码版本后直接运行：
+Clone the repository, install the source version, and run / clone 仓库并安装源码版本后运行：
 
 ```bash
 python -m pip install -e .
 python examples/hello_robot.py
 ```
 
-确认最小连接正常后，运行完整 SDK 能力导览：
+After the minimal example succeeds, run the full capability tour / 最小连接成功后运行完整能力导览：
 
 ```bash
 python examples/quickstart.py
 ```
 
-`quickstart.py` 不依赖硬件 smoke 框架，主要能力都以直接 SDK 调用的形式写在同一个文件中。动作、拍照和
-录音前会等待人工确认。
+`quickstart.py` calls the public SDK directly without the hardware smoke framework. It waits for confirmation before
+motion, camera, and microphone access. / 它直接调用公开 SDK，并在动作、拍照和录音前等待人工确认。
 
-也可以通过环境变量提供配对码，方便本地脚本化：
+The pairing code can also come from an environment variable / 也可通过环境变量提供配对码：
 
 ```powershell
 $env:WATCHEROBOT_PAIRING_CODE="123456"
 python examples/play_audio_file.py
 ```
 
-摄像头和麦克风示例会在调用设备前明确提示。请确认现场人员知情，并妥善处理 `artifacts/` 中的照片
-和录音；该目录不会进入 Git。
+Camera and microphone examples request confirmation before access. Handle photos and recordings under `artifacts/`
+responsibly; Git ignores this directory. / 摄像头和麦克风示例会先提示确认，请妥善处理 `artifacts/` 中的
+照片和录音；该目录不会进入 Git。
 
-完整台架验收、串口自动打开 App 和自动读取调试配对码位于 `tools/hardware_smoke.py`，不属于用户教学示例。
+Maintainer bench validation and serial-assisted pairing live in `tools/hardware_smoke.py`; they are not user examples.
+/ 维护者台架验收和串口自动配对位于 `tools/hardware_smoke.py`，不属于用户教学示例。

@@ -6,6 +6,7 @@ import wave
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
+from types import TracebackType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -125,7 +126,12 @@ class MicrophoneSession:
     def __enter__(self) -> MicrophoneSession:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
     def _push(self, data: bytes, sequence: int) -> None:
