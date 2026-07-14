@@ -26,6 +26,8 @@ def test_publish_workflow_separates_test_and_production_indexes() -> None:
     assert "id-token: write" in workflow
     assert "https://test.pypi.org/legacy/" in workflow
     assert "pypa/gh-action-pypi-publish@release/v1" in workflow
+    assert "actions/upload-artifact@v7" in workflow
+    assert workflow.count("actions/download-artifact@v8") == 2
     assert "PYPI_API_TOKEN" not in workflow
     assert "password:" not in workflow
 
