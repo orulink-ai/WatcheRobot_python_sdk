@@ -14,6 +14,7 @@ def test_quickstart_directly_demonstrates_the_main_sdk_domains() -> None:
     assert "animation.play" in source
     assert "lights.set_color" in source
     assert "motion.move_to" in source
+    assert "duration_ms=1000" in source
     assert "audio.play_file" in source
     assert "camera.capture" in source
     assert "microphone.record" in source

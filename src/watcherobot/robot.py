@@ -47,17 +47,21 @@ class MotionDomain(_Domain):
         *,
         pan_deg: int,
         tilt_deg: int,
-        duration: float,
+        duration_ms: int,
         profile: str = "ease_in_out",
     ) -> Job:
-        if duration <= 0:
-            raise ValueError("duration must be positive")
+        if (
+            isinstance(duration_ms, bool)
+            or not isinstance(duration_ms, int)
+            or not 1 <= duration_ms <= 65535
+        ):
+            raise ValueError("duration_ms must be an integer between 1 and 65535")
         return self._robot._start_job(
             "ctrl.motion.move_to",
             {
                 "pan_deg": int(pan_deg),
                 "tilt_deg": int(tilt_deg),
-                "duration_ms": max(1, round(duration * 1000)),
+                "duration_ms": duration_ms,
                 "profile": profile,
             },
         )

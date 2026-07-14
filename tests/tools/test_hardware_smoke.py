@@ -157,7 +157,10 @@ def test_motion_requires_explicit_option_and_is_stopped_after_test(tmp_path: Pat
     failures = module.run_smoke(robot, options, tmp_path)
 
     assert failures == []
-    assert ("motion.move_to", {"pan_deg": 101, "tilt_deg": 121, "duration": 1.0}) in robot.calls
+    assert (
+        "motion.move_to",
+        {"pan_deg": 101, "tilt_deg": 121, "duration_ms": 1000},
+    ) in robot.calls
     assert robot.calls[-1] == ("motion.stop",)
 
 

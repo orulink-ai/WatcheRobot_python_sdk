@@ -2,6 +2,8 @@ import hashlib
 import threading
 from concurrent.futures import Future
 
+import pytest
+
 from watcherobot import Job, WatcheRobot
 from watcherobot.errors import CommandError
 from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_AUDIO, FRAME_IMAGE, BinaryFrame
@@ -60,7 +62,7 @@ def test_public_namespaces_build_protocol_commands():
     robot = WatcheRobot._from_transport(transport)
 
     behavior = robot.behavior.play("greeting", repeat=2)
-    motion = robot.motion.move_to(pan_deg=110, tilt_deg=120, duration=0.5)
+    motion = robot.motion.move_to(pan_deg=110, tilt_deg=120, duration_ms=500)
     robot.motion.set_target(pan_deg=105)
     animation = robot.animation.play("smile")
     audio = robot.audio.play("confirm")
@@ -78,6 +80,14 @@ def test_public_namespaces_build_protocol_commands():
         ("ctrl.audio.play", {"sound_id": "confirm"}),
         ("ctrl.light.set", {"color": "#4DA3FF", "brightness": 0.7, "zone": "all"}),
     ]
+
+
+@pytest.mark.parametrize("duration_ms", [0, -1, 1.5, True, 65536])
+def test_motion_move_to_rejects_invalid_duration_ms(duration_ms):
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(ValueError, match="duration_ms must be an integer between 1 and 65535"):
+        robot.motion.move_to(pan_deg=110, tilt_deg=120, duration_ms=duration_ms)
 
 
 def test_operation_event_updates_matching_job():

@@ -58,6 +58,7 @@ with WatcheRobot.connect(pairing_code="123456") as robot:
 
 - `robot.behavior.play(...)` 播放机器人上已安装的多轨 Behavior。
 - `robot.animation`、`robot.motion`、`robot.audio`、`robot.lights` 提供单领域直接控制。
+- `robot.motion.move_to(..., duration_ms=1000)` 的动作时长统一使用整数毫秒。
 - `robot.audio.play(sound_id)` 播放内置资源；`robot.audio.play_file(path)` 传输电脑 WAV。
 - 有限操作返回 `Job`；`Job.wait()` 等待设备终态，ACK 本身不等于执行完成。
 - `motion.set_target(...)` 是 latest-wins 实时命令，不返回 Job。

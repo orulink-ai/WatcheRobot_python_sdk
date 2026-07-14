@@ -35,7 +35,7 @@ def main() -> None:
         robot.motion.move_to(
             pan_deg=100,
             tilt_deg=120,
-            duration=1.0,
+            duration_ms=1000,
         ).wait(timeout=10.0)
 
         print("\n[5/7] 把电脑 WAV 传给机器人播放")

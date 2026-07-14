@@ -94,7 +94,7 @@ class SmokeOptions:
     audio_file: Path = _DEFAULT_AUDIO_FILE
     motion_pan_deg: int = 100
     motion_tilt_deg: int = 120
-    motion_duration: float = 1.0
+    motion_duration_ms: int = 1000
     microphone_seconds: float = 5.0
 
 
@@ -186,7 +186,7 @@ def run_smoke(
             lambda: robot.motion.move_to(
                 pan_deg=options.motion_pan_deg,
                 tilt_deg=options.motion_tilt_deg,
-                duration=options.motion_duration,
+                duration_ms=options.motion_duration_ms,
             ).wait(timeout=options.job_timeout),
             failures,
             confirm=step_confirm,
@@ -249,6 +249,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--with-camera", action="store_true", help="拍摄并保存单张 JPEG")
     parser.add_argument("--motion-pan", type=int, default=100)
     parser.add_argument("--motion-tilt", type=int, default=120)
+    parser.add_argument("--motion-duration-ms", type=int, default=1000)
     parser.add_argument("--microphone-seconds", type=float, default=5.0)
     return parser.parse_args()
 
@@ -274,6 +275,7 @@ def main() -> int:
         audio_file=args.audio_file,
         motion_pan_deg=args.motion_pan,
         motion_tilt_deg=args.motion_tilt,
+        motion_duration_ms=args.motion_duration_ms,
         microphone_seconds=args.microphone_seconds,
     )
 

@@ -60,6 +60,7 @@ directory. See [examples/README.md](examples/README.md).
 
 - `robot.behavior.play(...)` plays an installed multi-track Behavior.
 - `robot.animation`, `robot.motion`, `robot.audio`, and `robot.lights` provide direct domain control.
+- `robot.motion.move_to(..., duration_ms=1000)` uses an integer duration in milliseconds.
 - `robot.audio.play(sound_id)` plays an installed resource; `robot.audio.play_file(path)` transfers a host WAV.
 - Finite operations return a `Job`; `Job.wait()` observes the device terminal event, not merely the ACK.
 - `motion.set_target(...)` is a latest-wins real-time command and does not return a Job.
