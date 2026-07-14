@@ -6,6 +6,8 @@ import wave
 from pathlib import Path
 from types import SimpleNamespace
 
+from watcherobot import AudioFormat, AudioRecording
+
 
 ROOT = Path(__file__).parents[2]
 
@@ -106,24 +108,14 @@ class _FakeSerial:
         self.closed = True
 
 
-class _FakeMicrophoneSession:
-    format = SimpleNamespace(channels=1, sample_width_bytes=2, sample_rate_hz=16000)
-    dropped_frames = 0
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args) -> None:
-        pass
-
-    def read(self, timeout: float):
-        assert timeout > 0
-        return SimpleNamespace(data=b"\x01\x00\x02\x00")
-
-
 class _FakeMicrophoneDomain:
-    def open(self):
-        return _FakeMicrophoneSession()
+    def record(self, *, duration: float, timeout: float):
+        assert duration > 0
+        assert timeout > duration
+        return AudioRecording(
+            data=b"\x01\x00\x02\x00",
+            format=AudioFormat(sample_rate_hz=16000, channels=1, sample_width_bytes=2),
+        )
 
 
 def test_auto_pair_opens_sdk_app_and_reads_debug_pairing_code() -> None:

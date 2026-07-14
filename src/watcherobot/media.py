@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import queue
 import time
+import wave
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING
 
@@ -26,12 +28,46 @@ class AudioFrame:
 
 
 @dataclass(frozen=True)
+class AudioRecording:
+    data: bytes
+    format: AudioFormat
+    dropped_frames: int = 0
+
+    @property
+    def duration_seconds(self) -> float:
+        bytes_per_second = (
+            self.format.sample_rate_hz
+            * self.format.channels
+            * self.format.sample_width_bytes
+        )
+        if bytes_per_second <= 0:
+            return 0.0
+        return len(self.data) / bytes_per_second
+
+    def save(self, path: str | Path) -> Path:
+        output = Path(path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(output), "wb") as wav_file:
+            wav_file.setnchannels(self.format.channels)
+            wav_file.setsampwidth(self.format.sample_width_bytes)
+            wav_file.setframerate(self.format.sample_rate_hz)
+            wav_file.writeframes(self.data)
+        return output
+
+
+@dataclass(frozen=True)
 class ImageFrame:
     data: bytes
     sequence: int
     timestamp: float
     content_type: str = "image/jpeg"
     session_id: int = 0
+
+    def save(self, path: str | Path) -> Path:
+        output = Path(path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(self.data)
+        return output
 
 
 class MicrophoneSession:

@@ -28,10 +28,10 @@ python -m pip install watcherobot
 1. 电脑和机器人连接同一个局域网。
 2. 在机器人 Launcher 中打开 **SDK Control App**。
 3. 记下机器人屏幕显示的六位临时配对码。
-4. 运行：
+4. 运行最小连接示例：
 
 ```bash
-python examples/quickstart.py
+python examples/hello_robot.py
 ```
 
 最小示例只负责连接、打印设备信息并播放出厂自带的 `happy` Behavior：
@@ -46,6 +46,7 @@ with WatcheRobot.connect(pairing_code="123456") as robot:
 
 ## 能力示例
 
+- `examples/quickstart.py`：在一个文件中直接调用主要 SDK 能力，并在动作、拍照和录音前等待确认。
 - `examples/play_audio_file.py`：把电脑 WAV 传给机器人播放。
 - `examples/capture_photo.py`：拍摄单张 JPEG。
 - `examples/record_microphone.py`：录制五秒麦克风音频。
@@ -61,7 +62,9 @@ with WatcheRobot.connect(pairing_code="123456") as robot:
 - 有限操作返回 `Job`；`Job.wait()` 等待设备终态，ACK 本身不等于执行完成。
 - `motion.set_target(...)` 是 latest-wins 实时命令，不返回 Job。
 - `robot.microphone.open()` 提供 PCM S16LE、16 kHz、单声道帧和丢帧统计。
+- `robot.microphone.record(duration=5)` 直接返回可保存的 `AudioRecording`。
 - `robot.camera.capture()` 返回单张 JPEG `ImageFrame`。
+- `AudioRecording.save(path)` 和 `ImageFrame.save(path)` 负责创建目录并保存标准文件。
 
 `play_file()` 在 v1 接受 PCM S16LE、24 kHz、单声道 WAV，单个音频流最大 4 MB。
 

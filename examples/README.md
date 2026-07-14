@@ -4,7 +4,8 @@
 
 | 示例 | 用途 | 本地产物 |
 |---|---|---|
-| `quickstart.py` | 最小连接与 `happy` Behavior | 无 |
+| `hello_robot.py` | 最小连接与 `happy` Behavior | 无 |
+| `quickstart.py` | 直接调用 Behavior、动画、灯光、动作、主机音频、拍照和录音 | `artifacts/quickstart/` |
 | `play_audio_file.py` | 传输并播放 `assets/sample_speech.wav` | 无 |
 | `capture_photo.py` | 拍摄单张 JPEG | `artifacts/camera.jpg` |
 | `record_microphone.py` | 录制五秒 PCM WAV | `artifacts/microphone.wav` |
@@ -13,8 +14,17 @@
 
 ```bash
 python -m pip install -e .
+python examples/hello_robot.py
+```
+
+确认最小连接正常后，运行完整 SDK 能力导览：
+
+```bash
 python examples/quickstart.py
 ```
+
+`quickstart.py` 不依赖硬件 smoke 框架，主要能力都以直接 SDK 调用的形式写在同一个文件中。动作、拍照和
+录音前会等待人工确认。
 
 也可以通过环境变量提供配对码，方便本地脚本化：
 

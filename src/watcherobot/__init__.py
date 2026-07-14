@@ -8,13 +8,14 @@ from .errors import (
 )
 from .audio import AudioPlayback, PCMAudio
 from .job import Job, JobState
-from .media import AudioFormat, AudioFrame, ImageFrame, MicrophoneSession
+from .media import AudioFormat, AudioFrame, AudioRecording, ImageFrame, MicrophoneSession
 from .robot import WatcheRobot
 
 __all__ = [
     "AudioFormat",
     "AudioFrame",
     "AudioPlayback",
+    "AudioRecording",
     "AuthenticationError",
     "CommandError",
     "ConnectionTimeoutError",

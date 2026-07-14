@@ -11,7 +11,7 @@ from ._internal.audio_status import AudioStatusKind, classify_audio_status
 from .errors import CommandError, WatcheRobotError
 from .audio import AudioPlayback, PCMAudio, load_pcm_wave
 from .job import Job, JobState
-from .media import AudioFormat, ImageFrame, MicrophoneSession
+from .media import AudioFormat, AudioRecording, ImageFrame, MicrophoneSession
 from .protocol import DISCOVERY_PORT, FLAG_LAST, FRAME_AUDIO, FRAME_IMAGE, WEBSOCKET_PORT, BinaryFrame
 from .transport import BackgroundTransport
 
@@ -153,6 +153,52 @@ class LightsDomain(_Domain):
 class MicrophoneDomain(_Domain):
     def open(self, *, queue_size: int = 32) -> MicrophoneSession:
         return self._robot._open_microphone(queue_size=queue_size)
+
+    def record(
+        self,
+        *,
+        duration: float,
+        timeout: float | None = None,
+        queue_size: int = 32,
+    ) -> AudioRecording:
+        if duration <= 0:
+            raise ValueError("duration must be positive")
+        if timeout is not None and timeout <= 0:
+            raise ValueError("timeout must be positive")
+
+        with self.open(queue_size=queue_size) as microphone:
+            audio_format = microphone.format
+            target_frames = max(1, round(audio_format.sample_rate_hz * duration))
+            target_bytes = (
+                target_frames
+                * audio_format.channels
+                * audio_format.sample_width_bytes
+            )
+            deadline = time.monotonic() + (timeout if timeout is not None else duration + 2.0)
+            chunks: list[bytes] = []
+            recorded_bytes = 0
+            while recorded_bytes < target_bytes:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    frame = microphone.read(timeout=min(1.0, remaining))
+                except TimeoutError:
+                    continue
+                chunks.append(frame.data)
+                recorded_bytes += len(frame.data)
+            dropped_frames = microphone.dropped_frames
+
+        pcm = b"".join(chunks)[:target_bytes]
+        if len(pcm) != target_bytes:
+            raise TimeoutError(
+                f"microphone recording incomplete: expected {target_bytes} bytes, got {len(pcm)}"
+            )
+        return AudioRecording(
+            data=pcm,
+            format=audio_format,
+            dropped_frames=dropped_frames,
+        )
 
 
 class CameraDomain(_Domain):

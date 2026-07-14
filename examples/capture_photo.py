@@ -22,9 +22,8 @@ def main() -> None:
 
     if not image.data.startswith(b"\xff\xd8"):
         raise RuntimeError("机器人返回的内容不是 JPEG")
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_FILE.write_bytes(image.data)
-    print(f"照片已保存：{OUTPUT_FILE}（{len(image.data)} bytes）")
+    saved = image.save(OUTPUT_FILE)
+    print(f"照片已保存：{saved}（{len(image.data)} bytes）")
 
 
 if __name__ == "__main__":

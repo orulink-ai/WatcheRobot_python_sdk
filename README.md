@@ -29,10 +29,10 @@ Python 3.10 or newer is required.
 1. Connect the computer and robot to the same LAN.
 2. Open **SDK Control App** from the robot launcher.
 3. Note the temporary six-digit code shown on the robot.
-4. Run:
+4. Run the minimal connection example:
 
 ```bash
-python examples/quickstart.py
+python examples/hello_robot.py
 ```
 
 The minimal example connects, prints device information, and plays the factory `happy` Behavior:
@@ -47,6 +47,8 @@ with WatcheRobot.connect(pairing_code="123456") as robot:
 
 ## Capability examples
 
+- `examples/quickstart.py`: directly call the main SDK domains in one file, with confirmation before motion,
+  camera, and microphone access.
 - `examples/play_audio_file.py`: transfer a host WAV file and play it on the robot.
 - `examples/capture_photo.py`: capture one JPEG.
 - `examples/record_microphone.py`: record five seconds from the robot microphone.
@@ -62,7 +64,9 @@ directory. See [examples/README.md](examples/README.md).
 - Finite operations return a `Job`; `Job.wait()` observes the device terminal event, not merely the ACK.
 - `motion.set_target(...)` is a latest-wins real-time command and does not return a Job.
 - `robot.microphone.open()` exposes PCM S16LE, 16 kHz, mono frames and dropped-frame statistics.
+- `robot.microphone.record(duration=5)` returns a saveable `AudioRecording` directly.
 - `robot.camera.capture()` returns one JPEG `ImageFrame`.
+- `AudioRecording.save(path)` and `ImageFrame.save(path)` create parent directories and save standard files.
 
 In v1, `play_file()` accepts PCM S16LE, 24 kHz, mono WAV files up to 4 MB.
 

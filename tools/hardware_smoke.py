@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import math
 import re
 import sys
 import time
-import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -128,49 +126,12 @@ def _run_step(
 def _record_microphone(robot: WatcheRobot, output_path: Path, duration: float) -> None:
     if duration <= 0:
         raise ValueError("录音时长必须大于零")
-    frames: list[bytes] = []
     print(f"       请靠近机器人说话，将录制 {duration:g} 秒……")
-    with robot.microphone.open() as microphone:
-        first_frame = microphone.read(timeout=max(2.0, duration))
-        frames.append(first_frame.data)
-        audio_format = microphone.format
-        bytes_per_second = (
-            audio_format.sample_rate_hz
-            * audio_format.channels
-            * audio_format.sample_width_bytes
-        )
-        target_bytes = max(audio_format.sample_width_bytes, round(bytes_per_second * duration))
-        recorded_bytes = len(first_frame.data)
-        deadline = time.monotonic() + duration + 2.0
-        last_countdown = 0
-        while recorded_bytes < target_bytes and time.monotonic() < deadline:
-            remaining_audio = (target_bytes - recorded_bytes) / bytes_per_second
-            countdown = max(1, math.ceil(remaining_audio))
-            if countdown != last_countdown:
-                print(f"       正在录音，还剩 {countdown} 秒……")
-                last_countdown = countdown
-            try:
-                frame = microphone.read(timeout=min(1.0, max(0.1, deadline - time.monotonic())))
-            except TimeoutError:
-                continue
-            frames.append(frame.data)
-            recorded_bytes += len(frame.data)
-        dropped_frames = microphone.dropped_frames
-
-    pcm = b"".join(frames)[:target_bytes]
-    if len(pcm) < target_bytes:
-        raise RuntimeError(
-            f"麦克风数据不足：期望 {target_bytes} 字节，实际 {len(pcm)} 字节"
-        )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(output_path), "wb") as wav_file:
-        wav_file.setnchannels(audio_format.channels)
-        wav_file.setsampwidth(audio_format.sample_width_bytes)
-        wav_file.setframerate(audio_format.sample_rate_hz)
-        wav_file.writeframes(pcm)
+    recording = robot.microphone.record(duration=duration, timeout=duration + 3.0)
+    saved = recording.save(output_path)
     print(
-        f"       录音已保存：{output_path.resolve()} "
-        f"(frames={len(frames)}, dropped={dropped_frames})"
+        f"       录音已保存：{saved.resolve()} "
+        f"(duration={recording.duration_seconds:.3f}s, dropped={recording.dropped_frames})"
     )
 
 
@@ -178,9 +139,8 @@ def _capture_camera(robot: WatcheRobot, output_path: Path) -> None:
     image = robot.camera.capture(timeout=10.0)
     if not image.data.startswith(b"\xff\xd8"):
         raise RuntimeError("摄像头返回的内容不是 JPEG")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(image.data)
-    print(f"       照片已保存：{output_path.resolve()} ({len(image.data)} bytes)")
+    saved = image.save(output_path)
+    print(f"       照片已保存：{saved.resolve()} ({len(image.data)} bytes)")
 
 
 def run_smoke(
