@@ -2,86 +2,40 @@
 
 ## Transport and pairing
 
-- Discovery: `37021/UDP` by default.
-- Gateway: `8766/TCP` WebSocket by default.
-- The Python SDK listens; `sdk.control.app` on the robot actively discovers and connects.
-- Authentication uses the six-digit code displayed for the current app session.
-- One WebSocket control session is accepted at a time.
+- Discovery defaults to `37021/UDP`; the WebSocket gateway defaults to `8766/TCP`.
+- Python listens. The robot's `sdk.control.app` actively discovers and connects.
+- Authentication uses the temporary six-digit code displayed for the current App session.
+- One robot control session is accepted at a time. v1 uses plain `ws://` on a trusted LAN.
 
-Discovery probe sent by the robot:
+Handshake sequence:
 
-```json
-{"cmd":"SDK_DISCOVER","service":"watcher-sdk","protocol_version":"1.0","device_id":"watcher-1234","mac":"..."}
-```
+1. Robot sends `sys.client.hello`.
+2. Python acknowledges hello and sends `sys.sdk.authenticate` with `pairing_code`, protocol version, client name,
+   and `command_id`.
+3. Robot sends `sys.ack` or `sys.nack`, then `evt.sdk.ready` with identity, firmware, and capabilities.
 
-Python response:
+## JSON envelope and Jobs
 
-```json
-{"cmd":"ANNOUNCE","service":"watcher-sdk","protocol_version":"1.0","port":8766,"server":"watcherobot-python-sdk"}
-```
-
-The WebSocket handshake is:
-
-1. Robot sends the existing `sys.client.hello` message.
-2. Python sends `sys.ack` for `sys.client.hello`.
-3. Python sends `sys.sdk.authenticate` with `pairing_code`, `protocol_version`, `client_name`, and `command_id`.
-4. Robot sends `sys.ack` or `sys.nack`, then `evt.sdk.ready` with device, firmware, and capability data.
-
-## JSON envelope
-
-Commands keep the existing Watcher envelope:
+Commands reuse `{type, code, data}` and include a client-generated `command_id`:
 
 ```json
 {
   "type": "ctrl.behavior.play",
   "code": 0,
-  "data": {
-    "command_id": "client-generated-id",
-    "behavior_id": "greeting",
-    "repeat": 1
-  }
+  "data": {"command_id": "cmd-1", "behavior_id": "happy", "repeat": 1}
 }
 ```
 
-Successful acceptance:
+ACK means accepted, not completed. Finite operations return `operation_id`; their lifecycle is reported separately
+through `evt.sdk.operation` as `starting`, `running`, then `completed`, `failed`, or `cancelled`. Commands are
+deduplicated by a bounded device-side `command_id` cache.
 
-```json
-{
-  "type": "sys.ack",
-  "code": 0,
-  "data": {
-    "type": "ctrl.behavior.play",
-    "command_id": "client-generated-id",
-    "operation_id": 42
-  }
-}
-```
+Firmware parsing is strict: identifiers are rejected instead of truncated, the pairing code is exactly six digits,
+and numeric/enum fields must be in range. Correlatable errors use `invalid_argument`, `unsupported_command`,
+`command_queue_full`, or a domain-specific reason.
 
-`sys.ack` means accepted, not completed. Finite operation state is reported separately:
-
-```json
-{
-  "type": "evt.sdk.operation",
-  "code": 0,
-  "data": {
-    "operation_id": 42,
-    "domain": "behavior",
-    "state": "completed"
-  }
-}
-```
-
-States are `starting`, `running`, `completed`, `failed`, and `cancelled`. A failed event may include `error_code`.
-Commands are deduplicated by `command_id` in a bounded device cache.
-
-The device validates v1 commands strictly. Identifiers that exceed the fixed protocol limits are rejected rather
-than truncated, the pairing code must be exactly six digits, and numeric/enum fields must be within their documented
-ranges. A correlatable malformed command receives `invalid_argument`; an unknown command type receives
-`unsupported_command`; a saturated device command queue receives `command_queue_full`.
-
-For `ctrl.motion.move_to`, `completed` means the STM32 reported `MOTION_DONE` for the matching command sequence.
-`stopped` or `interrupted` maps to `cancelled`; MCU rejection, fault, or terminal-event timeout maps to `failed`.
-This is execution-timeline completion, not physical position-feedback convergence.
+For `ctrl.motion.move_to`, completed means STM32 reported `MOTION_DONE` for the matching sequence. It confirms the
+execution timeline, not closed-loop physical position convergence.
 
 ## Commands
 
@@ -95,29 +49,51 @@ This is execution-timeline completion, not physical position-feedback convergenc
 | `ctrl.motion.set_target` | one or both of `pan_deg`, `tilt_deg` | ACK |
 | `ctrl.motion.action.play` | `action_id` | Job |
 | `ctrl.motion.stop` | — | ACK |
-| `ctrl.audio.play` | `sound_id` | Job |
+| `ctrl.audio.play` | installed `sound_id` | Job |
+| `ctrl.audio.stream.begin` | stream ID, PCM format, byte count, SHA256 | ACK |
 | `ctrl.audio.stop` | — | ACK |
 | `ctrl.light.set` | `color`, `brightness`, `zone` | ACK |
-| `ctrl.light.effect.play` | `effect`, color fields, `period_ms`, `repeat` | Job |
+| `ctrl.light.effect.play` | effect and timing fields | Job |
 | `ctrl.light.off` | — | ACK |
 | `ctrl.microphone.open` | `sample_rate_hz` | `session_id` ACK |
 | `ctrl.microphone.close` | `session_id` | ACK |
-| `ctrl.camera.capture` | optional `width`, `height`, `quality` | `session_id` ACK + JPEG frame |
+| `ctrl.camera.capture` | optional `width`, `height`, `quality` | `session_id` ACK + JPEG |
 | `ctrl.job.cancel` | `operation_id` | ACK + cancelled event |
 
 ## WSPK media frames
 
-ESP32-to-Python media currently uses the compatible 14-byte little-endian header:
+The current little-endian header is 16 bytes:
 
 | Offset | Size | Meaning |
 | --- | --- | --- |
 | 0 | 4 | ASCII `WSPK` |
-| 4 | 1 | frame type: audio `1`, image `3` |
-| 5 | 1 | flags: first `1`, last `2`, keyframe `4`, fragment `8` |
-| 6 | 4 | sequence |
-| 10 | 4 | payload length |
+| 4 | 1 | audio `1`, image `3` |
+| 5 | 1 | first `1`, last `2`, keyframe `4`, fragment `8` |
+| 6 | 2 | `stream_id` |
+| 8 | 4 | sequence |
+| 12 | 4 | payload length |
 
-The Python parser also accepts the current 16-byte header containing a two-byte `stream_id` before `sequence`.
-When present, that ID is matched to the acknowledged microphone/camera session so delayed frames from an older
-session are ignored. The 14-byte compatibility header has implicit stream ID `0`. Audio is PCM S16LE/16 kHz/mono.
-A camera capture returns one complete JPEG image frame.
+The parser also accepts the legacy 14-byte header with implicit stream ID zero for compatible device-to-host media.
+Microphone audio is PCM S16LE/16 kHz/mono. Camera capture returns one JPEG and is correlated to its acknowledged
+session ID.
+
+### Host-to-robot audio
+
+The host must authenticate and receive the `audio.stream` capability. It then sends
+`ctrl.audio.stream.begin` with:
+
+- a non-zero 16-bit `stream_id`;
+- `total_bytes` and `audio_sha256`;
+- the fixed v1 format: PCM S16LE, 24 kHz, mono.
+
+Only the authorized stream is accepted by the SDK App's WSPK guard. Data uses 4096-byte host payloads, sequence
+starting at zero, and FIRST/LAST flags. The Python sender keeps a bounded window derived from
+`evt.audio.buffer_status.pending_frames` and `queue_depth`.
+
+The begin ACK means authorized, not played. Playback completes only when `evt.audio.buffer_status` reports
+`complete` for the same non-zero stream ID and SHA256 matches. `aborted` means cancelled. Queue, sequence,
+stale-stream, or hardware-write errors mean failed.
+
+`ctrl.audio.stop`, replacement, disconnect, session reset, or App close stops host production, revokes device
+authorization, clears the playback queue, and terminates the previous playback. Binary audio received before
+authentication or without a matching begin command is rejected.

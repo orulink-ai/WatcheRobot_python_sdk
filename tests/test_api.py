@@ -1,4 +1,6 @@
+import hashlib
 import threading
+from concurrent.futures import Future
 
 from watcherobot import Job, WatcheRobot
 from watcherobot.errors import CommandError
@@ -11,11 +13,21 @@ class FakeTransport:
         self.message_callback = None
         self.binary_callback = None
         self.disconnect_callback = None
-        self.capabilities = ("behavior", "animation", "motion", "audio", "light", "microphone", "camera.capture")
+        self.capabilities = (
+            "behavior",
+            "animation",
+            "motion",
+            "audio",
+            "audio.stream",
+            "light",
+            "microphone",
+            "camera.capture",
+        )
         self.device_info = {"device_id": "watcher-test", "firmware_version": "test"}
         self.next_operation_id = 1
         self.next_session_id = 100
         self.closed = False
+        self.audio_streams = []
 
     def set_callbacks(self, message_callback, binary_callback, disconnect_callback):
         self.message_callback = message_callback
@@ -35,6 +47,12 @@ class FakeTransport:
 
     def close(self):
         self.closed = True
+
+    def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+        self.audio_streams.append((bytes(pcm), stream_id, chunk_bytes))
+        future = Future()
+        future.set_result(None)
+        return future
 
 
 def test_public_namespaces_build_protocol_commands():
@@ -73,6 +91,113 @@ def test_operation_event_updates_matching_job():
 
     assert job.wait(timeout=0) is job
     assert job.id not in robot._jobs
+
+
+def test_audio_play_pcm_streams_binary_and_completes_from_device_status():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    pcm = b"\x01\x00\x02\x00"
+
+    playback = robot.audio.play_pcm(pcm)
+
+    assert isinstance(playback, Job)
+    assert transport.commands == [
+        (
+            "ctrl.audio.stream.begin",
+            {
+                "stream_id": playback.id,
+                "total_bytes": len(pcm),
+                "sample_rate_hz": 24000,
+                "channels": 1,
+                "sample_width_bytes": 2,
+                "audio_sha256": hashlib.sha256(pcm).hexdigest(),
+            },
+        )
+    ]
+    assert transport.audio_streams == [(pcm, playback.id, 4096)]
+
+    transport.message_callback(
+        {
+            "type": "evt.audio.buffer_status",
+            "code": 0,
+            "data": {"reason": "playback", "stream_id": playback.id, "playing": True},
+        }
+    )
+    assert playback.state.value == "running"
+
+    transport.message_callback(
+        {
+            "type": "evt.audio.buffer_status",
+            "code": 0,
+            "data": {
+                "reason": "complete",
+                "stream_id": playback.id,
+                "audio_sha256": hashlib.sha256(pcm).hexdigest(),
+            },
+        }
+    )
+
+    assert playback.wait(timeout=0).state.value == "completed"
+
+
+def test_audio_playback_write_failure_is_a_terminal_failure():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    transport.message_callback(
+        {
+            "type": "evt.audio.buffer_status",
+            "code": 0,
+            "data": {
+                "reason": "playback_write_failed",
+                "stream_id": playback.id,
+            },
+        }
+    )
+
+    assert playback.state.value == "failed"
+
+
+def test_new_audio_stream_cancels_previous_host_sender_before_replacement():
+    class PendingAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            self.audio_streams.append((bytes(pcm), stream_id, chunk_bytes))
+            future = Future()
+            self.audio_streams[-1] += (future,)
+            return future
+
+    transport = PendingAudioTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    first = robot.audio.play_pcm(b"\x01\x00")
+    first_future = transport.audio_streams[0][3]
+    second = robot.audio.play_pcm(b"\x02\x00")
+
+    assert first_future.cancelled()
+    assert first.state.value == "cancelled"
+    assert second.state.value == "starting"
+    assert [command[0] for command in transport.commands] == [
+        "ctrl.audio.stream.begin",
+        "ctrl.audio.stream.begin",
+    ]
+
+
+def test_audio_playback_cancel_stops_sender_and_device():
+    class PendingAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            self.future = Future()
+            return self.future
+
+    transport = PendingAudioTransport()
+    robot = WatcheRobot._from_transport(transport)
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    playback.cancel()
+
+    assert transport.future.cancelled()
+    assert playback.state.value == "cancelled"
+    assert transport.commands[-1] == ("ctrl.audio.stop", {})
 
 
 def test_operation_event_arriving_immediately_after_ack_is_not_lost():
@@ -199,3 +324,20 @@ def test_camera_retries_transient_busy_until_capture_timeout():
 
     assert robot.camera.capture(timeout=0.5).data == b"jpeg"
     assert transport.capture_attempts == 2
+
+
+def test_camera_reports_command_ack_timeout_with_context():
+    class TimeoutCameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.camera.capture":
+                raise TimeoutError()
+            return super().send_command(message_type, data, timeout)
+
+    robot = WatcheRobot._from_transport(TimeoutCameraTransport())
+
+    try:
+        robot.camera.capture(timeout=0.01)
+    except TimeoutError as error:
+        assert "capture command was not acknowledged" in str(error)
+    else:
+        raise AssertionError("camera command timeout should include capture context")

@@ -6,6 +6,7 @@ from .errors import (
     JobFailedError,
     WatcheRobotError,
 )
+from .audio import AudioPlayback, PCMAudio
 from .job import Job, JobState
 from .media import AudioFormat, AudioFrame, ImageFrame, MicrophoneSession
 from .robot import WatcheRobot
@@ -13,6 +14,7 @@ from .robot import WatcheRobot
 __all__ = [
     "AudioFormat",
     "AudioFrame",
+    "AudioPlayback",
     "AuthenticationError",
     "CommandError",
     "ConnectionTimeoutError",
@@ -22,6 +24,7 @@ __all__ = [
     "JobFailedError",
     "JobState",
     "MicrophoneSession",
+    "PCMAudio",
     "WatcheRobot",
     "WatcheRobotError",
 ]
