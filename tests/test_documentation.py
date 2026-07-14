@@ -5,6 +5,8 @@ ROOT = Path(__file__).parents[1]
 PUBLIC_METHODS = (
     "WatcheRobot.connect",
     "robot.close",
+    "robot.device_info",
+    "robot.capabilities",
     "robot.behavior.play",
     "robot.behavior.stop",
     "robot.animation.play",
@@ -22,6 +24,8 @@ PUBLIC_METHODS = (
     "robot.lights.off",
     "robot.microphone.open",
     "robot.microphone.record",
+    "MicrophoneSession.read",
+    "MicrophoneSession.close",
     "robot.camera.capture",
     "Job.wait",
     "Job.cancel",

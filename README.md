@@ -60,7 +60,7 @@ directory. See [examples/README.md](examples/README.md).
 
 | Capability | SDK functions | Return / execution | v1 notes |
 |---|---|---|---|
-| Connect and close | `WatcheRobot.connect(...)`<br>`robot.close()` | `WatcheRobot` / immediate | Starts LAN Discovery and the WebSocket gateway; one robot per SDK instance |
+| Connect and close | `WatcheRobot.connect(...)`<br>`robot.close()`<br>`robot.device_info` / `robot.capabilities` | `WatcheRobot` / immediate / read-only properties | Starts LAN Discovery and the WebSocket gateway; one robot per SDK instance |
 | Behavior | `robot.behavior.play(id, repeat=1)`<br>`robot.behavior.stop()` | `Job` / immediate | Plays a multi-track Behavior already installed on the robot |
 | Animation | `robot.animation.play(id)`<br>`robot.animation.stop()` | `Job` / immediate | Animation resources must already be installed on the robot |
 | Point-to-point motion | `robot.motion.move_to(pan_deg=..., tilt_deg=..., duration_ms=...)` | `Job` | `duration_ms` is an integer from `1..65535` milliseconds |
@@ -68,8 +68,8 @@ directory. See [examples/README.md](examples/README.md).
 | Named motion | `robot.motion.play_action(id)`<br>`robot.motion.stop()` | `Job` / immediate | Named actions must already be installed on the robot |
 | Installed sound | `robot.audio.play(sound_id)` | `Job` | Sound resources must already be installed on the robot |
 | Host audio | `robot.audio.play_file(path)`<br>`robot.audio.play_pcm(data, ...)`<br>`robot.audio.stop()` | `AudioPlayback` / immediate | PCM S16LE, 24 kHz, mono; maximum 4 MB per stream |
-| Lights | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(...)`<br>`robot.lights.off()` | immediate / `Job` / immediate | Colors use `#RRGGBB`; brightness is from `0..1` |
-| Microphone session | `robot.microphone.open()` | `MicrophoneSession` | Read PCM frames with `read(timeout=...)`; current default is 16 kHz, 16-bit, mono |
+| Lights | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(...)`<br>`robot.lights.off()` | immediate / `Job` / immediate | Colors use `#RRGGBB`; brightness is from `0..1`; `period` is currently in seconds |
+| Microphone session | `robot.microphone.open()`<br>`MicrophoneSession.read(timeout=...)`<br>`MicrophoneSession.close()` | `MicrophoneSession` / `AudioFrame` / immediate | Current default is PCM 16 kHz, 16-bit, mono; the bounded queue tracks dropped frames |
 | Convenience recording | `robot.microphone.record(duration=...)`<br>`AudioRecording.save(path)` | `AudioRecording` / `Path` | `duration` is in seconds; saves a standard WAV file |
 | Camera capture | `robot.camera.capture(...)`<br>`ImageFrame.save(path)` | `ImageFrame` / `Path` | One JPEG frame; continuous video is outside v1 |
 | Job lifecycle | `Job.wait(timeout=...)`<br>`Job.cancel()` | `Job` / immediate cancel request | `STARTING → RUNNING → COMPLETED / FAILED / CANCELLED` |

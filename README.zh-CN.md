@@ -58,7 +58,7 @@ with WatcheRobot.connect(pairing_code="123456") as robot:
 
 | 能力 | SDK 函数 | 返回值 / 执行方式 | v1 说明 |
 |---|---|---|---|
-| 连接与关闭 | `WatcheRobot.connect(...)`<br>`robot.close()` | `WatcheRobot` / 立即执行 | 启动局域网 Discovery 与 WebSocket 网关；同一实例控制一台机器人 |
+| 连接与关闭 | `WatcheRobot.connect(...)`<br>`robot.close()`<br>`robot.device_info` / `robot.capabilities` | `WatcheRobot` / 立即执行 / 只读属性 | 启动局域网 Discovery 与 WebSocket 网关；同一实例控制一台机器人 |
 | Behavior | `robot.behavior.play(id, repeat=1)`<br>`robot.behavior.stop()` | `Job` / 立即执行 | 播放机器人中已安装的多轨 Behavior |
 | 动画 | `robot.animation.play(id)`<br>`robot.animation.stop()` | `Job` / 立即执行 | 动画资源必须已安装在机器人中 |
 | 定点动作 | `robot.motion.move_to(pan_deg=..., tilt_deg=..., duration_ms=...)` | `Job` | `duration_ms` 使用 `1..65535` 的整数毫秒 |
@@ -66,8 +66,8 @@ with WatcheRobot.connect(pairing_code="123456") as robot:
 | 命名动作 | `robot.motion.play_action(id)`<br>`robot.motion.stop()` | `Job` / 立即执行 | 命名动作必须已安装在机器人中 |
 | 内置音效 | `robot.audio.play(sound_id)` | `Job` | 音效资源必须已安装在机器人中 |
 | 电脑音频 | `robot.audio.play_file(path)`<br>`robot.audio.play_pcm(data, ...)`<br>`robot.audio.stop()` | `AudioPlayback` / 立即执行 | PCM S16LE、24 kHz、单声道；单次最多 4 MB |
-| 灯光 | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(...)`<br>`robot.lights.off()` | 立即执行 / `Job` / 立即执行 | 颜色使用 `#RRGGBB`，亮度范围 `0..1` |
-| 麦克风会话 | `robot.microphone.open()` | `MicrophoneSession` | 使用 `read(timeout=...)` 读取 PCM 帧；当前默认 16 kHz、16-bit、单声道 |
+| 灯光 | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(...)`<br>`robot.lights.off()` | 立即执行 / `Job` / 立即执行 | 颜色使用 `#RRGGBB`，亮度范围 `0..1`；`period` 当前使用秒 |
+| 麦克风会话 | `robot.microphone.open()`<br>`MicrophoneSession.read(timeout=...)`<br>`MicrophoneSession.close()` | `MicrophoneSession` / `AudioFrame` / 立即执行 | 当前默认 PCM 16 kHz、16-bit、单声道；有界队列会统计丢帧 |
 | 便捷录音 | `robot.microphone.record(duration=...)`<br>`AudioRecording.save(path)` | `AudioRecording` / `Path` | `duration` 使用秒；保存为标准 WAV |
 | 摄像头拍照 | `robot.camera.capture(...)`<br>`ImageFrame.save(path)` | `ImageFrame` / `Path` | 单张 JPEG；连续视频流不属于 v1 |
 | Job 生命周期 | `Job.wait(timeout=...)`<br>`Job.cancel()` | `Job` / 立即请求取消 | `STARTING → RUNNING → COMPLETED / FAILED / CANCELLED` |
