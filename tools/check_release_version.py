@@ -29,7 +29,7 @@ def validate_release_tag(tag: str, version: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("tag", help="GitHub Release tag, for example v0.1.0a1")
+    parser.add_argument("tag", help="GitHub Release tag, for example v0.1.0a2")
     parser.add_argument("--version-file", type=Path, default=_DEFAULT_VERSION_FILE)
     args = parser.parse_args()
 

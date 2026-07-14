@@ -67,8 +67,15 @@ def test_public_namespaces_build_protocol_commands():
     animation = robot.animation.play("smile")
     audio = robot.audio.play("confirm")
     robot.lights.set_color("#4DA3FF", brightness=0.7)
+    light_effect = robot.lights.play_effect(
+        "breathing",
+        color="#4DA3FF",
+        brightness=0.7,
+        period_ms=750,
+        repeat=3,
+    )
 
-    assert all(isinstance(job, Job) for job in (behavior, motion, animation, audio))
+    assert all(isinstance(job, Job) for job in (behavior, motion, animation, audio, light_effect))
     assert transport.commands == [
         ("ctrl.behavior.play", {"behavior_id": "greeting", "repeat": 2}),
         (
@@ -79,6 +86,17 @@ def test_public_namespaces_build_protocol_commands():
         ("ctrl.animation.play", {"animation_id": "smile"}),
         ("ctrl.audio.play", {"sound_id": "confirm"}),
         ("ctrl.light.set", {"color": "#4DA3FF", "brightness": 0.7, "zone": "all"}),
+        (
+            "ctrl.light.effect.play",
+            {
+                "effect": "breathing",
+                "color": "#4DA3FF",
+                "brightness": 0.7,
+                "zone": "all",
+                "period_ms": 750,
+                "repeat": 3,
+            },
+        ),
     ]
 
 
@@ -88,6 +106,21 @@ def test_motion_move_to_rejects_invalid_duration_ms(duration_ms):
 
     with pytest.raises(ValueError, match="duration_ms must be an integer between 1 and 65535"):
         robot.motion.move_to(pan_deg=110, tilt_deg=120, duration_ms=duration_ms)
+
+
+@pytest.mark.parametrize("period_ms", [-1, 1.5, True, 65536])
+def test_light_effect_rejects_invalid_period_ms(period_ms):
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(ValueError, match="period_ms must be an integer between 0 and 65535"):
+        robot.lights.play_effect("breathing", period_ms=period_ms)
+
+
+def test_light_effect_no_longer_accepts_ambiguous_period_seconds():
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(TypeError):
+        robot.lights.play_effect("breathing", period=0.5)
 
 
 def test_operation_event_updates_matching_job():

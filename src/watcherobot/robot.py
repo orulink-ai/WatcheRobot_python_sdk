@@ -132,12 +132,18 @@ class LightsDomain(_Domain):
         color: str = "#FFFFFF",
         brightness: float = 1.0,
         zone: str = "all",
-        period: float = 0.5,
+        period_ms: int = 500,
         repeat: int = 0,
     ) -> Job:
         _validate_light(color, brightness)
-        if not effect or period < 0 or repeat < 0:
+        if not effect or repeat < 0:
             raise ValueError("invalid light effect options")
+        if (
+            isinstance(period_ms, bool)
+            or not isinstance(period_ms, int)
+            or not 0 <= period_ms <= 65535
+        ):
+            raise ValueError("period_ms must be an integer between 0 and 65535")
         return self._robot._start_job(
             "ctrl.light.effect.play",
             {
@@ -145,7 +151,7 @@ class LightsDomain(_Domain):
                 "color": color.upper(),
                 "brightness": brightness,
                 "zone": zone,
-                "period_ms": round(period * 1000),
+                "period_ms": period_ms,
                 "repeat": repeat,
             },
         )

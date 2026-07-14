@@ -11,7 +11,7 @@ def test_package_version_has_one_alpha_source() -> None:
     assert 'dynamic = ["version"]' in pyproject
     assert '[tool.hatch.version]\npath = "src/watcherobot/__init__.py"' in pyproject
     assert 'version = "0.1.0"' not in pyproject
-    assert '__version__ = "0.1.0a1"' in package_init
+    assert '__version__ = "0.1.0a2"' in package_init
 
 
 def test_publish_workflow_separates_test_and_production_indexes() -> None:
@@ -38,3 +38,12 @@ def test_production_publish_requires_a_release_and_version_check() -> None:
     assert "github.event_name == 'release'" in workflow
     assert "tools/check_release_version.py" in workflow
     assert "git merge-base --is-ancestor" in workflow
+
+
+def test_publish_workflow_tests_every_declared_python_version_before_one_build() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+
+    assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
+    assert "python-version: ${{ matrix.python-version }}" in workflow
+    assert "name: Build distributions" in workflow
+    assert "needs: test" in workflow

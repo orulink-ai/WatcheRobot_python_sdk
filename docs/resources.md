@@ -21,7 +21,7 @@ Example / 示例：
 with WatcheRobot.connect(pairing_code="123456") as robot:
     robot.behavior.play("happy").wait(timeout=20)
     robot.animation.play("smile").wait(timeout=10)
-    robot.lights.play_effect("breathing", color="#4DA3FF", period=0.5, repeat=3).wait(timeout=5)
+    robot.lights.play_effect("breathing", color="#4DA3FF", period_ms=500, repeat=3).wait(timeout=5)
 ```
 
 `robot.capabilities` reports supported capability domains such as `behavior`, `motion`, and `camera.capture`; it does
