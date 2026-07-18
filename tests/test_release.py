@@ -18,6 +18,7 @@ def test_publish_workflow_separates_test_and_production_indexes() -> None:
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
     assert "pull_request:" in workflow
+    assert "push:\n    branches: [main]" in workflow
     assert "workflow_dispatch:" in workflow
     assert "release:" in workflow
     assert "types: [published]" in workflow
@@ -40,11 +41,14 @@ def test_production_publish_requires_a_release_and_version_check() -> None:
     assert "git merge-base --is-ancestor" in workflow
 
 
-def test_publish_workflow_tests_every_declared_python_version_before_one_build() -> None:
+def test_publish_workflow_tests_every_python_and_websockets_version_before_one_build() -> None:
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
     assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
+    assert 'websockets-version: ["lowest", "latest"]' in workflow
     assert "python-version: ${{ matrix.python-version }}" in workflow
+    assert 'python -m pip install "websockets==12.*"' in workflow
+    assert 'python -m pip install "websockets>=12,<16"' in workflow
     assert "python -m mypy src/watcherobot" in workflow
     assert "name: Build distributions" in workflow
     assert "needs: test" in workflow

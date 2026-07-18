@@ -167,6 +167,11 @@ python -m pytest
 python -m build
 ```
 
+网关集成测试使用 `tests/fakes/` 中的轻量机器人协议测试替身，在没有硬件时覆盖配对、指令 ACK、Job
+生命周期、断线和失败路径。它只服务于自动化测试：wheel 不包含模拟器，公开 SDK 也不提供模拟 API。
+CI 会在 Python 3.10-3.12 上分别验证最低版本 `websockets 12.x` 和当前允许的最新版
+`websockets <16`。
+
 维护者发布流程见 [docs/releasing.md](docs/releasing.md)。项目使用 GitHub Actions 与 PyPI Trusted
 Publishing，不保存长期上传 Token。仅供维护者使用的串口自动化台架见
 [docs/hardware-testing.md](docs/hardware-testing.md)。

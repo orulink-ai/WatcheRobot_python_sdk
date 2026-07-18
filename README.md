@@ -172,6 +172,11 @@ python -m pytest
 python -m build
 ```
 
+Gateway integration tests use a small robot-side protocol fake from `tests/fakes/`. It exercises pairing, command
+acknowledgements, Job lifecycle events, disconnects, and failure paths without hardware. It is test support only:
+the wheel doesn't contain a simulator and the public SDK doesn't expose a simulation API. CI runs the suite on
+Python 3.10-3.12 with both the minimum (`websockets 12.x`) and latest supported (`websockets <16`) dependency.
+
 Maintainers should follow [docs/releasing.md](docs/releasing.md). Releases use GitHub Actions and PyPI Trusted
 Publishing without a long-lived upload token. The private serial-assisted bench workflow is documented in
 [docs/hardware-testing.md](docs/hardware-testing.md).
