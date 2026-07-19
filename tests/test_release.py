@@ -11,7 +11,7 @@ def test_package_version_has_one_alpha_source() -> None:
     assert 'dynamic = ["version"]' in pyproject
     assert '[tool.hatch.version]\npath = "src/watcherobot/__init__.py"' in pyproject
     assert 'version = "0.1.0"' not in pyproject
-    assert '__version__ = "0.1.0a3"' in package_init
+    assert '__version__ = "0.1.0a4"' in package_init
 
 
 def test_publish_workflow_separates_test_and_production_indexes() -> None:

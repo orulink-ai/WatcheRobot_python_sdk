@@ -40,7 +40,7 @@ python tools/hardware_smoke.py --auto-pair-port COM5 --all --non-interactive
 
 | 字段 | 要求 |
 |---|---|
-| Python SDK | 完整版本，例如 `0.1.0a3` |
+| Python SDK | 完整版本，例如 `0.1.0a4` |
 | SDK protocol | 当前协议版本，例如 `1.0` |
 | ESP32 commit | 真机烧录源码的 40 位 commit SHA |
 | ESP32 firmware | 设备上报的固件版本 |
