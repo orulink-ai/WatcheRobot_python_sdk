@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 PROTOCOL_VERSION = "1.0"
+DISCOVERY_PROTOCOL_VERSION = "1.1"
 DISCOVERY_PORT = 37021
 WEBSOCKET_PORT = 8766
 

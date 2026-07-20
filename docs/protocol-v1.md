@@ -9,10 +9,10 @@
 
 Handshake sequence:
 
-1. Robot sends `sys.client.hello`.
-2. Python acknowledges hello and sends `sys.sdk.authenticate` with `pairing_code`, protocol version, client name,
-   and `command_id`.
-3. Robot sends `sys.ack` or `sys.nack`, then `evt.sdk.ready` with identity, firmware, and capabilities.
+1. Robot sends `sys.client.hello` with its six-digit `pairing_code`.
+2. Python validates that code and replies with `sys.ack(type=sys.client.hello)`; it returns `sys.nack` and closes the
+   WebSocket when the code does not match.
+3. After the acknowledged hello, the robot sends `evt.sdk.ready` with identity, firmware, and capabilities.
 
 ## JSON envelope and Jobs
 
@@ -81,7 +81,7 @@ images use `first`/`last`, are reassembled with an 8 MiB bound, and are discarde
 
 ### Host-to-robot audio
 
-The host must authenticate and receive the `audio.stream` capability. It then sends
+The host must complete the pairing-code hello validation and receive the `audio.stream` capability. It then sends
 `ctrl.audio.stream.begin` with:
 
 - a non-zero 16-bit `stream_id`;
