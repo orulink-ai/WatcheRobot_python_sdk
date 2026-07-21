@@ -7,6 +7,10 @@
 - Authentication uses the temporary six-digit code displayed for the current App session.
 - One robot control session is accepted at a time. v1 uses plain `ws://` on a trusted LAN.
 
+Discovery: the robot broadcasts `SDK_DISCOVER` with its temporary pairing code and request ID; only the matching Python
+service replies with `ANNOUNCE`, echoing both values. The WebSocket hello repeats the pairing-code check before a
+control session becomes ready.
+
 Handshake sequence:
 
 1. Robot sends `sys.client.hello` with its six-digit `pairing_code`.
