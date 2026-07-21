@@ -33,3 +33,19 @@ python tools/hardware_smoke.py --auto-pair-port COM5 --all --non-interactive
 - `artifacts/` 整体被 Git 忽略
 
 拍照和录音前应确认现场人员知情。测试结束后由操作者决定保留或删除本地产物。
+
+## 发布验收记录
+
+每次 TestPyPI/PyPI 发布前，在 PR 或 Release 说明中记录以下信息：
+
+| 字段 | 要求 |
+|---|---|
+| Python SDK | 完整版本，例如 `0.1.0a4` |
+| SDK protocol | 当前协议版本，例如 `1.0` |
+| ESP32 commit | 真机烧录源码的 40 位 commit SHA |
+| ESP32 firmware | 设备上报的固件版本 |
+| 测试命令 | 完整 `hardware_smoke.py` 命令，隐去真实配对码 |
+| 测试结果 | 各能力通过/失败，以及人工确认结论 |
+| 媒体检查 | `camera.jpg` 可解码、`microphone.wav` 可播放且格式正确 |
+
+核心能力失败时停止发布。测试用协议假机器人只能作为自动化回归，不得代替这份真机记录。
