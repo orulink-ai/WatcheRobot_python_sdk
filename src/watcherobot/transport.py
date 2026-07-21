@@ -90,6 +90,8 @@ def select_lan_bind_host(host: str) -> str:
     candidates: list[str] = []
     for entry in entries:
         value = entry[4][0]
+        if not isinstance(value, str):
+            continue
         if _is_usable_lan_ipv4(value) and value not in candidates:
             candidates.append(value)
     if not candidates:
