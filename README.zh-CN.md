@@ -3,7 +3,8 @@
 [English](README.md) | 简体中文
 
 `watcherobot` 让桌面端 Python 程序通过局域网控制 WatcheRobot 的 Behavior、动作、动画、音频、灯光、
-麦克风和摄像头。对外提供简单的同步 API，Discovery 和 WebSocket 网关在内部运行。
+麦克风和摄像头，也可以接收背部触摸、屏幕点按和滚轮旋转事件。对外提供简单的同步 API，Discovery
+和 WebSocket 网关在内部运行。
 
 > v0.1 面向可信局域网，使用普通 `ws://`、单次六位配对码和单机器人控制会话。
 
@@ -36,13 +37,13 @@ powershell -ExecutionPolicy Bypass -File .\tools\flash-monitor.ps1 COMx -NoWake
 
 ## 安装
 
-当前源码正在准备 `0.1.0a3` 测试版本。由于 PyPI 版本不可覆盖，请先在
+当前源码正在准备 `0.1.0a4` 测试版本。由于 PyPI 版本不可覆盖，请先在
 [TestPyPI 项目页](https://test.pypi.org/project/watcherobot/)确认该版本已经由发布流水线生成。TestPyPI
 不保证包含完整依赖，因此先从正式 PyPI 安装依赖，再从 TestPyPI 安装 SDK 本身：
 
 ```bash
 python -m pip install "websockets>=12,<16"
-python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a3
+python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a4
 ```
 
 从源码仓库开发或试用：
@@ -63,7 +64,7 @@ python -m pip install watcherobot
 
 | Python SDK | 协议 | 已验证 ESP32 固件 | Python | 发布状态 |
 |---|---|---|---|---|
-| `0.1.0a3` | `1.0` | `V3.1`，包含 SDK Control App | `>=3.10`（CI：3.10 / 3.11 / 3.12） | Alpha 候选版 / 发布后进入 TestPyPI |
+| `0.1.0a4` | `1.0` | `V3.1`，包含 SDK 输入事件扩展 | `>=3.10`（CI：3.10 / 3.11 / 3.12） | Alpha 候选版 / 发布后进入 TestPyPI |
 
 连接后应读取 `robot.device_info` 和 `robot.capabilities`，以设备实际协商结果为准。当前尚未承诺低于
 `V3.1` 的固件兼容性。
@@ -109,11 +110,31 @@ with WatcheRobot.connect(pairing_code=pairing_code) as robot:
 | `light` | `robot.lights.*` |
 | `microphone` | `robot.microphone.*` |
 | `camera.capture` | `robot.camera.capture(...)` |
+| `input.back_touch` | `robot.inputs.wait(...)` → `BackTouchEvent` |
+| `input.screen_touch` | `robot.inputs.wait(...)` → `ScreenTouchEvent` |
+| `input.roller` | `robot.inputs.wait(...)` → `RollerEvent` |
 
 ```python
 if robot.supports("camera.capture"):
     image = robot.camera.capture(timeout=10)
 ```
+
+例如，一个桌面小游戏可以等待用户下一次操作，再按事件类型作出反应：
+
+```python
+from watcherobot import BackTouchEvent, RollerEvent, ScreenTouchEvent
+
+event = robot.inputs.wait(timeout=30)
+if isinstance(event, BackTouchEvent) and event.action == "press":
+    print("用户摸了机器人背部")
+elif isinstance(event, ScreenTouchEvent):
+    print(f"用户点了屏幕坐标 ({event.x}, {event.y})")
+elif isinstance(event, RollerEvent):
+    print("滚轮转动量：", event.delta)
+```
+
+输入队列保留最新 64 条事件；`robot.inputs.dropped_events` 可查看溢出数量，`robot.inputs.clear()`
+可清空缓存。连接断开时，正在等待的 `wait()` 会收到 `WatcheRobotError`，不会一直卡住。
 
 ## 仓库示例
 
@@ -143,6 +164,7 @@ if robot.supports("camera.capture"):
 | 麦克风会话 | `robot.microphone.open()`<br>`MicrophoneSession.read(timeout=...)`<br>`MicrophoneSession.close()` | `MicrophoneSession` / `AudioFrame` / 立即执行 | 当前默认 PCM 16 kHz、16-bit、单声道；有界队列会统计丢帧 |
 | 便捷录音 | `robot.microphone.record(duration=...)`<br>`AudioRecording.save(path)` | `AudioRecording` / `Path` | `duration` 使用秒；保存为标准 WAV |
 | 摄像头拍照 | `robot.camera.capture(...)`<br>`ImageFrame.save(path)` | `ImageFrame` / `Path` | 单张 JPEG；连续视频流不属于 v1 |
+| 物理输入事件 | `robot.inputs.wait(timeout=...)`<br>`robot.inputs.clear()`<br>`robot.inputs.dropped_events` | `BackTouchEvent` / `ScreenTouchEvent` / `RollerEvent` | 背部按下/松开、屏幕点按坐标和带方向的滚轮转动量；有界队列保留最新 64 条 |
 | Job 生命周期 | `Job.wait(timeout=...)`<br>`Job.cancel()`<br>`Job.reason` / `Job.error_code` | `Job` / 立即请求取消 | `STARTING → RUNNING → COMPLETED / FAILED / CANCELLED`；终态异常提供结构化诊断信息 |
 
 有限操作返回 `Job` 或兼容 `Job` 的 `AudioPlayback`。ACK 只表示设备已经接收命令；使用
@@ -156,6 +178,7 @@ if robot.supports("camera.capture"):
 - Behavior、动画和 `audio.play(sound_id)` 要求资源已安装在机器人上。
 - 支持临时传输电脑 WAV，但不支持持久安装任意资源。
 - 暂不支持连续视频、Python 内联 Behavior、公开异步 API、TLS 和远程唤起。
+- 滚轮短按继续用于本机退出，长按继续用于系统关机；v1 只向 Python 提供滚轮旋转事件。
 - SDK、机器人 App 或网络连接关闭时，设备会停止 Job、媒体和输出并释放资源。
 
 协议说明见 [docs/protocol-v1.md](docs/protocol-v1.md)。

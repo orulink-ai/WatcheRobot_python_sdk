@@ -54,7 +54,7 @@ python -m venv .venv-release-test
 .venv-release-test\Scripts\python -m pip install websockets
 .venv-release-test\Scripts\python -m pip install `
   --index-url https://test.pypi.org/simple/ `
-  --no-deps watcherobot==0.1.0a3
+  --no-deps watcherobot==0.1.0a4
 .venv-release-test\Scripts\python -c "import watcherobot; print(watcherobot.__version__)"
 ```
 
@@ -68,13 +68,13 @@ python -m venv .venv-release-test
 3. 创建 Draft GitHub Release，标签必须严格等于 `v` 加包版本：
 
 ```powershell
-gh release create v0.1.0a3 --target main --draft --prerelease --generate-notes
+gh release create v0.1.0a4 --target main --draft --prerelease --generate-notes
 ```
 
 4. 核对 Release 内容后发布：
 
 ```powershell
-gh release edit v0.1.0a3 --draft=false
+gh release edit v0.1.0a4 --draft=false
 ```
 
 `release.published` 事件会启动正式发布任务。流水线会再次运行测试，并检查：
@@ -88,13 +88,13 @@ gh release edit v0.1.0a3 --draft=false
 
 ```powershell
 python -m venv .venv-pypi-test
-.venv-pypi-test\Scripts\python -m pip install watcherobot==0.1.0a3
+.venv-pypi-test\Scripts\python -m pip install watcherobot==0.1.0a4
 .venv-pypi-test\Scripts\python -c "import watcherobot; print(watcherobot.__version__)"
 ```
 
 ## 版本规则
 
-- Alpha：`0.1.0a1`、`0.1.0a2`、`0.1.0a3`
+- Alpha：`0.1.0a1`、`0.1.0a2`、`0.1.0a3`、`0.1.0a4`
 - Beta：`0.1.0b1`
 - Release Candidate：`0.1.0rc1`
 - 正式版：`0.1.0`

@@ -3,8 +3,8 @@
 English | [简体中文](README.zh-CN.md)
 
 `watcherobot` lets a desktop Python program control WatcheRobot Behaviors, motion, animation, audio, lights,
-microphone, and camera over the local network. It exposes a small synchronous API while running discovery and the
-WebSocket gateway internally.
+microphone, and camera over the local network, and receive rear-touch, screen-tap, and roller-rotation events. It
+exposes a small synchronous API while running discovery and the WebSocket gateway internally.
 
 > v0.1 targets trusted local networks. It uses plain `ws://`, a temporary six-digit pairing code, and one robot per
 > SDK instance.
@@ -38,14 +38,14 @@ for its exact build profile and promotion status. Everyone else should wait for 
 
 ## Install
 
-This source tree prepares the `0.1.0a3` preview. Check the
+This source tree prepares the `0.1.0a4` preview. Check the
 [TestPyPI project page](https://test.pypi.org/project/watcherobot/) before installing because the immutable build only
 appears after the release workflow completes. TestPyPI does not mirror every dependency, so install the runtime
 dependency from PyPI first and the SDK itself from TestPyPI without dependency resolution:
 
 ```bash
 python -m pip install "websockets>=12,<16"
-python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a3
+python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a4
 ```
 
 For development or evaluation from this repository:
@@ -66,7 +66,7 @@ Python 3.10 or newer is required.
 
 | Python SDK | Protocol | Verified ESP32 firmware | Python | Release status |
 |---|---|---|---|---|
-| `0.1.0a3` | `1.0` | `V3.1` with SDK Control App | `>=3.10` (CI: 3.10 / 3.11 / 3.12) | Alpha candidate / TestPyPI after publish |
+| `0.1.0a4` | `1.0` | `V3.1` with SDK input-event extension | `>=3.10` (CI: 3.10 / 3.11 / 3.12) | Alpha candidate / TestPyPI after publish |
 
 After connecting, inspect `robot.device_info` and `robot.capabilities`; the negotiated device response is the source
 of truth. Firmware older than `V3.1` is not currently covered by the compatibility promise.
@@ -113,11 +113,31 @@ Use `robot.supports(...)` before optional calls. Capability names are extensible
 | `light` | `robot.lights.*` |
 | `microphone` | `robot.microphone.*` |
 | `camera.capture` | `robot.camera.capture(...)` |
+| `input.back_touch` | `robot.inputs.wait(...)` → `BackTouchEvent` |
+| `input.screen_touch` | `robot.inputs.wait(...)` → `ScreenTouchEvent` |
+| `input.roller` | `robot.inputs.wait(...)` → `RollerEvent` |
 
 ```python
 if robot.supports("camera.capture"):
     image = robot.camera.capture(timeout=10)
 ```
+
+For example, a desktop game can wait for the next physical interaction and react according to its typed event:
+
+```python
+from watcherobot import BackTouchEvent, RollerEvent, ScreenTouchEvent
+
+event = robot.inputs.wait(timeout=30)
+if isinstance(event, BackTouchEvent) and event.action == "press":
+    print("The robot's back was touched")
+elif isinstance(event, ScreenTouchEvent):
+    print(f"Screen tapped at ({event.x}, {event.y})")
+elif isinstance(event, RollerEvent):
+    print("Roller moved", event.delta)
+```
+
+The input queue keeps the newest 64 events. `robot.inputs.dropped_events` reports overflow, and
+`robot.inputs.clear()` discards buffered input. Disconnecting wakes a blocked `wait()` with `WatcheRobotError`.
 
 ## Repository examples
 
@@ -148,6 +168,7 @@ directory. See [examples/README.md](examples/README.md).
 | Microphone session | `robot.microphone.open()`<br>`MicrophoneSession.read(timeout=...)`<br>`MicrophoneSession.close()` | `MicrophoneSession` / `AudioFrame` / immediate | Current default is PCM 16 kHz, 16-bit, mono; the bounded queue tracks dropped frames |
 | Convenience recording | `robot.microphone.record(duration=...)`<br>`AudioRecording.save(path)` | `AudioRecording` / `Path` | `duration` is in seconds; saves a standard WAV file |
 | Camera capture | `robot.camera.capture(...)`<br>`ImageFrame.save(path)` | `ImageFrame` / `Path` | One JPEG frame; continuous video is outside v1 |
+| Physical input events | `robot.inputs.wait(timeout=...)`<br>`robot.inputs.clear()`<br>`robot.inputs.dropped_events` | `BackTouchEvent` / `ScreenTouchEvent` / `RollerEvent` | Rear press/release, screen tap coordinates, and signed roller rotation; bounded newest-64 queue |
 | Job lifecycle | `Job.wait(timeout=...)`<br>`Job.cancel()`<br>`Job.reason` / `Job.error_code` | `Job` / immediate cancel request | `STARTING → RUNNING → COMPLETED / FAILED / CANCELLED`; terminal errors expose structured diagnostics |
 
 Finite operations return a `Job` or the Job-compatible `AudioPlayback`. An ACK only means that the device accepted
@@ -161,6 +182,8 @@ timeouts, audio validation, and dropped media frames, see [troubleshooting](docs
 - Behaviors, animations, and `audio.play(sound_id)` must already be installed on the robot.
 - Host WAV playback is temporary; arbitrary persistent resource upload is not supported.
 - Continuous video, inline Python Behaviors, a public async API, TLS, and remote wake-up are outside v1.
+- Roller short press remains the local exit action and long hold remains the system shutdown action; v1 only exposes
+  rotation to Python.
 - Closing the SDK, robot app, or connection cancels device jobs, media, and outputs and releases resources.
 
 Protocol details are in [docs/protocol-v1.md](docs/protocol-v1.md).

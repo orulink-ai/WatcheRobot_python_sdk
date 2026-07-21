@@ -31,6 +31,8 @@ PUBLIC_METHODS = (
     "MicrophoneSession.read",
     "MicrophoneSession.close",
     "robot.camera.capture",
+    "robot.inputs.wait",
+    "robot.inputs.clear",
     "Job.wait",
     "Job.cancel",
     "AudioRecording.save",

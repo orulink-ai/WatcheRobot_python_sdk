@@ -99,3 +99,19 @@ stale-stream, or hardware-write errors mean failed.
 `ctrl.audio.stop`, replacement, disconnect, session reset, or App close stops host production, revokes device
 authorization, clears the playback queue, and terminates the previous playback. Binary audio received before
 authentication or without a matching begin command is rejected.
+
+## Physical input events
+
+After authentication, firmware advertises `input.back_touch`, `input.screen_touch`, and `input.roller`. It sends
+physical interactions as `evt.sdk.input`; delivery is ordered but not durable:
+
+```json
+{"type":"evt.sdk.input","code":0,"data":{"source":"back_touch","action":"press","touch_id":0,"timestamp_ms":1234}}
+{"type":"evt.sdk.input","code":0,"data":{"source":"screen_touch","action":"tap","x":120,"y":180,"timestamp_ms":1250}}
+{"type":"evt.sdk.input","code":0,"data":{"source":"roller","action":"rotate","delta":-1,"timestamp_ms":1280}}
+```
+
+Back touch supports `press`, `release`, and the protocol-reserved `long_press`; current hardware normally reports
+press/release for touch ID zero. Screen input reports a short tap with display coordinates. Roller `delta` is signed
+and may combine several steps. Roller press is intentionally absent: short press owns the local exit UI and long
+hold owns system shutdown. The Python side validates all fields and keeps a bounded newest-64 event queue.

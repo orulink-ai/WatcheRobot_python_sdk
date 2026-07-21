@@ -14,6 +14,7 @@ from ._internal.audio_status import AudioStatusKind, classify_audio_status
 from .errors import CommandError, WatcheRobotError
 from .audio import AudioPlayback, PCMAudio, load_pcm_wave
 from .job import Job, JobState
+from .inputs import InputDomain, parse_input_event
 from .media import AudioFormat, AudioRecording, ImageFrame, MicrophoneSession
 from .protocol import (
     DISCOVERY_PORT,
@@ -285,6 +286,7 @@ class WatcheRobot:
         self.lights = LightsDomain(self)
         self.microphone = MicrophoneDomain(self)
         self.camera = CameraDomain(self)
+        self.inputs = InputDomain()
         transport.set_callbacks(self._on_message, self._on_binary, self._on_disconnect)
 
     @classmethod
@@ -341,6 +343,7 @@ class WatcheRobot:
         with self._media_lock:
             self._closed = True
             self._closing = False
+        self.inputs._close("connection_closed")
         self._transport.close()
         self._fail_all_jobs(reason="connection_closed")
 
@@ -659,6 +662,11 @@ class WatcheRobot:
                     return image
 
     def _on_message(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "evt.sdk.input":
+            event = parse_input_event(message.get("data", {}))
+            if event is not None:
+                self.inputs._push(event)
+            return
         if message.get("type") == "evt.audio.buffer_status":
             self._on_audio_buffer_status(message.get("data", {}))
             return
@@ -801,6 +809,7 @@ class WatcheRobot:
             self._pending_audio_frames.clear()
             microphone = self._microphone
         self._fail_all_jobs(reason="disconnected")
+        self.inputs._close("disconnected")
         if microphone is not None:
             microphone._mark_remote_closed()
         if not was_closed:
