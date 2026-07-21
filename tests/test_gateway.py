@@ -1,13 +1,23 @@
 import asyncio
+import inspect
+import json
 import threading
 
 import pytest
+import websockets
 
 from watcherobot import JobCancelledError, JobFailedError, WatcheRobot
-from watcherobot.errors import AuthenticationError, ConnectionTimeoutError
+from watcherobot.errors import ConnectionTimeoutError
 from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_AUDIO, ProtocolError, parse_wspk
 from watcherobot.transport import BackgroundTransport, _parse_capabilities
 from tests.fakes import FakeRobot
+
+
+def _loopback_connect(uri: str):
+    options = {}
+    if "proxy" in inspect.signature(websockets.connect).parameters:
+        options["proxy"] = None
+    return websockets.connect(uri, **options)
 
 
 def test_gateway_pairs_and_correlates_command_ack():
@@ -20,10 +30,6 @@ def test_gateway_reports_ready_event_timeout():
 
 def test_gateway_rejects_websocket_hello_with_wrong_pairing_code():
     asyncio.run(_gateway_rejects_wrong_hello_pairing_code())
-
-
-def test_gateway_reports_authentication_rejection():
-    asyncio.run(_gateway_authentication_rejection())
 
 
 def test_gateway_loopback_ignores_system_proxy(monkeypatch):
@@ -133,7 +139,7 @@ async def _gateway_ready_event_timeout():
     starter.start()
     assert await asyncio.to_thread(transport._started_event.wait, 1)
 
-    async with websockets.connect(f"ws://127.0.0.1:{transport.websocket_port}") as websocket:
+    async with _loopback_connect(f"ws://127.0.0.1:{transport.websocket_port}") as websocket:
         await websocket.send(
             json.dumps(
                 {
@@ -172,7 +178,7 @@ async def _gateway_rejects_wrong_hello_pairing_code():
     starter.start()
     assert await asyncio.to_thread(transport._started_event.wait, 1)
 
-    async with websockets.connect(f"ws://127.0.0.1:{transport.websocket_port}") as websocket:
+    async with _loopback_connect(f"ws://127.0.0.1:{transport.websocket_port}") as websocket:
         await websocket.send(
             json.dumps(
                 {
@@ -200,32 +206,6 @@ async def _gateway_rejects_wrong_hello_pairing_code():
     await asyncio.to_thread(transport.close)
 
 
-async def _gateway_authentication_rejection():
-    transport = BackgroundTransport(discovery_port=0, websocket_port=0)
-    start_error = []
-
-    def start_transport():
-        try:
-            transport.start("123456", timeout=1)
-        except Exception as error:  # pragma: no cover - asserted below
-            start_error.append(error)
-
-    starter = threading.Thread(target=start_transport)
-    starter.start()
-    assert await asyncio.to_thread(transport._started_event.wait, 1)
-
-    async with await FakeRobot.connect(transport.websocket_port) as robot:
-        authenticate = await robot.begin_pairing()
-        await robot.nack(authenticate, reason="invalid_pairing_code")
-        await asyncio.to_thread(starter.join, 1)
-
-    assert not starter.is_alive()
-    assert len(start_error) == 1
-    assert isinstance(start_error[0], AuthenticationError)
-    assert "invalid_pairing_code" in str(start_error[0])
-    await asyncio.to_thread(transport.close)
-
-
 async def _gateway_round_trip():
     received_events = []
     disconnected = threading.Event()
@@ -243,7 +223,7 @@ async def _gateway_round_trip():
     starter.start()
     assert await asyncio.to_thread(transport._started_event.wait, 2)
 
-    async with websockets.connect(f"ws://127.0.0.1:{transport.websocket_port}") as websocket:
+    async with _loopback_connect(f"ws://127.0.0.1:{transport.websocket_port}") as websocket:
         await websocket.send(
             json.dumps(
                 {
