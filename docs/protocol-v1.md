@@ -36,7 +36,8 @@ deduplicated by a bounded device-side `command_id` cache.
 
 Firmware parsing is strict: identifiers are rejected instead of truncated, the pairing code is exactly six digits,
 and numeric/enum fields must be in range. Correlatable errors use `invalid_argument`, `unsupported_command`,
-`command_queue_full`, or a domain-specific reason.
+`command_queue_full`, or a domain-specific reason. Display-specific reasons include `text_too_long`,
+`font_unavailable`, and `unsupported_glyph`.
 
 For `ctrl.motion.move_to`, completed means STM32 reported `MOTION_DONE` for the matching sequence. It confirms the
 execution timeline, not closed-loop physical position convergence.
@@ -49,6 +50,8 @@ execution timeline, not closed-loop physical position convergence.
 | `ctrl.behavior.stop` | — | ACK |
 | `ctrl.animation.play` | `animation_id` | Job |
 | `ctrl.animation.stop` | — | ACK |
+| `ctrl.display.text.set` | `text`, `mode`, `size`, `color`, `background`, `align`, `wrap` | ACK after UI commit |
+| `ctrl.display.clear` | — | ACK after UI commit |
 | `ctrl.motion.move_to` | `pan_deg`, `tilt_deg`, `duration_ms`, `profile` | Job |
 | `ctrl.motion.set_target` | one or both of `pan_deg`, `tilt_deg` | ACK |
 | `ctrl.motion.action.play` | `action_id` | Job |
@@ -63,6 +66,22 @@ execution timeline, not closed-loop physical position convergence.
 | `ctrl.microphone.close` | `session_id` | ACK |
 | `ctrl.camera.capture` | optional `width`, `height`, `quality` | `session_id` ACK + JPEG |
 | `ctrl.job.cancel` | `operation_id` | ACK + cancelled event |
+
+## Screen text
+
+Firmware always advertises `display.text` and `display.text.overlay` when these commands are implemented. It adds
+`display.text.zh_cn` only after the SD font manifest, font SHA-256, and SIL OFL license have been validated. Older
+firmware omits these capabilities; hosts must not send display commands to it.
+
+`ctrl.display.text.set` defaults to page mode, 24 px, white on black, centered, with wrapping. `mode` is `page` or
+`overlay`; `size` is 16, 24, or 32; colors use `#RRGGBB`; `align` is `left`, `center`, or `right`; and `wrap` is a
+boolean. Text must be valid UTF-8, no more than 512 bytes and 128 Unicode characters, and may contain ordinary
+characters and newline only.
+
+Page mode cancels the current Behavior/animation Job before committing an opaque text page. A subsequent visual Job
+replaces that page. Overlay mode is accepted only while a Behavior or animation is active; new text replaces the old
+overlay and the overlay is removed automatically when that Job ends. Clear is idempotent: it restores the connected
+control page from a text page, or removes only the overlay without stopping its visual Job.
 
 ## WSPK media frames
 

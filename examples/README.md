@@ -1,5 +1,7 @@
 # WatcheRobot Python SDK examples
 
+- `display_text.py` shows a persistent Simplified Chinese text page and clears it after confirmation.
+
 Before running an example, connect the computer and robot to the same LAN and open **SDK Control App** from the
 robot Launcher. / 运行前，请先让电脑和机器人连接同一局域网，并在 Launcher 中打开 **SDK Control App**。
 

@@ -63,6 +63,78 @@ class AnimationDomain(_Domain):
         self._robot._command("ctrl.animation.stop", {})
 
 
+class DisplayDomain(_Domain):
+    _MODES = {"page", "overlay"}
+    _SIZES = {16, 24, 32}
+    _ALIGNMENTS = {"left", "center", "right"}
+
+    def show_text(
+        self,
+        text: str,
+        *,
+        mode: str = "page",
+        size: int = 24,
+        color: str = "#FFFFFF",
+        background: str = "#000000",
+        align: str = "center",
+        wrap: bool = True,
+    ) -> None:
+        if not isinstance(text, str) or not text:
+            raise ValueError("text must not be empty")
+        if len(text.encode("utf-8")) > 512:
+            raise ValueError("text must contain at most 512 UTF-8 bytes")
+        if len(text) > 128:
+            raise ValueError("text must contain at most 128 Unicode characters")
+        if any(
+            (ord(character) < 0x20 and character != "\n")
+            or 0x7F <= ord(character) <= 0x9F
+            for character in text
+        ):
+            raise ValueError("text may contain only newline control characters")
+        if not isinstance(mode, str) or mode not in self._MODES:
+            raise ValueError("mode must be 'page' or 'overlay'")
+        if isinstance(size, bool) or not isinstance(size, int) or size not in self._SIZES:
+            raise ValueError("size must be 16, 24, or 32")
+        self._validate_color("color", color)
+        self._validate_color("background", background)
+        if not isinstance(align, str) or align not in self._ALIGNMENTS:
+            raise ValueError("align must be 'left', 'center', or 'right'")
+        if not isinstance(wrap, bool):
+            raise ValueError("wrap must be a boolean")
+
+        self._require_capability("display.text")
+        if mode == "overlay":
+            self._require_capability("display.text.overlay")
+        if any(ord(character) > 0x7F for character in text):
+            self._require_capability("display.text.zh_cn")
+
+        self._robot._command(
+            "ctrl.display.text.set",
+            {
+                "text": text,
+                "mode": mode,
+                "size": size,
+                "color": color.upper(),
+                "background": background.upper(),
+                "align": align,
+                "wrap": wrap,
+            },
+        )
+
+    def clear(self) -> None:
+        self._require_capability("display.text")
+        self._robot._command("ctrl.display.clear", {})
+
+    def _require_capability(self, capability: str) -> None:
+        if not self._robot.supports(capability):
+            raise WatcheRobotError(f"device does not support required capability: {capability}")
+
+    @staticmethod
+    def _validate_color(name: str, color: str) -> None:
+        if not isinstance(color, str) or re.fullmatch(r"#[0-9A-Fa-f]{6}", color) is None:
+            raise ValueError(f"{name} must use #RRGGBB")
+
+
 class MotionDomain(_Domain):
     def move_to(
         self,
@@ -281,6 +353,7 @@ class WatcheRobot:
         self._closing = False
         self.behavior = BehaviorDomain(self)
         self.animation = AnimationDomain(self)
+        self.display = DisplayDomain(self)
         self.motion = MotionDomain(self)
         self.audio = AudioDomain(self)
         self.lights = LightsDomain(self)

@@ -2,8 +2,8 @@
 
 English | [简体中文](README.zh-CN.md)
 
-`watcherobot` lets a desktop Python program control WatcheRobot Behaviors, motion, animation, audio, lights,
-microphone, and camera over the local network, and receive rear-touch, screen-tap, and roller-rotation events. It
+`watcherobot` lets a desktop Python program control WatcheRobot Behaviors, motion, animation, screen text, audio,
+lights, microphone, and camera over the local network, and receive rear-touch, screen-tap, and roller-rotation events. It
 exposes a small synchronous API while running discovery and the WebSocket gateway internally.
 
 > v0.1 targets trusted local networks. It uses plain `ws://`, a temporary six-digit pairing code, and one robot per
@@ -115,6 +115,9 @@ Use `robot.supports(...)` before optional calls. Capability names are extensible
 |---|---|
 | `behavior` | `robot.behavior.*` |
 | `animation` | `robot.animation.*` |
+| `display.text` | `robot.display.show_text(...)`, `robot.display.clear()` |
+| `display.text.overlay` | `robot.display.show_text(..., mode="overlay")` |
+| `display.text.zh_cn` | Simplified Chinese text through `robot.display.show_text(...)` |
 | `motion` | `robot.motion.*` |
 | `audio` | `robot.audio.play(...)` |
 | `audio.stream` | `robot.audio.play_file(...)`, `robot.audio.play_pcm(...)` |
@@ -129,6 +132,25 @@ Use `robot.supports(...)` before optional calls. Capability names are extensible
 if robot.supports("camera.capture"):
     image = robot.camera.capture(timeout=10)
 ```
+
+Screen text is persistent device state rather than a Job. The call returns after the device commits the UI update:
+
+```python
+robot.display.show_text(
+    "你好，WatcheRobot！",
+    mode="page",
+    size=24,
+    color="#FFFFFF",
+    background="#000000",
+    align="center",
+    wrap=True,
+)
+robot.display.clear()
+```
+
+`page` replaces the current visual content. `overlay` requires an active Behavior or animation and places text in a
+top panel until it is replaced, cleared, or the visual Job ends. Text is valid UTF-8 with at most 512 bytes and 128
+Unicode characters; only ordinary characters and newlines are accepted. See [screen text](docs/display-text.md).
 
 For example, a desktop game can wait for the next physical interaction and react according to its typed event:
 
@@ -167,6 +189,7 @@ directory. See [examples/README.md](examples/README.md).
 | Connect and close | `WatcheRobot.connect(...)`<br>`robot.close()`<br>`robot.device_info` / `robot.capabilities`<br>`robot.supports(capability)` | `WatcheRobot` / immediate / read-only properties | Starts LAN Discovery and the WebSocket gateway; one robot per SDK instance |
 | Behavior | `robot.behavior.play(id, repeat=1)`<br>`robot.behavior.stop()` | `Job` / immediate | Plays a multi-track Behavior already installed on the robot |
 | Animation | `robot.animation.play(id)`<br>`robot.animation.stop()` | `Job` / immediate | Animation resources must already be installed on the robot |
+| Screen text | `robot.display.show_text(...)`<br>`robot.display.clear()` | immediate after UI commit | Page or animation overlay; 16/24/32 px, RGB colors, alignment, wrapping, and Simplified Chinese capability negotiation |
 | Point-to-point motion | `robot.motion.move_to(pan_deg=..., tilt_deg=..., duration_ms=...)` | `Job` | `duration_ms` is an integer from `1..65535` milliseconds |
 | Real-time motion | `robot.motion.set_target(pan_deg=..., tilt_deg=...)` | immediate | Latest-wins command; does not wait for motion completion |
 | Named motion | `robot.motion.play_action(id)`<br>`robot.motion.stop()` | `Job` / immediate | Named actions must already be installed on the robot |
