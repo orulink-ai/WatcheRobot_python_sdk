@@ -14,9 +14,8 @@ matching code and a request ID in `ANNOUNCE`, and verifies the same code again w
 arrives. This prevents a different SDK process on the same trusted LAN from winning discovery by replying first; it
 does not encrypt or make the code safe to expose on an untrusted network.
 
-By default, the SDK selects a private LAN IPv4 for UDP discovery and excludes common VPN/virtual-network ranges such as
-`198.18.0.0/15` and `100.64.0.0/10`. Pass `host="192.168.x.x"` to `WatcheRobot.connect(...)` to override this automatic
-selection on a special network.
+UDP Discovery always listens on `0.0.0.0:37021`, so the ESP32 limited broadcast reaches the SDK on every IPv4 interface.
+The `host` argument controls only the WebSocket listener; use a concrete address only when that listener must be restricted.
 
 ## Before you start
 

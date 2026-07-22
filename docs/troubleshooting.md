@@ -32,7 +32,7 @@ except JobFailedError as error:
 
 | Symptom / 现象 | Likely cause / 常见原因 | Action / 处理方式 |
 |---|---|---|
-| `ConnectionTimeoutError` | Robot is not in SDK Control App, devices are on different LANs, UDP `37021` / WebSocket `8766` is blocked, or a VPN selected the wrong interface | Open SDK Control App, confirm the same LAN, allow Python through the host firewall, then retry with `host="192.168.x.x"` / 打开 SDK Control App、确认同一局域网并检查防火墙；VPN 或虚拟网卡存在时传入真实局域网 IP |
+| `ConnectionTimeoutError` | Robot is not in SDK Control App, devices are on different LANs, or UDP `37021` / WebSocket `8766` is blocked | Open SDK Control App, confirm the same LAN, and allow Python through the host firewall / 打开 SDK Control App、确认同一局域网并检查防火墙 |
 | `AuthenticationError` | Pairing code is stale or incorrect | Use the current six-digit code on the robot screen; a disconnect creates a new code / 使用机器人当前显示的六位码，断线后旧码会失效 |
 | `protocol_version_mismatch` | SDK and firmware use different protocol versions | Use the compatibility table in README and update the older side / 按 README 兼容表升级较旧的一端 |
 | `CommandError: ... not_found` | Behavior, animation, sound, or action ID is not installed | Use [confirmed resource IDs](resources.md); IDs are case-sensitive / 使用已确认资源 ID，并注意大小写 |
