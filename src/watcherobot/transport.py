@@ -34,6 +34,8 @@ MessageCallback = Callable[[dict[str, Any]], None]
 BinaryCallback = Callable[[BinaryFrame], None]
 DisconnectCallback = Callable[[], None]
 DISCOVERY_BIND_HOST = "0.0.0.0"
+AUDIO_DEVICE_SLOT_BYTES = 4096
+AUDIO_MAX_CREDIT_PACKETS = 8
 
 
 def _parse_capabilities(value: object) -> tuple[str, ...]:
@@ -118,6 +120,7 @@ class BackgroundTransport:
         self._audio_credit_condition: asyncio.Condition | None = None
         self._audio_flow_stream_id = 0
         self._audio_credits = 0
+        self._audio_slots_per_packet = 1
         self._audio_flow_error: str | None = None
 
     def _discovery_local_addr(self) -> tuple[str, int]:
@@ -379,6 +382,10 @@ class BackgroundTransport:
             self._audio_credit_condition = asyncio.Condition()
         async with self._audio_credit_condition:
             self._audio_flow_stream_id = stream_id
+            self._audio_slots_per_packet = max(
+                1,
+                (chunk_bytes + AUDIO_DEVICE_SLOT_BYTES - 1) // AUDIO_DEVICE_SLOT_BYTES,
+            )
             self._audio_credits = 4
             self._audio_flow_error = None
         sequence = 0
@@ -396,6 +403,7 @@ class BackgroundTransport:
                 if self._audio_flow_stream_id == stream_id:
                     self._audio_flow_stream_id = 0
                     self._audio_credits = 0
+                    self._audio_slots_per_packet = 1
 
     async def _take_audio_credit(self, stream_id: int) -> None:
         condition = self._audio_credit_condition
@@ -443,12 +451,15 @@ class BackgroundTransport:
                 ):
                     target_pending = max(4, queue_depth // 2)
                     available_slots = max(0, target_pending - pending_frames)
-                    # One 4096-byte WSPK packet is delivered to the ESP-IDF
-                    # callback in roughly three 2 KiB fragments. Convert the
-                    # device's internal-slot credit back to host packets.
-                    self._audio_credits = min(8, (available_slots + 2) // 3)
+                    # Firmware queues audio in 4096-byte playback slots. The
+                    # normal 4096-byte host packet consumes one slot; larger
+                    # packets consume multiple slots. Keep a bounded burst
+                    # while restoring the queue toward its target watermark.
+                    available_packets = available_slots // self._audio_slots_per_packet
+                    self._audio_credits = min(AUDIO_MAX_CREDIT_PACKETS, available_packets)
                 elif isinstance(free_frames, int) and free_frames > 0:
-                    self._audio_credits = min(free_frames, 8)
+                    free_packets = free_frames // self._audio_slots_per_packet
+                    self._audio_credits = min(free_packets, AUDIO_MAX_CREDIT_PACKETS)
             condition.notify_all()
 
     async def _dispatch_message(self, message: dict[str, Any]) -> None:
