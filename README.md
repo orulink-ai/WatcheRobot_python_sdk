@@ -9,6 +9,14 @@ exposes a small synchronous API while running discovery and the WebSocket gatewa
 > v0.1 targets trusted local networks. It uses plain `ws://`, a temporary six-digit pairing code, and one robot per
 > SDK instance.
 
+The six-digit code also gates Discovery protocol `1.1`: the SDK ignores a UDP probe with a different code, echoes the
+matching code and a request ID in `ANNOUNCE`, and verifies the same code again when the WebSocket `sys.client.hello`
+arrives. This prevents a different SDK process on the same trusted LAN from winning discovery by replying first; it
+does not encrypt or make the code safe to expose on an untrusted network.
+
+UDP Discovery always listens on `0.0.0.0:37021`, so the ESP32 limited broadcast reaches the SDK on every IPv4 interface.
+The `host` argument controls only the WebSocket listener; use a concrete address only when that listener must be restricted.
+
 ## Before you start
 
 | Requirement | What to check |

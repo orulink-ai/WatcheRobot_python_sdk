@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import re
 import threading
@@ -15,6 +16,7 @@ from ._internal.audio_status import AudioStatusKind, classify_audio_status
 from .errors import AuthenticationError, CommandError, ConnectionTimeoutError, WatcheRobotError
 from .protocol import (
     DISCOVERY_PORT,
+    DISCOVERY_PROTOCOL_VERSION,
     PROTOCOL_VERSION,
     WEBSOCKET_PORT,
     BinaryFrame,
@@ -31,6 +33,7 @@ from .protocol import (
 MessageCallback = Callable[[dict[str, Any]], None]
 BinaryCallback = Callable[[BinaryFrame], None]
 DisconnectCallback = Callable[[], None]
+DISCOVERY_BIND_HOST = "0.0.0.0"
 
 
 def _parse_capabilities(value: object) -> tuple[str, ...]:
@@ -42,8 +45,9 @@ def _parse_capabilities(value: object) -> tuple[str, ...]:
 
 
 class DiscoveryProtocol(asyncio.DatagramProtocol):
-    def __init__(self, websocket_port: int) -> None:
+    def __init__(self, websocket_port: int, pairing_code: str) -> None:
         self.websocket_port = websocket_port
+        self.pairing_code = pairing_code
         self.transport: asyncio.DatagramTransport | None = None
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
@@ -58,16 +62,27 @@ class DiscoveryProtocol(asyncio.DatagramProtocol):
             not isinstance(probe, dict)
             or probe.get("cmd") != "SDK_DISCOVER"
             or probe.get("service") != "watcher-sdk"
-            or probe.get("protocol_version") != PROTOCOL_VERSION
+            or probe.get("protocol_version") != DISCOVERY_PROTOCOL_VERSION
             or self.transport is None
+        ):
+            return
+        probe_pairing_code = probe.get("pairing_code")
+        request_id = probe.get("request_id")
+        if (
+            not isinstance(probe_pairing_code, str)
+            or not hmac.compare_digest(probe_pairing_code, self.pairing_code)
+            or not isinstance(request_id, str)
+            or not re.fullmatch(r"[0-9A-F]{16}", request_id)
         ):
             return
         announce = {
             "cmd": "ANNOUNCE",
             "service": "watcher-sdk",
-            "protocol_version": PROTOCOL_VERSION,
+            "protocol_version": DISCOVERY_PROTOCOL_VERSION,
             "port": self.websocket_port,
             "server": "watcherobot-python-sdk",
+            "pairing_code": probe_pairing_code,
+            "request_id": request_id,
         }
         self.transport.sendto(json.dumps(announce, separators=(",", ":")).encode("utf-8"), addr)
 
@@ -78,7 +93,7 @@ class BackgroundTransport:
         *,
         discovery_port: int = DISCOVERY_PORT,
         websocket_port: int = WEBSOCKET_PORT,
-        host: str = "0.0.0.0",
+        host: str = "auto",
         command_timeout: float = 5.0,
     ) -> None:
         self.discovery_port = discovery_port
@@ -104,6 +119,11 @@ class BackgroundTransport:
         self._audio_flow_stream_id = 0
         self._audio_credits = 0
         self._audio_flow_error: str | None = None
+
+    def _discovery_local_addr(self) -> tuple[str, int]:
+        """Bind discovery to every IPv4 interface so limited broadcasts arrive on Linux."""
+
+        return DISCOVERY_BIND_HOST, self.discovery_port
 
     def set_callbacks(
         self,
@@ -218,7 +238,7 @@ class BackgroundTransport:
         self._async_stop = asyncio.Event()
         websocket_server = await websockets.serve(
             self._handle_websocket,
-            self.host,
+            "0.0.0.0" if self.host == "auto" else self.host,
             self.websocket_port,
             ping_interval=20,
             ping_timeout=20,
@@ -227,8 +247,8 @@ class BackgroundTransport:
         bound_port = next(iter(websocket_server.sockets)).getsockname()[1]
         self.websocket_port = bound_port
         discovery_transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
-            lambda: DiscoveryProtocol(bound_port),
-            local_addr=(self.host, self.discovery_port),
+            lambda: DiscoveryProtocol(bound_port, self._pairing_code),
+            local_addr=self._discovery_local_addr(),
             allow_broadcast=True,
         )
         self._started_event.set()
@@ -259,6 +279,25 @@ class BackgroundTransport:
             if hello["type"] != "sys.client.hello":
                 raise ProtocolError("first message must be sys.client.hello")
             hello_data = hello.get("data", {})
+            device_pairing_code = hello_data.get("pairing_code")
+            if not isinstance(device_pairing_code, str) or not hmac.compare_digest(
+                device_pairing_code, self._pairing_code
+            ):
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "type": "sys.nack",
+                            "code": 1,
+                            "data": {
+                                "type": "sys.client.hello",
+                                "reason": "authentication_failed",
+                            },
+                        },
+                        separators=(",", ":"),
+                    )
+                )
+                await websocket.close(code=1008, reason="pairing code mismatch")
+                return
             self.device_info = {
                 "device_id": hello_data.get("device_id", "unknown"),
                 "firmware_version": hello_data.get("fw_version", "unknown"),
@@ -271,37 +310,18 @@ class BackgroundTransport:
                 )
             )
 
-            auth_id = uuid.uuid4().hex
-            await websocket.send(
-                build_command(
-                    "sys.sdk.authenticate",
-                    {
-                        "pairing_code": self._pairing_code,
-                        "protocol_version": PROTOCOL_VERSION,
-                        "client_name": "watcherobot-python-sdk",
-                    },
-                    auth_id,
-                )
-            )
-            authenticated = False
             announced_ready = False
-            while not (authenticated and announced_ready):
+            while not announced_ready:
                 try:
                     raw = await asyncio.wait_for(websocket.recv(), timeout=self.command_timeout)
                 except asyncio.TimeoutError as error:
-                    raise ConnectionTimeoutError(
-                        "Timed out waiting for the robot SDK authentication response"
-                    ) from error
+                    raise ConnectionTimeoutError("Timed out waiting for the robot SDK ready event") from error
                 if isinstance(raw, bytes):
                     self._dispatch_binary(raw)
                     continue
                 message = parse_json_message(raw)
                 data = message.get("data", {})
-                if message["type"] == "sys.nack" and data.get("command_id") == auth_id:
-                    raise AuthenticationError(data.get("reason", "authentication_failed"))
-                if message["type"] == "sys.ack" and data.get("command_id") == auth_id:
-                    authenticated = True
-                elif message["type"] == "evt.sdk.ready":
+                if message["type"] == "evt.sdk.ready":
                     if data.get("protocol_version") != PROTOCOL_VERSION:
                         raise AuthenticationError("protocol_version_mismatch")
                     self.capabilities = _parse_capabilities(data.get("capabilities"))

@@ -1,25 +1,35 @@
 import asyncio
+import inspect
+import json
 import threading
 
 import pytest
+import websockets
 
 from watcherobot import JobCancelledError, JobFailedError, WatcheRobot
-from watcherobot.errors import AuthenticationError, ConnectionTimeoutError
+from watcherobot.errors import ConnectionTimeoutError
 from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_AUDIO, ProtocolError, parse_wspk
 from watcherobot.transport import BackgroundTransport, _parse_capabilities
 from tests.fakes import FakeRobot
+
+
+def _loopback_connect(uri: str):
+    options = {}
+    if "proxy" in inspect.signature(websockets.connect).parameters:
+        options["proxy"] = None
+    return websockets.connect(uri, **options)
 
 
 def test_gateway_pairs_and_correlates_command_ack():
     asyncio.run(_gateway_round_trip())
 
 
-def test_gateway_reports_authentication_response_timeout():
-    asyncio.run(_gateway_authentication_timeout())
+def test_gateway_reports_ready_event_timeout():
+    asyncio.run(_gateway_ready_event_timeout())
 
 
-def test_gateway_reports_authentication_rejection():
-    asyncio.run(_gateway_authentication_rejection())
+def test_gateway_rejects_websocket_hello_with_wrong_pairing_code():
+    asyncio.run(_gateway_rejects_wrong_hello_pairing_code())
 
 
 def test_gateway_loopback_ignores_system_proxy(monkeypatch):
@@ -115,7 +125,7 @@ async def _audio_stream_backpressure():
     assert len(websocket.frames) == 6
 
 
-async def _gateway_authentication_timeout():
+async def _gateway_ready_event_timeout():
     transport = BackgroundTransport(discovery_port=0, websocket_port=0, command_timeout=0.05)
     start_error = []
 
@@ -129,25 +139,38 @@ async def _gateway_authentication_timeout():
     starter.start()
     assert await asyncio.to_thread(transport._started_event.wait, 1)
 
-    async with await FakeRobot.connect(transport.websocket_port) as robot:
-        authenticate = await robot.begin_pairing()
-        assert authenticate["type"] == "sys.sdk.authenticate"
+    async with _loopback_connect(f"ws://127.0.0.1:{transport.websocket_port}") as websocket:
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "sys.client.hello",
+                    "code": 0,
+                    "data": {
+                        "device_id": "watcher-test",
+                        "fw_version": "V1.0",
+                        "pairing_code": "123456",
+                    },
+                }
+            )
+        )
+        hello_ack = json.loads(await websocket.recv())
+        assert hello_ack["data"]["type"] == "sys.client.hello"
         await asyncio.to_thread(starter.join, 1)
 
     assert not starter.is_alive()
     assert len(start_error) == 1
     assert isinstance(start_error[0], ConnectionTimeoutError)
-    assert "SDK authentication response" in str(start_error[0])
+    assert "SDK ready event" in str(start_error[0])
     await asyncio.to_thread(transport.close)
 
 
-async def _gateway_authentication_rejection():
-    transport = BackgroundTransport(discovery_port=0, websocket_port=0)
+async def _gateway_rejects_wrong_hello_pairing_code():
+    transport = BackgroundTransport(discovery_port=0, websocket_port=0, command_timeout=0.05)
     start_error = []
 
     def start_transport():
         try:
-            transport.start("123456", timeout=1)
+            transport.start("123456", timeout=0.2)
         except Exception as error:  # pragma: no cover - asserted below
             start_error.append(error)
 
@@ -155,15 +178,31 @@ async def _gateway_authentication_rejection():
     starter.start()
     assert await asyncio.to_thread(transport._started_event.wait, 1)
 
-    async with await FakeRobot.connect(transport.websocket_port) as robot:
-        authenticate = await robot.begin_pairing()
-        await robot.nack(authenticate, reason="invalid_pairing_code")
-        await asyncio.to_thread(starter.join, 1)
+    async with _loopback_connect(f"ws://127.0.0.1:{transport.websocket_port}") as websocket:
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "sys.client.hello",
+                    "code": 0,
+                    "data": {
+                        "device_id": "watcher-test",
+                        "fw_version": "V1.0",
+                        "pairing_code": "654321",
+                    },
+                }
+            )
+        )
+        rejection = json.loads(await websocket.recv())
+        assert rejection == {
+            "type": "sys.nack",
+            "code": 1,
+            "data": {"type": "sys.client.hello", "reason": "authentication_failed"},
+        }
 
+    await asyncio.to_thread(starter.join, 1)
     assert not starter.is_alive()
     assert len(start_error) == 1
-    assert isinstance(start_error[0], AuthenticationError)
-    assert "invalid_pairing_code" in str(start_error[0])
+    assert isinstance(start_error[0], ConnectionTimeoutError)
     await asyncio.to_thread(transport.close)
 
 
@@ -184,9 +223,37 @@ async def _gateway_round_trip():
     starter.start()
     assert await asyncio.to_thread(transport._started_event.wait, 2)
 
-    async with await FakeRobot.connect(transport.websocket_port) as robot:
-        authenticate = await robot.begin_pairing()
-        await robot.accept_pairing(authenticate)
+    async with _loopback_connect(f"ws://127.0.0.1:{transport.websocket_port}") as websocket:
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "sys.client.hello",
+                    "code": 0,
+                    "data": {
+                        "device_id": "watcher-test",
+                        "fw_version": "V1.0",
+                        "mac": "00:11:22:33:44:55",
+                        "pairing_code": "123456",
+                    },
+                }
+            )
+        )
+        hello_ack = json.loads(await websocket.recv())
+        assert hello_ack["data"]["type"] == "sys.client.hello"
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "evt.sdk.ready",
+                    "code": 0,
+                    "data": {
+                        "protocol_version": "1.0",
+                        "device_id": "watcher-test",
+                        "firmware_version": "V1.0",
+                        "capabilities": ["behavior", "motion"],
+                    },
+                }
+            )
+        )
 
         await asyncio.to_thread(starter.join, 2)
         assert not starter.is_alive()
@@ -196,23 +263,34 @@ async def _gateway_round_trip():
         command_future = asyncio.create_task(
             asyncio.to_thread(transport.send_command, "ctrl.behavior.play", {"behavior_id": "greeting"})
         )
-        command = await robot.receive()
-        await robot.ack(command, operation_id=7)
+        command = json.loads(await websocket.recv())
+        await websocket.send(
+            json.dumps(
+                {
+                    "type": "sys.ack",
+                    "code": 0,
+                    "data": {
+                        "type": command["type"],
+                        "command_id": command["data"]["command_id"],
+                        "operation_id": 7,
+                    },
+                }
+            )
+        )
         response = await command_future
         assert response["data"]["operation_id"] == 7
 
-        await robot.operation(7, "running")
+        operation_event = {
+            "type": "evt.sdk.operation",
+            "code": 0,
+            "data": {"operation_id": 7, "domain": "behavior", "state": "running"},
+        }
+        await websocket.send(json.dumps(operation_event))
         for _ in range(20):
             if received_events:
                 break
             await asyncio.sleep(0.01)
-        assert received_events == [
-            {
-                "type": "evt.sdk.operation",
-                "code": 0,
-                "data": {"operation_id": 7, "domain": "behavior", "state": "running"},
-            }
-        ]
+        assert received_events == [operation_event]
 
     assert await asyncio.to_thread(disconnected.wait, 1)
     await asyncio.to_thread(transport.close)

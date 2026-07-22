@@ -297,7 +297,7 @@ class WatcheRobot:
         discovery_port: int = DISCOVERY_PORT,
         websocket_port: int = WEBSOCKET_PORT,
         timeout: float = 15.0,
-        host: str = "0.0.0.0",
+        host: str = "auto",
     ) -> WatcheRobot:
         transport = BackgroundTransport(
             discovery_port=discovery_port,

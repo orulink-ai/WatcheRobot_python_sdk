@@ -43,6 +43,7 @@ class FakeRobot:
         device_id: str = "watcher-test",
         firmware_version: str = "V1.0",
         mac: str = "00:11:22:33:44:55",
+        pairing_code: str = "123456",
     ) -> dict[str, Any]:
         await self.send(
             "sys.client.hello",
@@ -50,24 +51,21 @@ class FakeRobot:
                 "device_id": device_id,
                 "fw_version": firmware_version,
                 "mac": mac,
+                "pairing_code": pairing_code,
             },
         )
         hello_ack = await self.receive()
         assert hello_ack["type"] == "sys.ack"
         assert hello_ack["data"]["type"] == "sys.client.hello"
-        authenticate = await self.receive()
-        assert authenticate["type"] == "sys.sdk.authenticate"
-        return authenticate
+        return hello_ack
 
     async def accept_pairing(
         self,
-        authenticate: dict[str, Any],
+        hello_ack: dict[str, Any],
         *,
-        expected_pairing_code: str = "123456",
         capabilities: tuple[str, ...] = ("behavior", "motion"),
     ) -> None:
-        assert authenticate["data"]["pairing_code"] == expected_pairing_code
-        await self.ack(authenticate)
+        assert hello_ack["data"]["type"] == "sys.client.hello"
         await self.send(
             "evt.sdk.ready",
             {
