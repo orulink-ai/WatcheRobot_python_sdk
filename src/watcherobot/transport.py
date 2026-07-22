@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-import ipaddress
 import json
 import re
-import socket
 import threading
 import uuid
 from concurrent.futures import Future
@@ -35,6 +33,7 @@ from .protocol import (
 MessageCallback = Callable[[dict[str, Any]], None]
 BinaryCallback = Callable[[BinaryFrame], None]
 DisconnectCallback = Callable[[], None]
+DISCOVERY_BIND_HOST = "0.0.0.0"
 
 
 def _parse_capabilities(value: object) -> tuple[str, ...]:
@@ -43,60 +42,6 @@ def _parse_capabilities(value: object) -> tuple[str, ...]:
     ):
         raise ProtocolError("evt.sdk.ready capabilities must be a list of non-empty strings")
     return tuple(value)
-
-
-def _is_usable_lan_ipv4(value: str) -> bool:
-    try:
-        address = ipaddress.ip_address(value)
-    except ValueError:
-        return False
-    if not isinstance(address, ipaddress.IPv4Address):
-        return False
-    if address.is_loopback or address.is_unspecified or address.is_link_local or address.is_multicast:
-        return False
-    if address in ipaddress.ip_network("198.18.0.0/15"):
-        return False
-    if address in ipaddress.ip_network("100.64.0.0/10"):
-        return False
-    if address in ipaddress.ip_network("172.17.0.0/16"):
-        return False
-    return address.is_private
-
-
-def _lan_ipv4_priority(value: str) -> int:
-    if value.startswith("192.168."):
-        return 3
-    if value.startswith("172."):
-        return 2
-    if value.startswith("10."):
-        return 1
-    return 0
-
-
-def select_lan_bind_host(host: str) -> str:
-    """Choose a private LAN IPv4 for automatic gateway binding.
-
-    Binding UDP broadcast to INADDR_ANY can follow a VPN or virtual adapter's
-    default route.  ``auto`` deliberately excludes those common address ranges
-    and falls back to INADDR_ANY only when no private LAN address is available.
-    """
-
-    if host != "auto":
-        return host
-    try:
-        entries = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM)
-    except OSError:
-        return "0.0.0.0"
-    candidates: list[str] = []
-    for entry in entries:
-        value = entry[4][0]
-        if not isinstance(value, str):
-            continue
-        if _is_usable_lan_ipv4(value) and value not in candidates:
-            candidates.append(value)
-    if not candidates:
-        return "0.0.0.0"
-    return max(candidates, key=_lan_ipv4_priority)
 
 
 class DiscoveryProtocol(asyncio.DatagramProtocol):
@@ -154,7 +99,6 @@ class BackgroundTransport:
         self.discovery_port = discovery_port
         self.websocket_port = websocket_port
         self.host = host
-        self.discovery_host = select_lan_bind_host(host)
         self.command_timeout = command_timeout
         self.capabilities: tuple[str, ...] = ()
         self.device_info: dict[str, Any] = {}
@@ -175,6 +119,11 @@ class BackgroundTransport:
         self._audio_flow_stream_id = 0
         self._audio_credits = 0
         self._audio_flow_error: str | None = None
+
+    def _discovery_local_addr(self) -> tuple[str, int]:
+        """Bind discovery to every IPv4 interface so limited broadcasts arrive on Linux."""
+
+        return DISCOVERY_BIND_HOST, self.discovery_port
 
     def set_callbacks(
         self,
@@ -299,7 +248,7 @@ class BackgroundTransport:
         self.websocket_port = bound_port
         discovery_transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
             lambda: DiscoveryProtocol(bound_port, self._pairing_code),
-            local_addr=(self.discovery_host, self.discovery_port),
+            local_addr=self._discovery_local_addr(),
             allow_broadcast=True,
         )
         self._started_event.set()
