@@ -25,6 +25,9 @@ class FakeTransport:
         self.capabilities = (
             "behavior",
             "animation",
+            "display.text",
+            "display.text.overlay",
+            "display.text.zh_cn",
             "motion",
             "audio",
             "audio.stream",
@@ -120,6 +123,129 @@ def test_robot_supports_negotiated_capabilities():
     assert not robot.supports("video.stream")
     with pytest.raises(ValueError, match="capability must be a non-empty string"):
         robot.supports("")
+
+
+def test_display_show_text_builds_page_command_with_normalized_style():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    robot.display.show_text(
+        "你好，WatcheRobot！",
+        mode="page",
+        size=24,
+        color="#aabbcc",
+        background="#010203",
+        align="left",
+        wrap=False,
+    )
+
+    assert transport.commands == [
+        (
+            "ctrl.display.text.set",
+            {
+                "text": "你好，WatcheRobot！",
+                "mode": "page",
+                "size": 24,
+                "color": "#AABBCC",
+                "background": "#010203",
+                "align": "left",
+                "wrap": False,
+            },
+        )
+    ]
+
+
+def test_display_show_text_uses_documented_defaults_and_clear_is_immediate():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    robot.display.show_text("Ready")
+    robot.display.clear()
+
+    assert transport.commands == [
+        (
+            "ctrl.display.text.set",
+            {
+                "text": "Ready",
+                "mode": "page",
+                "size": 24,
+                "color": "#FFFFFF",
+                "background": "#000000",
+                "align": "center",
+                "wrap": True,
+            },
+        ),
+        ("ctrl.display.clear", {}),
+    ]
+
+
+def test_display_requires_negotiated_capability_before_sending():
+    transport = FakeTransport()
+    transport.capabilities = tuple(
+        capability for capability in transport.capabilities if not capability.startswith("display.text")
+    )
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(WatcheRobotError, match="display.text"):
+        robot.display.show_text("Ready")
+
+    assert transport.commands == []
+
+
+def test_display_overlay_and_chinese_require_their_specific_capabilities():
+    transport = FakeTransport()
+    transport.capabilities = ("display.text",)
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(WatcheRobotError, match="display.text.overlay"):
+        robot.display.show_text("Ready", mode="overlay")
+    with pytest.raises(WatcheRobotError, match="display.text.zh_cn"):
+        robot.display.show_text("你好")
+
+    assert transport.commands == []
+
+
+@pytest.mark.parametrize(
+    ("text", "kwargs", "message"),
+    [
+        ("", {}, "text must not be empty"),
+        ("a" * 513, {}, "at most 512 UTF-8 bytes"),
+        ("a" * 129, {}, "at most 128 Unicode characters"),
+        ("bad\ttext", {}, "only newline control characters"),
+        ("bad\u0085text", {}, "only newline control characters"),
+        ("Ready", {"mode": "canvas"}, "mode must be"),
+        ("Ready", {"mode": []}, "mode must be"),
+        ("Ready", {"size": 20}, "size must be"),
+        ("Ready", {"color": "white"}, "color must use #RRGGBB"),
+        ("Ready", {"background": "#12"}, "background must use #RRGGBB"),
+        ("Ready", {"align": "justify"}, "align must be"),
+        ("Ready", {"align": []}, "align must be"),
+        ("Ready", {"wrap": 1}, "wrap must be a boolean"),
+    ],
+)
+def test_display_rejects_invalid_text_and_style(text, kwargs, message):
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(ValueError, match=message):
+        robot.display.show_text(text, **kwargs)
+
+    assert transport.commands == []
+
+
+def test_display_propagates_structured_device_nack():
+    class RejectingDisplayTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.display.text.set":
+                raise CommandError(message_type, "text_too_long")
+            return super().send_command(message_type, data, timeout)
+
+    robot = WatcheRobot._from_transport(RejectingDisplayTransport())
+
+    with pytest.raises(CommandError) as error:
+        robot.display.show_text("Ready")
+
+    assert error.value.reason == "text_too_long"
 
 
 @pytest.mark.parametrize("duration_ms", [0, -1, 1.5, True, 65536])

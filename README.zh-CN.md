@@ -111,6 +111,9 @@ with WatcheRobot.connect(pairing_code=pairing_code) as robot:
 |---|---|
 | `behavior` | `robot.behavior.*` |
 | `animation` | `robot.animation.*` |
+| `display.text` | `robot.display.show_text(...)`、`robot.display.clear()` |
+| `display.text.overlay` | `robot.display.show_text(..., mode="overlay")` |
+| `display.text.zh_cn` | `robot.display.show_text(...)` 的简体中文支持 |
 | `motion` | `robot.motion.*` |
 | `audio` | `robot.audio.play(...)` |
 | `audio.stream` | `robot.audio.play_file(...)`、`robot.audio.play_pcm(...)` |
@@ -125,6 +128,24 @@ with WatcheRobot.connect(pairing_code=pairing_code) as robot:
 if robot.supports("camera.capture"):
     image = robot.camera.capture(timeout=10)
 ```
+
+屏幕文字属于持久显示状态，不创建 `Job`。设备完成界面提交并返回 ACK 后，调用才会返回：
+
+```python
+robot.display.show_text(
+    "你好，WatcheRobot！",
+    mode="page",
+    size=24,
+    color="#FFFFFF",
+    background="#000000",
+    align="center",
+    wrap=True,
+)
+robot.display.clear()
+```
+
+`page` 会替换当前视觉内容；`overlay` 仅在 Behavior 或动画运行时可用，并在顶部显示文字面板。文本最多
+512 个 UTF-8 字节和 128 个 Unicode 字符，控制字符只允许换行。完整说明见[屏幕文字](docs/display-text.md)。
 
 例如，一个桌面小游戏可以等待用户下一次操作，再按事件类型作出反应：
 
@@ -162,6 +183,7 @@ elif isinstance(event, RollerEvent):
 | 连接与关闭 | `WatcheRobot.connect(...)`<br>`robot.close()`<br>`robot.device_info` / `robot.capabilities`<br>`robot.supports(capability)` | `WatcheRobot` / 立即执行 / 只读属性 | 启动局域网 Discovery 与 WebSocket 网关；同一实例控制一台机器人 |
 | Behavior | `robot.behavior.play(id, repeat=1)`<br>`robot.behavior.stop()` | `Job` / 立即执行 | 播放机器人中已安装的多轨 Behavior |
 | 动画 | `robot.animation.play(id)`<br>`robot.animation.stop()` | `Job` / 立即执行 | 动画资源必须已安装在机器人中 |
+| 屏幕文字 | `robot.display.show_text(...)`<br>`robot.display.clear()` | 界面提交后立即返回 | 独立文字页或动画叠字；支持 16/24/32、RGB 颜色、对齐、换行及简体中文能力协商 |
 | 定点动作 | `robot.motion.move_to(pan_deg=..., tilt_deg=..., duration_ms=...)` | `Job` | `duration_ms` 使用 `1..65535` 的整数毫秒 |
 | 实时动作 | `robot.motion.set_target(pan_deg=..., tilt_deg=...)` | 立即执行 | latest-wins，不等待动作完成 |
 | 命名动作 | `robot.motion.play_action(id)`<br>`robot.motion.stop()` | `Job` / 立即执行 | 命名动作必须已安装在机器人中 |
@@ -183,6 +205,7 @@ elif isinstance(event, RollerEvent):
 ## v1 边界
 
 - Behavior、动画和 `audio.play(sound_id)` 要求资源已安装在机器人上。
+- 屏幕文字首期只支持独立文字页与动画叠字，不提供图片、按钮、任意坐标画布或 App.Center 自定义运行时。
 - 支持临时传输电脑 WAV，但不支持持久安装任意资源。
 - 暂不支持连续视频、Python 内联 Behavior、公开异步 API、TLS 和远程唤起。
 - 滚轮短按继续用于本机退出，长按继续用于系统关机；v1 只向 Python 提供滚轮旋转事件。
