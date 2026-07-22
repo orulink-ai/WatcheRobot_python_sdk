@@ -50,6 +50,10 @@ def test_audio_stream_waits_for_device_buffer_credit():
     asyncio.run(_audio_stream_backpressure())
 
 
+def test_audio_flow_matches_host_packets_to_device_slots():
+    asyncio.run(_audio_flow_packet_slot_accounting())
+
+
 def test_command_timeout_preserves_explicit_zero():
     transport = BackgroundTransport(command_timeout=5.0)
 
@@ -123,6 +127,59 @@ async def _audio_stream_backpressure():
     )
     await sender
     assert len(websocket.frames) == 6
+
+
+async def _audio_flow_packet_slot_accounting():
+    transport = BackgroundTransport(command_timeout=1.0)
+    transport._audio_credit_condition = asyncio.Condition()
+    transport._audio_flow_stream_id = 7
+    transport._audio_credits = 0
+
+    await transport._update_audio_flow(
+        {
+            "stream_id": 7,
+            "reason": "buffering",
+            "pending_frames": 29,
+            "free_frames": 35,
+            "queue_depth": 64,
+        }
+    )
+
+    assert transport._audio_credits == 3
+
+    await transport._update_audio_flow(
+        {
+            "stream_id": 7,
+            "reason": "playback",
+            "pending_frames": 0,
+            "free_frames": 64,
+            "queue_depth": 64,
+        }
+    )
+    assert transport._audio_credits == 8
+
+    await transport._update_audio_flow(
+        {
+            "stream_id": 7,
+            "reason": "playback",
+            "pending_frames": 32,
+            "free_frames": 32,
+            "queue_depth": 64,
+        }
+    )
+    assert transport._audio_credits == 0
+
+    transport._audio_slots_per_packet = 2
+    await transport._update_audio_flow(
+        {
+            "stream_id": 7,
+            "reason": "playback",
+            "pending_frames": 28,
+            "free_frames": 36,
+            "queue_depth": 64,
+        }
+    )
+    assert transport._audio_credits == 2
 
 
 async def _gateway_ready_event_timeout():
