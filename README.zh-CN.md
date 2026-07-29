@@ -2,8 +2,8 @@
 
 SDK 是 WatcheRobot Runtime/Daemon 与 Application API 的唯一实现来源。使用
 该 SDK 开发的程序都是受管 Application，可以脱离桌面端通过 CLI 和 Runtime
-控制 API 运行。同一套合同也用于后续由桌面端安装和启动 Application；但当前
-桌面端接入仍待完成，不能将其描述为已经交付的能力。
+控制 API 运行。桌面端也使用同一份 Runtime/Daemon 实现启动内置默认
+Application 和通过 SDK 开发的 Application。
 
 ## 安装与运行
 
@@ -16,6 +16,8 @@ python -m pip install -e ".[test]"
 `watcherobot app run` 会启动或复用当前用户会话中的唯一 Runtime。Runtime
 持有配对、设备与桌面连接、Application 进程、日志和路由。Application
 退出后 Runtime 默认继续运行。
+当前会话的 Daemon 日志可通过 `GET /daemon/logs` 读取；无论 Runtime
+由桌面端启动还是独立启动，该日志来源都有效。
 
 首次无桌面端运行时，先启动 Runtime，将 `123456` 替换为设备显示的六位码，
 通过本地控制 API 完成配对，再运行 Application：

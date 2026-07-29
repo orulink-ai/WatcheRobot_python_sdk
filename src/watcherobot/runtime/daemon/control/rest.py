@@ -80,6 +80,9 @@ class ApplicationController(Protocol):
     def request_shutdown(self) -> None:
         """Ask the owning Runtime process to stop cleanly."""
 
+    def daemon_logs(self, after_id: int = 0) -> list[dict[str, Any]]:
+        """Return current-session Daemon logs newer than ``after_id``."""
+
     def list_catalog_applications(self) -> list[dict[str, Any]]:
         """List installed Application versions."""
 
@@ -125,6 +128,10 @@ class DaemonControlAPI:
         @app.get("/daemon/status")
         async def get_status() -> dict[str, Any]:
             return self._status_response()
+
+        @app.get("/daemon/logs")
+        async def get_logs(after_id: int = 0) -> dict[str, Any]:
+            return {"logs": self._controller.daemon_logs(after_id)}
 
         @app.post("/daemon/application/start")
         async def start_application() -> Any:

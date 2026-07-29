@@ -35,7 +35,17 @@ Runtime                           Device
 
 ### `pair.request`
 
-- Runtime 在每个活跃局域网广播地址的 UDP `37021` 发送。
+- Runtime 为每个启用且具备广播语义的本机 IPv4 创建独立 UDP 通道；通道绑定
+  该本机 IPv4，并只向由该地址和子网掩码计算出的定向广播地址发送 UDP
+  `37021`。
+- Runtime 不使用绑定 `0.0.0.0` 的共享发送 socket，也不发送
+  `255.255.255.255` 有限广播；不同网卡即使计算出相同广播地址也不会跨网卡
+  去重。
+- 开始配对时立即刷新通道，并在默认 `1000 ms` 广播循环的每一轮重新比较网卡
+  快照。网卡启停、插拔或 DHCP 地址变化会新增、关闭或替换通道，不要求重启
+  Runtime。
+- 单个网卡绑定或发送失败只关闭该网卡通道，其他网卡继续查找；如果启动时存在
+  可用接口但所有接口都无法绑定，则 Runtime 启动失败，避免端口冲突被静默忽略。
 - `request_id` 和 `daemon_instance_id` 均为 32 位小写十六进制。
 - `pairing_code` 为六位数字。
 - `websocket_port` 是设备应连接的 Runtime 外部 WebSocket 端口。
@@ -45,6 +55,8 @@ Runtime                           Device
 - 必须匹配当前 `request_id`、`daemon_instance_id` 和 `target_mode`。
 - `session_token` 为 64 位小写十六进制。
 - Runtime 锁定首个有效响应的对端 IP，后续 hello 必须来自同一 IP。
+- Runtime 同时记录收到响应的本机 IPv4 和网卡名称；需要取消尚未完成的配对时，
+  `pair.cancel` 沿该通道单播返回，不由系统重新选择其他出口。
 
 ### 设备 hello
 
@@ -102,7 +114,23 @@ Application 不是第三个外部角色。Runtime 启动 Application 子进程�
 
 Application 到 Device 的路由不要求外部 Desktop 在线。
 
-## 5. WSPK 二进制合同
+Daemon 不按业务消息 `type` 设置保留路由或直达设备的例外。包括
+`ctrl.microphone.open` 和 `ctrl.microphone.close` 在内的 Desktop 业务帧，
+Application 运行时都透明交给当前 Application；由 Application 决定业务处理，
+并通过 Device channel 向设备发送硬件指令。只有 Application 未运行时，
+Desktop 业务帧才由 Daemon 直接转发给 Device。
+
+## 5. Daemon 日志合同
+
+- `GET /daemon/logs?after_id=<id>` 返回当前 Runtime 会话中 ID 大于
+  `after_id` 的 Daemon 日志。
+- 响应格式为 `{"logs":[{"id":...,"message":"...","timestamp_ms":...}]}`。
+- Daemon 自己维护最多 500 条近期记录，并追加保存到运行状态目录下的
+  `logs/daemon.jsonl`。
+- 该接口不依赖桌面端持有 Daemon 子进程 stdout，因此桌面接管一个已独立运行的
+  Daemon 后仍可读取实时日志。
+
+## 6. WSPK 二进制合同
 
 当前主格式为 16 字节小端头：
 
@@ -123,14 +151,14 @@ magic(4) + type(1) + flags(1) + stream_id(2) + sequence(4) + payload_len(4)
 - `tests/fixtures/contracts/watcher_lan_pairing_v1.json`
 - `tests/fixtures/contracts/wspk_v1.json`
 
-## 6. 断线与生命周期
+## 7. 断线与生命周期
 
 - Device 断线：设备状态进入 `reconnecting`，不重启 Application。
 - Application 任一必需本地通道异常断开：当前 Application 进入错误并清理进程树，不自动重连或自动重启。
 - Application 正常停止：运行凭证失效，两个本地通道关闭；设备连接继续由 Runtime 持有。
 - Runtime 停止：先停止控制面和 Application，再停止配对 UDP 与外部 WebSocket。
 
-## 7. 当前实现边界说明
+## 8. 当前实现边界说明
 
 旧 Server 的 `daemon/discovery/`、`DISCOVER/ANNOUNCE`、UDP `37020` 和
 `protocol_version=0.1.6` 已随 Server 直连入口一起删除。SDK 中唯一的活跃

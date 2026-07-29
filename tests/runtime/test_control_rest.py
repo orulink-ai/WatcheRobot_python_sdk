@@ -34,6 +34,18 @@ class _ControllerStub:
         self.disconnect_requests = 0
         self.selected_application_dir: str | None = None
         self.shutdown_requested = False
+        self.logs = [
+            {
+                "id": 1,
+                "message": "runtime starting",
+                "timestamp_ms": 1_000,
+            },
+            {
+                "id": 2,
+                "message": "runtime ready",
+                "timestamp_ms": 2_000,
+            },
+        ]
 
     def application_status(self) -> dict:
         return {
@@ -108,6 +120,13 @@ class _ControllerStub:
     def request_shutdown(self) -> None:
         self.shutdown_requested = True
 
+    def daemon_logs(self, after_id: int = 0) -> list[dict]:
+        return [
+            event
+            for event in self.logs
+            if event["id"] > after_id
+        ]
+
 
 def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None:
     controller = _ControllerStub()
@@ -120,6 +139,15 @@ def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None
             "process_id": None,
             "last_exit_code": None,
         }
+    }
+    assert client.get("/daemon/logs?after_id=1").json() == {
+        "logs": [
+            {
+                "id": 2,
+                "message": "runtime ready",
+                "timestamp_ms": 2_000,
+            }
+        ]
     }
     started = client.post("/daemon/application/start")
     assert started.status_code == 200
