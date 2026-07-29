@@ -1,0 +1,138 @@
+"""Per-user Runtime process locking and state discovery."""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import BinaryIO
+
+
+class RuntimeAlreadyRunningError(RuntimeError):
+    """Raised when another process owns the current user's Runtime lock."""
+
+
+@dataclass(frozen=True)
+class RuntimeProcessState:
+    pid: int
+    control_url: str
+    external_url: str
+    started_at: float
+
+
+class RuntimeStateStore:
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root).resolve()
+        self.path = self.root / "runtime-state.json"
+
+    def read(self) -> RuntimeProcessState | None:
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            return RuntimeProcessState(
+                pid=int(payload["pid"]),
+                control_url=str(payload["control_url"]),
+                external_url=str(payload["external_url"]),
+                started_at=float(payload["started_at"]),
+            )
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def write(self, state: RuntimeProcessState) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps(asdict(state), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(self.path)
+
+    def remove(self) -> None:
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+class RuntimeInstanceLock:
+    """Hold one byte locked for the lifetime of the Runtime process."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path).resolve()
+        self._handle: BinaryIO | None = None
+
+    def acquire(self) -> None:
+        if self._handle is not None:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        handle = self.path.open("a+b")
+        if handle.seek(0, os.SEEK_END) == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            _lock_file(handle)
+        except OSError as exc:
+            handle.close()
+            raise RuntimeAlreadyRunningError(
+                "another Runtime already owns this user session"
+            ) from exc
+        self._handle = handle
+
+    def release(self) -> None:
+        handle = self._handle
+        self._handle = None
+        if handle is None:
+            return
+        try:
+            handle.seek(0)
+            _unlock_file(handle)
+        finally:
+            handle.close()
+
+    def __enter__(self) -> "RuntimeInstanceLock":
+        self.acquire()
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: object,
+        _exc_value: object,
+        _traceback: object,
+    ) -> None:
+        self.release()
+
+
+def default_runtime_state_root() -> Path:
+    configured = os.environ.get("WATCHER_RUNTIME_STATE_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return Path(local_app_data).resolve() / "WatcheRobot" / "runtime"
+    return Path.home() / ".watcherobot" / "runtime"
+
+
+if os.name == "nt":
+    import msvcrt
+
+    def _lock_file(handle: BinaryIO) -> None:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+
+    def _unlock_file(handle: BinaryIO) -> None:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _lock_file(handle: BinaryIO) -> None:
+        fcntl.flock(  # type: ignore[attr-defined]
+            handle.fileno(),
+            fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
+        )
+
+    def _unlock_file(handle: BinaryIO) -> None:
+        fcntl.flock(  # type: ignore[attr-defined]
+            handle.fileno(),
+            fcntl.LOCK_UN,  # type: ignore[attr-defined]
+        )

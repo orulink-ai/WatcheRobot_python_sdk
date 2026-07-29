@@ -17,16 +17,13 @@ from .job import Job, JobState
 from .inputs import InputDomain, parse_input_event
 from .media import AudioFormat, AudioRecording, ImageFrame, MicrophoneSession
 from .protocol import (
-    DISCOVERY_PORT,
     FLAG_FIRST,
     FLAG_FRAGMENT,
     FLAG_LAST,
     FRAME_AUDIO,
     FRAME_IMAGE,
-    WEBSOCKET_PORT,
     BinaryFrame,
 )
-from .transport import BackgroundTransport
 
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -288,29 +285,6 @@ class WatcheRobot:
         self.camera = CameraDomain(self)
         self.inputs = InputDomain()
         transport.set_callbacks(self._on_message, self._on_binary, self._on_disconnect)
-
-    @classmethod
-    def connect(
-        cls,
-        *,
-        pairing_code: str,
-        discovery_port: int = DISCOVERY_PORT,
-        websocket_port: int = WEBSOCKET_PORT,
-        timeout: float = 15.0,
-        host: str = "auto",
-    ) -> WatcheRobot:
-        transport = BackgroundTransport(
-            discovery_port=discovery_port,
-            websocket_port=websocket_port,
-            host=host,
-        )
-        robot = cls(transport)
-        try:
-            transport.start(pairing_code, timeout=timeout)
-        except Exception:
-            robot.close()
-            raise
-        return robot
 
     @classmethod
     def _from_transport(cls, transport: Any) -> WatcheRobot:
