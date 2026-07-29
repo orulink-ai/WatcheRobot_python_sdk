@@ -60,6 +60,26 @@ watcherobot app stop
 大型 Application 可以增加 `.wappignore`，使用 `tests/`、`.venv*/`、
 `*.tmp` 等 glob 规则排除非运行文件；`.wappignore` 本身不会进入安装包。
 
+## 蓝牙 Wi-Fi 配网
+
+Windows 和 macOS 上的 Python 3.10–3.12 可以直接复用 `ESP_ROBOT`
+现有 GATT 服务：
+
+```powershell
+watcherobot bluetooth scan
+watcherobot bluetooth provision --device <id> --ssid MyWiFi
+watcherobot bluetooth status --device <id>
+watcherobot bluetooth clear --device <id>
+```
+
+`provision` 会交互式读取密码，不提供 `--password` 参数。返回
+`credentials_saved` 仅表示固件已经确认保存凭据，不代表设备已经成功连接
+Wi-Fi。SDK 会在返回前断开 BLE，使当前固件恢复 Wi-Fi 连接尝试。
+
+也可以使用异步 `BluetoothProvisioner` API。API 示例、超时、平台设备标识、
+协议限制和当前 GATT 安全边界见
+[蓝牙配网说明](docs/bluetooth-provisioning.md)。
+
 ## Application API
 
 Application 使用固定的 `app.json + app.py`：

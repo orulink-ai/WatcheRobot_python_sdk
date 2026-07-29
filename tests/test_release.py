@@ -11,7 +11,8 @@ def test_package_version_has_one_alpha_source() -> None:
     assert 'dynamic = ["version"]' in pyproject
     assert '[tool.hatch.version]\npath = "src/watcherobot/__init__.py"' in pyproject
     assert 'version = "0.1.0"' not in pyproject
-    assert '__version__ = "0.1.0a4"' in package_init
+    assert '__version__ = "0.1.0a5"' in package_init
+    assert '"bleak>=3,<4"' in pyproject
 
 
 def test_publish_workflow_separates_test_and_production_indexes() -> None:
@@ -51,6 +52,15 @@ def test_publish_workflow_tests_every_python_and_websockets_version_before_one_b
     assert 'python -m pip install "websockets>=14,<16"' in workflow
     assert "python -m mypy src/watcherobot" in workflow
     assert "name: Build distributions" in workflow
-    assert "needs: test" in workflow
+    assert "needs: [test, ble-provisioning]" in workflow
     assert "python -m pip install --force-reinstall dist/*.whl" in workflow
     assert "python -m pip check" in workflow
+
+
+def test_fake_ble_tests_run_on_windows_and_macos() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+
+    assert "ble-provisioning:" in workflow
+    assert "os: [windows-latest, macos-latest]" in workflow
+    assert "python -m pytest tests/provisioning" in workflow
+    assert "from watcherobot.provisioning.bleak_backend import BleakBackend" in workflow

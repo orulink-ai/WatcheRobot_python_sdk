@@ -1,0 +1,108 @@
+# Bluetooth Wi-Fi provisioning
+
+`watcherobot.provisioning` configures the existing WatcheRobot ESP32 GATT
+service from Python on Windows and macOS. It does not require the Runtime or
+Daemon.
+
+## Asynchronous API
+
+```python
+import asyncio
+
+from watcherobot.provisioning import BluetoothProvisioner
+
+
+async def main() -> None:
+    provisioner = BluetoothProvisioner()
+    devices = [
+        device
+        for device in await provisioner.scan_devices()
+        if device.is_watcher
+    ]
+    if len(devices) != 1:
+        raise RuntimeError("Select exactly one ESP_ROBOT device")
+
+    result = await provisioner.provision_wifi(
+        device=devices[0],
+        ssid="MyWiFi",
+        password="secret",
+    )
+    print(result.state)  # credentials_saved
+
+
+asyncio.run(main())
+```
+
+`scan_devices()` keeps the operating system's native device object internally
+so it can be passed directly to Bleak when connecting. A `BluetoothDevice.id`
+is a Bluetooth address on Windows and a CoreBluetooth UUID on macOS; callers
+must not assume that it is always a MAC address.
+
+The other operations are:
+
+```python
+status = await provisioner.get_wifi_status(devices[0])
+status = await provisioner.clear_wifi(devices[0])
+
+result = await provisioner.provision_wifi(
+    devices[0],
+    ssid="Replacement WiFi",
+    password="",
+    clear_existing=True,
+)
+```
+
+`clear_existing` defaults to `False`. An empty password is valid for an open
+network. SSIDs must contain 1–32 UTF-8 bytes and passwords at most 64 UTF-8
+bytes.
+
+## Result semantics
+
+`credentials_saved` means that a `sys.ack` matching both
+`cfg.wifi.set` and its `command_id` was received. It does not mean that the
+SSID exists, the password is correct, DHCP succeeded, or the robot is online.
+Use the later Wi-Fi status separately when needed.
+
+The SDK subscribes to notifications before writing, writes with an ATT
+response, and also reads the characteristic's cached response. It always
+stops notifications and disconnects after success, timeout, cancellation, or
+another error. The current firmware resumes its Wi-Fi connection attempt only
+after the BLE connection closes.
+
+Default scan, connect, and protocol-response timeouts are 10, 12, and 3
+seconds. They can be overridden when constructing `BluetoothProvisioner`.
+
+## CLI
+
+```text
+watcherobot bluetooth scan
+watcherobot bluetooth provision --device <id> --ssid <ssid> [--clear-existing]
+watcherobot bluetooth status --device <id>
+watcherobot bluetooth clear --device <id>
+```
+
+Every non-scan command scans again and resolves the exact platform device ID.
+No device is selected automatically. The provisioning password is read with
+an interactive, non-echoing prompt; there is deliberately no `--password`
+option. Output uses compact JSON. `Ctrl+C` cancels the operation, performs BLE
+cleanup, and exits with status 130.
+
+## Protocol and security boundary
+
+This release intentionally uses the firmware protocol without modifying it:
+
+- device name: `ESP_ROBOT`
+- service: `000000ff-0000-1000-8000-00805f9b34fb`
+- characteristic: `0000ff01-0000-1000-8000-00805f9b34fb`
+- compact UTF-8 JSON, at most 180 bytes per request
+
+The protocol sends the SSID and password in JSON and adds no application-layer
+authentication or encryption. This SDK release does not strengthen firmware
+pairing, GATT permissions, transport encryption, MTU handling, or protocol
+version negotiation. Provision only in a physically trusted environment and
+treat access to the current characteristic as access to Wi-Fi credentials.
+
+The SDK does not put the password in result reprs, logs, exceptions, CLI
+arguments, parsed message models, or test snapshots. This protects ordinary
+host-side diagnostics but does not change the on-air security of the existing
+firmware protocol.

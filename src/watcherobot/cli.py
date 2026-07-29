@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import subprocess
 import sys
 import time
+from getpass import getpass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from watcherobot.application.catalog import package_application
+from watcherobot.provisioning import (
+    BluetoothDevice,
+    BluetoothProvisioner,
+    BluetoothProvisioningError,
+    DeviceAmbiguityError,
+    DeviceNotFoundError,
+)
 from watcherobot.runtime.daemon.instance import (
     RuntimeProcessState,
     RuntimeStateStore,
@@ -56,6 +65,21 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall = app_commands.add_parser("uninstall")
     uninstall.add_argument("app_id")
     uninstall.add_argument("--version")
+
+    bluetooth = commands.add_parser("bluetooth")
+    bluetooth_commands = bluetooth.add_subparsers(
+        dest="bluetooth_command",
+        required=True,
+    )
+    bluetooth_commands.add_parser("scan")
+    provision = bluetooth_commands.add_parser("provision")
+    provision.add_argument("--device", required=True)
+    provision.add_argument("--ssid", required=True)
+    provision.add_argument("--clear-existing", action="store_true")
+    status = bluetooth_commands.add_parser("status")
+    status.add_argument("--device", required=True)
+    clear = bluetooth_commands.add_parser("clear")
+    clear.add_argument("--device", required=True)
     return parser
 
 
@@ -152,13 +176,81 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 _print_json(result)
                 return 0
-    except CliError as exc:
+        if args.command == "bluetooth":
+            try:
+                return asyncio.run(_run_bluetooth_command(args))
+            except KeyboardInterrupt:
+                print(
+                    json.dumps(
+                        {"error": "Bluetooth operation cancelled"},
+                        ensure_ascii=False,
+                    ),
+                    file=sys.stderr,
+                )
+                return 130
+            except ValueError as exc:
+                raise CliError(str(exc)) from exc
+    except (CliError, BluetoothProvisioningError) as exc:
         print(
             json.dumps({"error": str(exc)}, ensure_ascii=False),
             file=sys.stderr,
         )
         return 2
     raise CliError("unsupported command")
+
+
+async def _run_bluetooth_command(args: argparse.Namespace) -> int:
+    provisioner = BluetoothProvisioner()
+    if args.bluetooth_command == "scan":
+        devices = await provisioner.scan_devices()
+        _print_json(
+            {"devices": [device.to_dict() for device in devices]}
+        )
+        return 0
+
+    device = await _resolve_bluetooth_device(
+        provisioner,
+        str(args.device),
+    )
+    if args.bluetooth_command == "provision":
+        password = getpass("Wi-Fi password: ")
+        try:
+            result = await provisioner.provision_wifi(
+                device,
+                ssid=str(args.ssid),
+                password=password,
+                clear_existing=bool(args.clear_existing),
+            )
+        finally:
+            del password
+        _print_json(result.to_dict())
+        return 0
+    if args.bluetooth_command == "status":
+        status = await provisioner.get_wifi_status(device)
+        _print_json(status.to_dict())
+        return 0
+    if args.bluetooth_command == "clear":
+        status = await provisioner.clear_wifi(device)
+        _print_json(status.to_dict())
+        return 0
+    raise CliError("unsupported bluetooth command")
+
+
+async def _resolve_bluetooth_device(
+    provisioner: BluetoothProvisioner,
+    device_id: str,
+) -> BluetoothDevice:
+    devices = await provisioner.scan_devices()
+    matches = [device for device in devices if device.id == device_id]
+    if not matches:
+        raise DeviceNotFoundError(
+            f"Bluetooth device {device_id!r} was not found; scan again"
+        )
+    if len(matches) > 1:
+        raise DeviceAmbiguityError(
+            f"Bluetooth device identifier {device_id!r} is ambiguous"
+        )
+    return matches[0]
 
 
 def runtime_status() -> dict[str, Any]:
