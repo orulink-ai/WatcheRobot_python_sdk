@@ -6,6 +6,7 @@ import json
 from watcherobot.cli import build_parser, main
 from watcherobot.provisioning import (
     BluetoothDevice,
+    ProvisioningCancelledError,
     ProvisioningResult,
     ProtocolMessage,
     WifiStatus,
@@ -219,6 +220,22 @@ def test_bluetooth_ctrl_c_returns_cancelled_exit_code(
     monkeypatch.setattr(
         "watcherobot.cli._run_bluetooth_command",
         interrupted,
+    )
+
+    assert main(["bluetooth", "scan"]) == 130
+    assert "cancelled" in json.loads(capsys.readouterr().err)["error"]
+
+
+def test_bluetooth_stable_cancellation_returns_cancelled_exit_code(
+    monkeypatch,
+    capsys,
+) -> None:
+    async def cancelled(_args: argparse.Namespace) -> int:
+        raise ProvisioningCancelledError
+
+    monkeypatch.setattr(
+        "watcherobot.cli._run_bluetooth_command",
+        cancelled,
     )
 
     assert main(["bluetooth", "scan"]) == 130

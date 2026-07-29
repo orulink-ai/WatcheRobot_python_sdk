@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from watcherobot.errors import WatcheRobotError
 
 
@@ -77,10 +75,7 @@ class ProvisioningResponseTimeoutError(BluetoothProvisioningError):
         self.timeout = timeout
 
 
-class ProvisioningCancelledError(
-    asyncio.CancelledError,
-    BluetoothProvisioningError,
-):
+class ProvisioningCancelledError(BluetoothProvisioningError):
     """A provisioning operation was cancelled by its caller."""
 
     def __init__(self) -> None:

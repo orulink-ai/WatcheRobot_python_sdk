@@ -22,6 +22,7 @@ from watcherobot.provisioning import (
     BluetoothProvisioningError,
     DeviceAmbiguityError,
     DeviceNotFoundError,
+    ProvisioningCancelledError,
 )
 from watcherobot.runtime.daemon.instance import (
     RuntimeProcessState,
@@ -180,14 +181,9 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 return asyncio.run(_run_bluetooth_command(args))
             except KeyboardInterrupt:
-                print(
-                    json.dumps(
-                        {"error": "Bluetooth operation cancelled"},
-                        ensure_ascii=False,
-                    ),
-                    file=sys.stderr,
-                )
-                return 130
+                return _print_bluetooth_cancelled()
+            except ProvisioningCancelledError:
+                return _print_bluetooth_cancelled()
             except ValueError as exc:
                 raise CliError(str(exc)) from exc
     except (CliError, BluetoothProvisioningError) as exc:
@@ -197,6 +193,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     raise CliError("unsupported command")
+
+
+def _print_bluetooth_cancelled() -> int:
+    print(
+        json.dumps(
+            {"error": "Bluetooth operation cancelled"},
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+    )
+    return 130
 
 
 async def _run_bluetooth_command(args: argparse.Namespace) -> int:
