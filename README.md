@@ -3,8 +3,8 @@
 The SDK is the single owner of the WatcheRobot Runtime/Daemon and the public
 Application API. Programs built with this package are managed Applications:
 they can run without the desktop through the CLI and Runtime control API. The
-same contract is intended for desktop installation and launch, but Desktop
-integration is still pending and must not be treated as a completed feature.
+desktop uses this same Runtime/Daemon implementation to launch the bundled
+default Application and SDK-built Applications.
 
 ## Install and run
 
@@ -17,6 +17,8 @@ python -m pip install -e ".[test]"
 `watcherobot app run` starts or reuses the current user's one Runtime. The
 Runtime owns pairing, device and desktop connections, Application processes,
 logs, and routing. When the Application exits, the Runtime remains alive.
+Current-session Daemon logs are available from `GET /daemon/logs`; this source
+works whether the Runtime was launched by the desktop or independently.
 
 For a fresh standalone session, start the Runtime, replace `123456` with the
 six-digit code shown by the device, pair through the local control API, and

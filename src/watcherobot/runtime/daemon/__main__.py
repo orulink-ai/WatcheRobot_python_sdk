@@ -62,6 +62,7 @@ async def run_runtime(args: argparse.Namespace) -> int:
         control_port=args.control_port,
         pairing_udp_port=args.pairing_port,
         application_log_dir=state_root / "logs" / "applications",
+        daemon_log_path=state_root / "logs" / "daemon.jsonl",
         catalog_root=state_root / "catalog",
     )
     loop = asyncio.get_running_loop()

@@ -115,6 +115,16 @@ def test_active_application_owns_routing_then_desktop_control_recovers(
             await runtime.start_application()
             application_pid = runtime.application.process_id
 
+            microphone_open = (
+                '{"type":"ctrl.microphone.open","code":0,'
+                '"data":{"command_id":"mic-open-001","source":"desktop"}}'
+            )
+            await desktop.send(microphone_open)
+            assert (
+                await asyncio.wait_for(device.recv(), timeout=1)
+                == microphone_open
+            )
+
             desktop_text = '{"type":"cmd.desktop","data":{"value":1}}'
             await desktop.send(desktop_text)
             assert await asyncio.wait_for(desktop.recv(), timeout=1) == desktop_text

@@ -24,6 +24,7 @@ from watcherobot.runtime.daemon.connections.registry import ExternalConnectionRe
 from watcherobot.runtime.daemon.connections.registry import ExternalClientRole
 from watcherobot.runtime.daemon.connections.websocket_server import ExternalWebSocketServer
 from watcherobot.runtime.daemon.control.rest import DaemonControlServer
+from watcherobot.runtime.daemon.logging import DaemonLogService
 from watcherobot.runtime.daemon.pairing.protocol import (
     DeviceSessionEnd,
     HardwareHello,
@@ -49,11 +50,19 @@ class DaemonRuntime:
         control_port: int = 8767,
         auto_start_application: bool = False,
         application_log_dir: Path | None = None,
+        daemon_log_path: Path | None = None,
         pairing_udp_port: int = 37021,
         catalog_root: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         connection_registry = ExternalConnectionRegistry()
+        self.logs = DaemonLogService(
+            log_path=(
+                Path(daemon_log_path)
+                if daemon_log_path is not None
+                else Path(application_dir) / "logs" / "daemon.jsonl"
+            )
+        )
         self.application_logs = ApplicationLogService(
             log_dir=(
                 Path(application_log_dir)
@@ -116,6 +125,7 @@ class DaemonRuntime:
         self._shutdown_event = asyncio.Event()
 
     async def start(self) -> None:
+        self.logs.record("Daemon Runtime starting")
         await self.external_server.start()
         try:
             await self.pairing_udp.start()
@@ -128,6 +138,12 @@ class DaemonRuntime:
             await self.pairing_udp.stop()
             await self.external_server.stop()
             raise
+        self.logs.record(
+            "Daemon Runtime ready "
+            f"(external={self.external_server.url}, "
+            f"control={self.control_server.base_url}, "
+            f"pairing_udp={self.pairing_udp.bound_port})"
+        )
         if self._auto_start_enabled and not self.auto_start_attempted:
             self.auto_start_attempted = True
             try:
@@ -136,19 +152,41 @@ class DaemonRuntime:
                 self.auto_start_error = str(exc)
 
     async def stop(self) -> None:
+        self.logs.record("Daemon Runtime stopping")
         await self.control_server.stop()
         await self.application.stop()
         await self.pairing_udp.stop()
         await self.external_server.stop()
 
     async def start_application(self) -> ApplicationRun:
-        return await self.application.start()
+        self.logs.record(
+            "Application start requested "
+            f"(app_id={self.application.registry.current_app})"
+        )
+        try:
+            run = await self.application.start()
+        except Exception as exc:
+            self.logs.record(f"Application start failed ({exc})")
+            raise
+        self.logs.record(
+            "Application running "
+            f"(app_id={run.app_id}, pid={self.application.process_id})"
+        )
+        return run
 
     async def stop_application(self) -> None:
+        app_id = self.application.registry.current_app
+        self.logs.record(f"Application stop requested (app_id={app_id})")
         await self.application.stop()
+        self.logs.record(f"Application stopped (app_id={app_id})")
 
     def select_application(self, application_dir: str) -> dict[str, object]:
         self.application.select_application(Path(application_dir))
+        self.logs.record(
+            "Application selected "
+            f"(app_id={self.application.registry.current_app}, "
+            f"path={Path(application_dir).resolve()})"
+        )
         return self.application_status()
 
     def list_catalog_applications(self) -> list[dict[str, object]]:
@@ -178,7 +216,14 @@ class DaemonRuntime:
         self.catalog.uninstall(app_id, version=version)
 
     def request_shutdown(self) -> None:
+        self.logs.record("Daemon shutdown requested")
         self._shutdown_event.set()
+
+    def daemon_logs(self, after_id: int = 0) -> list[dict[str, object]]:
+        return [
+            dict(event)
+            for event in self.logs.recent(after_id=after_id)
+        ]
 
     async def wait_for_shutdown(self) -> None:
         await self._shutdown_event.wait()
@@ -201,11 +246,18 @@ class DaemonRuntime:
         except Exception:
             self.device_pairing.release()
             raise
+        request = self.device_pairing.current_request
+        assert request is not None
+        self.logs.record(
+            "Device pairing started "
+            f"(mode={target_mode}, request_id={request.request_id})"
+        )
         await self._publish_device_state(self.device_pairing.snapshot())
         return self.device_status()
 
     async def cancel_device_pairing(self) -> dict[str, object]:
         await self.pairing_udp.cancel_pairing()
+        self.logs.record("Device pairing cancelled")
         return self.device_status()
 
     async def disconnect_device(self) -> bool:
@@ -213,12 +265,14 @@ class DaemonRuntime:
 
         state = self.device_pairing.state
         if state is DevicePairingState.IDLE:
+            self.logs.record("Device disconnect ignored (no active session)")
             return False
         if state in {
             DevicePairingState.DISCOVERING,
             DevicePairingState.CONNECTING,
         }:
             await self.pairing_udp.cancel_pairing()
+            self.logs.record("Device pairing cancelled by disconnect request")
             return True
 
         request = self.device_pairing.current_request
@@ -244,6 +298,7 @@ class DaemonRuntime:
             reason="device session released",
         )
         await self._publish_device_state(self.device_pairing.snapshot())
+        self.logs.record("Device disconnected by desktop request")
         return True
 
     def application_status(self) -> dict[str, object]:
@@ -269,12 +324,17 @@ class DaemonRuntime:
             peer_ip=peer_ip,
             now=self._clock(),
         )
+        self.logs.record(
+            "Device connected "
+            f"(peer_ip={peer_ip}, request_id={hello.pair_request_id})"
+        )
         await self._publish_device_state(self.device_pairing.snapshot())
 
     async def _device_disconnected(self, _peer_ip: str) -> None:
         if self.device_pairing.state is not DevicePairingState.CONNECTED:
             return
         self.device_pairing.device_disconnected(now=self._clock())
+        self.logs.record(f"Device connection lost (peer_ip={_peer_ip})")
         self.pairing_udp.activate()
         await self._publish_device_state(self.device_pairing.snapshot())
 
@@ -285,6 +345,10 @@ class DaemonRuntime:
     ) -> None:
         self.device_pairing.end_device_session(
             pair_request_id=message.pair_request_id,
+        )
+        self.logs.record(
+            "Device session ended "
+            f"(request_id={message.pair_request_id}, reason={message.reason})"
         )
         await self._publish_device_state(self.device_pairing.snapshot())
 

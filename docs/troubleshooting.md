@@ -10,6 +10,7 @@ watcherobot app list
 | Symptom | Likely cause | Action |
 |---|---|---|
 | Runtime does not start | Ports are occupied or another user-session Runtime owns the lock | Read `%LOCALAPPDATA%\WatcheRobot\runtime\runtime.log`; stop the existing Runtime explicitly |
+| Desktop Daemon log is empty | The desktop adopted a Runtime that it did not spawn, so its stdout pipe is unavailable | Read `GET /daemon/logs` or `%LOCALAPPDATA%\WatcheRobot\runtime\logs\daemon.jsonl`; current desktop builds poll the Runtime endpoint automatically |
 | `Application environment is incomplete` | `app.py` was launched directly | Use `watcherobot app run <directory-or-wapp>` or start it from the desktop |
 | `invalid_application` | `app.json`, fixed `app.py`, id, or version requirement is invalid | Validate the manifest and `requires_watcherobot` |
 | `application_occupied` | Another Application process is starting or running | Stop it before selecting, installing, or starting another one |

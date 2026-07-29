@@ -102,7 +102,23 @@ Application 不是第三个外部角色。Runtime 启动 Application 子进程�
 
 Application 到 Device 的路由不要求外部 Desktop 在线。
 
-## 5. WSPK 二进制合同
+Daemon 保留一个窄范围的全局设备控制例外：外部 Desktop 发出的
+`ctrl.microphone.open` 和 `ctrl.microphone.close` 始终直达 Device，即使当前
+Application 正在运行。这样桌面全局快捷键不要求第三方 Application 理解桌面
+控制协议；设备返回的音频和事件仍按上表进入当前 Application Device channel。
+除此之外，普通 Desktop 文本和二进制帧仍透明交给当前 Application。
+
+## 5. Daemon 日志合同
+
+- `GET /daemon/logs?after_id=<id>` 返回当前 Runtime 会话中 ID 大于
+  `after_id` 的 Daemon 日志。
+- 响应格式为 `{"logs":[{"id":...,"message":"...","timestamp_ms":...}]}`。
+- Daemon 自己维护最多 500 条近期记录，并追加保存到运行状态目录下的
+  `logs/daemon.jsonl`。
+- 该接口不依赖桌面端持有 Daemon 子进程 stdout，因此桌面接管一个已独立运行的
+  Daemon 后仍可读取实时日志。
+
+## 6. WSPK 二进制合同
 
 当前主格式为 16 字节小端头：
 
@@ -123,14 +139,14 @@ magic(4) + type(1) + flags(1) + stream_id(2) + sequence(4) + payload_len(4)
 - `tests/fixtures/contracts/watcher_lan_pairing_v1.json`
 - `tests/fixtures/contracts/wspk_v1.json`
 
-## 6. 断线与生命周期
+## 7. 断线与生命周期
 
 - Device 断线：设备状态进入 `reconnecting`，不重启 Application。
 - Application 任一必需本地通道异常断开：当前 Application 进入错误并清理进程树，不自动重连或自动重启。
 - Application 正常停止：运行凭证失效，两个本地通道关闭；设备连接继续由 Runtime 持有。
 - Runtime 停止：先停止控制面和 Application，再停止配对 UDP 与外部 WebSocket。
 
-## 7. 当前实现边界说明
+## 8. 当前实现边界说明
 
 旧 Server 的 `daemon/discovery/`、`DISCOVER/ANNOUNCE`、UDP `37020` 和
 `protocol_version=0.1.6` 已随 Server 直连入口一起删除。SDK 中唯一的活跃

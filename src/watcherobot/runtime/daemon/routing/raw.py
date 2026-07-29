@@ -1,6 +1,8 @@
-"""Content-agnostic routing for external desktop and device frames."""
+"""Role-based routing for external desktop and device frames."""
 
 from __future__ import annotations
+
+import json
 
 from ..application.bridge import (
     ApplicationBridge,
@@ -18,7 +20,7 @@ from ..connections.registry import (
 
 
 class RawFrameRouter:
-    """Choose a destination only from the source connection role."""
+    """Route by role, with narrow Daemon-reserved desktop device controls."""
 
     def __init__(
         self,
@@ -43,6 +45,15 @@ class RawFrameRouter:
         source: ExternalConnection,
         frame: str | bytes,
     ) -> int:
+        if (
+            source.role is ExternalClientRole.DESKTOP
+            and _is_daemon_reserved_device_control(frame)
+        ):
+            return await self._registry.send_to_role(
+                ExternalClientRole.DEVICE,
+                frame,
+            )
+
         if self.application_active:
             channel = _application_channel_for_external(source.role)
             if channel is None or self._application_bridge is None:
@@ -91,3 +102,25 @@ def _application_channel_for_external(
     if role is ExternalClientRole.DEVICE:
         return ApplicationChannel.DEVICE
     return None
+
+
+_DAEMON_RESERVED_DEVICE_CONTROLS = frozenset(
+    {
+        "ctrl.microphone.open",
+        "ctrl.microphone.close",
+    }
+)
+
+
+def _is_daemon_reserved_device_control(frame: str | bytes) -> bool:
+    if not isinstance(frame, str):
+        return False
+    try:
+        message = json.loads(frame)
+    except json.JSONDecodeError:
+        return False
+    return (
+        isinstance(message, dict)
+        and message.get("type") in _DAEMON_RESERVED_DEVICE_CONTROLS
+        and isinstance(message.get("data"), dict)
+    )
