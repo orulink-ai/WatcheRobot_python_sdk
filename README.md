@@ -2,19 +2,49 @@
 
 The SDK is the single owner of the WatcheRobot Runtime/Daemon and the public
 Application API. Programs built with this package are managed Applications:
-they can run from the CLI without the desktop and can also be installed and
-started by the desktop.
+they can run without the desktop through the CLI and Runtime control API. The
+same contract is intended for desktop installation and launch, but Desktop
+integration is still pending and must not be treated as a completed feature.
 
 ## Install and run
 
+Install this checkout for development:
+
 ```powershell
 python -m pip install -e ".[test]"
-watcherobot app run .\examples\hello_robot
 ```
 
 `watcherobot app run` starts or reuses the current user's one Runtime. The
 Runtime owns pairing, device and desktop connections, Application processes,
 logs, and routing. When the Application exits, the Runtime remains alive.
+
+For a fresh standalone session, start the Runtime, replace `123456` with the
+six-digit code shown by the device, pair through the local control API, and
+then run the Application:
+
+```powershell
+$runtime = watcherobot daemon start | ConvertFrom-Json
+$pairBody = '{"pairing_code":"123456","target_mode":"desktop_link"}'
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($runtime.control_url)/daemon/devices/pair" `
+  -ContentType "application/json" `
+  -Body $pairBody
+do {
+  $device = (Invoke-RestMethod `
+    -Uri "$($runtime.control_url)/daemon/devices").device
+  if ($device.state -eq "idle") {
+    throw "Pairing failed: $($device.last_error)"
+  }
+  if ($device.state -ne "connected") {
+    Start-Sleep -Milliseconds 250
+  }
+} while ($device.state -ne "connected")
+watcherobot app run .\examples\hello_robot
+```
+
+If the current Runtime already owns a connected device session, skip the pair
+request and run the Application directly.
 
 Useful commands:
 

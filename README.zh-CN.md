@@ -1,19 +1,48 @@
 # WatcheRobot Python SDK
 
 SDK 是 WatcheRobot Runtime/Daemon 与 Application API 的唯一实现来源。使用
-该 SDK 开发的程序都是受管 Application：既可以脱离桌面端通过 CLI 运行，
-也可以安装到桌面端并由桌面端启动。
+该 SDK 开发的程序都是受管 Application，可以脱离桌面端通过 CLI 和 Runtime
+控制 API 运行。同一套合同也用于后续由桌面端安装和启动 Application；但当前
+桌面端接入仍待完成，不能将其描述为已经交付的能力。
 
 ## 安装与运行
 
+在当前源码仓库中开发时，先以 editable 方式安装：
+
 ```powershell
 python -m pip install -e ".[test]"
-watcherobot app run .\examples\hello_robot
 ```
 
 `watcherobot app run` 会启动或复用当前用户会话中的唯一 Runtime。Runtime
 持有配对、设备与桌面连接、Application 进程、日志和路由。Application
 退出后 Runtime 默认继续运行。
+
+首次无桌面端运行时，先启动 Runtime，将 `123456` 替换为设备显示的六位码，
+通过本地控制 API 完成配对，再运行 Application：
+
+```powershell
+$runtime = watcherobot daemon start | ConvertFrom-Json
+$pairBody = '{"pairing_code":"123456","target_mode":"desktop_link"}'
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($runtime.control_url)/daemon/devices/pair" `
+  -ContentType "application/json" `
+  -Body $pairBody
+do {
+  $device = (Invoke-RestMethod `
+    -Uri "$($runtime.control_url)/daemon/devices").device
+  if ($device.state -eq "idle") {
+    throw "Pairing failed: $($device.last_error)"
+  }
+  if ($device.state -ne "connected") {
+    Start-Sleep -Milliseconds 250
+  }
+} while ($device.state -ne "connected")
+watcherobot app run .\examples\hello_robot
+```
+
+如果当前 Runtime 已持有在线设备会话，可以跳过配对请求，直接运行
+Application。
 
 ```powershell
 watcherobot daemon start

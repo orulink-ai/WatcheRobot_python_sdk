@@ -1,68 +1,76 @@
-# Server Daemon 依赖剥离清单
+# M0 Server Daemon 依赖清单（历史快照）
 
-> 基线：`WatcheRobot_server@1ccd7a8`
-> 目标：迁入 `watcherobot.runtime.daemon` 后，生产代码不 import `server.src`
+> 历史快照基线：`WatcheRobot_server@1ccd7a8`
+>
+> 记录用途：保留 M0 阶段识别 Server 基础设施耦合的证据，不描述当前 SDK
+> 目录结构，也不作为新的迁移待办。
+>
+> 迁移结果：活跃 Daemon 已进入 `watcherobot.runtime.daemon`，SDK Runtime
+> 生产代码不 import `server.src`；未接入的旧 Server Discovery 实现没有形成
+> 第二个 Runtime Profile。
 
-## 1. 直接 `src.*` 依赖
+## 1. M0 发现的直接 `src.*` 依赖
 
-当前只有两个 `daemon/` 生产文件直接依赖 Server 基础设施。
+在上述 Server 基线中，只有两个 `daemon/` 生产文件直接依赖 Server
+基础设施。
 
-### `daemon/discovery/lan_address.py`
+### `daemon/discovery/lan_address.py`（基线文件）
 
-| 当前依赖 | 用途 | SDK Runtime 归属 |
+| 当时依赖 | 用途 | 最终处理 |
 |---|---|---|
-| `src.utils.logger.get_logger` | 模块日志 | Python `logging` 的 Runtime 日志适配 |
-| `src.utils.process_encoding.decode_process_output` | 解码系统命令输出 | `watcherobot.runtime.platform.process` |
-| `src.utils.subprocess_window.hidden_subprocess_kwargs` | Windows 隐藏子进程窗口 | `watcherobot.runtime.platform.process` |
+| `src.utils.logger.get_logger` | 模块日志 | 未随未使用 Discovery 实现进入 SDK |
+| `src.utils.process_encoding.decode_process_output` | 解码系统命令输出 | 未随未使用 Discovery 实现进入 SDK |
+| `src.utils.subprocess_window.hidden_subprocess_kwargs` | Windows 隐藏子进程窗口 | 未随未使用 Discovery 实现进入 SDK |
 
-### `daemon/discovery/server.py`
+### `daemon/discovery/server.py`（基线文件）
 
-| 当前依赖 | 用途 | SDK Runtime 归属 |
+| 当时依赖 | 用途 | 最终处理 |
 |---|---|---|
-| `src.config.settings` | discovery/ws 端口、服务名、版本 | 显式 `RuntimeSettings`，不读取 Server 配置 |
-| `src.utils.logger.get_logger` | 模块日志 | Runtime 日志适配 |
-| `src.utils.port_cleanup.*` | 地址占用检测、释放和等待 | `watcherobot.runtime.platform.ports` |
-| `src.utils.process_encoding.decode_process_output` | 系统命令输出 | `watcherobot.runtime.platform.process` |
-| `src.utils.structured_log.log_event` | 结构化事件日志 | `watcherobot.runtime.logging.log_event` |
-| `src.utils.subprocess_window.hidden_subprocess_kwargs` | Windows 隐藏窗口 | `watcherobot.runtime.platform.process` |
+| `src.config.settings` | discovery/ws 端口、服务名、版本 | 未接入 SDK Runtime |
+| `src.utils.logger.get_logger` | 模块日志 | 未接入 SDK Runtime |
+| `src.utils.port_cleanup.*` | 地址占用检测、释放和等待 | 未接入 SDK Runtime |
+| `src.utils.process_encoding.decode_process_output` | 系统命令输出 | 未接入 SDK Runtime |
+| `src.utils.structured_log.log_event` | 结构化事件日志 | 未接入 SDK Runtime |
+| `src.utils.subprocess_window.hidden_subprocess_kwargs` | Windows 隐藏窗口 | 未接入 SDK Runtime |
 
-## 2. 第三方运行依赖
+## 2. Runtime 基础依赖的落地结果
 
-迁入完整 Daemon 后，`pip install watcherobot` 基础包至少需要：
+`pip install watcherobot` 的基础依赖已经包含 Runtime/Daemon 所需的
+`websockets`、`fastapi`、`uvicorn`、`packaging` 和 `psutil`。
+Runtime 没有拆成 `[runtime]` extra；开发与测试工具继续放在 `[test]`。
 
-- `websockets`
-- `fastapi`
-- `uvicorn`
-- `pydantic`
-- `psutil`
+## 3. 入口解耦结果
 
-这些是 D9 所定义的 Runtime 基础能力，不能只放进 `[dev]` 或 `[runtime]` extra。
+M0 基线中的 `packaged_main.py` 同时承载 Daemon 与默认 Application
+冻结入口。配套迁移完成后的边界为：
 
-## 3. 入口耦合
-
-Server 的 `packaged_main.py` 当前把 Daemon 和默认 Application 冻结入口放在同一程序中。迁移后：
-
-- Runtime 入口属于 SDK 的 `watcherobot` CLI。
+- Runtime 入口属于 SDK 的 `watcherobot` CLI 和
+  `python -m watcherobot.runtime.daemon`。
 - Application 入口固定为应用根目录 `app.py`。
-- Server 不保留 `--daemon` 分支或导入 SDK Runtime 内部实现。
-- `watcher_default` 只使用公开 `watcherobot.application` API。
+- Server 默认业务使用公开 `watcherobot.application` API。
+- Server 不应保留第二份 Daemon 或 `packaged_main.py --daemon` 入口。
 
-## 4. 当前未接入的目录
+## 4. 未使用 Discovery 实现的处理结果
 
-`daemon/discovery/server.py` 虽然位于 Daemon 目录，但当前 `DaemonRuntime` 没有实例化 `DiscoveryServer`；活跃配对入口是 `daemon.pairing.udp.PairingUdpService`。
+M0 基线中的 `daemon/discovery/server.py` 没有被当时的 `DaemonRuntime`
+实例化；活跃配对入口已经是 `PairingUdpService`。迁移时没有将该未使用
+Discovery 实现接入 SDK，也没有保留它的 `DISCOVER/ANNOUNCE` Profile。
 
-迁移要求：
+当前 SDK Runtime 的唯一设备配对实现位于：
 
-1. 按已确认范围迁移该目录和测试，避免遗漏代码所有权。
-2. 不因物理迁移而自动把 `DiscoveryServer` 接入生产启动链。
-3. 在后续阶段根据调用链和 Profile 合同决定删除未使用实现或以测试证明其职责；不得形成第二个 UDP 设备 Profile。
+```text
+src/watcherobot/runtime/daemon/pairing/
+```
 
-## 5. 迁移验收查询
+其合同是 `watcher-lan-pairing/1.0`，详见
+[`runtime-profile-index.md`](../contracts/runtime-profile-index.md)。
 
-SDK Runtime 完成迁移后必须满足：
+## 5. 当前验收查询
+
+以下查询应保持无结果：
 
 ```text
 rg "^(from|import) src\b" src/watcherobot/runtime
 ```
 
-无结果；同时 Server 全局不存在第二份 `DaemonRuntime`、外部 WebSocket 所有者或 Application 进程监督实现。
+旧 Server 基线文件名仅允许出现在本历史记录中，不代表 SDK 仍持有这些实现。
