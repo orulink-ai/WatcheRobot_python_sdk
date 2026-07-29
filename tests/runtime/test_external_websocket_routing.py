@@ -197,7 +197,7 @@ def test_daemon_handles_connection_ping_without_routing_it() -> None:
             assert pong == {"type": "sys.pong", "code": 0, "data": {}}
             try:
                 await asyncio.wait_for(device.recv(), timeout=0.1)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
             else:
                 raise AssertionError("connection ping was routed as a business frame")
@@ -253,7 +253,7 @@ def test_device_session_end_is_acknowledged_and_not_routed() -> None:
             )
             try:
                 await asyncio.wait_for(desktop.recv(), timeout=0.1)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
             else:
                 raise AssertionError("device session end was routed as business data")

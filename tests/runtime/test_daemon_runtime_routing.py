@@ -120,7 +120,7 @@ def test_active_application_owns_routing_then_desktop_control_recovers(
             assert await asyncio.wait_for(desktop.recv(), timeout=1) == desktop_text
             try:
                 await asyncio.wait_for(device.recv(), timeout=0.1)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
             else:
                 raise AssertionError(
@@ -132,7 +132,7 @@ def test_active_application_owns_routing_then_desktop_control_recovers(
             assert await asyncio.wait_for(device.recv(), timeout=1) == device_binary
             try:
                 await asyncio.wait_for(desktop.recv(), timeout=0.1)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
             else:
                 raise AssertionError(

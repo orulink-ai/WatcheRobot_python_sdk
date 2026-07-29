@@ -151,7 +151,7 @@ def test_complete_daemon_application_vertical_flow(tmp_path: Path) -> None:
             )
             try:
                 await asyncio.wait_for(device.recv(), timeout=0.1)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 pass
             else:
                 raise AssertionError(
