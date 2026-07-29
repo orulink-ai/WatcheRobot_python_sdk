@@ -251,6 +251,40 @@ def test_bleak_backend_disconnects_after_connection_timeout(
     asyncio.run(scenario())
 
 
+def test_bleak_backend_bounds_disconnect_after_connection_timeout(
+    monkeypatch,
+) -> None:
+    class BlockingCleanupBleakClient(FakeBleakClient):
+        disconnect_started = False
+
+        async def connect(self) -> None:
+            await asyncio.Event().wait()
+
+        async def disconnect(self) -> None:
+            self.disconnect_started = True
+            await asyncio.Event().wait()
+
+    async def scenario() -> None:
+        BlockingCleanupBleakClient.instances.clear()
+        BlockingCleanupBleakClient.characteristic = Characteristic()
+        monkeypatch.setattr(
+            "watcherobot.provisioning.bleak_backend.BleakClient",
+            BlockingCleanupBleakClient,
+        )
+        backend = BleakBackend()
+        device = await _scan_one_with_backend(monkeypatch, backend)
+
+        with pytest.raises(BluetoothConnectionTimeoutError):
+            await asyncio.wait_for(
+                backend.connect(device, timeout=0.01),
+                timeout=0.2,
+            )
+
+        assert BlockingCleanupBleakClient.instances[-1].disconnect_started
+
+    asyncio.run(scenario())
+
+
 def test_bleak_backend_requires_native_scan_handle() -> None:
     async def scenario() -> None:
         device = BluetoothDevice(

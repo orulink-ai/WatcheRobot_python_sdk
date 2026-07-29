@@ -28,6 +28,8 @@ from .protocol import (
     BLE_SERVICE_UUID,
 )
 
+_MAX_CLEANUP_TIMEOUT = 2.0
+
 
 class BleakConnection(BleConnection):
     def __init__(self, client: BleakClient, characteristic: Any) -> None:
@@ -148,22 +150,22 @@ class BleakBackend:
         try:
             await asyncio.wait_for(client.connect(), timeout=timeout)
         except asyncio.CancelledError:
-            await _safe_disconnect(client)
+            await _safe_disconnect(client, timeout=timeout)
             raise
         except asyncio.TimeoutError as exc:
-            await _safe_disconnect(client)
+            await _safe_disconnect(client, timeout=timeout)
             raise BluetoothConnectionTimeoutError(
                 f"Timed out connecting to Bluetooth device {device.id!r}"
             ) from exc
         except Exception as exc:
-            await _safe_disconnect(client)
+            await _safe_disconnect(client, timeout=timeout)
             raise _map_platform_error(exc, operation="connect") from exc
 
         characteristic = client.services.get_characteristic(
             BLE_CHARACTERISTIC_UUID
         )
         if characteristic is None:
-            await _safe_disconnect(client)
+            await _safe_disconnect(client, timeout=timeout)
             raise ProvisioningProtocolError(
                 "Device does not expose the required FF01 characteristic"
             )
@@ -176,7 +178,7 @@ class BleakBackend:
             or "read" not in properties
             or "notify" not in properties
         ):
-            await _safe_disconnect(client)
+            await _safe_disconnect(client, timeout=timeout)
             raise ProvisioningProtocolError(
                 "FF01 does not provide read, write, and notify capabilities"
             )
@@ -188,9 +190,19 @@ def _advertisement_rssi(advertisement: Any) -> int | None:
     return value if isinstance(value, int) else None
 
 
-async def _safe_disconnect(client: BleakClient) -> None:
+async def _safe_disconnect(
+    client: BleakClient,
+    *,
+    timeout: float,
+) -> None:
+    cleanup_timeout = max(0.0, min(timeout, _MAX_CLEANUP_TIMEOUT))
     try:
-        await client.disconnect()
+        await asyncio.wait_for(
+            client.disconnect(),
+            timeout=cleanup_timeout,
+        )
+    except asyncio.CancelledError:
+        pass
     except Exception:
         pass
 

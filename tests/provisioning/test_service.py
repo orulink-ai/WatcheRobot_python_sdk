@@ -32,8 +32,11 @@ class FakeConnection(BleConnection):
         read_returns_echo: bool = False,
         stale_status_on_start: bool = False,
         reject_clear_after_status: bool = False,
+        delayed_reject_clear_after_status: bool = False,
         empty_read: bool = False,
         legacy_status_on_start: bool = True,
+        block_stop_notifications: bool = False,
+        block_disconnect: bool = False,
     ) -> None:
         self.fragmented_notifications = fragmented_notifications
         self.reject_wifi_set = reject_wifi_set
@@ -45,15 +48,22 @@ class FakeConnection(BleConnection):
         self.read_returns_echo = read_returns_echo
         self.stale_status_on_start = stale_status_on_start
         self.reject_clear_after_status = reject_clear_after_status
+        self.delayed_reject_clear_after_status = (
+            delayed_reject_clear_after_status
+        )
         self.empty_read = empty_read
         self.legacy_status_on_start = legacy_status_on_start
+        self.block_stop_notifications = block_stop_notifications
+        self.block_disconnect = block_disconnect
         self.characteristic_uuid = BLE_CHARACTERISTIC_UUID
         self.writes: list[dict[str, Any]] = []
         self.cached = b""
         self.callback: Callable[[bytes], None] | None = None
         self.notifications_started = False
         self.notifications_stopped = False
+        self.stop_notifications_started = False
         self.disconnected = False
+        self.disconnect_started = False
         self.write_started = asyncio.Event()
 
     async def start_notifications(
@@ -71,6 +81,9 @@ class FakeConnection(BleConnection):
             )
 
     async def stop_notifications(self) -> None:
+        self.stop_notifications_started = True
+        if self.block_stop_notifications:
+            await asyncio.Event().wait()
         self.notifications_stopped = True
 
     async def write(self, payload: bytes) -> None:
@@ -88,7 +101,10 @@ class FakeConnection(BleConnection):
             self.reject_wifi_set
             and request_type == "cfg.wifi.set"
         ) or (
-            self.reject_clear_after_status
+            (
+                self.reject_clear_after_status
+                or self.delayed_reject_clear_after_status
+            )
             and request_type == "cfg.wifi.clear"
         ):
             response = {
@@ -111,6 +127,24 @@ class FakeConnection(BleConnection):
             }
         encoded = json.dumps(response, separators=(",", ":")).encode("utf-8")
         self.cached = encoded
+        if (
+            self.delayed_reject_clear_after_status
+            and request_type == "cfg.wifi.clear"
+            and self.callback is not None
+        ):
+            callback = self.callback
+            self.cached = b""
+            callback(
+                b'{"type":"evt.wifi.status","code":0,'
+                b'"data":{"status":"connected","ssid":"Stale"}}'
+            )
+
+            async def send_delayed_rejection() -> None:
+                await asyncio.sleep(0.01)
+                callback(encoded)
+
+            asyncio.create_task(send_delayed_rejection())
+            return
         if (
             self.reject_clear_after_status
             and request_type == "cfg.wifi.clear"
@@ -176,6 +210,9 @@ class FakeConnection(BleConnection):
         return self.cached
 
     async def disconnect(self) -> None:
+        self.disconnect_started = True
+        if self.block_disconnect:
+            await asyncio.Event().wait()
         self.disconnected = True
 
 
@@ -323,6 +360,21 @@ def test_matching_nack_wins_over_unrelated_status_notification() -> None:
     asyncio.run(scenario())
 
 
+def test_delayed_matching_nack_wins_over_unrelated_status_notification() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection(delayed_reject_clear_after_status=True)
+        backend = FakeBackend(connection)
+        provisioner = BluetoothProvisioner(backend=backend)
+
+        with pytest.raises(ProvisioningRejectedError) as captured:
+            await provisioner.clear_wifi(backend.device)
+
+        assert captured.value.command_type == "cfg.wifi.clear"
+        assert connection.disconnected
+
+    asyncio.run(scenario())
+
+
 def test_ack_matching_ignores_wrong_command_and_duplicate_messages() -> None:
     async def scenario() -> None:
         connection = FakeConnection(
@@ -449,8 +501,12 @@ def test_task_cancellation_still_disconnects_the_device() -> None:
     ("ssid", "password", "field"),
     [
         ("", "secret", "SSID"),
+        ("s" * 32, "secret", "SSID"),
         ("网" * 11, "secret", "SSID"),
+        ("Office", "p" * 64, "password"),
         ("Office", "密" * 22, "password"),
+        ("Office\0Hidden", "secret", "SSID"),
+        ("Office", "secret\0Hidden", "password"),
     ],
 )
 def test_credentials_are_validated_by_utf8_length(
@@ -470,5 +526,43 @@ def test_credentials_are_validated_by_utf8_length(
             )
 
         assert backend.connect_calls == []
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("block_stop_notifications", "block_disconnect"),
+    [
+        (True, False),
+        (False, True),
+    ],
+)
+def test_cleanup_steps_are_bounded_and_disconnect_is_always_attempted(
+    block_stop_notifications: bool,
+    block_disconnect: bool,
+) -> None:
+    async def scenario() -> None:
+        connection = FakeConnection(
+            block_stop_notifications=block_stop_notifications,
+            block_disconnect=block_disconnect,
+        )
+        backend = FakeBackend(connection)
+        provisioner = BluetoothProvisioner(
+            backend=backend,
+            cleanup_timeout=0.01,
+        )
+
+        result = await asyncio.wait_for(
+            provisioner.provision_wifi(
+                backend.device,
+                ssid="Office",
+                password="secret",
+            ),
+            timeout=0.2,
+        )
+
+        assert result.state == "credentials_saved"
+        assert connection.stop_notifications_started
+        assert connection.disconnect_started
 
     asyncio.run(scenario())

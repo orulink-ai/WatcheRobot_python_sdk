@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 
 from .backend import BleConnection, BluetoothBackend
 from .errors import (
@@ -28,6 +29,10 @@ from .protocol import (
 DEFAULT_SCAN_TIMEOUT = 10.0
 DEFAULT_CONNECT_TIMEOUT = 12.0
 DEFAULT_RESPONSE_TIMEOUT = 3.0
+DEFAULT_CLEANUP_TIMEOUT = 2.0
+_STATUS_REJECTION_GRACE_PERIOD = 0.05
+_MAX_SSID_BYTES = 31
+_MAX_PASSWORD_BYTES = 63
 
 
 class BluetoothProvisioner:
@@ -40,7 +45,10 @@ class BluetoothProvisioner:
         scan_timeout: float = DEFAULT_SCAN_TIMEOUT,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
         response_timeout: float = DEFAULT_RESPONSE_TIMEOUT,
+        cleanup_timeout: float = DEFAULT_CLEANUP_TIMEOUT,
     ) -> None:
+        if cleanup_timeout <= 0:
+            raise ValueError("Bluetooth cleanup timeout must be positive")
         if backend is None:
             from .bleak_backend import BleakBackend
 
@@ -49,6 +57,7 @@ class BluetoothProvisioner:
         self._scan_timeout = scan_timeout
         self._connect_timeout = connect_timeout
         self._response_timeout = response_timeout
+        self._cleanup_timeout = cleanup_timeout
 
     async def scan_devices(
         self,
@@ -127,6 +136,7 @@ class BluetoothProvisioner:
         session = _ProvisioningSession(
             connection,
             response_timeout=self._response_timeout,
+            cleanup_timeout=self._cleanup_timeout,
         )
         try:
             await session.start()
@@ -142,9 +152,11 @@ class _ProvisioningSession:
         connection: BleConnection,
         *,
         response_timeout: float,
+        cleanup_timeout: float,
     ) -> None:
         self._connection = connection
         self._response_timeout = response_timeout
+        self._cleanup_timeout = cleanup_timeout
         self._messages: asyncio.Queue[
             tuple[float, ProtocolMessage | ProvisioningProtocolError]
         ] = asyncio.Queue()
@@ -280,10 +292,11 @@ class _ProvisioningSession:
             if isinstance(message, ProvisioningProtocolError):
                 raise message
             if message.type == "evt.wifi.status" and accept_status:
-                return self._prefer_matching_rejection(
+                return await self._prefer_matching_rejection(
                     message,
                     command_type,
                     command_id,
+                    deadline,
                     request_started,
                 )
             if (
@@ -300,18 +313,29 @@ class _ProvisioningSession:
             if message.type == "sys.ack":
                 return message
 
-    def _prefer_matching_rejection(
+    async def _prefer_matching_rejection(
         self,
         status: ProtocolMessage,
         command_type: str,
         command_id: str,
+        deadline: float,
         request_started: float,
     ) -> ProtocolMessage:
         candidate = status
+        settle_deadline = min(
+            deadline,
+            time.monotonic() + _STATUS_REJECTION_GRACE_PERIOD,
+        )
         while True:
+            remaining = settle_deadline - time.monotonic()
+            if remaining <= 0:
+                return candidate
             try:
-                received_at, message = self._messages.get_nowait()
-            except asyncio.QueueEmpty:
+                received_at, message = await asyncio.wait_for(
+                    self._messages.get(),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
                 return candidate
             if received_at < request_started:
                 continue
@@ -330,6 +354,13 @@ class _ProvisioningSession:
                     reason=message.reason or "rejected",
                     code=message.code or -1,
                 )
+            if (
+                message.type == "sys.ack"
+                and message.command_type == command_type
+                and message.command_id == command_id
+            ):
+                return candidate
+
     async def _wait_for_status(
         self,
         command_type: str,
@@ -405,14 +436,14 @@ class _ProvisioningSession:
             return
         self._closed = True
         if self._notifications_started:
-            try:
-                await self._connection.stop_notifications()
-            except Exception:
-                pass
-        try:
-            await self._connection.disconnect()
-        except Exception:
-            pass
+            await _run_cleanup_step(
+                self._connection.stop_notifications,
+                timeout=self._cleanup_timeout,
+            )
+        await _run_cleanup_step(
+            self._connection.disconnect,
+            timeout=self._cleanup_timeout,
+        )
 
 
 def _new_command_id(command_type: str) -> str:
@@ -421,12 +452,34 @@ def _new_command_id(command_type: str) -> str:
 
 
 def _validate_credentials(ssid: str, password: str) -> None:
+    if "\0" in ssid:
+        raise ValueError("SSID must not contain NUL characters")
+    if "\0" in password:
+        raise ValueError("Wi-Fi password must not contain NUL characters")
     ssid_length = len(ssid.encode("utf-8"))
-    if not ssid or ssid_length > 32:
-        raise ValueError("SSID must be non-empty and at most 32 UTF-8 bytes")
+    if not ssid or ssid_length > _MAX_SSID_BYTES:
+        raise ValueError(
+            f"SSID must be non-empty and at most {_MAX_SSID_BYTES} UTF-8 bytes"
+        )
     password_length = len(password.encode("utf-8"))
-    if password_length > 64:
-        raise ValueError("Wi-Fi password must be at most 64 UTF-8 bytes")
+    if password_length > _MAX_PASSWORD_BYTES:
+        raise ValueError(
+            "Wi-Fi password must be at most "
+            f"{_MAX_PASSWORD_BYTES} UTF-8 bytes"
+        )
+
+
+async def _run_cleanup_step(
+    operation: Callable[[], Awaitable[None]],
+    *,
+    timeout: float,
+) -> None:
+    try:
+        await asyncio.wait_for(operation(), timeout=timeout)
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
 
 
 async def _finish_cleanup(session: _ProvisioningSession) -> None:

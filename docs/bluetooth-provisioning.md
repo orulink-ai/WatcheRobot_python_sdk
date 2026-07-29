@@ -53,8 +53,9 @@ result = await provisioner.provision_wifi(
 ```
 
 `clear_existing` defaults to `False`. An empty password is valid for an open
-network. SSIDs must contain 1–32 UTF-8 bytes and passwords at most 64 UTF-8
-bytes.
+network. To match the currently shipped firmware's C-string storage boundary,
+SSIDs must contain 1–31 UTF-8 bytes and passwords at most 63 UTF-8 bytes.
+Neither value may contain an embedded NUL character.
 
 ## Result semantics
 
@@ -69,8 +70,11 @@ stops notifications and disconnects after success, timeout, cancellation, or
 another error. The current firmware resumes its Wi-Fi connection attempt only
 after the BLE connection closes.
 
-Default scan, connect, and protocol-response timeouts are 10, 12, and 3
-seconds. They can be overridden when constructing `BluetoothProvisioner`.
+Default scan, connect, protocol-response, and per-cleanup-step timeouts are
+10, 12, 3, and 2 seconds. They can be overridden when constructing
+`BluetoothProvisioner`. Notification shutdown and disconnect are bounded
+independently, so a stalled notification shutdown does not prevent the SDK
+from attempting to disconnect.
 
 ## CLI
 
