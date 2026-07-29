@@ -102,11 +102,11 @@ Application 不是第三个外部角色。Runtime 启动 Application 子进程�
 
 Application 到 Device 的路由不要求外部 Desktop 在线。
 
-Daemon 保留一个窄范围的全局设备控制例外：外部 Desktop 发出的
-`ctrl.microphone.open` 和 `ctrl.microphone.close` 始终直达 Device，即使当前
-Application 正在运行。这样桌面全局快捷键不要求第三方 Application 理解桌面
-控制协议；设备返回的音频和事件仍按上表进入当前 Application Device channel。
-除此之外，普通 Desktop 文本和二进制帧仍透明交给当前 Application。
+Daemon 不按业务消息 `type` 设置保留路由或直达设备的例外。包括
+`ctrl.microphone.open` 和 `ctrl.microphone.close` 在内的 Desktop 业务帧，
+Application 运行时都透明交给当前 Application；由 Application 决定业务处理，
+并通过 Device channel 向设备发送硬件指令。只有 Application 未运行时，
+Desktop 业务帧才由 Daemon 直接转发给 Device。
 
 ## 5. Daemon 日志合同
 

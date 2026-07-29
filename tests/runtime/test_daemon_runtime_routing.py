@@ -120,10 +120,15 @@ def test_active_application_owns_routing_then_desktop_control_recovers(
                 '"data":{"command_id":"mic-open-001","source":"desktop"}}'
             )
             await desktop.send(microphone_open)
-            assert (
-                await asyncio.wait_for(device.recv(), timeout=1)
-                == microphone_open
-            )
+            assert await asyncio.wait_for(desktop.recv(), timeout=1) == microphone_open
+            try:
+                await asyncio.wait_for(device.recv(), timeout=0.05)
+            except asyncio.TimeoutError:
+                pass
+            else:
+                raise AssertionError(
+                    "microphone control bypassed the active Application"
+                )
 
             desktop_text = '{"type":"cmd.desktop","data":{"value":1}}'
             await desktop.send(desktop_text)
