@@ -113,6 +113,7 @@ class DaemonRuntime:
             port=pairing_udp_port,
             clock=clock,
             state_listener=self._publish_device_state,
+            event_logger=self.logs.record,
         )
         self.control_server = DaemonControlServer(
             controller=self,

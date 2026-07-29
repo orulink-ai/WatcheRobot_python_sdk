@@ -35,7 +35,17 @@ Runtime                           Device
 
 ### `pair.request`
 
-- Runtime 在每个活跃局域网广播地址的 UDP `37021` 发送。
+- Runtime 为每个启用且具备广播语义的本机 IPv4 创建独立 UDP 通道；通道绑定
+  该本机 IPv4，并只向由该地址和子网掩码计算出的定向广播地址发送 UDP
+  `37021`。
+- Runtime 不使用绑定 `0.0.0.0` 的共享发送 socket，也不发送
+  `255.255.255.255` 有限广播；不同网卡即使计算出相同广播地址也不会跨网卡
+  去重。
+- 开始配对时立即刷新通道，并在默认 `1000 ms` 广播循环的每一轮重新比较网卡
+  快照。网卡启停、插拔或 DHCP 地址变化会新增、关闭或替换通道，不要求重启
+  Runtime。
+- 单个网卡绑定或发送失败只关闭该网卡通道，其他网卡继续查找；如果启动时存在
+  可用接口但所有接口都无法绑定，则 Runtime 启动失败，避免端口冲突被静默忽略。
 - `request_id` 和 `daemon_instance_id` 均为 32 位小写十六进制。
 - `pairing_code` 为六位数字。
 - `websocket_port` 是设备应连接的 Runtime 外部 WebSocket 端口。
@@ -45,6 +55,8 @@ Runtime                           Device
 - 必须匹配当前 `request_id`、`daemon_instance_id` 和 `target_mode`。
 - `session_token` 为 64 位小写十六进制。
 - Runtime 锁定首个有效响应的对端 IP，后续 hello 必须来自同一 IP。
+- Runtime 同时记录收到响应的本机 IPv4 和网卡名称；需要取消尚未完成的配对时，
+  `pair.cancel` 沿该通道单播返回，不由系统重新选择其他出口。
 
 ### 设备 hello
 
