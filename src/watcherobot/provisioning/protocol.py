@@ -96,11 +96,11 @@ def _parse_envelope(envelope: Any) -> ProtocolMessage:
             raise ProvisioningProtocolError(
                 "Provisioning NACK contains a zero code"
             )
-        reason = _optional_string(data.get("reason"))
-        if message_type == "sys.nack" and reason is None:
-            reason = "rejected"
-        if reason not in _SAFE_NACK_REASONS:
-            reason = "rejected"
+        reason = None
+        if message_type == "sys.nack":
+            reason = _optional_string(data.get("reason"))
+            if reason not in _SAFE_NACK_REASONS:
+                reason = "rejected"
         return ProtocolMessage(
             type=message_type,
             code=code,

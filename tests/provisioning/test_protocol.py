@@ -154,6 +154,16 @@ def test_parse_message_validates_nack_and_wifi_status() -> None:
     assert status.status == "unconfigured"
 
 
+def test_success_ack_does_not_report_a_rejection_reason() -> None:
+    ack = parse_message(
+        '{"type":"sys.ack","code":0,"data":'
+        '{"type":"cfg.wifi.set","command_id":"cmd-1"}}'
+    )
+
+    assert ack.reason is None
+    assert "reason" not in ack.to_dict()
+
+
 @pytest.mark.parametrize(
     "raw",
     [
