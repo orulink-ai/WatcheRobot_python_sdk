@@ -205,6 +205,67 @@ def test_udp_service_reconciles_added_removed_and_changed_interfaces() -> None:
     asyncio.run(scenario())
 
 
+def test_udp_service_closes_stale_same_ip_channel_before_rebinding() -> None:
+    class SingleBindPerIpFactory(FakeChannelFactory):
+        async def __call__(
+            self,
+            interface: PairingUdpInterface,
+            port: int,
+            datagram_handler: DatagramHandler,
+        ) -> FakePairingUdpChannel:
+            if any(
+                not channel.closed
+                and channel.interface.local_ip == interface.local_ip
+                for channel in self.created
+            ):
+                raise OSError(f"address already in use: {interface.local_ip}")
+            return await super().__call__(
+                interface,
+                port,
+                datagram_handler,
+            )
+
+    async def scenario() -> None:
+        old_wifi = lan(
+            "Wi-Fi",
+            "192.168.1.20",
+            "192.168.1.255",
+        )
+        updated_wifi = lan(
+            "Wi-Fi",
+            "192.168.1.20",
+            "192.168.255.255",
+            netmask="255.255.0.0",
+        )
+        current = (old_wifi,)
+        factory = SingleBindPerIpFactory()
+        session = make_session()
+        service = PairingUdpService(
+            session=session,
+            interface_provider=lambda: current,
+            channel_factory=factory,
+        )
+
+        await service.start()
+        old_channel = factory.created[0]
+        session.start_pairing(
+            pairing_code="123456",
+            target_mode="desktop_link",
+            websocket_port=8765,
+            now=10.0,
+        )
+        current = (updated_wifi,)
+
+        assert await service.broadcast_once()
+        assert old_channel.closed
+        assert service.active_interfaces == (updated_wifi,)
+        assert len(factory.created) == 2
+        assert len(factory.created[1].broadcasts) == 1
+        await service.stop()
+
+    asyncio.run(scenario())
+
+
 def test_udp_service_discovers_interface_added_after_daemon_start() -> None:
     async def scenario() -> None:
         current: tuple[PairingUdpInterface, ...] = ()

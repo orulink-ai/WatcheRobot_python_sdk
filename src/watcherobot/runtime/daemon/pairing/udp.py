@@ -362,6 +362,22 @@ class PairingUdpService:
             desired = tuple(dict.fromkeys(self._interface_provider()))
             desired_set = set(desired)
 
+            stale = [
+                interface
+                for interface in self._channels
+                if interface not in desired_set
+            ]
+            for interface in stale:
+                channel = self._channels.pop(interface)
+                channel.close()
+                if self._selected_interface == interface:
+                    self._selected_interface = None
+                self._emit_event(
+                    "Pairing UDP channel removed "
+                    f"(interface={interface.interface_name}, "
+                    f"local={interface.local_ip})"
+                )
+
             for interface in desired:
                 if interface in self._channels:
                     self._channel_errors.pop(interface, None)
@@ -392,22 +408,6 @@ class PairingUdpService:
                     f"local={interface.local_ip}, "
                     f"broadcast={interface.broadcast_ip}, "
                     f"port={channel.bound_port})"
-                )
-
-            stale = [
-                interface
-                for interface in self._channels
-                if interface not in desired_set
-            ]
-            for interface in stale:
-                channel = self._channels.pop(interface)
-                channel.close()
-                if self._selected_interface == interface:
-                    self._selected_interface = None
-                self._emit_event(
-                    "Pairing UDP channel removed "
-                    f"(interface={interface.interface_name}, "
-                    f"local={interface.local_ip})"
                 )
 
             for interface in tuple(self._channel_errors):
