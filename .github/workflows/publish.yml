@@ -43,11 +43,11 @@ jobs:
 
       - name: Select minimum websockets version
         if: matrix.websockets-version == 'lowest'
-        run: python -m pip install "websockets==12.*"
+        run: python -m pip install "websockets==14.*"
 
       - name: Select latest supported websockets version
         if: matrix.websockets-version == 'latest'
-        run: python -m pip install "websockets>=12,<16"
+        run: python -m pip install "websockets>=14,<16"
 
       - name: Check dependency consistency
         run: python -m pip check

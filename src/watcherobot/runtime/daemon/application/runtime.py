@@ -144,7 +144,7 @@ class ApplicationRuntimeManager:
                         else asyncio.subprocess.DEVNULL
                     ),
                     creationflags=(
-                        subprocess.CREATE_NEW_PROCESS_GROUP
+                        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP")
                         if os.name == "nt"
                         else 0
                     ),
@@ -182,7 +182,7 @@ class ApplicationRuntimeManager:
                             asyncio.shield(process.wait()),
                             timeout=min(1.0, self._stop_timeout),
                         )
-                    except TimeoutError:
+                    except asyncio.TimeoutError:
                         pass
                     await asyncio.to_thread(
                         _terminate_process_ids,
@@ -270,7 +270,7 @@ class ApplicationRuntimeManager:
                 asyncio.shield(process.wait()),
                 timeout=0.5,
             )
-        except TimeoutError:
+        except asyncio.TimeoutError:
             await self._abort_for_error()
             return
         await self._finalize_exited_process(

@@ -117,22 +117,30 @@ if os.name == "nt":
     import msvcrt
 
     def _lock_file(handle: BinaryIO) -> None:
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        getattr(msvcrt, "locking")(
+            handle.fileno(),
+            getattr(msvcrt, "LK_NBLCK"),
+            1,
+        )
 
     def _unlock_file(handle: BinaryIO) -> None:
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        getattr(msvcrt, "locking")(
+            handle.fileno(),
+            getattr(msvcrt, "LK_UNLCK"),
+            1,
+        )
 
 else:
     import fcntl
 
     def _lock_file(handle: BinaryIO) -> None:
-        fcntl.flock(  # type: ignore[attr-defined]
+        getattr(fcntl, "flock")(
             handle.fileno(),
-            fcntl.LOCK_EX | fcntl.LOCK_NB,  # type: ignore[attr-defined]
+            getattr(fcntl, "LOCK_EX") | getattr(fcntl, "LOCK_NB"),
         )
 
     def _unlock_file(handle: BinaryIO) -> None:
-        fcntl.flock(  # type: ignore[attr-defined]
+        getattr(fcntl, "flock")(
             handle.fileno(),
-            fcntl.LOCK_UN,  # type: ignore[attr-defined]
+            getattr(fcntl, "LOCK_UN"),
         )

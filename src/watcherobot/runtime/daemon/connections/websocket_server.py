@@ -125,7 +125,7 @@ class ExternalWebSocketServer:
                         websocket.recv(),
                         timeout=self._hello_timeout_seconds,
                     )
-                except TimeoutError:
+                except asyncio.TimeoutError:
                     await websocket.send(
                         json.dumps(
                             build_hardware_hello_nack(

@@ -47,8 +47,8 @@ def test_publish_workflow_tests_every_python_and_websockets_version_before_one_b
     assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
     assert 'websockets-version: ["lowest", "latest"]' in workflow
     assert "python-version: ${{ matrix.python-version }}" in workflow
-    assert 'python -m pip install "websockets==12.*"' in workflow
-    assert 'python -m pip install "websockets>=12,<16"' in workflow
+    assert 'python -m pip install "websockets==14.*"' in workflow
+    assert 'python -m pip install "websockets>=14,<16"' in workflow
     assert "python -m mypy src/watcherobot" in workflow
     assert "name: Build distributions" in workflow
     assert "needs: test" in workflow

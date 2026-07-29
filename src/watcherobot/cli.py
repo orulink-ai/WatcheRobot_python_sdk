@@ -193,9 +193,9 @@ def ensure_runtime() -> tuple[RuntimeProcessState, bool]:
     process_options: dict[str, Any] = {}
     if os.name == "nt":
         creation_flags = (
-            subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.DETACHED_PROCESS
-            | subprocess.CREATE_NO_WINDOW
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP")
+            | getattr(subprocess, "DETACHED_PROCESS")
+            | getattr(subprocess, "CREATE_NO_WINDOW")
         )
     else:
         process_options["start_new_session"] = True
