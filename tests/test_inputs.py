@@ -6,9 +6,9 @@ from watcherobot import (
     BackTouchEvent,
     RollerEvent,
     ScreenTouchEvent,
-    WatcheRobot,
     WatcheRobotError,
 )
+from watcherobot.robot import WatcheRobot
 
 
 class FakeTransport:

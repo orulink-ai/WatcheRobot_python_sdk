@@ -5,12 +5,18 @@ build-backend = "hatchling.build"
 [project]
 name = "watcherobot"
 dynamic = ["version"]
-description = "Synchronous Python SDK for controlling WatcheRobot on a local network"
+description = "Python SDK for managed WatcheRobot Applications with a bundled Runtime/Daemon"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [{name = "Orulink AI"}]
-dependencies = ["websockets>=12,<16"]
+dependencies = [
+  "fastapi>=0.110,<1",
+  "packaging>=24,<27",
+  "psutil>=5.9,<8",
+  "uvicorn>=0.30,<1",
+  "websockets>=14,<16",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -27,9 +33,16 @@ Repository = "https://github.com/orulink-ai/WatcheRobot_python_sdk"
 Documentation = "https://github.com/orulink-ai/WatcheRobot_python_sdk#readme"
 Issues = "https://github.com/orulink-ai/WatcheRobot_python_sdk/issues"
 
+[project.scripts]
+watcherobot = "watcherobot.cli:main"
+
 [project.optional-dependencies]
-test = ["mypy>=1.10,<2", "pytest>=8"]
-hardware = ["pyserial>=3.5"]
+test = [
+  "httpx>=0.25,<1",
+  "mypy>=1.10,<2",
+  "pytest>=8",
+  "types-psutil>=5.9",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/watcherobot"]

@@ -1,0 +1,30 @@
+{
+  "contract": "wspk_v1",
+  "byte_order": "little",
+  "current_header": {
+    "struct": "<4sBBHII",
+    "size": 16
+  },
+  "legacy_read_header": {
+    "struct": "<4sBBII",
+    "size": 14
+  },
+  "vectors": {
+    "current_audio_first": {
+      "frame_type": 1,
+      "flags": 1,
+      "stream_id": 42,
+      "sequence": 7,
+      "payload_utf8": "pcm",
+      "packet_hex": "5753504b01012a00070000000300000070636d"
+    },
+    "legacy_audio_last": {
+      "frame_type": 1,
+      "flags": 2,
+      "stream_id": 0,
+      "sequence": 9,
+      "payload_utf8": "old",
+      "packet_hex": "5753504b010209000000030000006f6c64"
+    }
+  }
+}

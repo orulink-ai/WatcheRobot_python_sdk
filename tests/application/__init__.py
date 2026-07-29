@@ -1,0 +1,1 @@
+"""Application public API tests."""

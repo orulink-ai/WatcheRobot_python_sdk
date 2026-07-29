@@ -10,7 +10,6 @@ from .audio import AudioPlayback, PCMAudio
 from .job import Job, JobState
 from .inputs import BackTouchEvent, InputDomain, InputEvent, RollerEvent, ScreenTouchEvent
 from .media import AudioFormat, AudioFrame, AudioRecording, ImageFrame, MicrophoneSession
-from .robot import WatcheRobot
 
 __all__ = [
     "AudioFormat",
@@ -32,7 +31,6 @@ __all__ = [
     "PCMAudio",
     "RollerEvent",
     "ScreenTouchEvent",
-    "WatcheRobot",
     "WatcheRobotError",
 ]
 

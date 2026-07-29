@@ -1,52 +1,38 @@
+import json
 from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1]
+EXAMPLE_IDS = {
+    "hello_robot": "example.hello_robot",
+    "quickstart": "example.quickstart",
+    "play_audio_file": "example.play_audio_file",
+    "capture_photo": "example.capture_photo",
+    "record_microphone": "example.record_microphone",
+}
 
 
-def test_quickstart_directly_demonstrates_the_main_sdk_domains() -> None:
-    source = (ROOT / "examples" / "quickstart.py").read_text(encoding="utf-8")
+def test_every_example_is_a_complete_managed_application() -> None:
+    for directory_name, app_id in EXAMPLE_IDS.items():
+        root = ROOT / "examples" / directory_name
+        manifest = json.loads(root.joinpath("app.json").read_text())
+        source = root.joinpath("app.py").read_text(encoding="utf-8")
 
-    assert "WatcheRobot.connect" in source
-    assert 'behavior.play("happy"' in source
-    assert "hardware_smoke" not in source
-    assert "run_smoke" not in source
-    assert "animation.play" in source
-    assert "lights.set_color" in source
-    assert "motion.move_to" in source
-    assert "duration_ms=1000" in source
-    assert "audio.play_file" in source
-    assert "camera.capture" in source
-    assert "microphone.record" in source
-    assert "required_capabilities" in source
-    assert "robot.supports(capability)" in source
+        assert manifest["id"] == app_id
+        assert manifest["requires_watcherobot"]
+        assert "ApplicationContext.from_environment()" in source
+        assert "WatcheRobot.connect" not in source
+        assert "WATCHEROBOT_PAIRING_CODE" not in source
 
 
-def test_hello_robot_remains_the_minimal_first_connection() -> None:
-    source = (ROOT / "examples" / "hello_robot.py").read_text(encoding="utf-8")
+def test_quickstart_demonstrates_domain_apis_through_context_robot() -> None:
+    source = (
+        ROOT / "examples" / "quickstart" / "app.py"
+    ).read_text(encoding="utf-8")
 
-    assert "WatcheRobot.connect" in source
-    assert 'behavior.play("happy"' in source
-    assert "camera.capture" not in source
-    assert "microphone.record" not in source
-    assert "motion.move_to" not in source
-
-
-def test_capability_examples_are_separate_from_the_quickstart() -> None:
-    expected = {
-        "play_audio_file.py",
-        "capture_photo.py",
-        "record_microphone.py",
-    }
-
-    assert expected <= {path.name for path in (ROOT / "examples").glob("*.py")}
-    assert (ROOT / "tools" / "hardware_smoke.py").is_file()
-
-
-def test_interactive_examples_use_bilingual_prompts() -> None:
-    for path in (ROOT / "examples").glob("*.py"):
-        source = path.read_text(encoding="utf-8")
-        assert "Six-digit code shown by SDK Control App" in source
+    assert "app.robot.behavior.play" in source
+    assert "app.robot.lights.set_color" in source
+    assert "app.robot.motion.move_to" in source
 
 
 def test_runtime_artifacts_are_ignored() -> None:

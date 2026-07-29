@@ -4,8 +4,9 @@ from concurrent.futures import Future
 
 import pytest
 
-from watcherobot import Job, WatcheRobot
+from watcherobot import Job
 from watcherobot.errors import CommandError, WatcheRobotError
+from watcherobot.robot import WatcheRobot
 from watcherobot.protocol import (
     FLAG_FIRST,
     FLAG_FRAGMENT,

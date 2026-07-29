@@ -10,10 +10,11 @@ PyPI Token。
 1. PR 与 `main` 的 CI 全绿，包括 Python 3.10/3.11/3.12、`websockets 12.x` 与当前允许最新版、
    pytest、mypy、wheel/sdist 构建、重装和 `pip check`。
 2. 记录用于验收的 ESP32 完整 commit、固件版本、协议版本和 SDK 版本，不能只写浮动分支名。
-3. 按[硬件测试说明](hardware-testing.md)执行 `tools/hardware_smoke.py --all`，核心能力全部通过。
+3. 按[硬件测试说明](hardware-testing.md)完成 Runtime 配对，并通过
+   `watcherobot app run` 运行受管 Application，验证行为、灯光、Job、相机和麦克风。
 4. 从目标索引在全新虚拟环境安装并验证版本；TestPyPI 的依赖仍从正式 PyPI 安装。
 
-测试使用的轻量假机器人位于 `tests/fakes/`，不会进入 wheel，也不替代发布前真机验收。
+自动化测试中的内联 Transport、Runtime 和协议替身不会进入 wheel，也不能替代发布前真机验收。
 
 ## 一次性配置
 
@@ -51,14 +52,17 @@ gh run watch
 
 ```powershell
 python -m venv .venv-release-test
-.venv-release-test\Scripts\python -m pip install websockets
 .venv-release-test\Scripts\python -m pip install `
   --index-url https://test.pypi.org/simple/ `
-  --no-deps watcherobot==0.1.0a4
+  --extra-index-url https://pypi.org/simple/ `
+  watcherobot==0.1.0a4
+.venv-release-test\Scripts\python -m pip check
 .venv-release-test\Scripts\python -c "import watcherobot; print(watcherobot.__version__)"
+.venv-release-test\Scripts\python -m watcherobot.runtime.daemon --help
 ```
 
-安装后还需使用验收记录中的同一固件运行最小连接示例。若版本已经上传但验收失败，不得覆盖上传，
+安装后还需按照[硬件测试说明](hardware-testing.md)，使用验收记录中的同一固件完成
+Runtime 配对并运行受管 Application。若版本已经上传但验收失败，不得覆盖上传，
 必须递增 Alpha 版本后重新发布。
 
 ## 正式发布

@@ -1,213 +1,105 @@
 # WatcheRobot Python SDK
 
-English | [简体中文](README.zh-CN.md)
+The SDK is the single owner of the WatcheRobot Runtime/Daemon and the public
+Application API. Programs built with this package are managed Applications:
+they can run without the desktop through the CLI and Runtime control API. The
+same contract is intended for desktop installation and launch, but Desktop
+integration is still pending and must not be treated as a completed feature.
 
-`watcherobot` lets a desktop Python program control WatcheRobot Behaviors, motion, animation, audio, lights,
-microphone, and camera over the local network, and receive rear-touch, screen-tap, and roller-rotation events. It
-exposes a small synchronous API while running discovery and the WebSocket gateway internally.
+## Install and run
 
-> v0.1 targets trusted local networks. It uses plain `ws://`, a temporary six-digit pairing code, and one robot per
-> SDK instance.
-
-The six-digit code also gates Discovery protocol `1.1`: the SDK ignores a UDP probe with a different code, echoes the
-matching code and a request ID in `ANNOUNCE`, and verifies the same code again when the WebSocket `sys.client.hello`
-arrives. This prevents a different SDK process on the same trusted LAN from winning discovery by replying first; it
-does not encrypt or make the code safe to expose on an untrusted network.
-
-UDP Discovery always listens on `0.0.0.0:37021`, so the ESP32 limited broadcast reaches the SDK on every IPv4 interface.
-The `host` argument controls only the WebSocket listener; use a concrete address only when that listener must be restricted.
-
-## Before you start
-
-| Requirement | What to check |
-|---|---|
-| Robot | A WatcheRobot/SenseCAP Watcher-based device with working Wi-Fi |
-| Firmware | `V3.1` with **SDK Control App** in the Launcher; the source candidate is currently tracked in [ESP32 PR #96](https://github.com/orulink-ai/WatcheRobot_esp32/pull/96) |
-| Network | Computer and robot are on the same LAN; local firewall permits UDP `37021` and TCP `8766` |
-| Python | CPython 3.10, 3.11, or 3.12 |
-
-The latest formal ESP32 release does not yet contain SDK Control App, and no supported public `V3.1` binary is
-available yet. Contributors can build the candidate with ESP-IDF `v5.2.1`:
+Install this checkout for development:
 
 ```powershell
-gh repo clone orulink-ai/WatcheRobot_esp32
-Set-Location WatcheRobot_esp32
-gh pr checkout 96
-& C:\Espressif\frameworks\esp-idf-v5.2.1\export.ps1
-Set-Location firmware\s3
-idf.py set-target esp32s3
-powershell -ExecutionPolicy Bypass -File .\tools\flash-monitor.ps1 COMx -NoWake
+python -m pip install -e ".[test]"
 ```
 
-Replace `COMx` with the robot's serial port. See the candidate
-[V3.1 release guide](https://github.com/orulink-ai/WatcheRobot_esp32/blob/codex/esp32-v3.1-release-prep/firmware/s3/docs/V3_1_RELEASE_GUIDE.md)
-for its exact build profile and promotion status. Everyone else should wait for a `V3.1` bundle on the
-[ESP32 releases](https://github.com/orulink-ai/WatcheRobot_esp32/releases) page instead of flashing an older formal release.
+`watcherobot app run` starts or reuses the current user's one Runtime. The
+Runtime owns pairing, device and desktop connections, Application processes,
+logs, and routing. When the Application exits, the Runtime remains alive.
 
-## Install
+For a fresh standalone session, start the Runtime, replace `123456` with the
+six-digit code shown by the device, pair through the local control API, and
+then run the Application:
 
-This source tree prepares the `0.1.0a4` preview. Check the
-[TestPyPI project page](https://test.pypi.org/project/watcherobot/) before installing because the immutable build only
-appears after the release workflow completes. TestPyPI does not mirror every dependency, so install the runtime
-dependency from PyPI first and the SDK itself from TestPyPI without dependency resolution:
-
-```bash
-python -m pip install "websockets>=12,<16"
-python -m pip install --index-url https://test.pypi.org/simple/ --no-deps watcherobot==0.1.0a4
+```powershell
+$runtime = watcherobot daemon start | ConvertFrom-Json
+$pairBody = '{"pairing_code":"123456","target_mode":"desktop_link"}'
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$($runtime.control_url)/daemon/devices/pair" `
+  -ContentType "application/json" `
+  -Body $pairBody
+do {
+  $device = (Invoke-RestMethod `
+    -Uri "$($runtime.control_url)/daemon/devices").device
+  if ($device.state -eq "idle") {
+    throw "Pairing failed: $($device.last_error)"
+  }
+  if ($device.state -ne "connected") {
+    Start-Sleep -Milliseconds 250
+  }
+} while ($device.state -ne "connected")
+watcherobot app run .\examples\hello_robot
 ```
 
-For development or evaluation from this repository:
+If the current Runtime already owns a connected device session, skip the pair
+request and run the Application directly.
 
-```bash
-python -m pip install -e .
+Useful commands:
+
+```powershell
+watcherobot daemon start
+watcherobot daemon status
+watcherobot daemon stop
+
+watcherobot app package .\examples\hello_robot .\dist\hello_robot.wapp
+watcherobot app install .\dist\hello_robot.wapp
+watcherobot app list
+watcherobot app select example.hello_robot --version 1.0.0
+watcherobot app start
+watcherobot app stop
+watcherobot app uninstall example.hello_robot --version 1.0.0
 ```
 
-The stable PyPI package has not been published yet. After its release, install with:
+For larger Applications, add a `.wappignore` file using glob patterns such as
+`tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not packaged.
 
-```bash
-python -m pip install watcherobot
-```
+## Application API
 
-Python 3.10 or newer is required.
-
-## Compatibility
-
-| Python SDK | Protocol | Verified ESP32 firmware | Python | Release status |
-|---|---|---|---|---|
-| `0.1.0a4` | `1.0` | `V3.1` with SDK input-event extension | `>=3.10` (CI: 3.10 / 3.11 / 3.12) | Alpha candidate / TestPyPI after publish |
-
-After connecting, inspect `robot.device_info` and `robot.capabilities`; the negotiated device response is the source
-of truth. Firmware older than `V3.1` is not currently covered by the compatibility promise.
-
-## Minimal first connection
-
-1. Connect the computer and robot to the same LAN.
-2. Open **SDK Control App** from the robot launcher.
-3. Note the temporary six-digit code shown on the robot.
-4. Save the following as `hello_robot.py`, then run `python hello_robot.py`:
+Every Application has `app.json` and a fixed `app.py` entrypoint:
 
 ```python
-from watcherobot import WatcheRobot
+import asyncio
 
-pairing_code = input("Six-digit pairing code: ").strip()
-with WatcheRobot.connect(pairing_code=pairing_code) as robot:
-    print("Connected:", robot.device_info)
-    print("Capabilities:", robot.capabilities)
-    robot.behavior.play("happy", repeat=1).wait(timeout=20)
+from watcherobot.application import ApplicationContext
+
+
+async def main() -> None:
+    async with ApplicationContext.from_environment() as app:
+        app.logger.info("capabilities=%s", app.robot.capabilities)
+        job = await asyncio.to_thread(
+            app.robot.behavior.play,
+            "happy",
+            repeat=1,
+        )
+        await asyncio.to_thread(job.wait, 20.0)
+
+
+asyncio.run(main())
 ```
 
-Expected output resembles:
+- `app.robot` retains the domain, Job, input, and media APIs and can only use
+  the Daemon-authorized device channel.
+- `app.desktop` sends and receives optional desktop frames.
+- `app.logger` writes process logs captured and persisted by the Runtime.
 
-```text
-Connected: {'device_id': 'watcher-AF8C', 'firmware_version': 'V3.1', ...}
-Capabilities: ('behavior', 'animation', 'motion', ..., 'camera.capture')
-```
+Applications that already own a complete business protocol stack may use the
+advanced `ApplicationChannels` API to receive source-aware raw desktop/device
+frames. Normal SDK Applications should use `ApplicationContext`.
 
-For a complete exception-handling example covering `ConnectionTimeoutError`, `AuthenticationError`, and structured
-`JobFailedError` diagnostics (`error.job_id`, `error.reason`, `error.error_code`), see
-[troubleshooting](docs/troubleshooting.md).
+Applications never open their own Discovery socket or device WebSocket and do
+not receive pairing credentials.
 
-## Capability negotiation
-
-Use `robot.supports(...)` before optional calls. Capability names are extensible strings, not a closed enum.
-
-| Negotiated capability | Related API |
-|---|---|
-| `behavior` | `robot.behavior.*` |
-| `animation` | `robot.animation.*` |
-| `motion` | `robot.motion.*` |
-| `audio` | `robot.audio.play(...)` |
-| `audio.stream` | `robot.audio.play_file(...)`, `robot.audio.play_pcm(...)` |
-| `light` | `robot.lights.*` |
-| `microphone` | `robot.microphone.*` |
-| `camera.capture` | `robot.camera.capture(...)` |
-| `input.back_touch` | `robot.inputs.wait(...)` → `BackTouchEvent` |
-| `input.screen_touch` | `robot.inputs.wait(...)` → `ScreenTouchEvent` |
-| `input.roller` | `robot.inputs.wait(...)` → `RollerEvent` |
-
-```python
-if robot.supports("camera.capture"):
-    image = robot.camera.capture(timeout=10)
-```
-
-For example, a desktop game can wait for the next physical interaction and react according to its typed event:
-
-```python
-from watcherobot import BackTouchEvent, RollerEvent, ScreenTouchEvent
-
-event = robot.inputs.wait(timeout=30)
-if isinstance(event, BackTouchEvent) and event.action == "press":
-    print("The robot's back was touched")
-elif isinstance(event, ScreenTouchEvent):
-    print(f"Screen tapped at ({event.x}, {event.y})")
-elif isinstance(event, RollerEvent):
-    print("Roller moved", event.delta)
-```
-
-The input queue keeps the newest 64 events. `robot.inputs.dropped_events` reports overflow, and
-`robot.inputs.clear()` discards buffered input. Disconnecting wakes a blocked `wait()` with `WatcheRobotError`.
-
-## Repository examples
-
-Clone this repository and install it with `python -m pip install -e .` before running these files:
-
-- `examples/quickstart.py`: directly call the main SDK domains in one file, with confirmation before motion,
-  camera, and microphone access.
-- `examples/play_audio_file.py`: transfer a host WAV file and play it on the robot.
-- `examples/capture_photo.py`: capture one JPEG.
-- `examples/record_microphone.py`: record five seconds from the robot microphone.
-
-Camera and microphone examples ask for confirmation first. Generated files go to the Git-ignored `artifacts/`
-directory. See [examples/README.md](examples/README.md).
-
-## Supported capabilities
-
-| Capability | SDK functions | Return / execution | v1 notes |
-|---|---|---|---|
-| Connect and close | `WatcheRobot.connect(...)`<br>`robot.close()`<br>`robot.device_info` / `robot.capabilities`<br>`robot.supports(capability)` | `WatcheRobot` / immediate / read-only properties | Starts LAN Discovery and the WebSocket gateway; one robot per SDK instance |
-| Behavior | `robot.behavior.play(id, repeat=1)`<br>`robot.behavior.stop()` | `Job` / immediate | Plays a multi-track Behavior already installed on the robot |
-| Animation | `robot.animation.play(id)`<br>`robot.animation.stop()` | `Job` / immediate | Animation resources must already be installed on the robot |
-| Point-to-point motion | `robot.motion.move_to(pan_deg=..., tilt_deg=..., duration_ms=...)` | `Job` | `duration_ms` is an integer from `1..65535` milliseconds |
-| Real-time motion | `robot.motion.set_target(pan_deg=..., tilt_deg=...)` | immediate | Latest-wins command; does not wait for motion completion |
-| Named motion | `robot.motion.play_action(id)`<br>`robot.motion.stop()` | `Job` / immediate | Named actions must already be installed on the robot |
-| Installed sound | `robot.audio.play(sound_id)` | `Job` | Sound resources must already be installed on the robot |
-| Host audio | `robot.audio.play_file(path)`<br>`robot.audio.play_pcm(data, ...)`<br>`robot.audio.stop()` | `AudioPlayback` / immediate | PCM S16LE, 24 kHz, mono; maximum 4 MB per stream |
-| Lights | `robot.lights.set_color(...)`<br>`robot.lights.play_effect(..., period_ms=500)`<br>`robot.lights.off()` | immediate / `Job` / immediate | Colors use `#RRGGBB`; brightness is from `0..1`; `period_ms` is an integer from `0..65535` milliseconds |
-| Microphone session | `robot.microphone.open()`<br>`MicrophoneSession.read(timeout=...)`<br>`MicrophoneSession.close()` | `MicrophoneSession` / `AudioFrame` / immediate | Current default is PCM 16 kHz, 16-bit, mono; the bounded queue tracks dropped frames |
-| Convenience recording | `robot.microphone.record(duration=...)`<br>`AudioRecording.save(path)` | `AudioRecording` / `Path` | `duration` is in seconds; saves a standard WAV file |
-| Camera capture | `robot.camera.capture(...)`<br>`ImageFrame.save(path)` | `ImageFrame` / `Path` | One JPEG frame; continuous video is outside v1 |
-| Physical input events | `robot.inputs.wait(timeout=...)`<br>`robot.inputs.clear()`<br>`robot.inputs.dropped_events` | `BackTouchEvent` / `ScreenTouchEvent` / `RollerEvent` | Rear press/release, screen tap coordinates, and signed roller rotation; bounded newest-64 queue |
-| Job lifecycle | `Job.wait(timeout=...)`<br>`Job.cancel()`<br>`Job.reason` / `Job.error_code` | `Job` / immediate cancel request | `STARTING → RUNNING → COMPLETED / FAILED / CANCELLED`; terminal errors expose structured diagnostics |
-
-Finite operations return a `Job` or the Job-compatible `AudioPlayback`. An ACK only means that the device accepted
-the command; call `Job.wait()` to wait for the device's terminal result.
-
-See [factory resource IDs](docs/resources.md) for safe examples on the current firmware. For pairing, `not_found`,
-timeouts, audio validation, and dropped media frames, see [troubleshooting](docs/troubleshooting.md).
-
-## v1 boundaries
-
-- Behaviors, animations, and `audio.play(sound_id)` must already be installed on the robot.
-- Host WAV playback is temporary; arbitrary persistent resource upload is not supported.
-- Continuous video, inline Python Behaviors, a public async API, TLS, and remote wake-up are outside v1.
-- Roller short press remains the local exit action and long hold remains the system shutdown action; v1 only exposes
-  rotation to Python.
-- Closing the SDK, robot app, or connection cancels device jobs, media, and outputs and releases resources.
-
-Protocol details are in [docs/protocol-v1.md](docs/protocol-v1.md).
-
-## Development
-
-```bash
-python -m pytest
-python -m build
-```
-
-Gateway integration tests use a small robot-side protocol fake from `tests/fakes/`. It exercises pairing, command
-acknowledgements, Job lifecycle events, disconnects, and failure paths without hardware. It is test support only:
-the wheel doesn't contain a simulator and the public SDK doesn't expose a simulation API. CI runs the suite on
-Python 3.10-3.12 with both the minimum (`websockets 12.x`) and latest supported (`websockets <16`) dependency.
-
-Maintainers should follow [docs/releasing.md](docs/releasing.md). Releases use GitHub Actions and PyPI Trusted
-Publishing without a long-lived upload token. The private serial-assisted bench workflow is documented in
-[docs/hardware-testing.md](docs/hardware-testing.md).
+See [examples](examples/README.md), [Runtime contract](docs/contracts/runtime-profile-index.md),
+and [troubleshooting](docs/troubleshooting.md).

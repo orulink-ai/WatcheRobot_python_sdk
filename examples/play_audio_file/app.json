@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "id": "example.play_audio_file",
+  "name": "Play Audio File",
+  "version": "1.0.0",
+  "requires_watcherobot": ">=0.1.0a4,<0.2",
+  "dependencies": []
+}
