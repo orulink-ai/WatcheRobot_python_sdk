@@ -73,6 +73,18 @@ Runtime                           Device
 
 校验失败返回 `sys.nack`，并关闭连接。Application 不参与设备 hello。
 
+### 麦克风 Opus payload 职责
+
+Runtime/Daemon 负责设备连接、WSPK 帧边界和按来源路由，但在 Application 运行时必须将设备
+音频 payload 原样交给 Application Device channel；它不解码、不转码，也不依据 Opus 内容做业务
+分支。`ApplicationContext.robot.microphone.open_pcm()` / `record_pcm()` 在 SDK 的 Application
+媒体层把每个完整 Opus 包解码为 16 kHz、单声道、`pcm_s16le`。`open()` / `record()` 是同一 PCM
+语义的兼容别名。
+
+因此，桌面安装包需要随 Daemon 和默认 Application 一起提供完整共享 `watcherobot` 环境；桌面 UI
+本身仍只调用 Daemon 控制面。需要原始帧的高级 Application 直接使用 `ApplicationChannels` 的
+Device channel。
+
 ## 3. 配对状态机
 
 ```text

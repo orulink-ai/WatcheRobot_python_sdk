@@ -98,5 +98,25 @@ asyncio.run(main())
 Application 不自行监听 Discovery 端口、不直连设备 WebSocket，也不会拿到
 设备配对凭证。
 
+## 麦克风 PCM
+
+设备麦克风上行使用 Opus（`16 kHz`、单声道、每个 WSPK 帧一个包）。普通 Application
+通过高层 SDK 得到解码后的 `pcm_s16le`：
+
+```python
+with app.robot.microphone.open_pcm() as microphone:
+    frame = microphone.read(timeout=1.0)  # frame.data 是 16 kHz 单声道 PCM
+
+recording = app.robot.microphone.record_pcm(duration=3.0)
+recording.save("microphone.wav")
+```
+
+`open()` 和 `record()` 为兼容保留，语义同样是 PCM。Runtime/Daemon 只持有设备连接并路由
+WSPK 帧，不能解码或改写其中的 Opus payload；解码发生在 SDK 的 Application 媒体层。因此，
+桌面安装包应携带完整共享 `watcherobot` 环境，但桌面自身仍只负责控制 Daemon。
+
+确实需要自行处理媒体协议的 Application，可以通过高级 `ApplicationChannels` 的 Device
+channel 读取原始 WSPK 帧。
+
 更多内容见 [示例](examples/README.md)、[Runtime 合同](docs/contracts/runtime-profile-index.md)
-和 [故障排查](docs/troubleshooting.md)。
+、[麦克风合同](docs/microphone-audio.md)和 [故障排查](docs/troubleshooting.md)。

@@ -103,5 +103,28 @@ frames. Normal SDK Applications should use `ApplicationContext`.
 Applications never open their own Discovery socket or device WebSocket and do
 not receive pairing credentials.
 
+## Microphone PCM
+
+The device microphone uplink is Opus (`16 kHz`, mono, one packet per WSPK
+frame). Normal Applications receive decoded `pcm_s16le` through the high-level
+SDK API:
+
+```python
+with app.robot.microphone.open_pcm() as microphone:
+    frame = microphone.read(timeout=1.0)  # frame.data is 16 kHz mono PCM
+
+recording = app.robot.microphone.record_pcm(duration=3.0)
+recording.save("microphone.wav")
+```
+
+`open()` and `record()` are PCM aliases for compatibility. The Runtime/Daemon
+only owns the device connection and routes the WSPK frame; it does not decode
+or rewrite an Opus payload. Decoding is performed in this SDK's Application
+media layer, so a desktop bundle must ship the complete shared `watcherobot`
+environment, while the desktop itself continues to control only the Daemon.
+
+Applications that intentionally implement their own media protocol can use
+the advanced `ApplicationChannels` Device channel and consume raw WSPK frames.
+
 See [examples](examples/README.md), [Runtime contract](docs/contracts/runtime-profile-index.md),
-and [troubleshooting](docs/troubleshooting.md).
+the [microphone contract](docs/microphone-audio.md), and [troubleshooting](docs/troubleshooting.md).

@@ -46,6 +46,24 @@ def test_microphone_read_timeout_is_plain_timeout_error():
         MicrophoneSession(FakeRobot(), session_id=2).read(timeout=0)
 
 
+def test_microphone_session_decodes_opus_before_exposing_audio_frames():
+    class FakeDecoder:
+        def decode(self, packet: bytes) -> bytes:
+            assert packet == b"opus-packet"
+            return b"\x01\x00\x02\x00"
+
+        def flush(self) -> bytes:
+            return b""
+
+    session = MicrophoneSession(FakeRobot(), session_id=2, decoder=FakeDecoder())
+
+    session._push_opus(b"opus-packet", sequence=9)
+
+    frame = session.read(timeout=0)
+    assert frame.data == b"\x01\x00\x02\x00"
+    assert frame.sequence == 9
+
+
 def test_image_frame_save_creates_parent_and_writes_jpeg(tmp_path: Path):
     output = tmp_path / "nested" / "camera.jpg"
     image = ImageFrame(data=b"\xff\xd8jpeg\xff\xd9", sequence=1, timestamp=1.0)
@@ -92,11 +110,19 @@ def test_microphone_domain_record_returns_exact_duration():
 
     robot = SimpleNamespace(_open_microphone=lambda queue_size: FakeSession())
 
-    recording = MicrophoneDomain(robot).record(duration=0.000125, timeout=1.0)
+    recording = MicrophoneDomain(robot).record_pcm(duration=0.000125, timeout=1.0)
 
     assert recording.data == b"\x01\x00\x02\x00"
     assert recording.format.sample_rate_hz == 16000
     assert recording.dropped_frames == 2
+
+
+def test_microphone_domain_open_is_the_pcm_alias():
+    sentinel = object()
+    robot = SimpleNamespace(_open_microphone=lambda queue_size: sentinel)
+
+    assert MicrophoneDomain(robot).open() is sentinel
+    assert MicrophoneDomain(robot).open_pcm() is sentinel
 
 
 def test_microphone_domain_record_rejects_invalid_duration():

@@ -71,6 +71,14 @@ class FakeTransport:
         return future
 
 
+class FakeOpusDecoder:
+    def decode(self, packet):
+        return b"decoded:" + bytes(packet)
+
+    def flush(self):
+        return b""
+
+
 def test_public_namespaces_build_protocol_commands():
     transport = FakeTransport()
     robot = WatcheRobot._from_transport(transport)
@@ -483,10 +491,12 @@ def test_media_frame_arriving_before_open_ack_is_buffered():
                 self.binary_callback(BinaryFrame(FRAME_IMAGE, FLAG_FIRST | FLAG_LAST, 0, 6, b"jpeg"))
             return super().send_command(message_type, data, timeout)
 
-    robot = WatcheRobot._from_transport(EarlyMediaTransport())
+    robot = WatcheRobot._from_transport(
+        EarlyMediaTransport(), opus_decoder_factory=FakeOpusDecoder
+    )
 
-    microphone = robot.microphone.open(queue_size=1)
-    assert microphone.read(timeout=0).data == b"pcm"
+    microphone = robot.microphone.open_pcm(queue_size=1)
+    assert microphone.read(timeout=0).data == b"decoded:pcm"
     assert robot.camera.capture(timeout=0.1).data == b"jpeg"
 
 
@@ -534,7 +544,7 @@ def test_concurrent_microphone_open_is_rejected_before_a_second_command():
             return super().send_command(message_type, data, timeout)
 
     transport = BlockingMicrophoneTransport()
-    robot = WatcheRobot._from_transport(transport)
+    robot = WatcheRobot._from_transport(transport, opus_decoder_factory=FakeOpusDecoder)
     opened = []
     opener = threading.Thread(target=lambda: opened.append(robot.microphone.open()))
     opener.start()
@@ -600,13 +610,13 @@ def test_microphone_open_rejects_an_already_closed_robot():
 
 def test_microphone_rejects_frames_from_another_session():
     transport = FakeTransport()
-    robot = WatcheRobot._from_transport(transport)
+    robot = WatcheRobot._from_transport(transport, opus_decoder_factory=FakeOpusDecoder)
     microphone = robot.microphone.open(queue_size=2)
 
     transport.binary_callback(BinaryFrame(FRAME_AUDIO, 0, microphone.id + 1, 1, b"stale"))
     transport.binary_callback(BinaryFrame(FRAME_AUDIO, 0, microphone.id, 2, b"current"))
 
-    assert microphone.read(timeout=0).data == b"current"
+    assert microphone.read(timeout=0).data == b"decoded:current"
 
 
 def test_camera_waits_for_the_acknowledged_session_frame():
