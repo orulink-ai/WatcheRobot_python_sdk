@@ -3,8 +3,8 @@
 The SDK is the single owner of the WatcheRobot Runtime/Daemon and the public
 Application API. Programs built with this package are managed Applications:
 they can run without the desktop through the CLI and Runtime control API. The
-same contract is intended for desktop installation and launch, but Desktop
-integration is still pending and must not be treated as a completed feature.
+desktop uses this same Runtime/Daemon implementation to launch the bundled
+default Application and SDK-built Applications.
 
 ## Install and run
 
@@ -17,6 +17,8 @@ python -m pip install -e ".[test]"
 `watcherobot app run` starts or reuses the current user's one Runtime. The
 Runtime owns pairing, device and desktop connections, Application processes,
 logs, and routing. When the Application exits, the Runtime remains alive.
+Current-session Daemon logs are available from `GET /daemon/logs`; this source
+works whether the Runtime was launched by the desktop or independently.
 
 For a fresh standalone session, start the Runtime, replace `123456` with the
 six-digit code shown by the device, pair through the local control API, and
@@ -80,8 +82,10 @@ watcherobot bluetooth clear --device <id>
 The provision command prompts for the password without accepting a
 `--password` argument. Its `credentials_saved` result means only that the
 firmware acknowledged storage of the credentials; it does not prove that the
-device connected to the network. The SDK disconnects BLE before returning so
-the current firmware can resume its Wi-Fi connection attempt.
+device connected to the network. The SDK makes a bounded attempt to stop
+notifications and disconnect BLE before returning. Cleanup failure does not
+replace an acknowledged `credentials_saved` result, so that result does not
+guarantee BLE disconnected or the firmware resumed its Wi-Fi attempt.
 
 The same flow is available through the asynchronous
 `BluetoothProvisioner` API. See
@@ -125,5 +129,32 @@ frames. Normal SDK Applications should use `ApplicationContext`.
 Applications never open their own Discovery socket or device WebSocket and do
 not receive pairing credentials.
 
+## Microphone PCM
+
+The device microphone uplink is Opus (`16 kHz`, mono, one packet per WSPK
+frame). Normal Applications receive decoded `pcm_s16le` through the high-level
+SDK API:
+
+```python
+with app.robot.microphone.open_pcm() as microphone:
+    frame = microphone.read(timeout=1.0)  # frame.data is 16 kHz mono PCM
+
+recording = app.robot.microphone.record_pcm(duration=3.0)
+recording.save("microphone.wav")
+```
+
+`open()` retains the raw Opus-packet stream for Applications that need to
+process packets themselves. Raw Opus does not provide byte-derived PCM
+duration or WAV output, so `record()` now raises a migration error instead of
+creating a misleading recording; use `open()` for raw packets or
+`record_pcm()` for a PCM recording. The Runtime/Daemon only owns the device
+connection and routes the WSPK frame; it does not decode or rewrite an Opus
+payload. Decoding is performed in this SDK's Application media layer, so a
+desktop bundle must ship the complete shared `watcherobot` environment, while
+the desktop itself continues to control only the Daemon.
+
+Applications that intentionally implement their own media protocol can use
+the advanced `ApplicationChannels` Device channel and consume raw WSPK frames.
+
 See [examples](examples/README.md), [Runtime contract](docs/contracts/runtime-profile-index.md),
-and [troubleshooting](docs/troubleshooting.md).
+the [microphone contract](docs/microphone-audio.md), and [troubleshooting](docs/troubleshooting.md).

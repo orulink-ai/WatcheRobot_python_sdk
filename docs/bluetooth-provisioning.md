@@ -65,16 +65,19 @@ SSID exists, the password is correct, DHCP succeeded, or the robot is online.
 Use the later Wi-Fi status separately when needed.
 
 The SDK subscribes to notifications before writing, writes with an ATT
-response, and also reads the characteristic's cached response. It always
-stops notifications and disconnects after success, timeout, cancellation, or
-another error. The current firmware resumes its Wi-Fi connection attempt only
-after the BLE connection closes.
+response, and also reads the characteristic's cached response. After success,
+timeout, cancellation, or another error, it makes bounded, independent
+attempts to stop notifications and disconnect. Cleanup timeout or failure is
+not allowed to replace an already acknowledged `credentials_saved` result.
+Consequently, that result does not guarantee BLE disconnected or that the
+firmware resumed its Wi-Fi connection attempt.
 
 Default scan, connect, protocol-response, and per-cleanup-step timeouts are
 10, 12, 3, and 2 seconds. They can be overridden when constructing
 `BluetoothProvisioner`. Notification shutdown and disconnect are bounded
 independently, so a stalled notification shutdown does not prevent the SDK
-from attempting to disconnect.
+from attempting to disconnect. Cleanup is best-effort and its failure is not
+reported separately by the current public result models.
 
 ## CLI
 

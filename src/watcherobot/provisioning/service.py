@@ -30,7 +30,6 @@ DEFAULT_SCAN_TIMEOUT = 10.0
 DEFAULT_CONNECT_TIMEOUT = 12.0
 DEFAULT_RESPONSE_TIMEOUT = 3.0
 DEFAULT_CLEANUP_TIMEOUT = 2.0
-_STATUS_REJECTION_GRACE_PERIOD = 0.05
 _MAX_SSID_BYTES = 31
 _MAX_PASSWORD_BYTES = 63
 
@@ -210,7 +209,6 @@ class _ProvisioningSession:
             command_id,
             deadline,
             request_started,
-            accept_status=False,
         )
 
     async def request_status(self, command_type: str) -> WifiStatus:
@@ -236,20 +234,12 @@ class _ProvisioningSession:
             del payload
 
         await self._read_cached_response(deadline)
-        message = await self._wait_for(
+        message = await self._wait_for_status_command(
             command_type,
             command_id,
             deadline,
             request_started,
-            accept_status=True,
         )
-        if message.status is None:
-            message = await self._wait_for_status(
-                command_type,
-                command_id,
-                deadline,
-                request_started,
-            )
         if message.status is None:
             raise ProvisioningProtocolError(
                 "Wi-Fi status response has no state"
@@ -280,8 +270,6 @@ class _ProvisioningSession:
         command_id: str,
         deadline: float,
         request_started: float,
-        *,
-        accept_status: bool,
     ) -> ProtocolMessage:
         while True:
             message = await self._next_message(
@@ -291,14 +279,6 @@ class _ProvisioningSession:
             )
             if isinstance(message, ProvisioningProtocolError):
                 raise message
-            if message.type == "evt.wifi.status" and accept_status:
-                return await self._prefer_matching_rejection(
-                    message,
-                    command_type,
-                    command_id,
-                    deadline,
-                    request_started,
-                )
             if (
                 message.command_type != command_type
                 or message.command_id != command_id
@@ -313,53 +293,45 @@ class _ProvisioningSession:
             if message.type == "sys.ack":
                 return message
 
-    async def _prefer_matching_rejection(
+    async def _wait_for_status_command(
         self,
-        status: ProtocolMessage,
         command_type: str,
         command_id: str,
         deadline: float,
         request_started: float,
     ) -> ProtocolMessage:
-        candidate = status
-        settle_deadline = min(
-            deadline,
-            time.monotonic() + _STATUS_REJECTION_GRACE_PERIOD,
-        )
+        candidate: ProtocolMessage | None = None
         while True:
-            remaining = settle_deadline - time.monotonic()
-            if remaining <= 0:
-                return candidate
-            try:
-                received_at, message = await asyncio.wait_for(
-                    self._messages.get(),
-                    timeout=remaining,
-                )
-            except asyncio.TimeoutError:
-                return candidate
-            if received_at < request_started:
-                continue
+            message = await self._next_message(
+                command_type,
+                deadline,
+                request_started,
+            )
             if isinstance(message, ProvisioningProtocolError):
                 raise message
             if message.type == "evt.wifi.status":
                 candidate = message
                 continue
             if (
-                message.type == "sys.nack"
-                and message.command_type == command_type
-                and message.command_id == command_id
+                message.command_type != command_type
+                or message.command_id != command_id
             ):
+                continue
+            if message.type == "sys.nack":
                 raise ProvisioningRejectedError(
                     command_type,
                     reason=message.reason or "rejected",
                     code=message.code or -1,
                 )
-            if (
-                message.type == "sys.ack"
-                and message.command_type == command_type
-                and message.command_id == command_id
-            ):
-                return candidate
+            if message.type == "sys.ack":
+                if candidate is not None:
+                    return candidate
+                return await self._wait_for_status(
+                    command_type,
+                    command_id,
+                    deadline,
+                    request_started,
+                )
 
     async def _wait_for_status(
         self,

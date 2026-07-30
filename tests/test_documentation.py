@@ -61,16 +61,18 @@ def test_release_guide_uses_managed_application_acceptance() -> None:
     assert "watcherobot app run" in guide
 
 
-def test_readmes_distinguish_current_and_target_desktop_support() -> None:
+def test_readmes_document_current_desktop_and_standalone_support() -> None:
     english = (ROOT / "README.md").read_text(encoding="utf-8")
     chinese = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
     normalized_english = " ".join(english.split())
     normalized_chinese = "".join(chinese.split())
 
-    assert "Desktop integration is still pending" in normalized_english
-    assert "桌面端接入仍待完成" in normalized_chinese
+    assert "desktop uses this same Runtime/Daemon implementation" in normalized_english
+    assert "桌面端也使用同一份Runtime/Daemon实现" in normalized_chinese
     assert "/daemon/devices/pair" in english
     assert "/daemon/devices/pair" in chinese
+    assert "GET /daemon/logs" in english
+    assert "GET /daemon/logs" in chinese
 
 
 def test_hardware_guide_contains_standalone_pairing_step() -> None:

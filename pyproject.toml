@@ -12,6 +12,7 @@ license = {text = "Apache-2.0"}
 authors = [{name = "Orulink AI"}]
 dependencies = [
   "bleak>=3,<4",
+  "av>=16,<17",
   "fastapi>=0.110,<1",
   "packaging>=24,<27",
   "psutil>=5.9,<8",

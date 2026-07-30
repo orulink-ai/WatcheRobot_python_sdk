@@ -140,7 +140,7 @@ class FakeConnection(BleConnection):
             )
 
             async def send_delayed_rejection() -> None:
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.1)
                 callback(encoded)
 
             asyncio.create_task(send_delayed_rejection())
@@ -178,6 +178,8 @@ class FakeConnection(BleConnection):
                 self.callback(encoded)
             self.cached = payload
         if request_type in {"cfg.wifi.get", "cfg.wifi.clear"}:
+            if self.callback is not None:
+                self.callback(encoded)
             state = (
                 "unconfigured"
                 if request_type == "cfg.wifi.clear"
