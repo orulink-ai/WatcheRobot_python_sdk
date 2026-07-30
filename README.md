@@ -67,6 +67,32 @@ watcherobot app uninstall example.hello_robot --version 1.0.0
 For larger Applications, add a `.wappignore` file using glob patterns such as
 `tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not packaged.
 
+## Bluetooth Wi-Fi provisioning
+
+Python 3.10–3.12 on Windows and macOS can provision the existing
+`ESP_ROBOT` GATT service directly:
+
+```powershell
+watcherobot bluetooth scan
+watcherobot bluetooth provision --device <id> --ssid MyWiFi
+watcherobot bluetooth status --device <id>
+watcherobot bluetooth clear --device <id>
+```
+
+The provision command prompts for the password without accepting a
+`--password` argument. Its `credentials_saved` result means only that the
+firmware acknowledged storage of the credentials; it does not prove that the
+device connected to the network. The SDK makes a bounded attempt to stop
+notifications and disconnect BLE before returning. Cleanup failure does not
+replace an acknowledged `credentials_saved` result, so that result does not
+guarantee BLE disconnected or the firmware resumed its Wi-Fi attempt.
+
+The same flow is available through the asynchronous
+`BluetoothProvisioner` API. See
+[Bluetooth provisioning](docs/bluetooth-provisioning.md) for API examples,
+timeouts, platform identifiers, protocol limits, and the current GATT
+security constraints.
+
 ## Application API
 
 Every Application has `app.json` and a fixed `app.py` entrypoint:

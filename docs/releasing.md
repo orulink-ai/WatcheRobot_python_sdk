@@ -55,7 +55,7 @@ python -m venv .venv-release-test
 .venv-release-test\Scripts\python -m pip install `
   --index-url https://test.pypi.org/simple/ `
   --extra-index-url https://pypi.org/simple/ `
-  watcherobot==0.1.0
+  watcherobot==0.1.1a1
 .venv-release-test\Scripts\python -m pip check
 .venv-release-test\Scripts\python -c "import watcherobot; print(watcherobot.__version__)"
 .venv-release-test\Scripts\python -m watcherobot.runtime.daemon --help
@@ -72,13 +72,13 @@ Runtime 配对并运行受管 Application。若版本已经上传但验收失败
 3. 创建 Draft GitHub Release，标签必须严格等于 `v` 加包版本：
 
 ```powershell
-gh release create v0.1.0 --target main --draft --generate-notes
+gh release create v0.1.1a1 --target main --draft --prerelease --generate-notes
 ```
 
 4. 核对 Release 内容后发布：
 
 ```powershell
-gh release edit v0.1.0 --draft=false
+gh release edit v0.1.1a1 --draft=false
 ```
 
 `release.published` 事件会启动正式发布任务。流水线会再次运行测试，并检查：
@@ -92,15 +92,15 @@ gh release edit v0.1.0 --draft=false
 
 ```powershell
 python -m venv .venv-pypi-test
-.venv-pypi-test\Scripts\python -m pip install watcherobot==0.1.0
+.venv-pypi-test\Scripts\python -m pip install watcherobot==0.1.1a1
 .venv-pypi-test\Scripts\python -c "import watcherobot; print(watcherobot.__version__)"
 ```
 
 ## 版本规则
 
-- Alpha：`0.1.0a1`、`0.1.0a2`、`0.1.0a3`、`0.1.0a4`
-- Beta：`0.1.0b1`
-- Release Candidate：`0.1.0rc1`
-- 正式版：`0.1.0`
+- Alpha：正式版 `0.1.0` 之后从 `0.1.1a1` 开始递增
+- Beta：`0.1.1b1`
+- Release Candidate：`0.1.1rc1`
+- 正式版：`0.1.1`
 
 PyPI 版本不可覆盖或重新上传。发布失败但文件已经进入索引时，必须递增版本号后重新发布。
