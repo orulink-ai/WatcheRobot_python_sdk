@@ -111,10 +111,12 @@ recording = app.robot.microphone.record_pcm(duration=3.0)
 recording.save("microphone.wav")
 ```
 
-`open()` 和 `record()` 为兼容保留，继续返回原始 Opus payload。需要按字节计算 PCM 时长或
-保存 PCM WAV 时，必须使用显式 PCM API，不能把原始 Opus 字节当作 PCM。Runtime/Daemon 只持有
-设备连接并路由 WSPK 帧，不能解码或改写其中的 Opus payload；解码发生在 SDK 的 Application
-媒体层。因此，桌面安装包应携带完整共享 `watcherobot` 环境，但桌面自身仍只负责控制 Daemon。
+`open()` 保留原始 Opus 包流，供需要自行处理媒体协议的 Application 使用。原始 Opus 不能按
+PCM 字节计算时长，也不能直接保存为 WAV；因此 `record()` 现在会明确报出迁移错误，而不再生成
+误导性的录音。需要原始包时使用 `open()`，需要可保存的 PCM 录音时使用 `record_pcm()`。
+Runtime/Daemon 只持有设备连接并路由 WSPK 帧，不能解码或改写其中的 Opus payload；解码发生在
+SDK 的 Application 媒体层。因此，桌面安装包应携带完整共享 `watcherobot` 环境，但桌面自身仍
+只负责控制 Daemon。
 
 确实需要自行处理媒体协议的 Application，可以通过高级 `ApplicationChannels` 的 Device
 channel 读取原始 WSPK 帧。

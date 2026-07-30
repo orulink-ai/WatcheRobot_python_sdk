@@ -613,10 +613,32 @@ def test_microphone_rejects_frames_from_another_session():
     robot = WatcheRobot._from_transport(transport)
     microphone = robot.microphone.open(queue_size=2)
 
+    assert microphone.format.encoding == "opus"
+    assert microphone.format.sample_width_bytes == 0
+
     transport.binary_callback(BinaryFrame(FRAME_AUDIO, 0, microphone.id + 1, 1, b"stale"))
     transport.binary_callback(BinaryFrame(FRAME_AUDIO, 0, microphone.id, 2, b"current"))
 
     assert microphone.read(timeout=0).data == b"current"
+
+
+def test_microphone_decoder_initialization_failure_closes_device_session():
+    transport = FakeTransport()
+
+    def fail_to_create_decoder():
+        raise RuntimeError("decoder unavailable")
+
+    robot = WatcheRobot._from_transport(transport, opus_decoder_factory=fail_to_create_decoder)
+
+    with pytest.raises(RuntimeError, match="decoder unavailable"):
+        robot.microphone.open_pcm()
+
+    assert transport.commands == [
+        ("ctrl.microphone.open", {"sample_rate_hz": 16000}),
+        ("ctrl.microphone.close", {"session_id": 100}),
+    ]
+    assert robot._microphone is None
+    assert not robot._microphone_opening
 
 
 def test_camera_waits_for_the_acknowledged_session_frame():

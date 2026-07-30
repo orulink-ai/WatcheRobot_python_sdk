@@ -11,9 +11,13 @@ decodes those packets before exposing `MicrophoneSession` frames. Therefore:
 - `robot.microphone.record_pcm()` returns an `AudioRecording` that can be
   saved as a valid WAV file. Its `duration_seconds` is calculated from decoded
   PCM bytes, not the compressed Opus packet size.
-- The legacy `robot.microphone.open()` and `robot.microphone.record()` retain
-  their raw Opus-payload behavior. Those bytes are not PCM and must not be
-  used for byte-derived PCM duration or PCM WAV output.
+- `robot.microphone.open()` retains the raw Opus-packet stream for Applications
+  that process the media protocol themselves. Its `AudioFormat.encoding` is
+  `"opus"`, and it has no PCM byte width or byte-derived duration.
+- `robot.microphone.record()` rejects raw Opus recording with a migration
+  error. It must not concatenate or truncate compressed packets and label the
+  result as a PCM WAV file; use `open()` for packets or `record_pcm()` for a
+  recordable PCM result.
 
 ```python
 with app.robot.microphone.open_pcm() as microphone:
@@ -36,11 +40,15 @@ and performs Opus-to-PCM decoding. This is why the desktop installation ships
 the complete shared SDK environment for the Daemon and Applications, even
 though the desktop UI itself only invokes the Daemon control API.
 
-An Application that needs raw frames must opt into the advanced
-`ApplicationChannels` Device channel and process the WSPK payload itself.
+An Application that needs full WSPK frames or a custom Device-channel protocol
+can opt into the advanced `ApplicationChannels` Device channel and process the
+payload itself. Applications that only need raw microphone packets can use
+`robot.microphone.open()`.
 
 ## Failure handling
 
 Malformed packets are dropped without terminating the Device channel. Their
-count is available as `MicrophoneSession.decode_failures`; queue overflow is
-reported separately as `MicrophoneSession.dropped_frames`.
+count is available as `MicrophoneSession.decode_failures` and is copied to the
+`AudioRecording.decode_failures` returned by `record_pcm()`; queue overflow is
+reported separately as `MicrophoneSession.dropped_frames` and
+`AudioRecording.dropped_frames`.

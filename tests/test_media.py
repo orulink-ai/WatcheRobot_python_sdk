@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from watcherobot.errors import WatcheRobotError
 from watcherobot.media import AudioFormat, AudioRecording, ImageFrame, MicrophoneSession
 from watcherobot.robot import MicrophoneDomain
 
@@ -123,15 +124,27 @@ def test_audio_recording_save_writes_standard_wave(tmp_path: Path):
         assert wav_file.readframes(wav_file.getnframes()) == recording.data
 
 
+def test_audio_recording_rejects_non_pcm_wave_output(tmp_path: Path):
+    recording = AudioRecording(
+        data=b"opus-packet",
+        format=AudioFormat(sample_width_bytes=0, encoding="opus"),
+    )
+
+    with pytest.raises(ValueError, match="only supports pcm_s16le"):
+        recording.save(tmp_path / "microphone.wav")
+
+
 def test_microphone_domain_record_returns_exact_duration():
     class FakeSession:
         format = AudioFormat(sample_rate_hz=16000, channels=1, sample_width_bytes=2)
         dropped_frames = 2
+        decode_failures = 0
 
         def __enter__(self):
             return self
 
         def __exit__(self, *_args):
+            self.decode_failures = 1
             return None
 
         def read(self, timeout):
@@ -147,6 +160,7 @@ def test_microphone_domain_record_returns_exact_duration():
     assert recording.data == b"\x01\x00\x02\x00"
     assert recording.format.sample_rate_hz == 16000
     assert recording.dropped_frames == 2
+    assert recording.decode_failures == 1
 
 
 def test_microphone_domain_open_keeps_raw_opus_separate_from_pcm():
@@ -166,10 +180,11 @@ def test_microphone_domain_open_keeps_raw_opus_separate_from_pcm():
     assert calls == [False, True]
 
 
-def test_microphone_domain_record_keeps_raw_opus_separate_from_pcm():
+def test_microphone_domain_record_rejects_raw_opus_and_keeps_pcm_recording():
     class FakeSession:
         format = AudioFormat(sample_rate_hz=16000, channels=1, sample_width_bytes=2)
         dropped_frames = 0
+        decode_failures = 0
 
         def __enter__(self):
             return self
@@ -190,14 +205,15 @@ def test_microphone_domain_record_keeps_raw_opus_separate_from_pcm():
 
     domain = MicrophoneDomain(SimpleNamespace(_open_microphone=open_microphone))
 
-    domain.record(duration=0.000125, timeout=1.0)
+    with pytest.raises(WatcheRobotError, match="raw Opus recording is not supported"):
+        domain.record(duration=0.000125, timeout=1.0)
     domain.record_pcm(duration=0.000125, timeout=1.0)
 
-    assert calls == [False, True]
+    assert calls == [True]
 
 
 def test_microphone_domain_record_rejects_invalid_duration():
-    robot = SimpleNamespace(_open_microphone=lambda queue_size: None)
+    robot = SimpleNamespace(_open_microphone=lambda **_kwargs: None)
 
     with pytest.raises(ValueError, match="duration must be positive"):
-        MicrophoneDomain(robot).record(duration=0)
+        MicrophoneDomain(robot).record_pcm(duration=0)

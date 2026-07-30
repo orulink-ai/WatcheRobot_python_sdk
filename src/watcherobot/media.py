@@ -39,6 +39,7 @@ class AudioRecording:
     data: bytes
     format: AudioFormat
     dropped_frames: int = 0
+    decode_failures: int = 0
 
     @property
     def duration_seconds(self) -> float:
@@ -52,6 +53,8 @@ class AudioRecording:
         return len(self.data) / bytes_per_second
 
     def save(self, path: str | Path) -> Path:
+        if self.format.encoding != "pcm_s16le":
+            raise ValueError("AudioRecording.save only supports pcm_s16le data")
         output = Path(path)
         output.parent.mkdir(parents=True, exist_ok=True)
         with wave.open(str(output), "wb") as wav_file:

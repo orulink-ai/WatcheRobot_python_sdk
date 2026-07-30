@@ -44,7 +44,7 @@ result as WAV, and verify all of the following:
 - the WAV header declares 16 kHz, mono, signed 16-bit PCM;
 - its duration is derived from PCM bytes and agrees with the recorded interval;
 - playback is intelligible rather than compressed-packet noise; and
-- `decode_failures` stays at zero for the tested stream.
+- the returned `recording.decode_failures` stays at zero for the tested stream.
 
 The device transport remains Opus. The Runtime/Daemon forwards those WSPK
 payloads without decoding them; the managed Application's SDK decodes them.
