@@ -4,14 +4,14 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
-def test_package_version_has_one_alpha_source() -> None:
+def test_package_version_has_one_release_source() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     package_init = (ROOT / "src" / "watcherobot" / "__init__.py").read_text(encoding="utf-8")
 
     assert 'dynamic = ["version"]' in pyproject
     assert '[tool.hatch.version]\npath = "src/watcherobot/__init__.py"' in pyproject
     assert 'version = "0.1.0"' not in pyproject
-    assert '__version__ = "0.1.0a4"' in package_init
+    assert '__version__ = "0.1.0"' in package_init
 
 
 def test_publish_workflow_separates_test_and_production_indexes() -> None:
