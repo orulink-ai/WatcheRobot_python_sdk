@@ -101,6 +101,25 @@ an interactive, non-echoing prompt; there is deliberately no `--password`
 option. Output uses compact JSON. `Ctrl+C` cancels the operation, performs BLE
 cleanup, and exits with status 130.
 
+## Physical-device smoke test
+
+The repository includes an interactive test tool for exercising a real device
+without putting the Wi-Fi password in shell history:
+
+```text
+python tools/ble_provisioning_hardware_test.py scan
+python tools/ble_provisioning_hardware_test.py status --id-prefix 80:B5
+python tools/ble_provisioning_hardware_test.py provision --id-prefix 80:B5 --ssid orulink
+python tools/ble_provisioning_hardware_test.py clear --id-prefix 80:B5
+```
+
+Run these commands from an editable SDK checkout or an environment where the
+SDK is installed. `provision` prompts for the password without echoing it.
+`--id-prefix` is intended for Windows MAC-address prefixes; on macOS, copy the
+CoreBluetooth UUID shown by `scan` and pass it through `--device`. A selector
+must resolve to exactly one recognized `ESP_ROBOT`, otherwise the tool stops
+without connecting.
+
 ## Protocol and security boundary
 
 This release intentionally uses the firmware protocol without modifying it:
