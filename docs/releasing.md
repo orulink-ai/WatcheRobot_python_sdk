@@ -99,8 +99,8 @@ python -m venv .venv-pypi-test
 ## 版本规则
 
 - Alpha：正式版 `0.1.0` 之后从 `0.1.1a1` 开始递增
-- Beta：`0.1.0b1`
-- Release Candidate：`0.1.0rc1`
-- 正式版：`0.1.0`
+- Beta：`0.1.1b1`
+- Release Candidate：`0.1.1rc1`
+- 正式版：`0.1.1`
 
 PyPI 版本不可覆盖或重新上传。发布失败但文件已经进入索引时，必须递增版本号后重新发布。

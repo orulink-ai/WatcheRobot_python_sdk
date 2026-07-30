@@ -178,8 +178,9 @@ class FakeConnection(BleConnection):
                 self.callback(encoded)
             self.cached = payload
         if request_type in {"cfg.wifi.get", "cfg.wifi.clear"}:
-            if self.callback is not None:
-                self.callback(encoded)
+            # The shipped firmware puts ACK in the ATT write response, which
+            # Bleak confirms without surfacing as a notification. Only the
+            # following status is observable through Notify/read.
             state = (
                 "unconfigured"
                 if request_type == "cfg.wifi.clear"
@@ -311,7 +312,7 @@ def test_provision_wifi_can_clear_existing_credentials_first() -> None:
     asyncio.run(scenario())
 
 
-def test_status_and_clear_return_firmware_wifi_state() -> None:
+def test_status_and_clear_accept_cached_status_without_ack_notification() -> None:
     async def scenario() -> None:
         connection = FakeConnection()
         backend = FakeBackend(connection)

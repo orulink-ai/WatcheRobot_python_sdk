@@ -72,6 +72,13 @@ not allowed to replace an already acknowledged `credentials_saved` result.
 Consequently, that result does not guarantee BLE disconnected or that the
 firmware resumed its Wi-Fi connection attempt.
 
+For `cfg.wifi.get` and `cfg.wifi.clear`, the shipped firmware places the
+command ACK in the ATT write response, whose payload Bleak does not expose,
+then publishes and caches `evt.wifi.status`. The SDK therefore accepts a valid
+status obtained by the explicit post-write read as the observable success
+signal. A status seen only through Notify remains a candidate until a matching
+ACK/NACK arrives, so an unrelated early notification cannot hide rejection.
+
 Default scan, connect, protocol-response, and per-cleanup-step timeouts are
 10, 12, 3, and 2 seconds. They can be overridden when constructing
 `BluetoothProvisioner`. Notification shutdown and disconnect are bounded

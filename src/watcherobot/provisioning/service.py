@@ -233,13 +233,24 @@ class _ProvisioningSession:
         finally:
             del payload
 
-        await self._read_cached_response(deadline)
-        message = await self._wait_for_status_command(
-            command_type,
-            command_id,
-            deadline,
-            request_started,
-        )
+        cached_message = await self._read_cached_response(deadline)
+        if (
+            cached_message is not None
+            and cached_message.type == "evt.wifi.status"
+        ):
+            message = self._resolve_cached_status(
+                cached_message,
+                command_type,
+                command_id,
+                request_started,
+            )
+        else:
+            message = await self._wait_for_status_command(
+                command_type,
+                command_id,
+                deadline,
+                request_started,
+            )
         if message.status is None:
             raise ProvisioningProtocolError(
                 "Wi-Fi status response has no state"
@@ -250,19 +261,71 @@ class _ProvisioningSession:
             ip=message.ip,
         )
 
-    async def _read_cached_response(self, deadline: float) -> None:
+    async def _read_cached_response(
+        self,
+        deadline: float,
+    ) -> ProtocolMessage | None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return
+            return None
         try:
             cached = await asyncio.wait_for(
                 self._connection.read(),
                 timeout=remaining,
             )
         except Exception:
-            return
-        if cached:
-            self._handle_notification(cached)
+            return None
+        if not cached:
+            return None
+
+        received_at = time.monotonic()
+        try:
+            messages = JsonMessageBuffer().feed(cached)
+        except ProvisioningProtocolError as exc:
+            self._messages.put_nowait((received_at, exc))
+            return None
+        for message in messages:
+            self._messages.put_nowait((received_at, message))
+        return messages[-1] if messages else None
+
+    def _resolve_cached_status(
+        self,
+        cached_status: ProtocolMessage,
+        command_type: str,
+        command_id: str,
+        request_started: float,
+    ) -> ProtocolMessage:
+        """Prefer a write-following cached status after queued rejection checks.
+
+        The shipped firmware returns ACK/NACK inside the ATT write response.
+        Bleak confirms that response but does not expose its payload. On a
+        successful status command the firmware then caches the emitted status,
+        so an explicit read of that value is the observable success signal.
+        """
+
+        candidate = cached_status
+        while True:
+            try:
+                received_at, message = self._messages.get_nowait()
+            except asyncio.QueueEmpty:
+                return candidate
+            if received_at < request_started:
+                continue
+            if isinstance(message, ProvisioningProtocolError):
+                raise message
+            if message.type == "evt.wifi.status":
+                candidate = message
+                continue
+            if (
+                message.type == "sys.nack"
+                and message.command_type == command_type
+                and message.command_id == command_id
+            ):
+                raise ProvisioningRejectedError(
+                    command_type,
+                    reason=message.reason or "rejected",
+                    code=message.code or -1,
+                )
 
     async def _wait_for(
         self,

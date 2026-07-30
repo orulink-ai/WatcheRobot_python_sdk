@@ -16,6 +16,15 @@ def test_package_version_has_one_release_source() -> None:
     assert '"av>=16,<17"' in pyproject
 
 
+def test_releasing_uses_one_next_patch_version_family() -> None:
+    releasing = (ROOT / "docs" / "releasing.md").read_text(encoding="utf-8")
+
+    for version in ("0.1.1a1", "0.1.1b1", "0.1.1rc1", "0.1.1"):
+        assert version in releasing
+    assert "0.1.0b1" not in releasing
+    assert "0.1.0rc1" not in releasing
+
+
 def test_publish_workflow_separates_test_and_production_indexes() -> None:
     workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
 
