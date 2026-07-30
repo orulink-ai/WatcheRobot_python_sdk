@@ -7,11 +7,17 @@ Application 和通过 SDK 开发的 Application。
 
 ## 安装与运行
 
-在当前源码仓库中开发时，先以 editable 方式安装：
+在当前源码仓库中开发时，建议使用独立虚拟环境，并以 editable 方式安装：
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[test]"
 ```
+
+示例是受 Runtime 管理的 Application，请使用
+`watcherobot app run .\examples\<示例目录>` 启动，不要直接执行 `app.py`。
+`WATCHER_APP_*` 环境变量由 Runtime 在启动 Application 时注入。
 
 `watcherobot app run` 会启动或复用当前用户会话中的唯一 Runtime。Runtime
 持有配对、设备与桌面连接、Application 进程、日志和路由。Application

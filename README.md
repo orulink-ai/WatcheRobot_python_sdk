@@ -8,11 +8,18 @@ default Application and SDK-built Applications.
 
 ## Install and run
 
-Install this checkout for development:
+Use an isolated virtual environment and install this checkout in editable mode:
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[test]"
 ```
+
+Examples are Runtime-managed Applications. Start them with
+`watcherobot app run .\examples\<example-directory>` instead of running
+`app.py` directly. The Runtime injects the required `WATCHER_APP_*`
+environment variables when it launches an Application.
 
 `watcherobot app run` starts or reuses the current user's one Runtime. The
 Runtime owns pairing, device and desktop connections, Application processes,
