@@ -1,9 +1,11 @@
 import wave
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
 
+from watcherobot.errors import WatcheRobotError
 from watcherobot.media import AudioFormat, AudioRecording, ImageFrame, MicrophoneSession
 from watcherobot.robot import MicrophoneDomain
 
@@ -46,6 +48,53 @@ def test_microphone_read_timeout_is_plain_timeout_error():
         MicrophoneSession(FakeRobot(), session_id=2).read(timeout=0)
 
 
+def test_microphone_session_decodes_opus_before_exposing_audio_frames():
+    class FakeDecoder:
+        def decode(self, packet: bytes) -> bytes:
+            assert packet == b"opus-packet"
+            return b"\x01\x00\x02\x00"
+
+        def flush(self) -> bytes:
+            return b""
+
+    session = MicrophoneSession(FakeRobot(), session_id=2, decoder=FakeDecoder())
+
+    session._push_opus(b"opus-packet", sequence=9)
+
+    frame = session.read(timeout=0)
+    assert frame.data == b"\x01\x00\x02\x00"
+    assert frame.sequence == 9
+
+
+def test_microphone_close_keeps_a_packet_already_being_decoded():
+    decode_started = Event()
+    release_decode = Event()
+
+    class BlockingDecoder:
+        def decode(self, _packet: bytes) -> bytes:
+            decode_started.set()
+            assert release_decode.wait(1)
+            return b"\x01\x00\x02\x00"
+
+        def flush(self) -> bytes:
+            return b""
+
+    session = MicrophoneSession(FakeRobot(), session_id=2, decoder=BlockingDecoder())
+    worker = Thread(target=lambda: session._push_opus(b"opus-packet", sequence=9))
+    worker.start()
+    assert decode_started.wait(1)
+
+    closer = Thread(target=session.close)
+    closer.start()
+    release_decode.set()
+    worker.join(1)
+    closer.join(1)
+
+    assert not worker.is_alive()
+    assert not closer.is_alive()
+    assert session.read(timeout=0).data == b"\x01\x00\x02\x00"
+
+
 def test_image_frame_save_creates_parent_and_writes_jpeg(tmp_path: Path):
     output = tmp_path / "nested" / "camera.jpg"
     image = ImageFrame(data=b"\xff\xd8jpeg\xff\xd9", sequence=1, timestamp=1.0)
@@ -75,10 +124,67 @@ def test_audio_recording_save_writes_standard_wave(tmp_path: Path):
         assert wav_file.readframes(wav_file.getnframes()) == recording.data
 
 
+def test_audio_recording_rejects_non_pcm_wave_output(tmp_path: Path):
+    recording = AudioRecording(
+        data=b"opus-packet",
+        format=AudioFormat(sample_width_bytes=0, encoding="opus"),
+    )
+
+    with pytest.raises(ValueError, match="only supports pcm_s16le"):
+        recording.save(tmp_path / "microphone.wav")
+
+
 def test_microphone_domain_record_returns_exact_duration():
     class FakeSession:
         format = AudioFormat(sample_rate_hz=16000, channels=1, sample_width_bytes=2)
         dropped_frames = 2
+        decode_failures = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.decode_failures = 1
+            return None
+
+        def read(self, timeout):
+            assert timeout > 0
+            return SimpleNamespace(data=b"\x01\x00\x02\x00\x03\x00")
+
+    robot = SimpleNamespace(
+        _open_microphone=lambda *, queue_size, decode_opus: FakeSession()
+    )
+
+    recording = MicrophoneDomain(robot).record_pcm(duration=0.000125, timeout=1.0)
+
+    assert recording.data == b"\x01\x00\x02\x00"
+    assert recording.format.sample_rate_hz == 16000
+    assert recording.dropped_frames == 2
+    assert recording.decode_failures == 1
+
+
+def test_microphone_domain_open_keeps_raw_opus_separate_from_pcm():
+    calls: list[bool] = []
+    raw_session = object()
+    pcm_session = object()
+
+    def open_microphone(*, queue_size: int, decode_opus: bool):
+        assert queue_size == 32
+        calls.append(decode_opus)
+        return pcm_session if decode_opus else raw_session
+
+    robot = SimpleNamespace(_open_microphone=open_microphone)
+
+    assert MicrophoneDomain(robot).open() is raw_session
+    assert MicrophoneDomain(robot).open_pcm() is pcm_session
+    assert calls == [False, True]
+
+
+def test_microphone_domain_record_rejects_raw_opus_and_keeps_pcm_recording():
+    class FakeSession:
+        format = AudioFormat(sample_rate_hz=16000, channels=1, sample_width_bytes=2)
+        dropped_frames = 0
+        decode_failures = 0
 
         def __enter__(self):
             return self
@@ -88,19 +194,26 @@ def test_microphone_domain_record_returns_exact_duration():
 
         def read(self, timeout):
             assert timeout > 0
-            return SimpleNamespace(data=b"\x01\x00\x02\x00\x03\x00")
+            return SimpleNamespace(data=b"\x01\x02\x03\x04")
 
-    robot = SimpleNamespace(_open_microphone=lambda queue_size: FakeSession())
+    calls: list[bool] = []
 
-    recording = MicrophoneDomain(robot).record(duration=0.000125, timeout=1.0)
+    def open_microphone(*, queue_size: int, decode_opus: bool):
+        assert queue_size == 32
+        calls.append(decode_opus)
+        return FakeSession()
 
-    assert recording.data == b"\x01\x00\x02\x00"
-    assert recording.format.sample_rate_hz == 16000
-    assert recording.dropped_frames == 2
+    domain = MicrophoneDomain(SimpleNamespace(_open_microphone=open_microphone))
+
+    with pytest.raises(WatcheRobotError, match="raw Opus recording is not supported"):
+        domain.record(duration=0.000125, timeout=1.0)
+    domain.record_pcm(duration=0.000125, timeout=1.0)
+
+    assert calls == [True]
 
 
 def test_microphone_domain_record_rejects_invalid_duration():
-    robot = SimpleNamespace(_open_microphone=lambda queue_size: None)
+    robot = SimpleNamespace(_open_microphone=lambda **_kwargs: None)
 
     with pytest.raises(ValueError, match="duration must be positive"):
-        MicrophoneDomain(robot).record(duration=0)
+        MicrophoneDomain(robot).record_pcm(duration=0)

@@ -8,7 +8,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Callable
 
 from ._internal.audio_status import AudioStatusKind, classify_audio_status
 from .errors import CommandError, WatcheRobotError
@@ -16,6 +16,7 @@ from .audio import AudioPlayback, PCMAudio, load_pcm_wave
 from .job import Job, JobState
 from .inputs import InputDomain, parse_input_event
 from .media import AudioFormat, AudioRecording, ImageFrame, MicrophoneSession
+from .opus import OpusDecoder
 from .protocol import (
     FLAG_FIRST,
     FLAG_FRAGMENT,
@@ -181,7 +182,12 @@ class LightsDomain(_Domain):
 
 class MicrophoneDomain(_Domain):
     def open(self, *, queue_size: int = 32) -> MicrophoneSession:
-        return self._robot._open_microphone(queue_size=queue_size)
+        """Open the legacy microphone stream with raw Opus packet payloads."""
+        return self._robot._open_microphone(queue_size=queue_size, decode_opus=False)
+
+    def open_pcm(self, *, queue_size: int = 32) -> MicrophoneSession:
+        """Open a microphone stream decoded from device Opus to PCM."""
+        return self._robot._open_microphone(queue_size=queue_size, decode_opus=True)
 
     def record(
         self,
@@ -190,12 +196,26 @@ class MicrophoneDomain(_Domain):
         timeout: float | None = None,
         queue_size: int = 32,
     ) -> AudioRecording:
+        """Reject raw Opus recording; use ``open`` or ``record_pcm`` instead."""
+        raise WatcheRobotError(
+            "raw Opus recording is not supported; use microphone.open() for "
+            "packets or microphone.record_pcm() for a PCM WAV recording"
+        )
+
+    def record_pcm(
+        self,
+        *,
+        duration: float,
+        timeout: float | None = None,
+        queue_size: int = 32,
+    ) -> AudioRecording:
+        """Record microphone audio decoded from device Opus to PCM."""
         if duration <= 0:
             raise ValueError("duration must be positive")
         if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be positive")
 
-        with self.open(queue_size=queue_size) as microphone:
+        with self.open_pcm(queue_size=queue_size) as microphone:
             audio_format = microphone.format
             target_frames = max(1, round(audio_format.sample_rate_hz * duration))
             target_bytes = (
@@ -216,8 +236,6 @@ class MicrophoneDomain(_Domain):
                     continue
                 chunks.append(frame.data)
                 recorded_bytes += len(frame.data)
-            dropped_frames = microphone.dropped_frames
-
         pcm = b"".join(chunks)[:target_bytes]
         if len(pcm) != target_bytes:
             raise TimeoutError(
@@ -226,7 +244,8 @@ class MicrophoneDomain(_Domain):
         return AudioRecording(
             data=pcm,
             format=audio_format,
-            dropped_frames=dropped_frames,
+            dropped_frames=microphone.dropped_frames,
+            decode_failures=microphone.decode_failures,
         )
 
 
@@ -252,8 +271,14 @@ def _validate_light(color: str, brightness: float) -> None:
 
 
 class WatcheRobot:
-    def __init__(self, transport: Any) -> None:
+    def __init__(
+        self,
+        transport: Any,
+        *,
+        opus_decoder_factory: Callable[[], Any] = OpusDecoder,
+    ) -> None:
         self._transport = transport
+        self._opus_decoder_factory = opus_decoder_factory
         self._jobs: dict[int, Job] = {}
         self._pending_job_events: dict[int, tuple[str, int | None, str | None]] = {}
         self._terminal_job_ids: dict[int, None] = {}
@@ -287,8 +312,13 @@ class WatcheRobot:
         transport.set_callbacks(self._on_message, self._on_binary, self._on_disconnect)
 
     @classmethod
-    def _from_transport(cls, transport: Any) -> WatcheRobot:
-        return cls(transport)
+    def _from_transport(
+        cls,
+        transport: Any,
+        *,
+        opus_decoder_factory: Callable[[], Any] = OpusDecoder,
+    ) -> WatcheRobot:
+        return cls(transport, opus_decoder_factory=opus_decoder_factory)
 
     @property
     def capabilities(self) -> tuple[str, ...]:
@@ -530,7 +560,7 @@ class WatcheRobot:
             self._replace_audio_playback()
             self._end_audio_transition(command_succeeded=True)
 
-    def _open_microphone(self, *, queue_size: int) -> MicrophoneSession:
+    def _open_microphone(self, *, queue_size: int, decode_opus: bool) -> MicrophoneSession:
         if queue_size <= 0:
             raise ValueError("queue_size must be positive")
         with self._media_lock:
@@ -557,25 +587,56 @@ class WatcheRobot:
                 self._microphone_opening = False
                 self._pending_audio_frames.clear()
             raise WatcheRobotError("microphone ACK did not include session_id")
-        session = MicrophoneSession(self, session_id, audio_format=AudioFormat(), queue_size=queue_size)
+        decoder = None
+        if decode_opus:
+            try:
+                decoder = self._opus_decoder_factory()
+            except Exception:
+                self._abort_microphone_open(session_id)
+                raise
+        session = MicrophoneSession(
+            self,
+            session_id,
+            audio_format=(
+                AudioFormat()
+                if decode_opus
+                else AudioFormat(sample_width_bytes=0, encoding="opus")
+            ),
+            decoder=decoder,
+            queue_size=queue_size,
+        )
         with self._media_lock:
             if self._closed or self._closing:
+                should_abort_open = True
+            else:
+                should_abort_open = False
+                self._microphone = session
+                buffered_frames = self._pending_audio_frames
+                self._pending_audio_frames = []
                 self._microphone_opening = False
-                self._pending_audio_frames.clear()
-                raise WatcheRobotError("robot connection closed while opening microphone")
-            self._microphone = session
-            buffered_frames = self._pending_audio_frames
-            self._pending_audio_frames = []
-            self._microphone_opening = False
+        if should_abort_open:
+            self._abort_microphone_open(session_id)
+            raise WatcheRobotError("robot connection closed while opening microphone")
         expected_stream_id = session_id & 0xFFFF
         for payload, sequence, flags, stream_id in buffered_frames:
             if stream_id not in (0, expected_stream_id):
                 continue
             if payload:
-                session._push(payload, sequence)
+                session._push_device_packet(payload, sequence)
             if flags & FLAG_LAST:
                 session._mark_remote_closed()
         return session
+
+    def _abort_microphone_open(self, session_id: int) -> None:
+        """Best-effort close for a device session that cannot be published locally."""
+        try:
+            self._command("ctrl.microphone.close", {"session_id": session_id})
+        except Exception:
+            pass
+        finally:
+            with self._media_lock:
+                self._microphone_opening = False
+                self._pending_audio_frames.clear()
 
     def _close_microphone(self, session_id: int) -> None:
         try:
@@ -722,7 +783,7 @@ class WatcheRobot:
                 if frame.stream_id not in (0, microphone.id & 0xFFFF):
                     return
                 if frame.payload:
-                    microphone._push(frame.payload, frame.sequence)
+                    microphone._push_device_packet(frame.payload, frame.sequence)
                 if frame.flags & FLAG_LAST:
                     microphone._mark_remote_closed()
             return
