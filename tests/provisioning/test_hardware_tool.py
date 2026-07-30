@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from tools.ble_provisioning_hardware_test import build_parser, select_device
@@ -59,3 +63,21 @@ def test_provision_command_has_no_password_argument() -> None:
                 "must-not-be-accepted",
             ]
         )
+
+
+def test_tool_can_run_directly_from_checkout() -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(repository_root / "tools" / "ble_provisioning_hardware_test.py"),
+            "--help",
+        ],
+        cwd=repository_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert "provision" in completed.stdout

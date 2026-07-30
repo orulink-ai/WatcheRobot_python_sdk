@@ -8,7 +8,13 @@ import asyncio
 import json
 import sys
 from getpass import getpass
+from pathlib import Path
 from typing import Sequence
+
+# Allow running this repository tool directly without first installing the SDK.
+if __package__ in (None, ""):
+    source_directory = Path(__file__).resolve().parents[1] / "src"
+    sys.path.insert(0, str(source_directory))
 
 from watcherobot.provisioning import (
     BluetoothDevice,
