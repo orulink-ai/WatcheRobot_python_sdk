@@ -117,11 +117,13 @@ recording = app.robot.microphone.record_pcm(duration=3.0)
 recording.save("microphone.wav")
 ```
 
-`open()` and `record()` are PCM aliases for compatibility. The Runtime/Daemon
-only owns the device connection and routes the WSPK frame; it does not decode
-or rewrite an Opus payload. Decoding is performed in this SDK's Application
-media layer, so a desktop bundle must ship the complete shared `watcherobot`
-environment, while the desktop itself continues to control only the Daemon.
+`open()` and `record()` retain their legacy raw Opus-payload behavior. Use the
+explicit PCM APIs for byte-derived duration calculations or PCM WAV output;
+raw Opus bytes must not be treated as PCM. The Runtime/Daemon only owns the
+device connection and routes the WSPK frame; it does not decode or rewrite an
+Opus payload. Decoding is performed in this SDK's Application media layer, so
+a desktop bundle must ship the complete shared `watcherobot` environment,
+while the desktop itself continues to control only the Daemon.
 
 Applications that intentionally implement their own media protocol can use
 the advanced `ApplicationChannels` Device channel and consume raw WSPK frames.

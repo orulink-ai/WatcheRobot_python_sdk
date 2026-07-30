@@ -610,13 +610,13 @@ def test_microphone_open_rejects_an_already_closed_robot():
 
 def test_microphone_rejects_frames_from_another_session():
     transport = FakeTransport()
-    robot = WatcheRobot._from_transport(transport, opus_decoder_factory=FakeOpusDecoder)
+    robot = WatcheRobot._from_transport(transport)
     microphone = robot.microphone.open(queue_size=2)
 
     transport.binary_callback(BinaryFrame(FRAME_AUDIO, 0, microphone.id + 1, 1, b"stale"))
     transport.binary_callback(BinaryFrame(FRAME_AUDIO, 0, microphone.id, 2, b"current"))
 
-    assert microphone.read(timeout=0).data == b"decoded:current"
+    assert microphone.read(timeout=0).data == b"current"
 
 
 def test_camera_waits_for_the_acknowledged_session_frame():

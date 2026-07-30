@@ -38,9 +38,8 @@ Application result, and any camera or microphone artifacts. Runtime and
 Application automated tests are useful for regression, but they do not replace
 real-device acceptance.
 
-For a microphone acceptance, use `robot.microphone.record_pcm()` (or the
-compatible `record()` alias), save the result as WAV, and verify all of the
-following:
+For a microphone acceptance, use `robot.microphone.record_pcm()`, save the
+result as WAV, and verify all of the following:
 
 - the WAV header declares 16 kHz, mono, signed 16-bit PCM;
 - its duration is derived from PCM bytes and agrees with the recorded interval;

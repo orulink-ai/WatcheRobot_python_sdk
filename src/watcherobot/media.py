@@ -99,6 +99,7 @@ class MicrophoneSession:
         self._last_sequence = 0
         self._closed = False
         self._lock = Lock()
+        self._decoder_lock = Lock()
 
     @property
     def id(self) -> int:
@@ -138,9 +139,7 @@ class MicrophoneSession:
         try:
             self._robot._close_microphone(self._session_id)
         finally:
-            self._flush_decoder()
-            with self._lock:
-                self._closed = True
+            self._finish_decoder_stream()
 
     def __enter__(self) -> MicrophoneSession:
         return self
@@ -174,22 +173,33 @@ class MicrophoneSession:
     def _push_opus(self, packet: bytes, sequence: int) -> None:
         """Decode a device Opus packet before exposing it to an Application."""
 
-        with self._lock:
-            if self._closed:
-                return
-            self._last_sequence = sequence
         if self._decoder is None:
             raise RuntimeError("microphone session does not have an Opus decoder")
-        try:
-            pcm = self._decoder.decode(packet)
-        except Exception:
-            with self._lock:
-                self._decode_failures += 1
-            return
-        if pcm:
-            self._push(pcm, sequence)
 
-    def _flush_decoder(self) -> None:
+        # Decoder state must remain ordered with stream finalization.  A close
+        # can race a WebSocket callback, so it waits for a packet already being
+        # decoded to reach the queue before flush marks the session closed.
+        with self._decoder_lock:
+            with self._lock:
+                if self._closed:
+                    return
+                self._last_sequence = sequence
+            try:
+                pcm = self._decoder.decode(packet)
+            except Exception:
+                with self._lock:
+                    self._decode_failures += 1
+                return
+            if pcm:
+                self._push(pcm, sequence)
+
+    def _push_device_packet(self, packet: bytes, sequence: int) -> None:
+        if self._decoder is None:
+            self._push(packet, sequence)
+            return
+        self._push_opus(packet, sequence)
+
+    def _flush_decoder_locked(self) -> None:
         if self._decoder is None:
             return
         try:
@@ -212,7 +222,19 @@ class MicrophoneSession:
                 self._dropped_frames += 1
             self._queue.put_nowait(frame)
 
+    def _finish_decoder_stream(self) -> None:
+        if self._decoder is None:
+            with self._lock:
+                self._closed = True
+            return
+
+        with self._decoder_lock:
+            with self._lock:
+                if self._closed:
+                    return
+            self._flush_decoder_locked()
+            with self._lock:
+                self._closed = True
+
     def _mark_remote_closed(self) -> None:
-        self._flush_decoder()
-        with self._lock:
-            self._closed = True
+        self._finish_decoder_stream()

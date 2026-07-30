@@ -1,5 +1,6 @@
 import wave
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -64,6 +65,35 @@ def test_microphone_session_decodes_opus_before_exposing_audio_frames():
     assert frame.sequence == 9
 
 
+def test_microphone_close_keeps_a_packet_already_being_decoded():
+    decode_started = Event()
+    release_decode = Event()
+
+    class BlockingDecoder:
+        def decode(self, _packet: bytes) -> bytes:
+            decode_started.set()
+            assert release_decode.wait(1)
+            return b"\x01\x00\x02\x00"
+
+        def flush(self) -> bytes:
+            return b""
+
+    session = MicrophoneSession(FakeRobot(), session_id=2, decoder=BlockingDecoder())
+    worker = Thread(target=lambda: session._push_opus(b"opus-packet", sequence=9))
+    worker.start()
+    assert decode_started.wait(1)
+
+    closer = Thread(target=session.close)
+    closer.start()
+    release_decode.set()
+    worker.join(1)
+    closer.join(1)
+
+    assert not worker.is_alive()
+    assert not closer.is_alive()
+    assert session.read(timeout=0).data == b"\x01\x00\x02\x00"
+
+
 def test_image_frame_save_creates_parent_and_writes_jpeg(tmp_path: Path):
     output = tmp_path / "nested" / "camera.jpg"
     image = ImageFrame(data=b"\xff\xd8jpeg\xff\xd9", sequence=1, timestamp=1.0)
@@ -108,7 +138,9 @@ def test_microphone_domain_record_returns_exact_duration():
             assert timeout > 0
             return SimpleNamespace(data=b"\x01\x00\x02\x00\x03\x00")
 
-    robot = SimpleNamespace(_open_microphone=lambda queue_size: FakeSession())
+    robot = SimpleNamespace(
+        _open_microphone=lambda *, queue_size, decode_opus: FakeSession()
+    )
 
     recording = MicrophoneDomain(robot).record_pcm(duration=0.000125, timeout=1.0)
 
@@ -117,12 +149,51 @@ def test_microphone_domain_record_returns_exact_duration():
     assert recording.dropped_frames == 2
 
 
-def test_microphone_domain_open_is_the_pcm_alias():
-    sentinel = object()
-    robot = SimpleNamespace(_open_microphone=lambda queue_size: sentinel)
+def test_microphone_domain_open_keeps_raw_opus_separate_from_pcm():
+    calls: list[bool] = []
+    raw_session = object()
+    pcm_session = object()
 
-    assert MicrophoneDomain(robot).open() is sentinel
-    assert MicrophoneDomain(robot).open_pcm() is sentinel
+    def open_microphone(*, queue_size: int, decode_opus: bool):
+        assert queue_size == 32
+        calls.append(decode_opus)
+        return pcm_session if decode_opus else raw_session
+
+    robot = SimpleNamespace(_open_microphone=open_microphone)
+
+    assert MicrophoneDomain(robot).open() is raw_session
+    assert MicrophoneDomain(robot).open_pcm() is pcm_session
+    assert calls == [False, True]
+
+
+def test_microphone_domain_record_keeps_raw_opus_separate_from_pcm():
+    class FakeSession:
+        format = AudioFormat(sample_rate_hz=16000, channels=1, sample_width_bytes=2)
+        dropped_frames = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, timeout):
+            assert timeout > 0
+            return SimpleNamespace(data=b"\x01\x02\x03\x04")
+
+    calls: list[bool] = []
+
+    def open_microphone(*, queue_size: int, decode_opus: bool):
+        assert queue_size == 32
+        calls.append(decode_opus)
+        return FakeSession()
+
+    domain = MicrophoneDomain(SimpleNamespace(_open_microphone=open_microphone))
+
+    domain.record(duration=0.000125, timeout=1.0)
+    domain.record_pcm(duration=0.000125, timeout=1.0)
+
+    assert calls == [False, True]
 
 
 def test_microphone_domain_record_rejects_invalid_duration():

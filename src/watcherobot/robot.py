@@ -182,12 +182,12 @@ class LightsDomain(_Domain):
 
 class MicrophoneDomain(_Domain):
     def open(self, *, queue_size: int = 32) -> MicrophoneSession:
-        """Open a microphone stream decoded to 16 kHz mono PCM."""
-        return self.open_pcm(queue_size=queue_size)
+        """Open the legacy microphone stream with raw Opus packet payloads."""
+        return self._robot._open_microphone(queue_size=queue_size, decode_opus=False)
 
     def open_pcm(self, *, queue_size: int = 32) -> MicrophoneSession:
         """Open a microphone stream decoded from device Opus to PCM."""
-        return self._robot._open_microphone(queue_size=queue_size)
+        return self._robot._open_microphone(queue_size=queue_size, decode_opus=True)
 
     def record(
         self,
@@ -196,8 +196,13 @@ class MicrophoneDomain(_Domain):
         timeout: float | None = None,
         queue_size: int = 32,
     ) -> AudioRecording:
-        """Record microphone audio as 16 kHz mono PCM."""
-        return self.record_pcm(duration=duration, timeout=timeout, queue_size=queue_size)
+        """Record the legacy raw Opus microphone payload stream."""
+        return self._record(
+            duration=duration,
+            timeout=timeout,
+            queue_size=queue_size,
+            decode_opus=False,
+        )
 
     def record_pcm(
         self,
@@ -207,12 +212,28 @@ class MicrophoneDomain(_Domain):
         queue_size: int = 32,
     ) -> AudioRecording:
         """Record microphone audio decoded from device Opus to PCM."""
+        return self._record(
+            duration=duration,
+            timeout=timeout,
+            queue_size=queue_size,
+            decode_opus=True,
+        )
+
+    def _record(
+        self,
+        *,
+        duration: float,
+        timeout: float | None,
+        queue_size: int,
+        decode_opus: bool,
+    ) -> AudioRecording:
         if duration <= 0:
             raise ValueError("duration must be positive")
         if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be positive")
 
-        with self.open_pcm(queue_size=queue_size) as microphone:
+        opener = self.open_pcm if decode_opus else self.open
+        with opener(queue_size=queue_size) as microphone:
             audio_format = microphone.format
             target_frames = max(1, round(audio_format.sample_rate_hz * duration))
             target_bytes = (
@@ -558,7 +579,7 @@ class WatcheRobot:
             self._replace_audio_playback()
             self._end_audio_transition(command_succeeded=True)
 
-    def _open_microphone(self, *, queue_size: int) -> MicrophoneSession:
+    def _open_microphone(self, *, queue_size: int, decode_opus: bool) -> MicrophoneSession:
         if queue_size <= 0:
             raise ValueError("queue_size must be positive")
         with self._media_lock:
@@ -585,13 +606,15 @@ class WatcheRobot:
                 self._microphone_opening = False
                 self._pending_audio_frames.clear()
             raise WatcheRobotError("microphone ACK did not include session_id")
-        try:
-            decoder = self._opus_decoder_factory()
-        except Exception:
-            with self._media_lock:
-                self._microphone_opening = False
-                self._pending_audio_frames.clear()
-            raise
+        decoder = None
+        if decode_opus:
+            try:
+                decoder = self._opus_decoder_factory()
+            except Exception:
+                with self._media_lock:
+                    self._microphone_opening = False
+                    self._pending_audio_frames.clear()
+                raise
         session = MicrophoneSession(
             self,
             session_id,
@@ -613,7 +636,7 @@ class WatcheRobot:
             if stream_id not in (0, expected_stream_id):
                 continue
             if payload:
-                session._push_opus(payload, sequence)
+                session._push_device_packet(payload, sequence)
             if flags & FLAG_LAST:
                 session._mark_remote_closed()
         return session
@@ -763,7 +786,7 @@ class WatcheRobot:
                 if frame.stream_id not in (0, microphone.id & 0xFFFF):
                     return
                 if frame.payload:
-                    microphone._push_opus(frame.payload, frame.sequence)
+                    microphone._push_device_packet(frame.payload, frame.sequence)
                 if frame.flags & FLAG_LAST:
                     microphone._mark_remote_closed()
             return

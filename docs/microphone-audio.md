@@ -6,12 +6,14 @@ The device sends microphone audio as Opus: 16 kHz, mono, 60 ms per packet,
 with one complete packet in each WSPK audio frame. `ApplicationContext.robot`
 decodes those packets before exposing `MicrophoneSession` frames. Therefore:
 
-- `robot.microphone.open_pcm()` and `robot.microphone.open()` return 16 kHz,
-  mono, signed-16-bit little-endian PCM frames.
-- `robot.microphone.record_pcm()` and `robot.microphone.record()` return an
-  `AudioRecording` that can be saved as a valid WAV file.
-- `AudioRecording.duration_seconds` is calculated from decoded PCM bytes, not
-  the compressed Opus packet size.
+- `robot.microphone.open_pcm()` returns 16 kHz, mono, signed-16-bit
+  little-endian PCM frames.
+- `robot.microphone.record_pcm()` returns an `AudioRecording` that can be
+  saved as a valid WAV file. Its `duration_seconds` is calculated from decoded
+  PCM bytes, not the compressed Opus packet size.
+- The legacy `robot.microphone.open()` and `robot.microphone.record()` retain
+  their raw Opus-payload behavior. Those bytes are not PCM and must not be
+  used for byte-derived PCM duration or PCM WAV output.
 
 ```python
 with app.robot.microphone.open_pcm() as microphone:
