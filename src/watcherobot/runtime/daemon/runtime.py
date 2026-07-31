@@ -32,6 +32,9 @@ from watcherobot.runtime.daemon.pairing.protocol import (
 )
 from watcherobot.runtime.daemon.pairing.session import DevicePairingSession, DevicePairingState
 from watcherobot.runtime.daemon.pairing.udp import PairingUdpService
+from watcherobot.runtime.daemon.preview.face_tracking import (
+    FaceTrackingPreviewBroker,
+)
 from watcherobot.runtime.daemon.routing.raw import RawFrameRouter
 
 
@@ -99,6 +102,9 @@ class DaemonRuntime:
         )
         self._clock = clock
         self.connection_registry = connection_registry
+        self.face_tracking_preview = FaceTrackingPreviewBroker(
+            connection_registry
+        )
         self.external_server = ExternalWebSocketServer(
             host=external_host,
             port=external_port,
@@ -107,6 +113,10 @@ class DaemonRuntime:
             hardware_hello_authorizer=self._authorize_hardware_hello,
             device_disconnect_listener=self._device_disconnected,
             device_session_end_listener=self._device_session_ended,
+            business_frame_listener=self.face_tracking_preview.observe_frame,
+            external_disconnect_listener=(
+                self.face_tracking_preview.connection_lost
+            ),
         )
         self.pairing_udp = PairingUdpService(
             session=self.device_pairing,
