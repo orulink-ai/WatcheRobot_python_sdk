@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
 import secrets
 from collections.abc import Callable
@@ -87,6 +89,22 @@ class DevicePairingSession:
     def expected_peer_ip(self) -> str | None:
         return self._expected_peer_ip
 
+    def preview_transport_credentials(self) -> tuple[str, bytes] | None:
+        """Return ephemeral media credentials only while the device is online."""
+
+        if (
+            self._state is not DevicePairingState.CONNECTED
+            or self._expected_peer_ip is None
+            or self._session_token is None
+        ):
+            return None
+        key = hmac.new(
+            self._session_token.encode("ascii"),
+            b"face-preview-v1",
+            hashlib.sha256,
+        ).digest()
+        return self._expected_peer_ip, key
+
     def snapshot(self) -> dict[str, object]:
         """Return only public state; connection code and token never escape."""
 
@@ -94,7 +112,9 @@ class DevicePairingSession:
             "state": self._state.value,
             "online": self._state is DevicePairingState.CONNECTED,
             "mode": self._request.target_mode if self._request is not None else None,
-            "request_id": self._request.request_id if self._request is not None else None,
+            "request_id": (
+                self._request.request_id if self._request is not None else None
+            ),
             "last_error": self._last_error,
         }
 
@@ -146,10 +166,13 @@ class DevicePairingSession:
         if self._state is not DevicePairingState.DISCOVERING:
             raise PairingSessionError("invalid_state_transition")
         assert self._request is not None
-        if not self._matches_response(
-            request_id=response.request_id,
-            daemon_instance_id=response.daemon_instance_id,
-        ) or response.target_mode != self._request.target_mode:
+        if (
+            not self._matches_response(
+                request_id=response.request_id,
+                daemon_instance_id=response.daemon_instance_id,
+            )
+            or response.target_mode != self._request.target_mode
+        ):
             raise PairingSessionError("pairing_credential_invalid")
         if not peer_ip:
             raise PairingSessionError("pairing_credential_invalid")
@@ -237,10 +260,7 @@ class DevicePairingSession:
     def end_device_session(self, *, pair_request_id: str) -> None:
         """Release only the current connected session reported by hardware."""
 
-        if (
-            self._state is not DevicePairingState.CONNECTED
-            or self._request is None
-        ):
+        if self._state is not DevicePairingState.CONNECTED or self._request is None:
             raise PairingSessionError("pairing_session_required")
         if pair_request_id != self._request.request_id:
             raise PairingSessionError("pairing_credential_invalid")
