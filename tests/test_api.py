@@ -1,6 +1,7 @@
 import hashlib
 import threading
 from concurrent.futures import Future
+from pathlib import Path
 
 import pytest
 
@@ -27,6 +28,8 @@ class FakeTransport:
             "behavior",
             "animation",
             "display.text",
+            "display.image",
+            "display.stream",
             "motion",
             "audio",
             "audio.stream",
@@ -39,6 +42,8 @@ class FakeTransport:
         self.next_session_id = 100
         self.closed = False
         self.audio_streams = []
+        self.display_images = []
+        self.display_streams = []
 
     def set_callbacks(self, message_callback, binary_callback, disconnect_callback):
         self.message_callback = message_callback
@@ -63,6 +68,19 @@ class FakeTransport:
         self.audio_streams.append((bytes(pcm), stream_id, chunk_bytes))
         future = Future()
         future.set_result(None)
+        return future
+
+    def send_display_image(self, jpeg, *, stream_id):
+        self.display_images.append((bytes(jpeg), stream_id))
+        future = Future()
+        future.set_result(None)
+        return future
+
+    def send_display_stream(self, frames, *, stream_id, fps):
+        materialized = tuple(bytes(frame) for frame in frames)
+        self.display_streams.append((materialized, stream_id, fps))
+        future = Future()
+        future.set_result(len(materialized))
         return future
 
     def send_command_nowait(self, message_type, data):
@@ -175,6 +193,96 @@ def test_display_text_rejects_values_the_firmware_cannot_render(text, message):
 
     with pytest.raises(ValueError, match=message):
         robot.display.show_text(text)
+
+
+def _baseline_jpeg(*, width=2, height=2, payload=b"\x00") -> bytes:
+    sof = (
+        b"\xff\xc0"
+        + (11).to_bytes(2, "big")
+        + b"\x08"
+        + height.to_bytes(2, "big")
+        + width.to_bytes(2, "big")
+        + b"\x01\x01\x11\x00"
+    )
+    return b"\xff\xd8" + sof + b"\xff\xda\x00\x08" + payload + b"\xff\xd9"
+
+
+def test_display_show_image_accepts_jpeg_bytes_and_paths(tmp_path: Path):
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    jpeg = _baseline_jpeg()
+    image_path = tmp_path / "frame.jpg"
+    image_path.write_bytes(jpeg)
+
+    robot.display.show_image(jpeg)
+    robot.display.show_image(image_path)
+
+    assert [image for image, _stream_id in transport.display_images] == [jpeg, jpeg]
+    assert transport.display_images[0][1] != transport.display_images[1][1]
+
+
+def test_display_rejects_oversized_path_before_reading_it(tmp_path: Path):
+    image_path = tmp_path / "oversized.jpg"
+    image_path.write_bytes(b"\xff\xd8" + b"x" * (512 * 1024))
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(ValueError, match="524288 bytes"):
+        robot.display.show_image(image_path)
+
+
+def test_display_stream_sends_validated_jpegs_at_requested_rate():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    frames = [_baseline_jpeg(payload=bytes((index,))) for index in range(3)]
+
+    sent = robot.display.stream(frames, fps=12)
+
+    assert sent == 3
+    assert transport.display_streams == [(tuple(frames), transport.display_streams[0][1], 12.0)]
+
+
+@pytest.mark.parametrize(
+    ("image", "message"),
+    [
+        (b"not-jpeg", "JPEG"),
+        (
+            b"\xff\xd8\xff\xc2\x00\x0b\x08\x00\x02\x00\x02\x01\x01\x11\x00\xff\xd9",
+            "progressive",
+        ),
+        (_baseline_jpeg()[:-2], "end marker"),
+        (_baseline_jpeg(width=413), "412x412"),
+        (_baseline_jpeg(height=413), "412x412"),
+    ],
+)
+def test_display_rejects_images_the_firmware_cannot_decode(image, message):
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(ValueError, match=message):
+        robot.display.show_image(image)
+
+
+@pytest.mark.parametrize("fps", [0, -1, 15.1, True, "10"])
+def test_display_stream_rejects_unsupported_frame_rates(fps):
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(ValueError, match="fps"):
+        robot.display.stream([_baseline_jpeg()], fps=fps)
+
+
+@pytest.mark.parametrize("capability", ["display.image", "display.stream"])
+def test_display_image_apis_require_negotiated_capabilities(capability):
+    transport = FakeTransport()
+    transport.capabilities = tuple(
+        item for item in transport.capabilities if item != capability
+    )
+    robot = WatcheRobot._from_transport(transport)
+
+    if capability == "display.image":
+        with pytest.raises(WatcheRobotError, match=capability):
+            robot.display.show_image(_baseline_jpeg())
+    else:
+        with pytest.raises(WatcheRobotError, match=capability):
+            robot.display.stream([_baseline_jpeg()])
 
 
 @pytest.mark.parametrize("duration_ms", [0, -1, 1.5, True, 65536])
