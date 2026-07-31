@@ -4,6 +4,7 @@ import queue
 import re
 import threading
 import time
+from collections.abc import Iterable
 from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,8 +12,9 @@ from types import TracebackType
 from typing import Any, Callable
 
 from ._internal.audio_status import AudioStatusKind, classify_audio_status
-from .errors import CommandError, WatcheRobotError
 from .audio import AudioPlayback, PCMAudio, load_pcm_wave
+from .display import DisplayImageSource, load_display_jpeg
+from .errors import CommandError, WatcheRobotError
 from .job import Job, JobState
 from .inputs import InputDomain, parse_input_event
 from .media import AudioFormat, AudioRecording, ImageFrame, MicrophoneSession
@@ -59,6 +61,70 @@ class AnimationDomain(_Domain):
 
     def stop(self) -> None:
         self._robot._command("ctrl.animation.stop", {})
+
+
+class DisplayDomain(_Domain):
+    MAX_CHARACTERS = 30
+    MAX_UTF8_BYTES = 90
+
+    def show_text(self, text: str) -> None:
+        if not isinstance(text, str) or not text:
+            raise ValueError("text must be a non-empty string")
+        if len(text) > self.MAX_CHARACTERS:
+            raise ValueError(f"text must contain at most {self.MAX_CHARACTERS} characters")
+        if len(text.encode("utf-8")) > self.MAX_UTF8_BYTES:
+            raise ValueError(f"text must contain at most {self.MAX_UTF8_BYTES} UTF-8 bytes")
+        if any(
+            (ord(character) < 0x20 and character != "\n")
+            or 0x7F <= ord(character) <= 0x9F
+            for character in text
+        ):
+            raise ValueError("text contains unsupported control characters")
+        self._require_capability()
+        self._robot._command("ctrl.display.text.set", {"text": text})
+
+    def clear(self) -> None:
+        self._require_capability()
+        self._robot._command("ctrl.display.clear", {})
+
+    def show_image(self, image: DisplayImageSource) -> None:
+        self._require_capability("display.image")
+        jpeg = load_display_jpeg(image)
+        stream_id = self._robot._next_display_id()
+        self._robot._transport.send_display_image(
+            jpeg,
+            stream_id=stream_id,
+        ).result()
+
+    def stream(
+        self,
+        frames: Iterable[DisplayImageSource],
+        *,
+        fps: float = 10.0,
+    ) -> int:
+        if (
+            isinstance(fps, bool)
+            or not isinstance(fps, (int, float))
+            or not 0 < fps <= 15
+        ):
+            raise ValueError("fps must be a number greater than 0 and at most 15")
+        self._require_capability("display.stream")
+        stream_id = self._robot._next_display_id()
+        validated_frames = (
+            load_display_jpeg(frame)
+            for frame in frames
+        )
+        return self._robot._transport.send_display_stream(
+            validated_frames,
+            stream_id=stream_id,
+            fps=float(fps),
+        ).result()
+
+    def _require_capability(self, capability: str = "display.text") -> None:
+        if not self._robot.supports(capability):
+            raise WatcheRobotError(
+                f"device does not support required capability: {capability}"
+            )
 
 
 class MotionDomain(_Domain):
@@ -299,10 +365,13 @@ class WatcheRobot:
         self._audio_cleanup_required = False
         self._audio_transition_in_progress = False
         self._next_audio_stream_id = 1
+        self._next_display_stream_id = 1
+        self._display_stream_lock = threading.Lock()
         self._closed = False
         self._closing = False
         self.behavior = BehaviorDomain(self)
         self.animation = AnimationDomain(self)
+        self.display = DisplayDomain(self)
         self.motion = MotionDomain(self)
         self.audio = AudioDomain(self)
         self.lights = LightsDomain(self)
@@ -332,6 +401,14 @@ class WatcheRobot:
         if not isinstance(capability, str) or not capability:
             raise ValueError("capability must be a non-empty string")
         return capability in self.capabilities
+
+    def _next_display_id(self) -> int:
+        with self._display_stream_lock:
+            stream_id = self._next_display_stream_id
+            self._next_display_stream_id = (
+                1 if stream_id >= 0xFFFF else stream_id + 1
+            )
+            return stream_id
 
     def close(self) -> None:
         with self._media_lock:

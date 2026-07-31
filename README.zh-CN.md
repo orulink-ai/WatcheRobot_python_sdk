@@ -119,6 +119,42 @@ asyncio.run(main())
 Application 不自行监听 Discovery 端口、不直连设备 WebSocket，也不会拿到
 设备配对凭证。
 
+## 屏幕文字
+
+设备声明 `display.text` 能力后，Application 可以在当前动画上方显示文字，并在
+不停止动画的情况下清除文字层：
+
+```python
+app.robot.display.show_text("你好\nWatcheRobot")
+app.robot.display.clear()
+```
+
+文字最多包含 30 个 Unicode 字符和 90 个 UTF-8 字节；支持换行，不接受其他控制字符。
+
+## 屏幕图片与实时帧
+
+设备声明 `display.image` 能力后，可以直接显示 JPEG 字节、`ImageFrame` 或图片路径：
+
+```python
+app.robot.display.show_image("status.jpg")
+```
+
+设备声明 `display.stream` 能力后，可以显示有限序列或实时产生的 JPEG 帧。该接口是同步
+接口，异步 Application 应把它放在线程中运行：
+
+```python
+sent = await asyncio.to_thread(
+    app.robot.display.stream,
+    jpeg_frames(),
+    fps=10,
+)
+```
+
+SDK 会在发送前校验图片。首版只支持基线 JPEG（不支持渐进式 JPEG），尺寸不超过
+412x412，每帧不超过 512 KiB。默认请求 10 FPS，SDK 允许的上限为 15 FPS；实际显示
+帧率仍取决于 JPEG 大小、Wi-Fi 状态和设备解码耗时。设备只保留最新一张待处理帧，
+负载过高时会丢弃旧帧，避免延迟和内存队列持续增长。
+
 ## 麦克风 PCM
 
 设备麦克风上行使用 Opus（`16 kHz`、单声道、每个 WSPK 帧一个包）。普通 Application

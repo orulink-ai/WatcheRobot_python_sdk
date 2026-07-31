@@ -129,6 +129,48 @@ frames. Normal SDK Applications should use `ApplicationContext`.
 Applications never open their own Discovery socket or device WebSocket and do
 not receive pairing credentials.
 
+## Display text
+
+When the device advertises the `display.text` capability, an Application can
+show text over the current animation and clear it without stopping the
+animation:
+
+```python
+app.robot.display.show_text("Hello\nWatcheRobot")
+app.robot.display.clear()
+```
+
+Text is limited to 30 Unicode characters and 90 UTF-8 bytes. Newlines are
+supported; other control characters are rejected.
+
+## Display images and live frames
+
+Devices advertising `display.image` accept a baseline JPEG from bytes, an
+`ImageFrame`, or a file path:
+
+```python
+app.robot.display.show_image("status.jpg")
+```
+
+Devices advertising `display.stream` can display a finite or live iterable of
+JPEG frames. The call is synchronous, so async Applications should run it in a
+worker thread:
+
+```python
+sent = await asyncio.to_thread(
+    app.robot.display.stream,
+    jpeg_frames(),
+    fps=10,
+)
+```
+
+JPEGs are validated on the host before transmission. They must be baseline
+(not progressive), no larger than 412x412 pixels, and at most 512 KiB each.
+The default requested rate is 10 FPS and the SDK caps requests at 15 FPS.
+Actual display rate depends on JPEG size, Wi-Fi conditions, and decode time.
+The device keeps only the newest pending frame, so overload drops stale frames
+instead of building latency or an unbounded queue.
+
 ## Microphone PCM
 
 The device microphone uplink is Opus (`16 kHz`, mono, one packet per WSPK

@@ -6,7 +6,7 @@ import asyncio
 import json
 import threading
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterable, Iterator
 from concurrent.futures import Future
 from typing import Any
 
@@ -17,8 +17,11 @@ from watcherobot._internal.audio_status import (
 from watcherobot.errors import CommandError, WatcheRobotError
 from watcherobot.protocol import (
     FLAG_FIRST,
+    FLAG_KEYFRAME,
     FLAG_LAST,
     FRAME_AUDIO,
+    FRAME_IMAGE,
+    FRAME_VIDEO,
     BinaryFrame,
     build_command,
     build_wspk,
@@ -36,6 +39,15 @@ DisconnectCallback = Callable[[], None]
 DesktopCallback = Callable[[str | bytes], None]
 AUDIO_DEVICE_SLOT_BYTES = 4096
 AUDIO_MAX_CREDIT_PACKETS = 8
+
+
+def _next_display_frame(
+    iterator: Iterator[bytes],
+) -> tuple[bool, bytes]:
+    try:
+        return True, next(iterator)
+    except StopIteration:
+        return False, b""
 
 
 class DaemonApplicationTransport:
@@ -140,6 +152,27 @@ class DaemonApplicationTransport:
             )
         return self._submit(
             self._send_audio_stream(bytes(pcm), stream_id, chunk_bytes)
+        )
+
+    def send_display_image(
+        self,
+        jpeg: bytes,
+        *,
+        stream_id: int,
+    ) -> Future[None]:
+        return self._submit(
+            self._send_display_image(bytes(jpeg), stream_id)
+        )
+
+    def send_display_stream(
+        self,
+        frames: Iterable[bytes],
+        *,
+        stream_id: int,
+        fps: float,
+    ) -> Future[int]:
+        return self._submit(
+            self._send_display_stream(frames, stream_id, fps)
         )
 
     def send_desktop(self, frame: str | bytes) -> Future[None]:
@@ -294,6 +327,74 @@ class DaemonApplicationTransport:
                     self._audio_flow_stream_id = 0
                     self._audio_credits = 0
                     self._audio_slots_per_packet = 1
+
+    async def _send_display_image(
+        self,
+        jpeg: bytes,
+        stream_id: int,
+    ) -> None:
+        await self._send(
+            ApplicationChannel.DEVICE,
+            build_wspk(
+                FRAME_IMAGE,
+                FLAG_FIRST | FLAG_LAST | FLAG_KEYFRAME,
+                stream_id,
+                0,
+                jpeg,
+            ),
+        )
+
+    async def _send_display_stream(
+        self,
+        frames: Iterable[bytes],
+        stream_id: int,
+        fps: float,
+    ) -> int:
+        interval = 1.0 / fps
+        loop = asyncio.get_running_loop()
+        started_at = loop.time()
+        sequence = 0
+        iterator = iter(frames)
+        try:
+            while True:
+                available, frame = await asyncio.to_thread(
+                    _next_display_frame,
+                    iterator,
+                )
+                if not available:
+                    break
+                if sequence > 0:
+                    due_at = started_at + sequence * interval
+                    delay = due_at - loop.time()
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+                flags = FLAG_KEYFRAME
+                if sequence == 0:
+                    flags |= FLAG_FIRST
+                await self._send(
+                    ApplicationChannel.DEVICE,
+                    build_wspk(
+                        FRAME_VIDEO,
+                        flags,
+                        stream_id,
+                        sequence,
+                        bytes(frame),
+                    ),
+                )
+                sequence += 1
+        finally:
+            if sequence > 0:
+                await self._send(
+                    ApplicationChannel.DEVICE,
+                    build_wspk(
+                        FRAME_VIDEO,
+                        FLAG_LAST,
+                        stream_id,
+                        sequence,
+                        b"",
+                    ),
+                )
+        return sequence
 
     async def _take_audio_credit(self, stream_id: int) -> None:
         condition = self._audio_credit_condition
