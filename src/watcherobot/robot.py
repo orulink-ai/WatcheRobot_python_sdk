@@ -61,6 +61,35 @@ class AnimationDomain(_Domain):
         self._robot._command("ctrl.animation.stop", {})
 
 
+class DisplayDomain(_Domain):
+    MAX_CHARACTERS = 30
+    MAX_UTF8_BYTES = 90
+
+    def show_text(self, text: str) -> None:
+        if not isinstance(text, str) or not text:
+            raise ValueError("text must be a non-empty string")
+        if len(text) > self.MAX_CHARACTERS:
+            raise ValueError(f"text must contain at most {self.MAX_CHARACTERS} characters")
+        if len(text.encode("utf-8")) > self.MAX_UTF8_BYTES:
+            raise ValueError(f"text must contain at most {self.MAX_UTF8_BYTES} UTF-8 bytes")
+        if any(
+            (ord(character) < 0x20 and character != "\n")
+            or 0x7F <= ord(character) <= 0x9F
+            for character in text
+        ):
+            raise ValueError("text contains unsupported control characters")
+        self._require_capability()
+        self._robot._command("ctrl.display.text.set", {"text": text})
+
+    def clear(self) -> None:
+        self._require_capability()
+        self._robot._command("ctrl.display.clear", {})
+
+    def _require_capability(self) -> None:
+        if not self._robot.supports("display.text"):
+            raise WatcheRobotError("device does not support required capability: display.text")
+
+
 class MotionDomain(_Domain):
     def move_to(
         self,
@@ -303,6 +332,7 @@ class WatcheRobot:
         self._closing = False
         self.behavior = BehaviorDomain(self)
         self.animation = AnimationDomain(self)
+        self.display = DisplayDomain(self)
         self.motion = MotionDomain(self)
         self.audio = AudioDomain(self)
         self.lights = LightsDomain(self)

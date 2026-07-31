@@ -31,6 +31,8 @@ def test_quickstart_demonstrates_domain_apis_through_context_robot() -> None:
     ).read_text(encoding="utf-8")
 
     assert "app.robot.behavior.play" in source
+    assert "app.robot.display.show_text" in source
+    assert "app.robot.display.clear" in source
     assert "app.robot.lights.set_color" in source
     assert "app.robot.motion.move_to" in source
 

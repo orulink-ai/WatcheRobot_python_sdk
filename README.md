@@ -129,6 +129,20 @@ frames. Normal SDK Applications should use `ApplicationContext`.
 Applications never open their own Discovery socket or device WebSocket and do
 not receive pairing credentials.
 
+## Display text
+
+When the device advertises the `display.text` capability, an Application can
+show text over the current animation and clear it without stopping the
+animation:
+
+```python
+app.robot.display.show_text("Hello\nWatcheRobot")
+app.robot.display.clear()
+```
+
+Text is limited to 30 Unicode characters and 90 UTF-8 bytes. Newlines are
+supported; other control characters are rejected.
+
 ## Microphone PCM
 
 The device microphone uplink is Opus (`16 kHz`, mono, one packet per WSPK

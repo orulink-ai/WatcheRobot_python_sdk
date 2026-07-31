@@ -26,6 +26,7 @@ class FakeTransport:
         self.capabilities = (
             "behavior",
             "animation",
+            "display.text",
             "motion",
             "audio",
             "audio.stream",
@@ -126,9 +127,54 @@ def test_robot_supports_negotiated_capabilities():
     robot = WatcheRobot._from_transport(FakeTransport())
 
     assert robot.supports("camera.capture")
+    assert robot.supports("display.text")
     assert not robot.supports("video.stream")
     with pytest.raises(ValueError, match="capability must be a non-empty string"):
         robot.supports("")
+
+
+def test_display_text_builds_set_and_clear_commands():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    robot.display.show_text("你好\nWatcheRobot")
+    robot.display.clear()
+
+    assert transport.commands == [
+        ("ctrl.display.text.set", {"text": "你好\nWatcheRobot"}),
+        ("ctrl.display.clear", {}),
+    ]
+
+
+def test_display_text_requires_negotiated_capability():
+    transport = FakeTransport()
+    transport.capabilities = tuple(
+        capability for capability in transport.capabilities if capability != "display.text"
+    )
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(WatcheRobotError, match="display.text"):
+        robot.display.show_text("Hello")
+    with pytest.raises(WatcheRobotError, match="display.text"):
+        robot.display.clear()
+
+    assert transport.commands == []
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("", "non-empty string"),
+        ("a" * 31, "at most 30 characters"),
+        ("🙂" * 30, "at most 90 UTF-8 bytes"),
+        ("bad\ttext", "unsupported control characters"),
+    ],
+)
+def test_display_text_rejects_values_the_firmware_cannot_render(text, message):
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(ValueError, match=message):
+        robot.display.show_text(text)
 
 
 @pytest.mark.parametrize("duration_ms", [0, -1, 1.5, True, 65536])

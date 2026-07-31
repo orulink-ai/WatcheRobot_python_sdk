@@ -14,6 +14,9 @@ async def main() -> None:
             repeat=1,
         )
         await asyncio.to_thread(behavior.wait, 20.0)
+        await asyncio.to_thread(app.robot.display.show_text, "Hello\nWatcheRobot")
+        await asyncio.sleep(2.0)
+        await asyncio.to_thread(app.robot.display.clear)
         await asyncio.to_thread(
             app.robot.lights.set_color,
             "#4DA3FF",
