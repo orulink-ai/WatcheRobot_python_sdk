@@ -276,6 +276,12 @@ def test_device_session_end_releases_daemon_slot_without_stopping_application(
         device = await connect_runtime_hardware(runtime)
 
         try:
+            assert (
+                runtime.device_status()["device"][
+                    "preview_websocket_url"
+                ]
+                == "ws://127.0.0.1:81/ws/face-track"
+            )
             await runtime.start_application()
             application_pid = runtime.application.process_id
             request = runtime.device_pairing.current_request
@@ -298,6 +304,12 @@ def test_device_session_end_releases_daemon_slot_without_stopping_application(
             await asyncio.wait_for(device.wait_closed(), timeout=1)
 
             assert runtime.device_status()["device"]["state"] == "idle"
+            assert (
+                runtime.device_status()["device"][
+                    "preview_websocket_url"
+                ]
+                is None
+            )
             assert runtime.application.process_id == application_pid
         finally:
             await device.close()

@@ -323,7 +323,14 @@ class DaemonRuntime:
         }
 
     def device_status(self) -> dict[str, object]:
-        return {"device": self.device_pairing.snapshot()}
+        device = self.device_pairing.snapshot()
+        peer_ip = self.device_pairing.expected_peer_ip
+        device["preview_websocket_url"] = (
+            f"ws://{peer_ip}:81/ws/face-track"
+            if device["online"] and peer_ip is not None
+            else None
+        )
+        return {"device": device}
 
     async def _authorize_hardware_hello(
         self,
