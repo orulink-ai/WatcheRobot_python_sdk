@@ -29,6 +29,14 @@ class FakeRegistry:
         return 1
 
 
+class FakeClock:
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
 def connected_session() -> DevicePairingSession:
     session = DevicePairingSession(
         daemon_instance_id=DAEMON_ID, request_id_factory=lambda: REQUEST_ID
@@ -78,8 +86,9 @@ def packets(sequence: int = 9) -> list[bytes]:
 def test_service_rejects_wrong_source_and_publishes_pair_to_desktop() -> None:
     async def scenario() -> None:
         registry = FakeRegistry()
+        clock = FakeClock(10.0)
         service = FaceTrackingUdpPreviewService(
-            session=connected_session(), registry=registry, port=0
+            session=connected_session(), registry=registry, port=0, clock=clock
         )
         await service.start()
         for packet in packets():
@@ -87,10 +96,14 @@ def test_service_rejects_wrong_source_and_publishes_pair_to_desktop() -> None:
         assert service.stats.wrong_source_datagrams == len(packets())
         for packet in reversed(packets()):
             service.handle_datagram(packet, (PEER_IP, 50000))
+        clock.now = 10.025
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         assert registry.frames == [
-            (ExternalClientRole.DESKTOP, '{"v":1,"kind":"frame","seq":9}'),
+            (
+                ExternalClientRole.DESKTOP,
+                '{"v":1,"kind":"frame","seq":9,"relay":[10000,25.0]}',
+            ),
             (ExternalClientRole.DESKTOP, b"FTW1" + bytes(20) + b"jpeg"),
         ]
         assert service.stats.published_frames == 1

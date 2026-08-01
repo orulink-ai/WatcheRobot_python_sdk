@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 from dataclasses import asdict
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from ..connections.registry import ExternalClientRole, ExternalConnectionRegistry
 from ..pairing.session import DevicePairingSession
@@ -46,15 +48,18 @@ class FaceTrackingUdpPreviewService:
         registry: ExternalConnectionRegistry,
         host: str = "0.0.0.0",
         port: int = 37022,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._session = session
         self._registry = registry
         self._host = host
         self._port = port
+        self._clock = clock
         self._transport: asyncio.DatagramTransport | None = None
         self._publisher: asyncio.Task[None] | None = None
         self._publish_event = asyncio.Event()
         self._pending: CompletedPreviewFrame | None = None
+        self._pending_completed_at = 0.0
         self._reassembler: FaceTrackingUdpReassembler | None = None
         self._active_key: bytes | None = None
         self.stats = FaceTrackingUdpPreviewStats()
@@ -118,7 +123,9 @@ class FaceTrackingUdpPreviewService:
             return
         if session_key != self._active_key:
             self._active_key = session_key
-            self._reassembler = FaceTrackingUdpReassembler(session_key=session_key)
+            self._reassembler = FaceTrackingUdpReassembler(
+                session_key=session_key, clock=self._clock
+            )
         assert self._reassembler is not None
         malformed_before = self._reassembler.stats.malformed_datagrams
         frame = self._reassembler.push(data)
@@ -131,6 +138,7 @@ class FaceTrackingUdpPreviewService:
         if self._pending is not None:
             self.stats.publish_overwrites += 1
         self._pending = frame
+        self._pending_completed_at = self._clock()
         self._publish_event.set()
 
     async def _publish_loop(self) -> None:
@@ -138,12 +146,24 @@ class FaceTrackingUdpPreviewService:
             await self._publish_event.wait()
             self._publish_event.clear()
             frame = self._pending
+            completed_at = self._pending_completed_at
             self._pending = None
             if frame is None:
                 continue
             try:
                 telemetry, image = parse_preview_bundle(frame.bundle)
-            except FaceTrackingUdpProtocolError:
+                payload = json.loads(telemetry)
+                if not isinstance(payload, dict):
+                    raise FaceTrackingUdpProtocolError(
+                        "preview telemetry is not an object"
+                    )
+                published_at = self._clock()
+                payload["relay"] = [
+                    int(round(completed_at * 1000)),
+                    round(max(0.0, published_at - completed_at) * 1000, 1),
+                ]
+                telemetry = json.dumps(payload, separators=(",", ":"))
+            except (FaceTrackingUdpProtocolError, json.JSONDecodeError):
                 self.stats.invalid_datagrams += 1
                 continue
             await self._registry.send_to_role(ExternalClientRole.DESKTOP, telemetry)
@@ -154,4 +174,5 @@ class FaceTrackingUdpPreviewService:
         self._active_key = None
         self._reassembler = None
         self._pending = None
+        self._pending_completed_at = 0.0
         self._publish_event.clear()
