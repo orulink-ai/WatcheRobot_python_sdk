@@ -122,3 +122,22 @@ def test_protocol_rejects_invalid_limits_and_bundle_shape() -> None:
     with pytest.raises(FaceTrackingUdpProtocolError):
         parse_preview_bundle(b"\xff\xffbad")
     assert zlib.crc32(make_bundle()) >= 0
+
+
+def test_protocol_accepts_416_preview_capacity_but_rejects_oversize_bundle() -> None:
+    large_bundle = make_bundle(jpeg_size=50 * 1024)
+    packets = encode_preview_datagrams(
+        large_bundle,
+        session_key=SESSION_KEY,
+        stream_id=12,
+        sequence=9,
+    )
+    assert len(packets) < 64
+
+    with pytest.raises(FaceTrackingUdpProtocolError):
+        encode_preview_datagrams(
+            make_bundle(jpeg_size=65 * 1024),
+            session_key=SESSION_KEY,
+            stream_id=12,
+            sequence=10,
+        )
