@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import struct
+import threading
+from concurrent.futures import Future
+
+import pytest
+
+from watcherobot import FaceBox, FaceTrackingFrame, WatcheRobotError
+from watcherobot.protocol import FRAME_VIDEO, BinaryFrame
+from watcherobot.robot import WatcheRobot
+
+
+class FakeTransport:
+    def __init__(self, *, capable: bool = True) -> None:
+        self.capabilities = (
+            ("face_tracking.preview.v1",) if capable else ()
+        )
+        self.device_info = {"device_id": "watcher-face-preview-test"}
+        self.commands: list[tuple[str, dict[str, object]]] = []
+        self.message_callback = None
+        self.binary_callback = None
+        self.disconnect_callback = None
+        self.closed = False
+
+    def set_callbacks(self, message_callback, binary_callback, disconnect_callback) -> None:
+        self.message_callback = message_callback
+        self.binary_callback = binary_callback
+        self.disconnect_callback = disconnect_callback
+
+    def send_command(self, message_type, data, timeout=None):
+        self.commands.append((message_type, dict(data)))
+        return {"type": "sys.ack", "code": 0, "data": {}}
+
+    def send_command_nowait(self, message_type, data):
+        self.commands.append((message_type, dict(data)))
+        future: Future[dict[str, object]] = Future()
+        future.set_result({"type": "sys.ack", "code": 0, "data": {}})
+        return future
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def telemetry(sequence: int, *, error_x: float = 4.0) -> dict[str, object]:
+    return {
+        "v": 1,
+        "kind": "frame",
+        "seq": sequence,
+        "t": 1000 + sequence,
+        "age": 2,
+        "size": [416, 416],
+        "boxes": [[100, 110, 80, 90, 87, 0]],
+        "perf": [1, 33, 2],
+        "error": [error_x, -3.0],
+        "velocity": [12.0, -4.0],
+        "visible": True,
+        "state": 2,
+        "command": 1,
+    }
+
+
+def image_packet(sequence: int, *, jpeg: bytes | None = None) -> bytes:
+    payload = jpeg or b"\xff\xd8face-preview\xff\xd9"
+    return struct.pack(
+        "<4sBBHIIHHI",
+        b"FTW1",
+        1,
+        1,
+        24,
+        sequence,
+        1000 + sequence,
+        416,
+        416,
+        len(payload),
+    ) + payload
+
+
+def emit_pair(transport: FakeTransport, sequence: int) -> None:
+    assert transport.message_callback is not None
+    assert transport.binary_callback is not None
+    transport.message_callback(
+        {
+            "type": "evt.face_tracking.preview.frame",
+            "code": 0,
+            "data": telemetry(sequence),
+        }
+    )
+    transport.binary_callback(
+        BinaryFrame(FRAME_VIDEO, 0, 0, sequence, image_packet(sequence))
+    )
+
+
+def test_public_preview_pairs_typed_telemetry_and_jpeg() -> None:
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    preview = robot.face_tracking.open_preview(
+        width=416,
+        height=416,
+        frame_stride=1,
+    )
+    emit_pair(transport, 7)
+    frame = preview.read(timeout=0)
+
+    assert isinstance(frame, FaceTrackingFrame)
+    assert frame.sequence == 7
+    assert frame.width == 416
+    assert frame.height == 416
+    assert frame.jpeg.startswith(b"\xff\xd8")
+    assert frame.faces == (
+        FaceBox(x=100, y=110, width=80, height=90, score=87, target=0),
+    )
+    assert frame.telemetry.error_x_percent == 4.0
+    assert frame.telemetry.inference_ms == 33.0
+    assert transport.commands[0] == (
+        "ctrl.face_tracking.preview.start",
+        {"frame_stride": 1, "width": 416, "height": 416},
+    )
+
+    preview.close()
+    preview.close()
+    assert transport.commands[-1] == (
+        "ctrl.face_tracking.preview.stop",
+        {"policy": "hold"},
+    )
+    assert [name for name, _data in transport.commands].count(
+        "ctrl.face_tracking.preview.stop"
+    ) == 1
+
+
+def test_preview_keeps_latest_complete_frame_for_slow_consumers() -> None:
+    transport = FakeTransport()
+    preview = WatcheRobot._from_transport(transport).face_tracking.open_preview()
+
+    emit_pair(transport, 1)
+    emit_pair(transport, 2)
+
+    assert preview.read(timeout=0).sequence == 2
+    assert preview.dropped_frames == 1
+    with pytest.raises(TimeoutError, match="preview frame"):
+        preview.read(timeout=0)
+    preview.close()
+
+
+def test_preview_pairs_out_of_order_parts_and_ignores_malformed_packets() -> None:
+    transport = FakeTransport()
+    preview = WatcheRobot._from_transport(transport).face_tracking.open_preview()
+    assert transport.message_callback is not None
+    assert transport.binary_callback is not None
+
+    transport.binary_callback(BinaryFrame(FRAME_VIDEO, 0, 0, 3, b"bad"))
+    transport.binary_callback(
+        BinaryFrame(FRAME_VIDEO, 0, 0, 4, image_packet(4))
+    )
+    transport.message_callback(
+        {
+            "type": "evt.face_tracking.preview.frame",
+            "code": 0,
+            "data": telemetry(4),
+        }
+    )
+
+    assert preview.read(timeout=0).sequence == 4
+    preview.close()
+
+
+def test_preview_supports_async_iteration_and_recenter_on_exit() -> None:
+    async def scenario() -> None:
+        transport = FakeTransport()
+        preview = WatcheRobot._from_transport(transport).face_tracking.open_preview(
+            stop_policy="recenter"
+        )
+        async with preview:
+            pending = asyncio.create_task(anext(preview))
+            await asyncio.sleep(0)
+            emit_pair(transport, 11)
+            assert (await asyncio.wait_for(pending, timeout=1)).sequence == 11
+
+        assert transport.commands[-1] == (
+            "ctrl.face_tracking.preview.stop",
+            {"policy": "recenter"},
+        )
+
+    asyncio.run(scenario())
+
+
+def test_preview_rejects_invalid_contract_and_concurrent_session() -> None:
+    robot = WatcheRobot._from_transport(FakeTransport())
+    preview = robot.face_tracking.open_preview()
+    with pytest.raises(WatcheRobotError, match="already open"):
+        robot.face_tracking.open_preview()
+    preview.close()
+
+    for options in (
+        {"width": 320, "height": 240},
+        {"frame_stride": 0},
+        {"frame_stride": True},
+        {"queue_size": 0},
+        {"stop_policy": "scan"},
+    ):
+        with pytest.raises(ValueError):
+            robot.face_tracking.open_preview(**options)
+
+    incapable = WatcheRobot._from_transport(FakeTransport(capable=False))
+    with pytest.raises(WatcheRobotError, match="face_tracking.preview.v1"):
+        incapable.face_tracking.open_preview()
+
+
+def test_disconnect_wakes_blocked_preview_reader() -> None:
+    transport = FakeTransport()
+    preview = WatcheRobot._from_transport(transport).face_tracking.open_preview()
+    errors: list[BaseException] = []
+
+    def read() -> None:
+        try:
+            preview.read()
+        except BaseException as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    assert transport.disconnect_callback is not None
+    transport.disconnect_callback()
+    reader.join(1)
+
+    assert not reader.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], WatcheRobotError)
+    assert "disconnected" in str(errors[0])

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from itertools import count
 
+from ..application.session import ApplicationChannel
 from ..connections.registry import (
     ExternalClientRole,
     ExternalConnection,
@@ -24,6 +25,7 @@ class FaceTrackingPreviewBroker:
     ) -> None:
         self._registry = registry
         self._owners: set[object] = set()
+        self._application_owner = object()
         self._command_sequence = count(1)
 
     def bind_registry(self, registry: ExternalConnectionRegistry) -> None:
@@ -38,16 +40,39 @@ class FaceTrackingPreviewBroker:
     ) -> None:
         if source.role is not ExternalClientRole.DESKTOP:
             return
+        self._observe_owner(source.websocket, frame)
+
+    async def observe_application_frame(
+        self,
+        source: ApplicationChannel,
+        frame: str | bytes,
+    ) -> None:
+        if source is ApplicationChannel.DEVICE:
+            self._observe_owner(self._application_owner, frame)
+
+    def _observe_owner(self, owner: object, frame: str | bytes) -> None:
         message_type = self._message_type(frame)
         if message_type == self.START_TYPE:
-            self._owners.add(source.websocket)
+            self._owners.add(owner)
         elif message_type == self.STOP_TYPE:
-            self._owners.discard(source.websocket)
+            self._owners.clear()
 
     async def connection_lost(self, connection: ExternalConnection) -> None:
-        if connection.websocket not in self._owners:
+        await self._owner_lost(connection.websocket)
+
+    async def application_channel_lost(
+        self,
+        channel: ApplicationChannel,
+    ) -> None:
+        if channel is ApplicationChannel.DEVICE:
+            await self._owner_lost(self._application_owner)
+
+    async def _owner_lost(self, owner: object) -> None:
+        if owner not in self._owners:
             return
-        self._owners.discard(connection.websocket)
+        self._owners.discard(owner)
+        if self._owners:
+            return
         registry = self._registry
         if registry is None:
             return

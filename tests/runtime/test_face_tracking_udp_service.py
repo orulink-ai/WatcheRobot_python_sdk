@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
 
 from watcherobot.runtime.daemon.connections.registry import ExternalClientRole
 from watcherobot.runtime.daemon.pairing.protocol import HardwareHello, PairAccept
@@ -129,6 +130,35 @@ def test_service_rejects_bad_authentication_and_inactive_session() -> None:
         session.release()
         service.handle_datagram(packets()[0], (PEER_IP, 50000))
         assert service.stats.inactive_session_datagrams == 1
+        await service.stop()
+
+    asyncio.run(scenario())
+
+
+def test_service_can_publish_to_managed_application_sink() -> None:
+    async def scenario() -> None:
+        published: list[str | bytes] = []
+
+        async def publish(frame: str | bytes) -> int:
+            published.append(frame)
+            return 1
+
+        service = FaceTrackingUdpPreviewService(
+            session=connected_session(),
+            registry=FakeRegistry(),
+            publisher=publish,
+            port=0,
+        )
+        await service.start()
+        for packet in packets(sequence=17):
+            service.handle_datagram(packet, (PEER_IP, 50000))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert len(published) == 2
+        assert isinstance(published[0], str)
+        assert json.loads(published[0])["seq"] == 17
+        assert published[1] == b"FTW1" + bytes(20) + b"jpeg"
         await service.stop()
 
     asyncio.run(scenario())

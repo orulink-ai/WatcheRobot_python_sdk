@@ -14,14 +14,20 @@ from watcherobot.application.catalog import (
     ApplicationCatalog,
     CatalogEntry,
 )
+from watcherobot.runtime.daemon.application.bridge import ChannelNotConnectedError
 from watcherobot.runtime.daemon.application.logging import ApplicationLogService
 from watcherobot.runtime.daemon.application.runtime import (
     ApplicationRuntimeError,
     ApplicationRuntimeManager,
 )
-from watcherobot.runtime.daemon.application.session import ApplicationRun
-from watcherobot.runtime.daemon.connections.registry import ExternalConnectionRegistry
-from watcherobot.runtime.daemon.connections.registry import ExternalClientRole
+from watcherobot.runtime.daemon.application.session import (
+    ApplicationChannel,
+    ApplicationRun,
+)
+from watcherobot.runtime.daemon.connections.registry import (
+    ExternalClientRole,
+    ExternalConnectionRegistry,
+)
 from watcherobot.runtime.daemon.connections.websocket_server import (
     ExternalWebSocketServer,
 )
@@ -103,13 +109,18 @@ class DaemonRuntime:
             application_registry=self.application.registry,
             application_bridge=self.application.bridge,
         )
-        self.application.bridge.set_frame_callback(self.router.route_application)
         self.device_pairing = DevicePairingSession(
             daemon_instance_id=secrets.token_hex(16),
         )
         self._clock = clock
         self.connection_registry = connection_registry
         self.face_tracking_preview = FaceTrackingPreviewBroker(connection_registry)
+        self.application.bridge.set_frame_callback(
+            self._route_application_frame
+        )
+        self.application.bridge.add_channel_lost_listener(
+            self.face_tracking_preview.application_channel_lost
+        )
         self.external_server = ExternalWebSocketServer(
             host=external_host,
             port=external_port,
@@ -131,6 +142,7 @@ class DaemonRuntime:
         self.preview_udp = FaceTrackingUdpPreviewService(
             session=self.device_pairing,
             registry=connection_registry,
+            publisher=self._publish_preview_frame,
             port=preview_udp_port,
         )
         self.control_server = DaemonControlServer(
@@ -395,6 +407,34 @@ class DaemonRuntime:
                 build_device_state_event(snapshot),
                 separators=(",", ":"),
             ),
+        )
+
+    async def _route_application_frame(
+        self,
+        source: ApplicationChannel,
+        frame: str | bytes,
+    ) -> int:
+        delivered = await self.router.route_application(source, frame)
+        if delivered > 0:
+            await self.face_tracking_preview.observe_application_frame(
+                source,
+                frame,
+            )
+        return delivered
+
+    async def _publish_preview_frame(self, frame: str | bytes) -> int:
+        if self.application.registry.active_run is not None:
+            try:
+                await self.application.bridge.send_to_application(
+                    ApplicationChannel.DEVICE,
+                    frame,
+                )
+            except ChannelNotConnectedError:
+                return 0
+            return 1
+        return await self.connection_registry.send_to_role(
+            ExternalClientRole.DESKTOP,
+            frame,
         )
 
 

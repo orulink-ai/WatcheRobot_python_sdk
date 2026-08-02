@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import struct
 
 from watcherobot.application.transport import DaemonApplicationTransport
+from watcherobot.protocol import FRAME_VIDEO
 from watcherobot.runtime.daemon.application.session import ApplicationChannel
 
 
@@ -52,5 +54,59 @@ def test_audio_stream_waits_for_device_buffer_credit() -> None:
         )
         await asyncio.wait_for(task, timeout=1.0)
         assert len(sent) == 5
+
+    asyncio.run(scenario())
+
+
+def test_transport_dispatches_face_preview_packet_as_video_frame() -> None:
+    transport = DaemonApplicationTransport()
+    received = []
+    transport.set_callbacks(lambda _message: None, received.append, lambda: None)
+    jpeg = b"\xff\xd8preview\xff\xd9"
+    packet = struct.pack(
+        "<4sBBHIIHHI",
+        b"FTW1",
+        1,
+        1,
+        24,
+        42,
+        1000,
+        416,
+        416,
+        len(jpeg),
+    ) + jpeg
+
+    transport._dispatch_binary(packet)
+
+    assert len(received) == 1
+    assert received[0].frame_type == FRAME_VIDEO
+    assert received[0].sequence == 42
+    assert received[0].payload == packet
+
+
+def test_transport_dispatches_face_preview_telemetry_as_sdk_event() -> None:
+    async def scenario() -> None:
+        transport = DaemonApplicationTransport()
+        received = []
+        transport.set_callbacks(received.append, lambda _frame: None, lambda: None)
+        telemetry = {
+            "v": 1,
+            "kind": "frame",
+            "seq": 42,
+            "size": [416, 416],
+        }
+
+        await transport._on_frame(
+            ApplicationChannel.DEVICE,
+            json.dumps(telemetry),
+        )
+
+        assert received == [
+            {
+                "type": "evt.face_tracking.preview.frame",
+                "code": 0,
+                "data": telemetry,
+            }
+        ]
 
     asyncio.run(scenario())

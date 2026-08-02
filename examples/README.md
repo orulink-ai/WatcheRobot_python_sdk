@@ -20,3 +20,10 @@ watcherobot app run .\dist\hello_robot.wapp
 
 Pairing and device ownership remain in the long-lived Runtime. Stopping an
 Application does not stop the Runtime or rebuild the device connection.
+
+Available examples include:
+
+- `capture_photo`: capture one JPEG from the camera.
+- `record_microphone`: record a short WAV file.
+- `face_tracking_preview`: consume typed, sequence-matched live preview frames
+  without opening a device socket in Application code.

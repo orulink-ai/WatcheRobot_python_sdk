@@ -7,7 +7,7 @@ import json
 import time
 from dataclasses import asdict
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from ..connections.registry import ExternalClientRole, ExternalConnectionRegistry
 from ..pairing.session import DevicePairingSession
@@ -49,12 +49,14 @@ class FaceTrackingUdpPreviewService:
         *,
         session: DevicePairingSession,
         registry: ExternalConnectionRegistry,
+        publisher: Callable[[str | bytes], Awaitable[int]] | None = None,
         host: str = "0.0.0.0",
         port: int = 37022,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._session = session
         self._registry = registry
+        self._publisher_callback = publisher
         self._host = host
         self._port = port
         self._clock = clock
@@ -194,9 +196,15 @@ class FaceTrackingUdpPreviewService:
             except (FaceTrackingUdpProtocolError, json.JSONDecodeError):
                 self.stats.invalid_datagrams += 1
                 continue
-            await self._registry.send_to_role(ExternalClientRole.DESKTOP, telemetry)
-            await self._registry.send_to_role(ExternalClientRole.DESKTOP, image)
+            await self._publish(telemetry)
+            await self._publish(image)
             self.stats.published_frames += 1
+
+    async def _publish(self, frame: str | bytes) -> int:
+        callback = self._publisher_callback
+        if callback is not None:
+            return await callback(frame)
+        return await self._registry.send_to_role(ExternalClientRole.DESKTOP, frame)
 
     def _reset_session(self) -> None:
         self._active_key = None

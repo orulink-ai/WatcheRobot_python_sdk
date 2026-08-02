@@ -11,6 +11,7 @@ from watcherobot.runtime.daemon.connections.websocket_server import (
 from watcherobot.runtime.daemon.preview.face_tracking import (
     FaceTrackingPreviewBroker,
 )
+from watcherobot.runtime.daemon.application.session import ApplicationChannel
 
 
 async def _allow_hardware(_hello, _peer_ip: str) -> None:
@@ -142,6 +143,38 @@ def test_normal_preview_stop_disarms_disconnect_cleanup() -> None:
                 )
         finally:
             await desktop.close()
+            await device.close()
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_application_channel_loss_stops_armed_preview() -> None:
+    async def scenario() -> None:
+        broker = FaceTrackingPreviewBroker()
+        server = ExternalWebSocketServer(
+            host="127.0.0.1",
+            port=0,
+            hardware_hello_authorizer=_allow_hardware,
+        )
+        broker.bind_registry(server.registry)
+        await server.start()
+        device = await _connect_as(server, "hardware")
+        try:
+            await broker.observe_application_frame(
+                ApplicationChannel.DEVICE,
+                json.dumps(
+                    {
+                        "type": "ctrl.face_tracking.preview.start",
+                        "data": {"command_id": "app-preview-start"},
+                    }
+                ),
+            )
+            await broker.application_channel_lost(ApplicationChannel.DEVICE)
+            stop = json.loads(await asyncio.wait_for(device.recv(), timeout=1))
+            assert stop["type"] == "ctrl.face_tracking.preview.stop"
+            assert stop["data"]["policy"] == "hold"
+        finally:
             await device.close()
             await server.stop()
 
