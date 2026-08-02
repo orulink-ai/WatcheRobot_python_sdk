@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from ..connections.registry import ExternalClientRole, ExternalConnectionRegistry
 from ..pairing.session import DevicePairingSession
+from .udp_feedback import encode_preview_ack
 from .udp_protocol import (
     CompletedPreviewFrame,
     FaceTrackingUdpProtocolError,
@@ -28,6 +29,8 @@ class FaceTrackingUdpPreviewStats:
     completed_frames: int = 0
     publish_overwrites: int = 0
     published_frames: int = 0
+    feedback_sent: int = 0
+    feedback_errors: int = 0
 
 
 class _DatagramProtocol(asyncio.DatagramProtocol):
@@ -135,11 +138,36 @@ class FaceTrackingUdpPreviewService:
         if frame is None:
             return
         self.stats.completed_frames += 1
+        self._send_feedback(frame, address, session_key)
         if self._pending is not None:
             self.stats.publish_overwrites += 1
         self._pending = frame
         self._pending_completed_at = self._clock()
         self._publish_event.set()
+
+    def _send_feedback(
+        self,
+        frame: CompletedPreviewFrame,
+        address: tuple[str, int],
+        session_key: bytes,
+    ) -> None:
+        transport = self._transport
+        if transport is None:
+            self.stats.feedback_errors += 1
+            return
+        try:
+            transport.sendto(
+                encode_preview_ack(
+                    session_key=session_key,
+                    stream_id=frame.stream_id,
+                    sequence=frame.sequence,
+                ),
+                address,
+            )
+        except OSError:
+            self.stats.feedback_errors += 1
+            return
+        self.stats.feedback_sent += 1
 
     async def _publish_loop(self) -> None:
         while True:

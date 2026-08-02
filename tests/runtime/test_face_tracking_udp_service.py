@@ -107,6 +107,8 @@ def test_service_rejects_wrong_source_and_publishes_pair_to_desktop() -> None:
             (ExternalClientRole.DESKTOP, b"FTW1" + bytes(20) + b"jpeg"),
         ]
         assert service.stats.published_frames == 1
+        assert service.stats.feedback_sent == 1
+        assert service.stats.feedback_errors == 0
         assert service.bound_port > 0
         await service.stop()
 
