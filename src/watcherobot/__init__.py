@@ -10,6 +10,24 @@ from .audio import AudioPlayback, PCMAudio
 from .job import Job, JobState
 from .inputs import BackTouchEvent, InputDomain, InputEvent, RollerEvent, ScreenTouchEvent
 from .media import AudioFormat, AudioFrame, AudioRecording, ImageFrame, MicrophoneSession
+from .provisioning import (
+    BluetoothConnectionTimeoutError,
+    BluetoothDevice,
+    BluetoothPermissionError,
+    BluetoothProvisioner,
+    BluetoothProvisioningError,
+    BluetoothUnavailableError,
+    DeviceAmbiguityError,
+    DeviceNotFoundError,
+    PayloadTooLargeError,
+    ProtocolMessage,
+    ProvisioningCancelledError,
+    ProvisioningProtocolError,
+    ProvisioningRejectedError,
+    ProvisioningResponseTimeoutError,
+    ProvisioningResult,
+    WifiStatus,
+)
 from .vision import (
     FaceBox,
     FaceTrackingFrame,
@@ -25,8 +43,16 @@ __all__ = [
     "AudioRecording",
     "AuthenticationError",
     "BackTouchEvent",
+    "BluetoothConnectionTimeoutError",
+    "BluetoothDevice",
+    "BluetoothPermissionError",
+    "BluetoothProvisioner",
+    "BluetoothProvisioningError",
+    "BluetoothUnavailableError",
     "CommandError",
     "ConnectionTimeoutError",
+    "DeviceAmbiguityError",
+    "DeviceNotFoundError",
     "FaceBox",
     "FaceTrackingFrame",
     "FaceTrackingPreview",
@@ -41,9 +67,17 @@ __all__ = [
     "JobState",
     "MicrophoneSession",
     "PCMAudio",
+    "PayloadTooLargeError",
+    "ProtocolMessage",
+    "ProvisioningCancelledError",
+    "ProvisioningProtocolError",
+    "ProvisioningRejectedError",
+    "ProvisioningResponseTimeoutError",
+    "ProvisioningResult",
     "RollerEvent",
     "ScreenTouchEvent",
     "WatcheRobotError",
+    "WifiStatus",
 ]
 
-__version__ = "0.1.0a4"
+__version__ = "0.1.1a1"

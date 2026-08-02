@@ -74,6 +74,32 @@ watcherobot app uninstall example.hello_robot --version 1.0.0
 For larger Applications, add a `.wappignore` file using glob patterns such as
 `tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not packaged.
 
+## Bluetooth Wi-Fi provisioning
+
+Python 3.10–3.12 on Windows and macOS can provision the existing
+`ESP_ROBOT` GATT service directly:
+
+```powershell
+watcherobot bluetooth scan
+watcherobot bluetooth provision --device <id> --ssid MyWiFi
+watcherobot bluetooth status --device <id>
+watcherobot bluetooth clear --device <id>
+```
+
+The provision command prompts for the password without accepting a
+`--password` argument. Its `credentials_saved` result means only that the
+firmware acknowledged storage of the credentials; it does not prove that the
+device connected to the network. The SDK makes a bounded attempt to stop
+notifications and disconnect BLE before returning. Cleanup failure does not
+replace an acknowledged `credentials_saved` result, so that result does not
+guarantee BLE disconnected or the firmware resumed its Wi-Fi attempt.
+
+The same flow is available through the asynchronous
+`BluetoothProvisioner` API. See
+[Bluetooth provisioning](docs/bluetooth-provisioning.md) for API examples,
+timeouts, platform identifiers, protocol limits, and the current GATT
+security constraints.
+
 ## Application API
 
 Every Application has `app.json` and a fixed `app.py` entrypoint:
@@ -110,7 +136,7 @@ frames. Normal SDK Applications should use `ApplicationContext`.
 Applications never open their own Discovery socket or device WebSocket and do
 not receive pairing credentials.
 
-### Face-tracking preview
+## Face-tracking preview
 
 The managed SDK can consume the live JPEG stream and the face-tracking
 telemetry as one typed, sequence-matched frame:
@@ -137,5 +163,32 @@ Runtime owns the device and UDP/WebSocket routing; Applications only use the
 typed API. See [face-tracking preview](docs/face-tracking-preview.md) and the
 [example Application](examples/face_tracking_preview).
 
+## Microphone PCM
+
+The device microphone uplink is Opus (`16 kHz`, mono, one packet per WSPK
+frame). Normal Applications receive decoded `pcm_s16le` through the high-level
+SDK API:
+
+```python
+with app.robot.microphone.open_pcm() as microphone:
+    frame = microphone.read(timeout=1.0)  # frame.data is 16 kHz mono PCM
+
+recording = app.robot.microphone.record_pcm(duration=3.0)
+recording.save("microphone.wav")
+```
+
+`open()` retains the raw Opus-packet stream for Applications that need to
+process packets themselves. Raw Opus does not provide byte-derived PCM
+duration or WAV output, so `record()` now raises a migration error instead of
+creating a misleading recording; use `open()` for raw packets or
+`record_pcm()` for a PCM recording. The Runtime/Daemon only owns the device
+connection and routes the WSPK frame; it does not decode or rewrite an Opus
+payload. Decoding is performed in this SDK's Application media layer, so a
+desktop bundle must ship the complete shared `watcherobot` environment, while
+the desktop itself continues to control only the Daemon.
+
+Applications that intentionally implement their own media protocol can use
+the advanced `ApplicationChannels` Device channel and consume raw WSPK frames.
+
 See [examples](examples/README.md), [Runtime contract](docs/contracts/runtime-profile-index.md),
-and [troubleshooting](docs/troubleshooting.md).
+the [microphone contract](docs/microphone-audio.md), and [troubleshooting](docs/troubleshooting.md).
