@@ -19,6 +19,7 @@ from watcherobot.protocol import (
     FLAG_FIRST,
     FLAG_LAST,
     FRAME_AUDIO,
+    FRAME_VIDEO,
     BinaryFrame,
     build_command,
     build_wspk,
@@ -379,6 +380,23 @@ class DaemonApplicationTransport:
         if isinstance(frame, bytes):
             self._dispatch_binary(frame)
             return
+        try:
+            preview_payload = json.loads(frame)
+        except json.JSONDecodeError:
+            preview_payload = None
+        if (
+            isinstance(preview_payload, dict)
+            and preview_payload.get("v") == 1
+            and preview_payload.get("kind") == "frame"
+        ):
+            self._message_callback(
+                {
+                    "type": "evt.face_tracking.preview.frame",
+                    "code": 0,
+                    "data": preview_payload,
+                }
+            )
+            return
         message = parse_json_message(frame)
         message_type = message["type"]
         data = message.get("data", {})
@@ -409,6 +427,12 @@ class DaemonApplicationTransport:
         self._message_callback(message)
 
     def _dispatch_binary(self, raw: bytes) -> None:
+        if len(raw) >= 12 and raw.startswith(b"FTW1"):
+            sequence = int.from_bytes(raw[8:12], "little")
+            self._binary_callback(
+                BinaryFrame(FRAME_VIDEO, 0, 0, sequence, bytes(raw))
+            )
+            return
         try:
             frame = parse_wspk(raw)
         except ValueError:

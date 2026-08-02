@@ -91,7 +91,7 @@ class LocalWebSocketApplicationBridge(ApplicationBridge):
         self._requested_port = port
         self._bound_port: int | None = None
         self._on_frame = on_frame
-        self._on_channel_lost = on_channel_lost
+        self._channel_lost_listeners = [on_channel_lost]
         self._server: Server | None = None
         self._connections: dict[ApplicationChannel, ServerConnection] = {}
         self._stopping = False
@@ -102,6 +102,10 @@ class LocalWebSocketApplicationBridge(ApplicationBridge):
 
     def set_frame_callback(self, callback: FrameCallback) -> None:
         self._on_frame = callback
+
+    def add_channel_lost_listener(self, callback: ChannelCallback) -> None:
+        if callback not in self._channel_lost_listeners:
+            self._channel_lost_listeners.append(callback)
 
     @property
     def bound_port(self) -> int:
@@ -210,7 +214,8 @@ class LocalWebSocketApplicationBridge(ApplicationBridge):
                     abnormal=not self._stopping,
                 )
                 if not self._stopping:
-                    await _invoke_callback(self._on_channel_lost, channel)
+                    for listener in tuple(self._channel_lost_listeners):
+                        await _invoke_callback(listener, channel)
 
     @staticmethod
     def _parse_request(

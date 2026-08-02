@@ -27,6 +27,8 @@ def test_local_bridge_keeps_channel_source_and_raw_frame_content() -> None:
             on_frame=lambda channel, frame: received.put((channel, frame)),
             on_channel_lost=lost_channels.put,
         )
+        additional_lost_channels: asyncio.Queue[ApplicationChannel] = asyncio.Queue()
+        bridge.add_channel_lost_listener(additional_lost_channels.put)
         await bridge.start()
 
         try:
@@ -87,6 +89,9 @@ def test_local_bridge_keeps_channel_source_and_raw_frame_content() -> None:
                 assert await asyncio.wait_for(lost_channels.get(), timeout=1) is (
                     ApplicationChannel.DEVICE
                 )
+                assert await asyncio.wait_for(
+                    additional_lost_channels.get(), timeout=1
+                ) is ApplicationChannel.DEVICE
                 assert run.state is ApplicationState.ERROR
         finally:
             await bridge.stop()

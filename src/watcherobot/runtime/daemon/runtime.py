@@ -14,15 +14,23 @@ from watcherobot.application.catalog import (
     ApplicationCatalog,
     CatalogEntry,
 )
+from watcherobot.runtime.daemon.application.bridge import ChannelNotConnectedError
 from watcherobot.runtime.daemon.application.logging import ApplicationLogService
 from watcherobot.runtime.daemon.application.runtime import (
     ApplicationRuntimeError,
     ApplicationRuntimeManager,
 )
-from watcherobot.runtime.daemon.application.session import ApplicationRun
-from watcherobot.runtime.daemon.connections.registry import ExternalConnectionRegistry
-from watcherobot.runtime.daemon.connections.registry import ExternalClientRole
-from watcherobot.runtime.daemon.connections.websocket_server import ExternalWebSocketServer
+from watcherobot.runtime.daemon.application.session import (
+    ApplicationChannel,
+    ApplicationRun,
+)
+from watcherobot.runtime.daemon.connections.registry import (
+    ExternalClientRole,
+    ExternalConnectionRegistry,
+)
+from watcherobot.runtime.daemon.connections.websocket_server import (
+    ExternalWebSocketServer,
+)
 from watcherobot.runtime.daemon.control.rest import DaemonControlServer
 from watcherobot.runtime.daemon.logging import DaemonLogService
 from watcherobot.runtime.daemon.pairing.protocol import (
@@ -30,8 +38,17 @@ from watcherobot.runtime.daemon.pairing.protocol import (
     HardwareHello,
     build_device_state_event,
 )
-from watcherobot.runtime.daemon.pairing.session import DevicePairingSession, DevicePairingState
+from watcherobot.runtime.daemon.pairing.session import (
+    DevicePairingSession,
+    DevicePairingState,
+)
 from watcherobot.runtime.daemon.pairing.udp import PairingUdpService
+from watcherobot.runtime.daemon.preview.face_tracking import (
+    FaceTrackingPreviewBroker,
+)
+from watcherobot.runtime.daemon.preview.udp_service import (
+    FaceTrackingUdpPreviewService,
+)
 from watcherobot.runtime.daemon.routing.raw import RawFrameRouter
 
 
@@ -52,6 +69,7 @@ class DaemonRuntime:
         application_log_dir: Path | None = None,
         daemon_log_path: Path | None = None,
         pairing_udp_port: int = 37021,
+        preview_udp_port: int = 0,
         catalog_root: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -91,14 +109,18 @@ class DaemonRuntime:
             application_registry=self.application.registry,
             application_bridge=self.application.bridge,
         )
-        self.application.bridge.set_frame_callback(
-            self.router.route_application
-        )
         self.device_pairing = DevicePairingSession(
             daemon_instance_id=secrets.token_hex(16),
         )
         self._clock = clock
         self.connection_registry = connection_registry
+        self.face_tracking_preview = FaceTrackingPreviewBroker(connection_registry)
+        self.application.bridge.set_frame_callback(
+            self._route_application_frame
+        )
+        self.application.bridge.add_channel_lost_listener(
+            self.face_tracking_preview.application_channel_lost
+        )
         self.external_server = ExternalWebSocketServer(
             host=external_host,
             port=external_port,
@@ -107,6 +129,8 @@ class DaemonRuntime:
             hardware_hello_authorizer=self._authorize_hardware_hello,
             device_disconnect_listener=self._device_disconnected,
             device_session_end_listener=self._device_session_ended,
+            business_frame_listener=self.face_tracking_preview.observe_frame,
+            external_disconnect_listener=(self.face_tracking_preview.connection_lost),
         )
         self.pairing_udp = PairingUdpService(
             session=self.device_pairing,
@@ -114,6 +138,12 @@ class DaemonRuntime:
             clock=clock,
             state_listener=self._publish_device_state,
             event_logger=self.logs.record,
+        )
+        self.preview_udp = FaceTrackingUdpPreviewService(
+            session=self.device_pairing,
+            registry=connection_registry,
+            publisher=self._publish_preview_frame,
+            port=preview_udp_port,
         )
         self.control_server = DaemonControlServer(
             controller=self,
@@ -134,8 +164,15 @@ class DaemonRuntime:
             await self.external_server.stop()
             raise
         try:
+            await self.preview_udp.start()
+        except Exception:
+            await self.pairing_udp.stop()
+            await self.external_server.stop()
+            raise
+        try:
             await self.control_server.start()
         except Exception:
+            await self.preview_udp.stop()
             await self.pairing_udp.stop()
             await self.external_server.stop()
             raise
@@ -143,7 +180,8 @@ class DaemonRuntime:
             "Daemon Runtime ready "
             f"(external={self.external_server.url}, "
             f"control={self.control_server.base_url}, "
-            f"pairing_udp={self.pairing_udp.bound_port})"
+            f"pairing_udp={self.pairing_udp.bound_port}, "
+            f"preview_udp={self.preview_udp.bound_port})"
         )
         if self._auto_start_enabled and not self.auto_start_attempted:
             self.auto_start_attempted = True
@@ -156,6 +194,7 @@ class DaemonRuntime:
         self.logs.record("Daemon Runtime stopping")
         await self.control_server.stop()
         await self.application.stop()
+        await self.preview_udp.stop()
         await self.pairing_udp.stop()
         await self.external_server.stop()
 
@@ -221,10 +260,7 @@ class DaemonRuntime:
         self._shutdown_event.set()
 
     def daemon_logs(self, after_id: int = 0) -> list[dict[str, object]]:
-        return [
-            dict(event)
-            for event in self.logs.recent(after_id=after_id)
-        ]
+        return [dict(event) for event in self.logs.recent(after_id=after_id)]
 
     async def wait_for_shutdown(self) -> None:
         await self._shutdown_event.wait()
@@ -313,7 +349,15 @@ class DaemonRuntime:
         }
 
     def device_status(self) -> dict[str, object]:
-        return {"device": self.device_pairing.snapshot()}
+        device = self.device_pairing.snapshot()
+        peer_ip = self.device_pairing.expected_peer_ip
+        device["preview_websocket_url"] = (
+            f"ws://{peer_ip}:81/ws/face-track"
+            if device["online"] and peer_ip is not None
+            else None
+        )
+        device["preview_transport"] = self.preview_udp.snapshot()
+        return {"device": device}
 
     async def _authorize_hardware_hello(
         self,
@@ -363,6 +407,34 @@ class DaemonRuntime:
                 build_device_state_event(snapshot),
                 separators=(",", ":"),
             ),
+        )
+
+    async def _route_application_frame(
+        self,
+        source: ApplicationChannel,
+        frame: str | bytes,
+    ) -> int:
+        delivered = await self.router.route_application(source, frame)
+        if delivered > 0:
+            await self.face_tracking_preview.observe_application_frame(
+                source,
+                frame,
+            )
+        return delivered
+
+    async def _publish_preview_frame(self, frame: str | bytes) -> int:
+        if self.application.registry.active_run is not None:
+            try:
+                await self.application.bridge.send_to_application(
+                    ApplicationChannel.DEVICE,
+                    frame,
+                )
+            except ChannelNotConnectedError:
+                return 0
+            return 1
+        return await self.connection_registry.send_to_role(
+            ExternalClientRole.DESKTOP,
+            frame,
         )
 
 

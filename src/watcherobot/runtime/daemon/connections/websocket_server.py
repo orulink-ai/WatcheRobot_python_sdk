@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import ipaddress
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -39,6 +40,14 @@ DeviceSessionEndListener = Callable[
     [DeviceSessionEnd, str],
     Awaitable[None] | None,
 ]
+BusinessFrameListener = Callable[
+    [ExternalConnection, str | bytes],
+    Awaitable[None] | None,
+]
+ExternalDisconnectListener = Callable[
+    [ExternalConnection],
+    Awaitable[None] | None,
+]
 
 
 class ExternalWebSocketServer:
@@ -51,6 +60,7 @@ class ExternalWebSocketServer:
     CLOSE_PAIRING_CREDENTIAL_INVALID = 4411
     CLOSE_DEVICE_SLOT_OCCUPIED = 4412
     CLOSE_PAIRING_PROTOCOL_MISMATCH = 4413
+    CLOSE_DESKTOP_LOOPBACK_REQUIRED = 4414
 
     def __init__(
         self,
@@ -62,6 +72,8 @@ class ExternalWebSocketServer:
         hardware_hello_authorizer: HardwareHelloAuthorizer | None = None,
         device_disconnect_listener: DeviceDisconnectListener | None = None,
         device_session_end_listener: DeviceSessionEndListener | None = None,
+        business_frame_listener: BusinessFrameListener | None = None,
+        external_disconnect_listener: ExternalDisconnectListener | None = None,
         hello_timeout_seconds: float = 5.0,
     ) -> None:
         if hello_timeout_seconds <= 0:
@@ -74,6 +86,8 @@ class ExternalWebSocketServer:
         self._hardware_hello_authorizer = hardware_hello_authorizer
         self._device_disconnect_listener = device_disconnect_listener
         self._device_session_end_listener = device_session_end_listener
+        self._business_frame_listener = business_frame_listener
+        self._external_disconnect_listener = external_disconnect_listener
         self._hello_timeout_seconds = hello_timeout_seconds
         self._server: Server | None = None
 
@@ -172,11 +186,25 @@ class ExternalWebSocketServer:
                         await self._handle_device_session_end(connection, frame)
                         return
 
+                    if self._business_frame_listener is not None:
+                        result = self._business_frame_listener(
+                            connection,
+                            frame,
+                        )
+                        if inspect.isawaitable(result):
+                            await result
                     await self.router.route_external(connection, frame)
             except ConnectionClosed:
                 pass
         finally:
             removed = self.registry.remove(websocket)
+            if (
+                removed is not None
+                and self._external_disconnect_listener is not None
+            ):
+                result = self._external_disconnect_listener(removed)
+                if inspect.isawaitable(result):
+                    await result
             if (
                 removed is not None
                 and removed.role is ExternalClientRole.DEVICE
@@ -279,6 +307,28 @@ class ExternalWebSocketServer:
             return False
         declared_role = str(payload.get("role", "")).strip().lower()
         hardware_ack: dict[str, object] | None = None
+        if (
+            declared_role == ExternalClientRole.DESKTOP.value
+            and not self.is_loopback_address(self._peer_ip(connection.websocket))
+        ):
+            await connection.websocket.send(
+                json.dumps(
+                    {
+                        "type": "sys.nack",
+                        "code": 403,
+                        "data": {
+                            "type": "sys.client.hello",
+                            "error": "desktop_loopback_required",
+                        },
+                    },
+                    separators=(",", ":"),
+                )
+            )
+            await connection.websocket.close(
+                code=self.CLOSE_DESKTOP_LOOPBACK_REQUIRED,
+                reason="desktop clients must use loopback",
+            )
+            return False
         if declared_role == ExternalClientRole.DEVICE.value:
             if self._hardware_hello_authorizer is None:
                 await self._reject_hardware_hello(
@@ -400,6 +450,13 @@ class ExternalWebSocketServer:
         if isinstance(remote, tuple) and remote:
             return str(remote[0])
         return ""
+
+    @staticmethod
+    def is_loopback_address(address: str) -> bool:
+        try:
+            return ipaddress.ip_address(address).is_loopback
+        except ValueError:
+            return False
 
     @classmethod
     def _is_control_message(cls, frame: str | bytes, expected_type: str) -> bool:

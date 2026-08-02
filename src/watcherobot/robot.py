@@ -23,7 +23,13 @@ from .protocol import (
     FLAG_LAST,
     FRAME_AUDIO,
     FRAME_IMAGE,
+    FRAME_VIDEO,
     BinaryFrame,
+)
+from .vision import (
+    FaceTrackingDomain,
+    FaceTrackingPreview,
+    FaceTrackingStopPolicy,
 )
 
 
@@ -291,6 +297,8 @@ class WatcheRobot:
         self._image_assemblies: dict[int, _ImageAssembly] = {}
         self._image_assembly_lock = threading.Lock()
         self._camera_lock = threading.Lock()
+        self._face_tracking_lock = threading.Lock()
+        self._face_tracking_preview: FaceTrackingPreview | None = None
         self._audio_playback_lock = threading.Lock()
         self._audio_api_lock = threading.Lock()
         self._audio_playback: AudioPlayback | None = None
@@ -308,6 +316,7 @@ class WatcheRobot:
         self.lights = LightsDomain(self)
         self.microphone = MicrophoneDomain(self)
         self.camera = CameraDomain(self)
+        self.face_tracking = FaceTrackingDomain(self)
         self.inputs = InputDomain()
         transport.set_callbacks(self._on_message, self._on_binary, self._on_disconnect)
 
@@ -342,6 +351,13 @@ class WatcheRobot:
         if microphone is not None and not microphone.closed:
             try:
                 microphone.close()
+            except Exception:
+                pass
+        with self._face_tracking_lock:
+            preview = self._face_tracking_preview
+        if preview is not None and not preview.closed:
+            try:
+                preview.close()
             except Exception:
                 pass
         with self._media_lock:
@@ -696,7 +712,81 @@ class WatcheRobot:
                 if image.session_id in (0, expected_stream_id):
                     return image
 
+    def _open_face_tracking_preview(
+        self,
+        *,
+        width: int,
+        height: int,
+        frame_stride: int,
+        stop_policy: FaceTrackingStopPolicy,
+        queue_size: int,
+    ) -> FaceTrackingPreview:
+        if "face_tracking.preview.v1" not in self.capabilities:
+            raise WatcheRobotError(
+                "robot firmware does not advertise face_tracking.preview.v1"
+            )
+        with self._face_tracking_lock:
+            if self._closed:
+                raise WatcheRobotError("robot connection is closed")
+            if self._face_tracking_preview is not None:
+                raise WatcheRobotError("face tracking preview is already open")
+            preview = FaceTrackingPreview(
+                self,
+                stop_policy=stop_policy,
+                queue_size=queue_size,
+            )
+            self._face_tracking_preview = preview
+        try:
+            self._command(
+                "ctrl.face_tracking.preview.start",
+                {
+                    "frame_stride": frame_stride,
+                    "width": width,
+                    "height": height,
+                },
+            )
+        except Exception:
+            with self._face_tracking_lock:
+                if self._face_tracking_preview is preview:
+                    self._face_tracking_preview = None
+            preview._mark_closed("start_failed")
+            raise
+        return preview
+
+    def _close_face_tracking_preview(
+        self,
+        preview: FaceTrackingPreview,
+        policy: FaceTrackingStopPolicy,
+    ) -> None:
+        with self._face_tracking_lock:
+            if self._face_tracking_preview is not preview:
+                preview._mark_closed("closed")
+                return
+        try:
+            self._command("ctrl.face_tracking.preview.stop", {"policy": policy})
+        finally:
+            with self._face_tracking_lock:
+                if self._face_tracking_preview is preview:
+                    self._face_tracking_preview = None
+            preview._mark_closed("closed")
+
+    def _stop_face_tracking_preview(
+        self,
+        policy: FaceTrackingStopPolicy,
+    ) -> None:
+        with self._face_tracking_lock:
+            preview = self._face_tracking_preview
+        if preview is None:
+            return
+        self._close_face_tracking_preview(preview, policy)
+
     def _on_message(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "evt.face_tracking.preview.frame":
+            with self._face_tracking_lock:
+                preview = self._face_tracking_preview
+            if preview is not None:
+                preview._push_telemetry(message.get("data"))
+            return
         if message.get("type") == "evt.sdk.input":
             event = parse_input_event(message.get("data", {}))
             if event is not None:
@@ -769,6 +859,12 @@ class WatcheRobot:
                 send_future.cancel()
 
     def _on_binary(self, frame: BinaryFrame) -> None:
+        if frame.frame_type == FRAME_VIDEO:
+            with self._face_tracking_lock:
+                preview = self._face_tracking_preview
+            if preview is not None:
+                preview._push_image(frame.payload)
+            return
         if frame.frame_type == FRAME_AUDIO:
             with self._media_lock:
                 microphone = self._microphone
@@ -847,6 +943,11 @@ class WatcheRobot:
         self.inputs._close("disconnected")
         if microphone is not None:
             microphone._mark_remote_closed()
+        with self._face_tracking_lock:
+            preview = self._face_tracking_preview
+            self._face_tracking_preview = None
+        if preview is not None:
+            preview._mark_closed("disconnected")
         if not was_closed:
             self._transport.close()
 

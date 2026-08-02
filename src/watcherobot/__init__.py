@@ -28,6 +28,13 @@ from .provisioning import (
     ProvisioningResult,
     WifiStatus,
 )
+from .vision import (
+    FaceBox,
+    FaceTrackingFrame,
+    FaceTrackingPreview,
+    FaceTrackingStopPolicy,
+    FaceTrackingTelemetry,
+)
 
 __all__ = [
     "AudioFormat",
@@ -46,6 +53,11 @@ __all__ = [
     "ConnectionTimeoutError",
     "DeviceAmbiguityError",
     "DeviceNotFoundError",
+    "FaceBox",
+    "FaceTrackingFrame",
+    "FaceTrackingPreview",
+    "FaceTrackingStopPolicy",
+    "FaceTrackingTelemetry",
     "ImageFrame",
     "InputDomain",
     "InputEvent",

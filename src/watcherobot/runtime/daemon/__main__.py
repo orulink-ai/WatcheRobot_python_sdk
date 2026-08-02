@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=int(os.environ.get("WATCHER_RUNTIME_PAIRING_PORT", "37021")),
     )
+    parser.add_argument(
+        "--preview-udp-port",
+        type=int,
+        default=int(os.environ.get("WATCHER_RUNTIME_PREVIEW_UDP_PORT", "37022")),
+    )
     return parser
 
 
@@ -61,6 +66,7 @@ async def run_runtime(args: argparse.Namespace) -> int:
         external_port=args.external_port,
         control_port=args.control_port,
         pairing_udp_port=args.pairing_port,
+        preview_udp_port=args.preview_udp_port,
         application_log_dir=state_root / "logs" / "applications",
         daemon_log_path=state_root / "logs" / "daemon.jsonl",
         catalog_root=state_root / "catalog",

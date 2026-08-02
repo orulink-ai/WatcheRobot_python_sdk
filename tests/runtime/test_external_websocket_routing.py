@@ -83,6 +83,14 @@ def test_no_application_routes_desktop_and_device_frames_unchanged() -> None:
 
     asyncio.run(scenario())
 
+
+def test_desktop_role_is_restricted_to_loopback_peers() -> None:
+    assert ExternalWebSocketServer.is_loopback_address("127.0.0.1")
+    assert ExternalWebSocketServer.is_loopback_address("::1")
+    assert not ExternalWebSocketServer.is_loopback_address("192.0.2.10")
+    assert not ExternalWebSocketServer.is_loopback_address("")
+
+
 def test_external_connection_requires_one_valid_role_declaration() -> None:
     async def scenario() -> None:
         server = ExternalWebSocketServer(host="127.0.0.1", port=0)

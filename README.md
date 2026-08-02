@@ -8,11 +8,18 @@ default Application and SDK-built Applications.
 
 ## Install and run
 
-Install this checkout for development:
+Use an isolated virtual environment and install this checkout in editable mode:
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[test]"
 ```
+
+Examples are Runtime-managed Applications. Start them with
+`watcherobot app run .\examples\<example-directory>` instead of running
+`app.py` directly. The Runtime injects the required `WATCHER_APP_*`
+environment variables when it launches an Application.
 
 `watcherobot app run` starts or reuses the current user's one Runtime. The
 Runtime owns pairing, device and desktop connections, Application processes,
@@ -128,6 +135,33 @@ frames. Normal SDK Applications should use `ApplicationContext`.
 
 Applications never open their own Discovery socket or device WebSocket and do
 not receive pairing credentials.
+
+## Face-tracking preview
+
+The managed SDK can consume the live JPEG stream and the face-tracking
+telemetry as one typed, sequence-matched frame:
+
+```python
+preview = await asyncio.to_thread(
+    app.robot.face_tracking.open_preview,
+    width=416,
+    height=416,
+)
+async with preview:
+    async for frame in preview:
+        app.logger.info(
+            "frame=%d faces=%d inference_ms=%s",
+            frame.sequence,
+            len(frame.faces),
+            frame.telemetry.inference_ms,
+        )
+```
+
+The queue is bounded and keeps the newest complete frame by default, so a slow
+consumer does not turn temporary congestion into seconds of stale video. The
+Runtime owns the device and UDP/WebSocket routing; Applications only use the
+typed API. See [face-tracking preview](docs/face-tracking-preview.md) and the
+[example Application](examples/face_tracking_preview).
 
 ## Microphone PCM
 

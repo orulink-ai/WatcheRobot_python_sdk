@@ -8,6 +8,7 @@ from pathlib import Path
 from websockets.asyncio.client import connect
 
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
+from watcherobot.runtime.daemon.application.session import ApplicationChannel
 from tests.runtime.pairing_helpers import connect_runtime_hardware
 
 
@@ -74,6 +75,36 @@ def _write_relay_application(root: Path) -> None:
 def _write_exiting_application(root: Path) -> None:
     _write_relay_application(root)
     root.joinpath("app.py").write_text(EXITING_APPLICATION, encoding="utf-8")
+
+
+def test_preview_frames_prefer_the_active_application_device_channel(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        runtime = DaemonRuntime(
+            application_dir=tmp_path / "application",
+            current_app="test_app",
+            external_host="127.0.0.1",
+            external_port=0,
+            control_port=0,
+            pairing_udp_port=0,
+            preview_udp_port=0,
+        )
+        runtime.application.registry.begin_start()
+        delivered: list[tuple[ApplicationChannel, str | bytes]] = []
+
+        async def capture(
+            channel: ApplicationChannel,
+            frame: str | bytes,
+        ) -> None:
+            delivered.append((channel, frame))
+
+        runtime.application.bridge.send_to_application = capture  # type: ignore[method-assign]
+
+        assert await runtime._publish_preview_frame(b"FTW1") == 1
+        assert delivered == [(ApplicationChannel.DEVICE, b"FTW1")]
+
+    asyncio.run(scenario())
 
 
 async def _connect_as(runtime: DaemonRuntime, role: str):
@@ -276,6 +307,12 @@ def test_device_session_end_releases_daemon_slot_without_stopping_application(
         device = await connect_runtime_hardware(runtime)
 
         try:
+            assert (
+                runtime.device_status()["device"][
+                    "preview_websocket_url"
+                ]
+                == "ws://127.0.0.1:81/ws/face-track"
+            )
             await runtime.start_application()
             application_pid = runtime.application.process_id
             request = runtime.device_pairing.current_request
@@ -298,6 +335,12 @@ def test_device_session_end_releases_daemon_slot_without_stopping_application(
             await asyncio.wait_for(device.wait_closed(), timeout=1)
 
             assert runtime.device_status()["device"]["state"] == "idle"
+            assert (
+                runtime.device_status()["device"][
+                    "preview_websocket_url"
+                ]
+                is None
+            )
             assert runtime.application.process_id == application_pid
         finally:
             await device.close()
