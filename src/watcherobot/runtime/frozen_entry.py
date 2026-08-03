@@ -36,7 +36,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             import esptool
         except ImportError as exc:
             raise SystemExit("esptool is not installed in the Desktop Runtime") from exc
-        esptool.main(args[1:])
+        try:
+            esptool.main(args[1:])
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 1
+        except Exception as exc:  # esptool reports expected serial failures as exceptions
+            print(f"esptool failed: {exc}", file=sys.stderr)
+            return 2
         return 0
     if args and args[0] == "--application":
         if len(args) != 2 or not args[1].strip():

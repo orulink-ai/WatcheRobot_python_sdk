@@ -275,6 +275,9 @@ class DaemonRuntime:
     def maintenance_job(self, job_id: str) -> dict[str, object]:
         return self.maintenance.get(job_id)
 
+    def active_maintenance_job(self) -> dict[str, object] | None:
+        return self.maintenance.active()
+
     def start_maintenance_work(
         self,
         composition: dict[str, object],

@@ -132,6 +132,9 @@ class ApplicationController(Protocol):
     def maintenance_job(self, job_id: str) -> dict[str, Any]:
         """Return a maintenance job snapshot."""
 
+    def active_maintenance_job(self) -> dict[str, Any] | None:
+        """Return the currently running maintenance job, if any."""
+
     def start_maintenance_work(
         self,
         composition: dict[str, Any],
@@ -357,6 +360,10 @@ class DaemonControlAPI:
             except MaintenanceError as exc:
                 return JSONResponse(status_code=409, content={"error": "maintenance_unavailable", "message": str(exc)})
             return {"job": job}
+
+        @app.get("/daemon/maintenance/jobs/active")
+        async def active_maintenance_job() -> dict[str, Any]:
+            return {"job": self._controller.active_maintenance_job()}
 
         @app.get("/daemon/maintenance/jobs/{job_id}")
         async def maintenance_job(job_id: str) -> Any:

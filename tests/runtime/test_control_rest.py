@@ -48,6 +48,7 @@ class _ControllerStub:
             },
         ]
         self.work_requests: list[tuple[dict, str, str]] = []
+        self.active_maintenance = {"id": "firmware-job", "kind": "firmware", "status": "running"}
 
     def application_status(self) -> dict:
         return {
@@ -132,6 +133,9 @@ class _ControllerStub:
     def start_maintenance_work(self, composition: dict, sd_package_path: str, port: str) -> dict:
         self.work_requests.append((composition, sd_package_path, port))
         return {"id": "work-job", "kind": "work", "status": "queued"}
+
+    def active_maintenance_job(self) -> dict | None:
+        return self.active_maintenance
 
 
 def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None:
@@ -267,6 +271,21 @@ def test_control_rest_starts_creator_work_install() -> None:
     assert controller.work_requests == [(
         {"name": "Demo", "clips": []}, "D:/resources.tar.gz", "COM29",
     )]
+
+
+def test_control_rest_returns_active_maintenance_job() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    response = client.get("/daemon/maintenance/jobs/active")
+
+    assert response.status_code == 200
+    assert response.json() == {"job": controller.active_maintenance}
+
+    controller.active_maintenance = None
+    assert client.get("/daemon/maintenance/jobs/active").json() == {"job": None}
+
+
 def test_control_rest_allows_only_local_desktop_origins() -> None:
     controller = _ControllerStub()
     client = TestClient(DaemonControlAPI(controller=controller).create_app())

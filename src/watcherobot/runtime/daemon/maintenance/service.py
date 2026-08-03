@@ -27,11 +27,16 @@ from serial.tools import list_ports
 PROTOCOL_PREFIX = "WRSD/2"
 DEFAULT_BAUD = 115200
 TRANSFER_BAUD = 460800
-FLASH_BAUD = 460800
-CHUNK_BYTES = 2048
+FLASH_BAUD_CANDIDATES = (921600, 460800)
+FLASH_BAUD = FLASH_BAUD_CANDIDATES[0]
+CHUNK_BYTES = 4096
 SPACE_RESERVE_BYTES = 4 * 1024 * 1024
+REPLACEMENT_TIMEOUT_SECONDS = 300
+FIRMWARE_READY_TIMEOUT_SECONDS = 45
+SD_ACTIVATION_TIMEOUT_SECONDS = 900
 VERSION_PATTERN = re.compile(r"^v\d+\.\d+\.\d+$")
 WRITING_PERCENT = re.compile(r"(?:\((\d+(?:\.\d+)?)\s*%\)|\]\s+(\d+(?:\.\d+)?)%)")
+WRITING_ADDRESS = re.compile(r"Writing at 0x([0-9a-fA-F]+)")
 
 
 class MaintenanceError(RuntimeError):
@@ -153,6 +158,15 @@ class MaintenanceService:
                 raise MaintenanceError("Maintenance job was not found.")
             return job.payload()
 
+    def active(self) -> dict[str, Any] | None:
+        with self._lock:
+            if self._active_job_id is None:
+                return None
+            job = self._jobs.get(self._active_job_id)
+            if job is None or job.status not in {"queued", "running"}:
+                return None
+            return job.payload()
+
     def _run(self, job_id: str) -> None:
         self._update(job_id, status="running", phase="validating", progress=1,
                      message="开始校验用户选择的本地文件。")
@@ -260,50 +274,129 @@ def _flash_firmware(path: Path, port: str, progress: Progress) -> None:
         entry = [sys.executable, "--maintenance-esptool"] if getattr(sys, "frozen", False) else [
             sys.executable, "-m", "watcherobot.runtime.frozen_entry", "--maintenance-esptool"
         ]
-        command = [*entry, "--chip", "esp32s3", "-p", port,
-                   "-b", str(FLASH_BAUD), "--before", "default_reset", "--after", "hard_reset",
-                   "write_flash", "--flash_mode", flags["flash_mode"], "--flash_freq",
-                   flags["flash_freq"], "--flash_size", flags["flash_size"]]
+        segment_paths: list[tuple[int, Path]] = []
         for offset, name, data in segments:
             target = root / f"{offset:08x}-{name}"
             target.write_bytes(data)
-            command.extend([hex(offset), str(target)])
-        progress("connecting", 8, f"正在连接 {port}，设备会自动进入烧录模式。")
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   text=True, encoding="utf-8", errors="replace", bufsize=1)
-        assert process.stdout is not None
-        writer = _EsptoolProgress(progress, [len(data) for _, _, data in segments])
-        for line in process.stdout:
-            writer.emit(line)
-        if process.wait() != 0:
+            segment_paths.append((offset, target))
+        for attempt, baud in enumerate(FLASH_BAUD_CANDIDATES):
+            command = _build_esptool_flash_command(entry, port, flags, baud=baud)
+            for offset, target in segment_paths:
+                command.extend([hex(offset), str(target)])
+            progress("connecting", 8, f"正在以 {baud} baud 连接 {port}，设备会自动进入烧录模式。")
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                       text=True, encoding="utf-8", errors="replace", bufsize=1)
+            assert process.stdout is not None
+            writer = _EsptoolProgress(
+                progress,
+                [(offset, len(data)) for offset, _, data in segments],
+            )
+            for line in process.stdout:
+                writer.emit(line)
+            if process.wait() == 0:
+                break
+            if attempt + 1 < len(FLASH_BAUD_CANDIDATES):
+                progress(
+                    "connecting",
+                    8,
+                    f"{baud} baud 高速烧录未完成，正在自动回退到 {FLASH_BAUD_CANDIDATES[attempt + 1]} baud 完整重试。",
+                )
+                continue
             raise MaintenanceError("固件烧录工具执行失败，请检查端口是否被占用并重新连接设备。")
-    progress("restarting", 98, "固件已写入并完成哈希校验，正在重启设备。")
+    progress("restarting", 96, "固件已写入并完成哈希校验，正在重启设备。")
+    _wait_for_firmware_ready(port, progress)
+
+
+def _build_esptool_flash_command(
+    entry: list[str], port: str, flags: dict[str, str], *, baud: int = FLASH_BAUD
+) -> list[str]:
+    """Build an esptool 5-compatible command without deprecated spellings."""
+
+    return [
+        *entry,
+        "--chip", "esp32s3",
+        "-p", port,
+        "-b", str(baud),
+        "--before", "default-reset",
+        "--after", "hard-reset",
+        "write-flash",
+        "--flash-mode", flags["flash_mode"],
+        "--flash-freq", flags["flash_freq"],
+        "--flash-size", flags["flash_size"],
+    ]
+
+
+class _FirmwareBootProbe:
+    _CRASH_MARKERS = (
+        "assert failed:",
+        "guru meditation error",
+        "abort() was called",
+        "panic'ed",
+    )
+
+    def __init__(self) -> None:
+        self._rom_boots = 0
+        self._diagnostics: list[str] = []
+
+    @property
+    def diagnostics(self) -> list[str]:
+        return list(self._diagnostics)
+
+    def feed(self, line: str) -> list[str] | None:
+        text = line.strip()
+        if not text:
+            return None
+        self._diagnostics.append(text)
+        self._diagnostics[:] = self._diagnostics[-80:]
+
+        lowered = text.lower()
+        for marker in self._CRASH_MARKERS:
+            if marker in lowered:
+                raise MaintenanceError(f"固件已写入，但设备启动崩溃：{text}")
+
+        if "ESP-ROM:" in text:
+            self._rom_boots += 1
+            if self._rom_boots >= 2:
+                raise MaintenanceError("固件已写入，但设备在启动阶段重复重启。")
+
+        protocol_marker = text.find(PROTOCOL_PREFIX + " ")
+        if protocol_marker < 0:
+            return None
+        parts = text[protocol_marker:].split()
+        if len(parts) >= 2 and parts[1] == "READY":
+            return parts
+        return None
 
 
 class _EsptoolProgress:
-    def __init__(self, progress: Progress, segment_sizes: list[int]) -> None:
+    def __init__(self, progress: Progress, segments: list[tuple[int, int]]) -> None:
         self._progress = progress
-        self._sizes = segment_sizes
-        self._index = -1
-        self._completed = 0
-        self._total = max(1, sum(segment_sizes))
+        self._segments = sorted(segments)
+        self._total = max(1, sum(size for _, size in self._segments))
+        self._last_value = 10
 
     def emit(self, line: str) -> None:
         text = line.strip()
         if not text:
             return
-        if text.startswith("Compressed ") or text.startswith("Writing at ") and self._index < 0:
-            self._index = min(self._index + 1, len(self._sizes) - 1)
-        match = WRITING_PERCENT.search(text)
-        if match and self._index >= 0:
-            percent = float(match.group(1) or match.group(2))
-            current = int(self._sizes[self._index] * percent / 100)
-            value = 10 + (self._completed + current) * 85 // self._total
-        else:
-            value = 10 + self._completed * 85 // self._total
+        address_match = WRITING_ADDRESS.search(text)
+        percent_match = WRITING_PERCENT.search(text)
+        value = self._last_value
+        if address_match and percent_match and self._segments:
+            address = int(address_match.group(1), 16)
+            segment_index = 0
+            for index, (offset, _) in enumerate(self._segments):
+                if address < offset:
+                    break
+                segment_index = index
+            _, segment_size = self._segments[segment_index]
+            completed = sum(size for _, size in self._segments[:segment_index])
+            percent = float(percent_match.group(1) or percent_match.group(2))
+            current = min(segment_size, int(segment_size * percent / 100))
+            value = 10 + (completed + current) * 85 // self._total
+        value = min(95, max(self._last_value, value))
+        self._last_value = value
         self._progress("flashing", value, text)
-        if text == "Hash of data verified." and 0 <= self._index < len(self._sizes):
-            self._completed += self._sizes[self._index]
 
 
 @dataclass(frozen=True)
@@ -456,6 +549,18 @@ class _SerialProtocol:
         self._serial.write(f"{PROTOCOL_PREFIX} {command}\n".encode("ascii"))
         self._serial.flush()
 
+    def set_read_timeout(self, timeout: float) -> None:
+        self._serial.timeout = timeout
+
+    def set_baudrate(self, baudrate: int) -> None:
+        self._serial.baudrate = baudrate
+
+    def reset_input_buffer(self) -> None:
+        self._serial.reset_input_buffer()
+
+    def read_line(self) -> str:
+        return self._serial.readline().decode("utf-8", errors="ignore").strip()
+
     def receive(self, timeout: float, accepted: tuple[str, ...]) -> list[str]:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -489,6 +594,130 @@ class _SerialProtocol:
         return self.receive(3, ("READY",))
 
 
+def _wait_for_firmware_ready(port: str, progress: Progress) -> list[str]:
+    deadline = time.monotonic() + FIRMWARE_READY_TIMEOUT_SECONDS
+    probe = _FirmwareBootProbe()
+    last_serial_error: str | None = None
+    progress("waiting_device", 98, f"固件写入完成，正在等待 {port} 返回 {PROTOCOL_PREFIX} READY。")
+
+    while time.monotonic() < deadline:
+        protocol: _SerialProtocol | None = None
+        try:
+            protocol = _SerialProtocol(port)
+            protocol.set_read_timeout(0.25)
+            next_hello_at = 0.0
+            while time.monotonic() < deadline:
+                now = time.monotonic()
+                if now >= next_hello_at:
+                    protocol.send("HELLO")
+                    next_hello_at = now + 1.0
+                text = protocol.read_line()
+                if not text:
+                    continue
+                progress("waiting_device", 99, f"[设备启动] {text}")
+                ready = probe.feed(text)
+                if ready is not None:
+                    progress("device_ready", 99, f"设备维护服务已就绪：{' '.join(ready)}")
+                    return ready
+        except MaintenanceError:
+            raise
+        except serial.SerialException as exc:
+            last_serial_error = str(exc)
+            time.sleep(0.4)
+        finally:
+            if protocol is not None:
+                try:
+                    protocol.close()
+                except serial.SerialException:
+                    pass
+
+    detail = probe.diagnostics[-1] if probe.diagnostics else last_serial_error
+    suffix = f"，最后信息：{detail}" if detail else ""
+    raise MaintenanceError(f"固件已写入，但设备未在 {FIRMWARE_READY_TIMEOUT_SECONDS} 秒内进入维护就绪状态{suffix}")
+
+
+def _parse_sd_activation_response(text: str, expected_version: str) -> list[str] | None:
+    marker = text.find(PROTOCOL_PREFIX + " ")
+    if marker < 0:
+        return None
+    parts = text[marker:].split()
+    if len(parts) < 2:
+        return None
+    if parts[1] == "ERROR":
+        raise MaintenanceError("设备拒绝资源启用操作：" + " ".join(parts[2:]))
+    if parts[1] == "DONE":
+        if len(parts) > 2 and parts[2] != expected_version:
+            raise MaintenanceError(f"设备启用了 {parts[2]}，预期为 {expected_version}。")
+        return parts
+    if (
+        parts[1] == "READY"
+        and len(parts) >= 7
+        and parts[2] == expected_version
+        and parts[3] == "mounted"
+        and parts[6] == "ESP_OK"
+    ):
+        return parts
+    return None
+
+
+def _parse_sd_install_status(text: str) -> tuple[str, int, str] | None:
+    """Parse a progress frame emitted by the device while COMMIT is running."""
+
+    marker = text.find(PROTOCOL_PREFIX + " ")
+    if marker < 0:
+        return None
+    parts = text[marker:].split(maxsplit=4)
+    if len(parts) < 4 or parts[1] != "STATUS":
+        return None
+    try:
+        progress = int(parts[3])
+    except ValueError:
+        return None
+    if not 0 <= progress <= 100:
+        return None
+    detail = parts[4] if len(parts) == 5 else "设备正在处理 SD 官方资源。"
+    return parts[2], progress, detail
+
+
+def _negotiate_chunk_size(begin: list[str]) -> int:
+    if len(begin) < 4:
+        return CHUNK_BYTES
+    try:
+        device_limit = int(begin[3])
+    except (TypeError, ValueError):
+        return CHUNK_BYTES
+    if device_limit <= 0:
+        return CHUNK_BYTES
+    return min(CHUNK_BYTES, device_limit)
+
+
+def _wait_for_sd_activation(
+    protocol: _SerialProtocol,
+    expected_version: str,
+    progress: Progress,
+    *,
+    timeout_seconds: float = SD_ACTIVATION_TIMEOUT_SECONDS,
+) -> list[str]:
+    """Wait for device progress and DONE without changing the active transfer baudrate."""
+
+    deadline = time.monotonic() + timeout_seconds
+    protocol.set_read_timeout(0.25)
+    while time.monotonic() < deadline:
+        line = protocol.read_line()
+        status = _parse_sd_install_status(line)
+        if status is not None:
+            progress(*status)
+            continue
+        completed = _parse_sd_activation_response(line, expected_version)
+        if completed is not None:
+            progress("activating", 98, f"设备已确认启用 SD 官方资源 {expected_version}。")
+            return completed
+
+    raise MaintenanceError(
+        f"资源已上传，但设备未在 {timeout_seconds:g} 秒内确认启用 {expected_version}。"
+    )
+
+
 def _install_sd_resources(path: Path, port: str, progress: Progress) -> None:
     package = _inspect_sd_package(path)
     progress("validating", 5, f"SD 资源包 {package.version} 校验通过，SHA-256 {package.sha256}。")
@@ -503,7 +732,7 @@ def _install_sd_resources(path: Path, port: str, progress: Progress) -> None:
             raise MaintenanceError("设备 SD 卡未挂载，请检查卡片并重启设备。")
         progress("clearing", 10, "正在清理设备中原有的官方资源。")
         protocol.send("REPLACE")
-        replaced = protocol.receive(30, ("OK",))
+        replaced = protocol.receive(REPLACEMENT_TIMEOUT_SECONDS, ("OK",))
         required = package.size + package.expanded_size + SPACE_RESERVE_BYTES
         if len(replaced) < 6 or replaced[2] != "REPLACE" or replaced[5] != "ESP_OK":
             raise MaintenanceError("设备未能进入资源替换模式。")
@@ -512,7 +741,7 @@ def _install_sd_resources(path: Path, port: str, progress: Progress) -> None:
         protocol.send(f"BEGIN {package.version} {package.size} {package.expanded_size} "
                       f"{package.file_count} {package.object_count} {package.sha256}")
         begin = protocol.receive(10, ("OK",))
-        chunk_size = min(CHUNK_BYTES, int(begin[3])) if len(begin) >= 4 else CHUNK_BYTES
+        chunk_size = _negotiate_chunk_size(begin)
         sent = 0
         last_reported_percent = -2
         with path.open("rb") as handle:
@@ -537,9 +766,7 @@ def _install_sd_resources(path: Path, port: str, progress: Progress) -> None:
                     last_reported_percent = percent
         progress("installing", 82, "上传完成，设备正在校验、解压并启用资源。")
         protocol.send("COMMIT")
-        completed = protocol.receive(900, ("DONE",))
-        if len(completed) > 2 and completed[2] != package.version:
-            raise MaintenanceError(f"设备启用了 {completed[2]}，预期为 {package.version}。")
+        _wait_for_sd_activation(protocol, package.version, progress)
         progress("restarting", 98, f"SD 官方资源 {package.version} 已安装，设备正在重启。")
     finally:
         protocol.close()
@@ -564,7 +791,7 @@ def _install_work(
             raise MaintenanceError("Device SD card is not mounted.")
         protocol.send(f"WORK_BEGIN {package.work_id} {len(package.payload)} {package.sha256}")
         begin = protocol.receive(10, ("OK",))
-        chunk_size = min(CHUNK_BYTES, int(begin[3])) if len(begin) >= 4 else CHUNK_BYTES
+        chunk_size = _negotiate_chunk_size(begin)
         sent = 0
         for sequence, offset in enumerate(range(0, len(package.payload), chunk_size)):
             payload = package.payload[offset:offset + chunk_size]
