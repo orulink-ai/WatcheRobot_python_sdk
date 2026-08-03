@@ -2,8 +2,9 @@
 
 SDK 是 WatcheRobot Runtime/Daemon 与 Application API 的唯一实现来源。使用
 该 SDK 开发的程序都是受管 Application，可以脱离桌面端通过 CLI 和 Runtime
-控制 API 运行。桌面端也使用同一份 Runtime/Daemon 实现启动内置默认
-Application 和通过 SDK 开发的 Application。
+控制 API 运行。桌面端也使用同一份 Runtime/Daemon 实现；Daemon 可以在未选择
+Application 的状态下启动，之后由桌面端通过 Catalog 与控制 API 安装、选择和启动
+SDK Application。
 
 ## 安装与运行
 

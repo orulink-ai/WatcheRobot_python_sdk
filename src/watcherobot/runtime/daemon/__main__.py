@@ -10,6 +10,7 @@ import sys
 import time
 from pathlib import Path
 
+from watcherobot.application.catalog import ApplicationCatalog
 from watcherobot.runtime.daemon.instance import (
     RuntimeAlreadyRunningError,
     RuntimeInstanceLock,
@@ -60,9 +61,10 @@ async def run_runtime(args: argparse.Namespace) -> int:
         return 3
 
     state_store.remove()
+    application_dir, current_app = _initial_application(state_root)
     runtime = DaemonRuntime(
-        application_dir=state_root / "unselected",
-        current_app="unselected",
+        application_dir=application_dir,
+        current_app=current_app,
         external_port=args.external_port,
         control_port=args.control_port,
         pairing_udp_port=args.pairing_port,
@@ -86,7 +88,13 @@ async def run_runtime(args: argparse.Namespace) -> int:
             pass
 
     try:
-        await runtime.start()
+        try:
+            await runtime.start()
+        except Exception as exc:
+            runtime.logs.record(
+                f"Daemon Runtime startup failed ({type(exc).__name__}: {exc})"
+            )
+            raise
         state_store.write(
             RuntimeProcessState(
                 pid=os.getpid(),
@@ -101,6 +109,13 @@ async def run_runtime(args: argparse.Namespace) -> int:
         state_store.remove()
         await runtime.stop()
         instance_lock.release()
+
+
+def _initial_application(state_root: Path) -> tuple[Path, str | None]:
+    selected = ApplicationCatalog(state_root / "catalog").selected()
+    if selected is None:
+        return state_root / "unselected", None
+    return selected.path, selected.app_id
 
 
 def main(argv: list[str] | None = None) -> int:

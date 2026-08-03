@@ -21,8 +21,12 @@ from watcherobot.runtime.daemon.application.runtime import ApplicationStartError
 from watcherobot.runtime.daemon.application.manifest import (
     ApplicationManifestError,
 )
-from watcherobot.runtime.daemon.application.session import SessionOccupiedError
+from watcherobot.runtime.daemon.application.session import (
+    ApplicationNotSelectedError,
+    SessionOccupiedError,
+)
 from watcherobot.runtime.daemon.pairing.session import PairingSessionError
+from watcherobot.runtime.daemon.maintenance import MaintenanceError
 
 
 class PairDeviceRequest(BaseModel):
@@ -46,6 +50,17 @@ class SelectCatalogApplicationRequest(BaseModel):
 class UninstallApplicationRequest(BaseModel):
     app_id: str
     version: str | None = None
+
+
+class MaintenanceInstallRequest(BaseModel):
+    package_path: str
+    port: str
+
+
+class MaintenanceWorkRequest(BaseModel):
+    composition: dict[str, Any]
+    sd_package_path: str
+    port: str
 
 
 class ApplicationController(Protocol):
@@ -106,6 +121,25 @@ class ApplicationController(Protocol):
     ) -> None:
         """Remove one non-protected installed Application."""
 
+    def maintenance_ports(self) -> list[dict[str, Any]]:
+        """List local serial ports available for maintenance."""
+
+    def start_maintenance_job(
+        self, kind: str, package_path: str, port: str
+    ) -> dict[str, Any]:
+        """Start a non-blocking firmware or SD resource job."""
+
+    def maintenance_job(self, job_id: str) -> dict[str, Any]:
+        """Return a maintenance job snapshot."""
+
+    def start_maintenance_work(
+        self,
+        composition: dict[str, Any],
+        sd_package_path: str,
+        port: str,
+    ) -> dict[str, Any]:
+        """Build and install the current Creator Mode work."""
+
 class DaemonControlAPI:
     """Expose lifecycle management without carrying business traffic."""
 
@@ -137,6 +171,14 @@ class DaemonControlAPI:
         async def start_application() -> Any:
             try:
                 await self._controller.start_application()
+            except ApplicationNotSelectedError as exc:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "error": "application_not_selected",
+                        "message": str(exc),
+                    },
+                )
             except SessionOccupiedError as exc:
                 return JSONResponse(
                     status_code=409,
@@ -292,7 +334,47 @@ class DaemonControlAPI:
                 **self._controller.device_status(),
             }
 
+        @app.get("/daemon/maintenance/ports")
+        async def maintenance_ports() -> dict[str, Any]:
+            return {"ports": self._controller.maintenance_ports()}
+
+        @app.post("/daemon/maintenance/firmware", status_code=202)
+        async def install_firmware(request: MaintenanceInstallRequest) -> Any:
+            return self._start_maintenance("firmware", request)
+
+        @app.post("/daemon/maintenance/sd-resources", status_code=202)
+        async def install_sd_resources(request: MaintenanceInstallRequest) -> Any:
+            return self._start_maintenance("sd_resources", request)
+
+        @app.post("/daemon/maintenance/work", status_code=202)
+        async def install_work(request: MaintenanceWorkRequest) -> Any:
+            try:
+                job = self._controller.start_maintenance_work(
+                    request.composition,
+                    request.sd_package_path,
+                    request.port,
+                )
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=409, content={"error": "maintenance_unavailable", "message": str(exc)})
+            return {"job": job}
+
+        @app.get("/daemon/maintenance/jobs/{job_id}")
+        async def maintenance_job(job_id: str) -> Any:
+            try:
+                return {"job": self._controller.maintenance_job(job_id)}
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=404, content={"error": "maintenance_job_not_found", "message": str(exc)})
+
         return app
+
+    def _start_maintenance(self, kind: str, request: MaintenanceInstallRequest) -> Any:
+        try:
+            job = self._controller.start_maintenance_job(
+                kind, request.package_path, request.port
+            )
+        except MaintenanceError as exc:
+            return JSONResponse(status_code=409, content={"error": "maintenance_unavailable", "message": str(exc)})
+        return {"job": job}
 
     def _status_response(self) -> dict[str, Any]:
         return {"application": self._controller.application_status()}
@@ -336,6 +418,7 @@ class DaemonControlServer:
             lifespan="off",
             access_log=False,
             log_level="warning",
+            log_config=None,
         )
         server = uvicorn.Server(config)
         server.install_signal_handlers = lambda: None  # type: ignore[attr-defined]

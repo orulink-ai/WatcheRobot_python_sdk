@@ -88,6 +88,8 @@ def test_public_namespaces_build_protocol_commands():
     robot.motion.set_target(pan_deg=105)
     animation = robot.animation.play("smile")
     audio = robot.audio.play("confirm")
+    robot.works.play("morning_show")
+    robot.works.delete("old_show")
     robot.lights.set_color("#4DA3FF", brightness=0.7)
     light_effect = robot.lights.play_effect(
         "breathing",
@@ -107,6 +109,8 @@ def test_public_namespaces_build_protocol_commands():
         ("ctrl.motion.set_target", {"pan_deg": 105}),
         ("ctrl.animation.play", {"animation_id": "smile"}),
         ("ctrl.audio.play", {"sound_id": "confirm"}),
+        ("resource.work.play", {"work_id": "morning_show"}),
+        ("resource.work.delete", {"work_id": "old_show"}),
         ("ctrl.light.set", {"color": "#4DA3FF", "brightness": 0.7, "zone": "all"}),
         (
             "ctrl.light.effect.play",
@@ -120,6 +124,14 @@ def test_public_namespaces_build_protocol_commands():
             },
         ),
     ]
+
+
+@pytest.mark.parametrize("work_id", ["", "UPPER", "contains-dash", "1starts_with_digit", "x" * 24])
+def test_work_domain_rejects_ids_that_cannot_exist_on_sd(work_id):
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(ValueError, match="work_id"):
+        robot.works.play(work_id)
 
 
 def test_robot_supports_negotiated_capabilities():

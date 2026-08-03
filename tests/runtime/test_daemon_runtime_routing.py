@@ -7,8 +7,10 @@ from pathlib import Path
 
 from websockets.asyncio.client import connect
 
-from watcherobot.runtime.daemon.runtime import DaemonRuntime
+from watcherobot.application.catalog import ApplicationCatalog, package_application
+from watcherobot.runtime.daemon.__main__ import _initial_application
 from watcherobot.runtime.daemon.application.session import ApplicationChannel
+from watcherobot.runtime.daemon.runtime import DaemonRuntime
 from tests.runtime.pairing_helpers import connect_runtime_hardware
 
 
@@ -105,6 +107,51 @@ def test_preview_frames_prefer_the_active_application_device_channel(
         assert delivered == [(ApplicationChannel.DEVICE, b"FTW1")]
 
     asyncio.run(scenario())
+
+
+def test_daemon_starts_without_a_selected_application(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        runtime = DaemonRuntime(
+            application_dir=tmp_path / "unselected",
+            current_app=None,
+            external_host="127.0.0.1",
+            external_port=0,
+            control_port=0,
+            pairing_udp_port=0,
+            preview_udp_port=0,
+        )
+
+        await runtime.start()
+        try:
+            assert runtime.application_status() == {
+                "selected": False,
+                "current_app": None,
+                "state": "not_selected",
+                "process_id": None,
+                "last_exit_code": None,
+            }
+        finally:
+            await runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_daemon_entry_restores_catalog_selection_without_a_desktop_default(
+    tmp_path: Path,
+) -> None:
+    catalog = ApplicationCatalog(tmp_path / "catalog")
+    package = tmp_path / "selected.wapp"
+    source = tmp_path / "source"
+    _write_relay_application(source)
+    package_application(source, package)
+    installed = catalog.install(package)
+    catalog.select(installed.app_id, version=installed.version)
+
+    assert _initial_application(tmp_path) == (installed.path, installed.app_id)
+    assert _initial_application(tmp_path / "fresh") == (
+        tmp_path / "fresh" / "unselected",
+        None,
+    )
 
 
 async def _connect_as(runtime: DaemonRuntime, role: str):

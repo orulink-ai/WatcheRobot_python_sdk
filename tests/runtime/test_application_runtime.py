@@ -15,9 +15,11 @@ from watcherobot.runtime.daemon.application.runtime import (
     resolve_application_command,
 )
 from watcherobot.runtime.daemon.application.session import (
+    ApplicationNotSelectedError,
     ApplicationState,
     SessionOccupiedError,
 )
+from watcherobot.runtime.frozen_entry import main as frozen_runtime_main
 
 
 CONNECTED_APP = """
@@ -244,6 +246,58 @@ def test_source_runtime_launches_application_with_shared_python(
         python_executable="python-shared",
         frozen=False,
     ) == ("python-shared", str(app_dir.resolve() / "app.py"))
+
+
+def test_frozen_runtime_launches_the_selected_application_directory(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "application"
+
+    assert resolve_application_command(
+        application_dir=app_dir,
+        python_executable="watcher-runtime.exe",
+        frozen=True,
+    ) == (
+        "watcher-runtime.exe",
+        "--application",
+        str(app_dir.resolve()),
+    )
+
+
+def test_runtime_represents_an_unselected_application_explicitly(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        manager = ApplicationRuntimeManager(
+            application_dir=tmp_path / "unselected",
+            current_app=None,
+            python_executable=sys.executable,
+        )
+
+        assert manager.registry.current_app is None
+        assert manager.last_state is ApplicationState.NOT_SELECTED
+        with pytest.raises(ApplicationNotSelectedError):
+            await manager.start()
+
+    asyncio.run(scenario())
+
+
+def test_frozen_entry_executes_a_validated_application_directory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    app_dir = tmp_path / "application"
+    marker = tmp_path / "application-ran.txt"
+    _write_application(
+        app_dir,
+        "from pathlib import Path\n"
+        "import os\n"
+        "Path(os.environ['APPLICATION_MARKER']).write_text('ok', encoding='utf-8')\n",
+    )
+    monkeypatch.setenv("APPLICATION_MARKER", str(marker))
+
+    assert frozen_runtime_main(["--application", str(app_dir)]) == 0
+    assert marker.read_text(encoding="utf-8") == "ok"
 
 
 def test_runtime_can_select_another_application_without_restarting_itself(

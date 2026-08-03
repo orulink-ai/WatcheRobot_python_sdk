@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from watcherobot.runtime.daemon.application.runtime import ApplicationStartError
 from watcherobot.runtime.daemon.application.session import (
+    ApplicationNotSelectedError,
     ApplicationRun,
     ApplicationState,
     SessionOccupiedError,
@@ -46,6 +47,7 @@ class _ControllerStub:
                 "timestamp_ms": 2_000,
             },
         ]
+        self.work_requests: list[tuple[dict, str, str]] = []
 
     def application_status(self) -> dict:
         return {
@@ -126,6 +128,10 @@ class _ControllerStub:
             for event in self.logs
             if event["id"] > after_id
         ]
+
+    def start_maintenance_work(self, composition: dict, sd_package_path: str, port: str) -> dict:
+        self.work_requests.append((composition, sd_package_path, port))
+        return {"id": "work-job", "kind": "work", "status": "queued"}
 
 
 def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None:
@@ -230,12 +236,37 @@ def test_control_rest_reports_occupied_and_start_failure() -> None:
     assert occupied.status_code == 409
     assert occupied.json()["error"] == "application_occupied"
 
+    controller.start_error = ApplicationNotSelectedError(
+        "No Application is selected"
+    )
+    unselected = client.post("/daemon/application/start")
+    assert unselected.status_code == 409
+    assert unselected.json() == {
+        "error": "application_not_selected",
+        "message": "No Application is selected",
+    }
+
     controller.start_error = ApplicationStartError("entrypoint failed")
     failed = client.post("/daemon/application/start")
     assert failed.status_code == 500
     assert failed.json()["error"] == "application_start_failed"
 
 
+def test_control_rest_starts_creator_work_install() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    response = client.post("/daemon/maintenance/work", json={
+        "composition": {"name": "Demo", "clips": []},
+        "sd_package_path": "D:/resources.tar.gz",
+        "port": "COM29",
+    })
+
+    assert response.status_code == 202
+    assert response.json()["job"]["id"] == "work-job"
+    assert controller.work_requests == [(
+        {"name": "Demo", "clips": []}, "D:/resources.tar.gz", "COM29",
+    )]
 def test_control_rest_allows_only_local_desktop_origins() -> None:
     controller = _ControllerStub()
     client = TestClient(DaemonControlAPI(controller=controller).create_app())

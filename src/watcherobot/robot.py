@@ -144,6 +144,26 @@ class AudioDomain(_Domain):
         self._robot._stop_audio_playback()
 
 
+class WorkDomain(_Domain):
+    """Control Creator Mode works already installed on the robot SD card."""
+
+    @staticmethod
+    def _validate_id(work_id: str) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,22}", work_id) is None:
+            raise ValueError(
+                "work_id must start with a lowercase letter and contain at most "
+                "23 lowercase letters, digits, or underscores"
+            )
+
+    def play(self, work_id: str) -> None:
+        self._validate_id(work_id)
+        self._robot._command("resource.work.play", {"work_id": work_id})
+
+    def delete(self, work_id: str) -> None:
+        self._validate_id(work_id)
+        self._robot._command("resource.work.delete", {"work_id": work_id})
+
+
 class LightsDomain(_Domain):
     def set_color(self, color: str, *, brightness: float = 1.0, zone: str = "all") -> None:
         _validate_light(color, brightness)
@@ -313,6 +333,7 @@ class WatcheRobot:
         self.animation = AnimationDomain(self)
         self.motion = MotionDomain(self)
         self.audio = AudioDomain(self)
+        self.works = WorkDomain(self)
         self.lights = LightsDomain(self)
         self.microphone = MicrophoneDomain(self)
         self.camera = CameraDomain(self)
