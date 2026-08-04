@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
 from typing import Protocol
+
+
+_FULL_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 @dataclass(frozen=True)
@@ -52,6 +57,84 @@ class HubIdentity:
     display_name: str = ""
 
 
+@dataclass(frozen=True)
+class UploadFile:
+    """One exact file in a Space snapshot without exposing local content."""
+
+    path_in_repo: str
+    source_path: Path | None = field(default=None, repr=False)
+    content: bytes | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        normalized = PurePosixPath(self.path_in_repo)
+        if (
+            not self.path_in_repo
+            or "\\" in self.path_in_repo
+            or normalized.is_absolute()
+            or ".." in normalized.parts
+            or normalized.as_posix() != self.path_in_repo
+        ):
+            raise ValueError("upload path must be a normalized relative POSIX path")
+        if (self.source_path is None) == (self.content is None):
+            raise ValueError("upload file must contain exactly one source")
+
+    @classmethod
+    def from_path(cls, path_in_repo: str, source_path: Path) -> UploadFile:
+        return cls(path_in_repo=path_in_repo, source_path=Path(source_path))
+
+    @classmethod
+    def from_bytes(cls, path_in_repo: str, content: bytes) -> UploadFile:
+        return cls(path_in_repo=path_in_repo, content=bytes(content))
+
+
+@dataclass(frozen=True)
+class SpaceRepository:
+    """Result of ensuring one public source Space exists."""
+
+    space_id: str
+    created: bool
+
+
+@dataclass(frozen=True)
+class RepositoryRevision:
+    """One immutable Hub revision and its fixed source-tree URL."""
+
+    commit: str
+    url: str
+
+    def __post_init__(self) -> None:
+        _validate_full_commit(self.commit)
+        if not self.url:
+            raise ValueError("repository revision URL must not be empty")
+
+
+@dataclass(frozen=True)
+class CatalogDocument:
+    """Catalog bytes read together with the exact parent revision."""
+
+    content: bytes = field(repr=False)
+    commit: str
+
+    def __post_init__(self) -> None:
+        _validate_full_commit(self.commit)
+
+
+@dataclass(frozen=True)
+class CatalogPullRequest:
+    """Non-sensitive metadata for one catalog pull request."""
+
+    number: int
+    title: str
+    url: str
+    status: str
+
+    def __post_init__(self) -> None:
+        if self.number <= 0:
+            raise ValueError("pull request number must be positive")
+        if not self.title or not self.url or not self.status:
+            raise ValueError("pull request metadata must not be empty")
+
+
 class OAuthClient(Protocol):
     """Perform the two HTTP operations of OAuth Device Code flow."""
 
@@ -83,6 +166,62 @@ class HubClient(Protocol):
     def whoami(self, token: AccessToken) -> HubIdentity: ...
 
 
+class PublishHubClient(Protocol):
+    """Remote repository operations required by Application publishing."""
+
+    def ensure_public_space(
+        self,
+        token: AccessToken,
+        *,
+        space_id: str,
+        sdk: str,
+    ) -> SpaceRepository: ...
+
+    def replace_space_files(
+        self,
+        token: AccessToken,
+        *,
+        space_id: str,
+        files: tuple[UploadFile, ...],
+        commit_message: str,
+    ) -> None: ...
+
+    def get_space_head(
+        self,
+        token: AccessToken,
+        *,
+        space_id: str,
+    ) -> RepositoryRevision: ...
+
+    def read_catalog(
+        self,
+        token: AccessToken,
+        *,
+        repo_id: str,
+        path: str,
+    ) -> CatalogDocument: ...
+
+    def list_open_catalog_pull_requests(
+        self,
+        token: AccessToken,
+        *,
+        repo_id: str,
+        author: str,
+    ) -> tuple[CatalogPullRequest, ...]: ...
+
+    def create_catalog_pull_request(
+        self,
+        token: AccessToken,
+        *,
+        repo_id: str,
+        path: str,
+        content: bytes,
+        parent_commit: str,
+        title: str,
+        description: str,
+    ) -> CatalogPullRequest: ...
+
+
 class HubError(RuntimeError):
     """Base failure raised by an authenticated Hub adapter."""
 
@@ -97,6 +236,14 @@ class HubNetworkError(HubError):
 
 class HubInvalidResponse(HubError):
     """The Hub response does not satisfy the expected identity contract."""
+
+
+class HubRepositoryConflict(HubError):
+    """A target repository exists but this OAuth App cannot manage it."""
+
+
+class HubCatalogConflict(HubError):
+    """The catalog changed before its pull request could be created."""
 
 
 class OAuthFlowError(RuntimeError):
@@ -125,3 +272,8 @@ class OAuthNetworkError(OAuthFlowError):
 
 class OAuthInvalidResponse(OAuthFlowError):
     """The OAuth provider response does not satisfy the expected contract."""
+
+
+def _validate_full_commit(commit: str) -> None:
+    if _FULL_COMMIT_PATTERN.fullmatch(commit) is None:
+        raise ValueError("commit must be a lowercase 40-character SHA")

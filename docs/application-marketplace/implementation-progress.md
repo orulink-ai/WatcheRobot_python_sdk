@@ -100,6 +100,25 @@ OAuth 前置核对已完成：官方文档确认 Public App 支持 Device Code O
 
 下一步唯一入口：进入 S3，先用 Fake Hub 固定公开 Space 的创建/更新、源码上传、完整 commit 和官方名单 PR 的服务合同，再接入真实 Hugging Face HTTP 实现。
 
+### S3：Space 发布与官方名单 PR——进行中
+
+- 已确认 Space 唯一命名规则为 `<hf_username>/WatcherRobot-<app_id>`；例如 `tianguiti/WatcherRobot-com.orulink.demo`。
+- 同一 Hugging Face 身份与同一 `app.json.id` 始终映射到同一个 Space；若同名 Space 不是由 Watcher Desktop OAuth App 创建，则发布必须失败，不得改写开发者已有仓库。
+- CLI 仍保持 `watcherobot app publish <directory>`，V1 不增加要求开发者填写 Space ID 的参数。
+- Space 只作为公开源码仓库：创建为 `static` 类型，但发布工具不生成 `index.html`、落地页或其他运行页面。开发者 README 正文保留，只在远端上传快照补齐 Hugging Face 必需元数据；没有 README 时生成远端最小仓库说明，不修改本地项目。Desktop 后续直接打开固定 commit 文件树。
+- 名单申请采用单开放 PR 规则：正式名单已是相同 commit 时返回 `already_listed`；相同 commit 的开放 PR 返回原 URL 和 `pending`；不同 commit 遇到开放 PR 时返回 `catalog_pr_conflict`，等待原 PR 合并或关闭。V1 不自动改写开放 PR，也不创建第二个并行 PR。
+- 已建立独立 `PublishHubClient` 发布端口，固定公开 Space 创建、精确源码替换、完整 commit 读取、带父 commit 的名单读取、开放 PR 枚举和名单 PR 创建六个远端边界；本地路径和生成内容不会出现在值对象表示中，commit 值对象只接受 40 位小写 SHA。TDD 首次因发布端口类型不存在而收集失败，最小实现后新旧端口测试 7 项和定向 mypy 通过。
+- 已实现确定性的 Space 上传快照准备：继续复用 S1 源码选择器；开发者 README 正文只在远端副本补齐 `sdk: static`，本地文件不变；无 README 时仅生成远端仓库说明；不生成 `index.html` 或落地页。未闭合的 README YAML 和非 UTF-8 内容作为本地源码错误拒绝。TDD 首次因 `publish_files` 模块不存在而收集失败，实现后上传快照与源码选择定向测试 5 项通过。
+- 已固定官方名单的纯函数合同：根对象必须是数组，每项只允许 `space_id + 40 位小写 commit`，重复 Space、短 SHA、未知字段和损坏 UTF-8/JSON 全部拒绝；首次收录追加记录，新版本原位更新且不重排其他 App。PR 标题编码 Space 与 commit；正式名单相同返回 `already_listed`，相同开放 PR 返回 `pending`，不同开放 PR 返回 `catalog_pr_conflict`。TDD 首次因模块不存在而收集失败，实现后 14 项名单规划测试通过。
+- 已完成不依赖真实网络的发布编排：严格检查和上传快照准备先于凭据/远端调用；登录身份唯一生成 `<username>/WatcherRobot-<app_id>`；随后依次确认 Space、替换源码、读取完整 commit、读取名单/开放 PR 并创建最小 PR。Fake 同时覆盖新建与更新 Space、缺少登录、同名仓库归属冲突、Space/上传/commit/PR 失败、名单损坏、名单父 commit 冲突、已收录、相同开放 PR 复用和不同开放 PR 冲突。新增 `space_ownership_conflict`、`catalog_invalid`、`catalog_pr_conflict` 稳定错误并统一映射远程退出码。编排、事件、名单和快照定向测试 34 项通过。
+- 已接入 `huggingface-hub>=1.26,<2` 的真实发布适配器；当前验证版本 1.26.0 明确要求 Python 3.10+，与 SDK 支持范围一致。每次 HfApi 实例都显式使用 Watcher 系统凭据 Token，不读取 HF CLI 默认登录；Space 强制公开且为 `static`，上传先列出远端文件、删除陈旧路径并提交精确文件集，名单下载固定到先观察到的完整 SHA，名单 PR 使用 `parent_commit + create_pr=True`。库自身会移除内容未变化的 add 操作并在空变更时返回现有 HEAD，保证相同源码重发不制造新 commit。TDD 首次因依赖和适配器不存在而收集失败；Fake API 14 项覆盖创建/更新、精确替换、固定 commit、名单下载、开放 PR、最小 PR、401/403/409 和网络错误脱敏。
+- CLI 已接入 `watcherobot app publish <directory>`：人类输出展示 Space、固定 commit 源码地址和名单 PR 状态；`--jsonl` 只输出结构化进度、结果或稳定错误，并保留源码已上传但名单冲突时的部分结果。命令直接复用唯一发布服务，不启动 Daemon；本地校验失败、远端失败、名单冲突和用户取消均有稳定退出码。TDD 首次新增 6 项全部失败，其中 5 项因解析器没有 `publish`、1 项因真实依赖构造器不存在；实现后发布与认证 CLI 定向测试 11 项通过。
+- 已使用非 `Orulink` 管理员账号 `tianguiti` 完成真实发布闭环。首次发布创建公开源码 Space `tianguiti/WatcherRobot-com.orulink.marketplace_smoke`，固定 commit 为 `18c3966e898d6ca84b1868663d1b5b591f9f7606`；远端只有 `README.md`、`app.json`、`app.py`，没有 `index.html`。官方名单 PR 为 `Orulink/watcherobot-app-store` #1，PR 与主分支之间唯一变化是 `app-list.json`，主分支在未合并时仍为 `[]`。
+- 相同源码连续重发保持 commit `18c3966e898d6ca84b1868663d1b5b591f9f7606`，复用 PR #1 并返回 `pending`；修改源码后 Space 产生新 commit `082eae52e04948ea1e9e1578fac7a3af9ef745e2`，发布返回 `catalog_pr_conflict` 和原 PR URL，开放 PR 仍只有一个。`huggingface_hub` 的空提交提示只进入 stderr，JSONL stdout 逐行解析保持纯净。
+- 最小权限真实门禁通过：先用普通网页会话创建不属于 Watcher OAuth 的同名公开 Space，记录 HEAD `588d39d94c62d74cbe1b1ce81d55e38b80117aa1` 和四个文件；Watcher 发布返回 `space_ownership_conflict`、退出码 4，尝试后 HEAD 与文件清单完全不变。临时 Space 随后已删除；Watcher 专用系统凭据也已清理并确认 `logged_in=false`。
+
+S3 已完成。下一步唯一入口：进入 S4，先用 TDD 固定官方名单读取、缓存回退和完整 commit 快照下载的独立端口与错误合同，不接触 Daemon 运行时。
+
 ## 提交纪律
 
 每个小步必须依次完成失败测试、最小实现、定向验证、全量回归、本文档更新和独立 commit。任何新增架构问题先记录并与项目负责人确认，不在实现中静默扩大范围。

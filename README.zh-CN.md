@@ -58,12 +58,32 @@ watcherobot daemon status
 watcherobot daemon stop
 
 watcherobot app package .\examples\hello_robot .\dist\hello_robot.wapp
+watcherobot app check .\examples\hello_robot
+watcherobot app login
+watcherobot app login --status
+watcherobot app publish .\examples\hello_robot
+watcherobot app logout
 watcherobot app install .\dist\hello_robot.wapp
 watcherobot app list
 watcherobot app select example.hello_robot --version 1.0.0
 watcherobot app start
 watcherobot app stop
 ```
+
+`watcherobot app check <directory>` 会校验唯一的 `app.json`、固定入口
+`app.py`、SDK 兼容范围、标准 Python 依赖、图标路径和允许发布的源码集合，
+但不会启动 Daemon。Desktop 调用时使用 `--jsonl`，stdout 只包含逐行 JSON
+事件。
+
+`watcherobot app login` 使用 Watcher Desktop 公共 OAuth Device Flow 登录
+Hugging Face，验证身份后只把 Token 保存到 Watcher 专用的操作系统凭据项。
+`app login --status` 校验已保存身份，`app logout` 只删除 Watcher 凭据；这些
+命令均不启动 Daemon，并支持 `--jsonl`。
+
+`watcherobot app publish <directory>` 会先执行相同的本地检查，再把精确源码
+快照发布到公开的 `<hf_username>/WatcherRobot-<app_id>` Hugging Face Space。
+Space 只作为源码仓库，不生成网页；成功结果包含固定源码 commit，以及官方
+应用名单 PR 或其现有状态。该命令不启动 Daemon，并支持 `--jsonl`。
 
 大型 Application 可以增加 `.wappignore`，使用 `tests/`、`.venv*/`、
 `*.tmp` 等 glob 规则排除非运行文件；`.wappignore` 本身不会进入安装包。

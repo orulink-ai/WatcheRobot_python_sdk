@@ -30,6 +30,7 @@ from watcherobot.distribution.events import (
     ResultEvent,
     exit_code_for,
 )
+from watcherobot.distribution.hf_publish import HuggingFacePublishHubClient
 from watcherobot.distribution.hub_http import HuggingFaceHubClient
 from watcherobot.distribution.login import (
     LoginError,
@@ -40,7 +41,17 @@ from watcherobot.distribution.login import (
     logout,
 )
 from watcherobot.distribution.oauth_http import HuggingFaceOAuthClient
-from watcherobot.distribution.ports import CredentialStore, HubClient, OAuthClient
+from watcherobot.distribution.ports import (
+    CredentialStore,
+    HubClient,
+    OAuthClient,
+    PublishHubClient,
+)
+from watcherobot.distribution.publish import (
+    PublishError,
+    PublishResult,
+    publish_application,
+)
 from watcherobot.distribution.source_files import ApplicationSourceError
 from watcherobot.provisioning import (
     BluetoothDevice,
@@ -95,6 +106,9 @@ def build_parser() -> argparse.ArgumentParser:
     login_command.add_argument("--jsonl", action="store_true")
     logout_command = app_commands.add_parser("logout")
     logout_command.add_argument("--jsonl", action="store_true")
+    publish = app_commands.add_parser("publish")
+    publish.add_argument("application_dir", type=Path)
+    publish.add_argument("--jsonl", action="store_true")
     install = app_commands.add_parser("install")
     install.add_argument("package", type=Path)
     app_commands.add_parser("list")
@@ -155,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_application_login(args)
         if args.command == "app" and args.app_command == "logout":
             return _run_application_logout(args)
+        if args.command == "app" and args.app_command == "publish":
+            return _run_application_publish(args)
         if args.command == "app":
             if args.app_command == "package":
                 output = package_application(
@@ -373,6 +389,116 @@ def _run_application_logout(args: argparse.Namespace) -> int:
     else:
         print("已退出 Watcher 的 Hugging Face 登录")
     return ExitCode.SUCCESS
+
+
+@dataclass(frozen=True)
+class _PublishDependencies:
+    credentials: CredentialStore
+    identity_hub: HubClient
+    publish_hub: PublishHubClient
+
+
+class _HumanPublishEventSink:
+    """Render non-sensitive publishing progress for terminal users."""
+
+    def emit(self, event: DistributionEvent) -> None:
+        if isinstance(event, ProgressEvent):
+            print(event.message)
+
+
+def _build_publish_dependencies() -> _PublishDependencies:
+    return _PublishDependencies(
+        credentials=SystemCredentialStore(),
+        identity_hub=HuggingFaceHubClient(),
+        publish_hub=HuggingFacePublishHubClient(),
+    )
+
+
+def _run_application_publish(args: argparse.Namespace) -> int:
+    dependencies = _build_publish_dependencies()
+    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    events: EventSink = event_writer or _HumanPublishEventSink()
+    try:
+        result = publish_application(
+            args.application_dir,
+            credentials=dependencies.credentials,
+            identity_hub=dependencies.identity_hub,
+            publish_hub=dependencies.publish_hub,
+            events=events,
+        )
+    except KeyboardInterrupt:
+        return _print_publish_error(
+            ErrorCode.OPERATION_CANCELLED,
+            "Application 发布已取消",
+            event_writer=event_writer,
+        )
+    except ApplicationCompatibilityError as exc:
+        return _print_publish_error(
+            ErrorCode.APP_SDK_INCOMPATIBLE,
+            str(exc),
+            event_writer=event_writer,
+        )
+    except ApplicationManifestError as exc:
+        return _print_publish_error(
+            _manifest_error_code(exc),
+            str(exc),
+            event_writer=event_writer,
+        )
+    except ApplicationSourceError as exc:
+        return _print_publish_error(
+            ErrorCode.APP_CONTENT_FORBIDDEN,
+            str(exc),
+            event_writer=event_writer,
+        )
+    except PublishError as exc:
+        return _print_publish_error(
+            exc.code,
+            str(exc),
+            details=exc.details,
+            event_writer=event_writer,
+        )
+
+    if event_writer is not None:
+        event_writer.emit(ResultEvent(data=result.to_dict()))
+    else:
+        _print_publish_result(result)
+    return ExitCode.SUCCESS
+
+
+def _print_publish_result(result: PublishResult) -> None:
+    print(f"Application 发布成功：{result.space_id}@{result.commit}")
+    print(f"Space：{result.space_url}")
+    print(f"固定源码：{result.source_url}")
+    print(f"名单状态：{result.pr_status}")
+    if result.pr_url:
+        print(f"名单 PR：{result.pr_url}")
+
+
+def _print_publish_error(
+    code: ErrorCode,
+    message: str,
+    *,
+    event_writer: JsonLineEventWriter | None,
+    details: dict[str, object] | None = None,
+) -> int:
+    safe_details = dict(details or {})
+    if event_writer is not None:
+        event_writer.emit(
+            ErrorEvent(
+                code=code,
+                message=message,
+                details=safe_details,
+            )
+        )
+    else:
+        print(f"Application 发布失败：{message}", file=sys.stderr)
+        source_url = safe_details.get("source_url")
+        pr_url = safe_details.get("pr_url")
+        if isinstance(source_url, str):
+            print(f"已上传源码：{source_url}", file=sys.stderr)
+        if isinstance(pr_url, str):
+            print(f"现有名单 PR：{pr_url}", file=sys.stderr)
+    return exit_code_for(code)
 
 
 def _print_auth_error(

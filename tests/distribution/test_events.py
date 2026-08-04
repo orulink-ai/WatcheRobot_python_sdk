@@ -93,6 +93,15 @@ def test_stable_error_categories_map_to_process_exit_codes() -> None:
     )
     assert exit_code_for(ErrorCode.REMOTE_ERROR) is ExitCode.REMOTE_ERROR
     assert (
+        exit_code_for(ErrorCode.SPACE_OWNERSHIP_CONFLICT)
+        is ExitCode.REMOTE_ERROR
+    )
+    assert exit_code_for(ErrorCode.CATALOG_INVALID) is ExitCode.REMOTE_ERROR
+    assert (
+        exit_code_for(ErrorCode.CATALOG_PR_CONFLICT)
+        is ExitCode.REMOTE_ERROR
+    )
+    assert (
         exit_code_for(ErrorCode.OPERATION_CANCELLED)
         is ExitCode.CANCELLED
     )

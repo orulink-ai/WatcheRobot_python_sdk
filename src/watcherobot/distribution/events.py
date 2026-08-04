@@ -23,6 +23,9 @@ class ErrorCode(str, Enum):
     AUTH_INVALID_RESPONSE = "auth_invalid_response"
     AUTH_NETWORK_ERROR = "auth_network_error"
     CREDENTIAL_STORE_ERROR = "credential_store_error"
+    SPACE_OWNERSHIP_CONFLICT = "space_ownership_conflict"
+    CATALOG_INVALID = "catalog_invalid"
+    CATALOG_PR_CONFLICT = "catalog_pr_conflict"
     REMOTE_ERROR = "remote_error"
     OPERATION_CANCELLED = "operation_cancelled"
     INTERNAL_ERROR = "internal_error"
@@ -142,6 +145,9 @@ _AUTH_ERROR_CODES = frozenset(
 _REMOTE_ERROR_CODES = frozenset(
     {
         ErrorCode.AUTH_NETWORK_ERROR,
+        ErrorCode.SPACE_OWNERSHIP_CONFLICT,
+        ErrorCode.CATALOG_INVALID,
+        ErrorCode.CATALOG_PR_CONFLICT,
         ErrorCode.REMOTE_ERROR,
     }
 )

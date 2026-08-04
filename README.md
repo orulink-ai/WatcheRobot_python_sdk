@@ -66,6 +66,7 @@ watcherobot app package .\examples\hello_robot .\dist\hello_robot.wapp
 watcherobot app check .\examples\hello_robot
 watcherobot app login
 watcherobot app login --status
+watcherobot app publish .\examples\hello_robot
 watcherobot app logout
 watcherobot app install .\dist\hello_robot.wapp
 watcherobot app list
@@ -88,6 +89,14 @@ been verified. `--force` starts a new authorization even when the saved token
 is valid. `app login --status` verifies the saved identity, and `app logout`
 deletes only Watcher's credential. These commands do not start the Daemon and
 also support `--jsonl` for Desktop callers.
+
+`watcherobot app publish <directory>` first performs the same local checks,
+then creates or updates the public
+`<hf_username>/WatcherRobot-<app_id>` Hugging Face Space with the exact source
+snapshot. The Space is a source repository only: publishing does not generate
+a web page. A successful result contains the fixed source commit and the
+official catalog pull request (or its existing status). The command does not
+start the Daemon and supports `--jsonl` for Desktop callers.
 
 For larger Applications, add a `.wappignore` file using glob patterns such as
 `tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not packaged.
