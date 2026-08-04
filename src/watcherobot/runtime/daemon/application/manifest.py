@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
@@ -32,9 +33,21 @@ _ALLOWED_FIELDS = _REQUIRED_FIELDS | _OPTIONAL_FIELDS
 class ApplicationManifestError(ValueError):
     """Raised when an Application directory doesn't satisfy app.json rules."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "app_manifest_invalid",
+    ) -> None:
+        self.code = code
+        super().__init__(message)
+
 
 class ApplicationCompatibilityError(ApplicationManifestError):
     """Raised when an Application cannot run on the installed watcherobot."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="app_sdk_incompatible")
 
 
 @dataclass(frozen=True)
@@ -62,11 +75,13 @@ class ApplicationManifest:
         entrypoint_path = application_root / "app.py"
         if not manifest_path.is_file():
             raise ApplicationManifestError(
-                f"missing Application manifest: {manifest_path}"
+                f"missing Application manifest: {manifest_path}",
+                code="app_manifest_missing",
             )
         if not entrypoint_path.is_file():
             raise ApplicationManifestError(
-                f"missing Application entrypoint: {entrypoint_path}"
+                f"missing Application entrypoint: {entrypoint_path}",
+                code="app_entrypoint_missing",
             )
 
         try:
@@ -125,8 +140,20 @@ class ApplicationManifest:
             for item in dependencies
         ):
             raise ApplicationManifestError(
-                "dependencies must be an array of non-empty strings"
+                "dependencies must be an array of non-empty strings",
+                code="app_dependency_invalid",
             )
+        normalized_dependencies: list[str] = []
+        for index, dependency in enumerate(dependencies):
+            normalized = dependency.strip()
+            try:
+                Requirement(normalized)
+            except InvalidRequirement as exc:
+                raise ApplicationManifestError(
+                    f"dependencies[{index}] must be a valid Python requirement",
+                    code="app_dependency_invalid",
+                ) from exc
+            normalized_dependencies.append(normalized)
 
         installed_version = watcherobot_version or _installed_watcherobot_version()
         try:
@@ -159,7 +186,7 @@ class ApplicationManifest:
             name=name,
             version=version,
             requires_watcherobot=requires_watcherobot,
-            dependencies=tuple(item.strip() for item in dependencies),
+            dependencies=tuple(normalized_dependencies),
             entrypoint=entrypoint_path,
             description=str(payload.get("description") or "").strip(),
             author=str(payload.get("author") or "").strip(),

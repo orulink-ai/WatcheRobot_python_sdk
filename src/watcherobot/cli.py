@@ -16,6 +16,17 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from watcherobot.application.catalog import package_application
+from watcherobot.distribution.check import check_application
+from watcherobot.distribution.events import (
+    ErrorCode,
+    ErrorEvent,
+    ExitCode,
+    JsonLineEventWriter,
+    ProgressEvent,
+    ResultEvent,
+    exit_code_for,
+)
+from watcherobot.distribution.source_files import ApplicationSourceError
 from watcherobot.provisioning import (
     BluetoothDevice,
     BluetoothProvisioner,
@@ -28,6 +39,10 @@ from watcherobot.runtime.daemon.instance import (
     RuntimeProcessState,
     RuntimeStateStore,
     default_runtime_state_root,
+)
+from watcherobot.runtime.daemon.application.manifest import (
+    ApplicationCompatibilityError,
+    ApplicationManifestError,
 )
 
 
@@ -55,6 +70,9 @@ def build_parser() -> argparse.ArgumentParser:
     package = app_commands.add_parser("package")
     package.add_argument("application_dir", type=Path)
     package.add_argument("output", type=Path)
+    check = app_commands.add_parser("check")
+    check.add_argument("application_dir", type=Path)
+    check.add_argument("--jsonl", action="store_true")
     install = app_commands.add_parser("install")
     install.add_argument("package", type=Path)
     app_commands.add_parser("list")
@@ -109,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
         if args.command == "app" and args.app_command == "run":
             return run_application(args.application)
+        if args.command == "app" and args.app_command == "check":
+            return _run_application_check(args)
         if args.command == "app":
             if args.app_command == "package":
                 output = package_application(
@@ -193,6 +213,63 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     raise CliError("unsupported command")
+
+
+def _run_application_check(args: argparse.Namespace) -> int:
+    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    if event_writer is not None:
+        event_writer.emit(
+            ProgressEvent(
+                stage="checking",
+                message="正在检查 Application",
+            )
+        )
+    try:
+        result = check_application(args.application_dir)
+    except ApplicationCompatibilityError as exc:
+        return _print_application_check_error(
+            ErrorCode.APP_SDK_INCOMPATIBLE,
+            str(exc),
+            event_writer=event_writer,
+        )
+    except ApplicationManifestError as exc:
+        return _print_application_check_error(
+            _manifest_error_code(exc),
+            str(exc),
+            event_writer=event_writer,
+        )
+    except ApplicationSourceError as exc:
+        return _print_application_check_error(
+            ErrorCode.APP_CONTENT_FORBIDDEN,
+            str(exc),
+            event_writer=event_writer,
+        )
+
+    if event_writer is not None:
+        event_writer.emit(ResultEvent(data=result.to_dict()))
+    else:
+        print(f"Application 有效：{result.app_id}@{result.version}")
+    return ExitCode.SUCCESS
+
+
+def _print_application_check_error(
+    code: ErrorCode,
+    message: str,
+    *,
+    event_writer: JsonLineEventWriter | None,
+) -> int:
+    if event_writer is not None:
+        event_writer.emit(ErrorEvent(code=code, message=message))
+    else:
+        print(f"Application 检查失败：{message}", file=sys.stderr)
+    return exit_code_for(code)
+
+
+def _manifest_error_code(error: ApplicationManifestError) -> ErrorCode:
+    try:
+        return ErrorCode(error.code)
+    except ValueError:
+        return ErrorCode.APP_MANIFEST_INVALID
 
 
 def _print_bluetooth_cancelled() -> int:

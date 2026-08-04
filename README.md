@@ -63,6 +63,7 @@ watcherobot daemon status
 watcherobot daemon stop
 
 watcherobot app package .\examples\hello_robot .\dist\hello_robot.wapp
+watcherobot app check .\examples\hello_robot
 watcherobot app install .\dist\hello_robot.wapp
 watcherobot app list
 watcherobot app select example.hello_robot --version 1.0.0
@@ -70,6 +71,12 @@ watcherobot app start
 watcherobot app stop
 watcherobot app uninstall example.hello_robot --version 1.0.0
 ```
+
+`watcherobot app check <directory>` validates the canonical `app.json`, fixed
+`app.py`, SDK compatibility, standard Python dependency requirements, icon
+path, and the source set that can later be published. It does not start the
+Daemon. Desktop callers use `--jsonl`; stdout then contains only one
+`progress`, `result`, or `error` JSON object per line.
 
 For larger Applications, add a `.wappignore` file using glob patterns such as
 `tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not packaged.
