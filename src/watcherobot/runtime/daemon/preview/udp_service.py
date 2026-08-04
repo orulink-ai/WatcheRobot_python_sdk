@@ -63,6 +63,7 @@ class FaceTrackingUdpPreviewService:
         self._transport: asyncio.DatagramTransport | None = None
         self._publisher: asyncio.Task[None] | None = None
         self._publish_event = asyncio.Event()
+        self._listener_lock = asyncio.Lock()
         self._pending: CompletedPreviewFrame | None = None
         self._pending_completed_at = 0.0
         self._reassembler: FaceTrackingUdpReassembler | None = None
@@ -114,6 +115,13 @@ class FaceTrackingUdpPreviewService:
             except asyncio.CancelledError:
                 pass
         self._reset_session()
+
+    async def refresh_listener(self) -> None:
+        """Rebind the UDP endpoint before a new preview stream starts."""
+
+        async with self._listener_lock:
+            await self.stop()
+            await self.start()
 
     def handle_datagram(self, data: bytes, address: tuple[str, int]) -> None:
         self.stats.datagrams_received += 1

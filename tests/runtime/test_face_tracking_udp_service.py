@@ -162,3 +162,27 @@ def test_service_can_publish_to_managed_application_sink() -> None:
         await service.stop()
 
     asyncio.run(scenario())
+
+
+def test_service_refresh_rebinds_listener_and_accepts_new_preview() -> None:
+    async def scenario() -> None:
+        registry = FakeRegistry()
+        service = FaceTrackingUdpPreviewService(
+            session=connected_session(), registry=registry, port=0
+        )
+        await service.start()
+        previous_transport = service._transport
+
+        await service.refresh_listener()
+
+        assert service.bound_port > 0
+        assert service._transport is not previous_transport
+        for packet in packets(sequence=23):
+            service.handle_datagram(packet, (PEER_IP, 50000))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert service.stats.published_frames == 1
+        assert json.loads(registry.frames[0][1])["seq"] == 23
+        await service.stop()
+
+    asyncio.run(scenario())

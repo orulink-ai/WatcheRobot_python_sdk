@@ -114,7 +114,10 @@ class DaemonRuntime:
         )
         self._clock = clock
         self.connection_registry = connection_registry
-        self.face_tracking_preview = FaceTrackingPreviewBroker(connection_registry)
+        self.face_tracking_preview = FaceTrackingPreviewBroker(
+            connection_registry,
+            on_preview_start=self._refresh_preview_udp_listener,
+        )
         self.application.bridge.set_frame_callback(
             self._route_application_frame
         )
@@ -154,6 +157,13 @@ class DaemonRuntime:
         self.auto_start_attempted = False
         self.auto_start_error: str | None = None
         self._shutdown_event = asyncio.Event()
+
+    async def _refresh_preview_udp_listener(self) -> None:
+        await self.preview_udp.refresh_listener()
+        self.logs.record(
+            "Preview UDP listener refreshed "
+            f"(port={self.preview_udp.bound_port})"
+        )
 
     async def start(self) -> None:
         self.logs.record("Daemon Runtime starting")

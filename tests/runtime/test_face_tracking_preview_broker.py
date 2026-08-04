@@ -91,6 +91,44 @@ def test_preview_disconnect_stops_device_without_recentering() -> None:
     asyncio.run(scenario())
 
 
+def test_preview_start_refreshes_udp_listener_before_forwarding() -> None:
+    async def scenario() -> None:
+        listener_refreshed = asyncio.Event()
+
+        async def refresh_listener() -> None:
+            listener_refreshed.set()
+
+        broker = FaceTrackingPreviewBroker(
+            on_preview_start=refresh_listener,
+        )
+        server = ExternalWebSocketServer(
+            host="127.0.0.1",
+            port=0,
+            hardware_hello_authorizer=_allow_hardware,
+            business_frame_listener=broker.observe_frame,
+        )
+        broker.bind_registry(server.registry)
+        await server.start()
+        desktop = await _connect_as(server, "desktop")
+        device = await _connect_as(server, "hardware")
+        try:
+            start = json.dumps(
+                {
+                    "type": "ctrl.face_tracking.preview.start",
+                    "data": {"command_id": "preview-start-refresh"},
+                }
+            )
+            await desktop.send(start)
+            assert await asyncio.wait_for(device.recv(), timeout=1) == start
+            assert listener_refreshed.is_set()
+        finally:
+            await desktop.close()
+            await device.close()
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
 def test_normal_preview_stop_disarms_disconnect_cleanup() -> None:
     async def scenario() -> None:
         broker = FaceTrackingPreviewBroker()
