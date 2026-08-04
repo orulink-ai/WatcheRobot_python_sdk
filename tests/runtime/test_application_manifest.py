@@ -109,6 +109,38 @@ def test_manifest_accepts_standard_python_requirements(tmp_path) -> None:
     )
 
 
+def test_manifest_allows_watcherobot_version_constraint_from_bundled_wheel(
+    tmp_path,
+) -> None:
+    write_application(tmp_path, dependencies=["watcherobot>=1.0,<2.0"])
+
+    manifest = ApplicationManifest.load(
+        tmp_path,
+        watcherobot_version="1.5.0",
+    )
+
+    assert manifest.dependencies == ("watcherobot>=1.0,<2.0",)
+
+
+@pytest.mark.parametrize(
+    "dependency",
+    [
+        "watcherobot @ https://example.com/watcherobot.whl",
+        "Watcherobot @ file:///tmp/watcherobot",
+    ],
+)
+def test_manifest_rejects_watcherobot_direct_reference(tmp_path, dependency: str) -> None:
+    write_application(tmp_path, dependencies=[dependency])
+
+    with pytest.raises(
+        ApplicationManifestError,
+        match="bundled watcherobot wheel",
+    ) as captured:
+        ApplicationManifest.load(tmp_path, watcherobot_version="1.5.0")
+
+    assert captured.value.code == "app_dependency_invalid"
+
+
 def test_manifest_rejects_invalid_python_requirement(tmp_path) -> None:
     write_application(
         tmp_path,

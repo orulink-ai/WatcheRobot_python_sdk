@@ -134,6 +134,27 @@ S3 已完成。下一步唯一入口：进入 S4，先用 TDD 固定官方名单
 
 S4 的公开名单服务、`app marketplace`、固定快照下载服务与 `app download` 路径已经闭合。下一步进入 S5，按既定文档实现 SDK Daemon 的受控 Application 启动合同，不改变内容无关路由边界。
 
+### S5：SDK Daemon 受控启动器合同——进行中
+
+- 修改前事实：`ApplicationRuntimeManager` 构造时固定保存一个 `python_executable`，`select_application()` 只替换 Application 目录；源码模式始终用 Daemon Python 执行 `app.py`，冻结模式始终执行当前 Runtime 二进制的 `--application` 分支，因此尚不能表达每 App Python 或独立默认 App 启动单元。
+- 已建立独立 `ApplicationLauncher` / `ApplicationLaunchSpec` 合同。启动器类型只允许 `python` 和 `bundled`；规格只产生 `<受控 Python> <固定 app.py>` 或 `watcher-default-app` 两种命令，不携带调用方参数或 shell 字符串。Python 启动器必须位于启动时固定的 App 受管根，bundled 启动器与默认 Application 目录必须位于固定资源根；普通 Python Application 的已校验源码可以与其环境根分开，以兼容开发者 `app run <源码目录>`。解析真实路径后再次做包含关系检查，路径逃逸、缺失/不可执行文件、任意可执行文件名、第三方 bundled 与默认 App Python 均在生成进程命令前拒绝。
+- TDD 首次因 `application.launcher` 模块不存在而收集失败；实现后新增 10 项、Application 启动/Manifest/REST/路由聚焦 40 项和 SDK 全量 465 项通过，mypy 74 个源码文件、`pip check`、迁移守卫 post 模式与 `git diff --check` 均通过。该小步尚未切换现有 Runtime 或 REST，只先固定下一步可复用的安全规格。
+- `ApplicationRuntimeManager` 现已支持原子选择目录与受控启动器：校验失败或运行槽占用时不会替换当前 App/规格；启动前重新校验 Manifest、受管根与可执行文件，再只执行规格中的固定参数数组。子进程环境会移除继承的 `PYTHONPATH`、`PYTHONHOME`、`VIRTUAL_ENV`，并固定 `PYTHONNOUSERSITE=1`、`PYTHONUNBUFFERED=1`，现有四个 `WATCHER_APP_*`、channel 就绪、日志和进程树合同保持不变。为便于下一小步迁移 REST，旧目录选择路径暂时仍存在但新规格路径已经真实启动验证。新增规格选择、环境隔离和运行中拒绝切换测试后，启动/日志/路由聚焦 28 项、SDK 全量 468 项、mypy 74 个源码文件、`pip check`、迁移守卫和 `git diff --check` 均通过。
+- `/daemon/application/select` 已固定为严格的 `application_dir + launcher.kind + launcher.executable` 请求，未知字段、旧的仅目录请求和调用方参数均返回 422；启动器越界等策略错误返回稳定 `invalid_application_launcher`。Daemon 启动时固定受管 App 根和 bundled 资源根，CLI 开发运行模式显式声明当前 SDK Python 根。REST、Daemon 组合根和真实 CLI 定向 18 项通过，mypy 74 个源码文件通过。
+- `ApplicationRuntimeManager` 已删除 Daemon 自身解释器和冻结 `--application` 的旧命令推断；没有受控 `ApplicationLaunchSpec` 时拒绝启动。Daemon 不再持有 `ApplicationCatalog`，也不再暴露 `/daemon/applications*` 安装、列表、选择和卸载 REST；旧 `.wapp` 本地安装管理命令在 Desktop Store 接管前返回明确边界错误，`package` 仍只负责本地打包。该变化关闭了绕过受控启动器的目录选择入口，并没有把下载或环境安装迁入 Daemon。
+- S5 真实双环境门禁已通过：测试创建 App A、App B 两个真实 venv，两个子进程分别报告各自的 `sys.executable`；A 运行时选择 B 被拒绝，停止 A 后 B 可选择并启动；两个 App PID 不同而同一测试 Daemon PID 保持不变。Application 生命周期、日志、REST、完整路由和 CLI 全量回归共 473 项通过，mypy 74 个源码文件、`pip check`、迁移守卫 post 模式和 `git diff --check` 均通过。
+
+S5 已完成。下一步唯一入口：进入 S6，在 `WatcheRobot_client` 建立独立 Desktop Application Store/Environment 模块，先固定 App Data 目录、每 App 根目录与安装事务合同，再接入真实 Python/uv 环境创建；不能把这些职责放回 Daemon。
+
+### S6 配套收口：平台 SDK 依赖来源门禁
+
+- 每 App 环境会始终先安装 Desktop 随包、且与 Daemon 同 commit 构建的本地 `watcherobot` wheel。
+- Manifest 继续允许普通 `watcherobot>=...` 版本约束，由 uv 将其与 `requires_watcherobot` 及本地 wheel 合并解析。
+- `watcherobot @ https://...`、`watcherobot @ file://...` 等直接引用现在由唯一 `ApplicationManifest` 校验入口拒绝，错误码保持 `app_dependency_invalid`；其他第三方包的标准直接 URL 不受影响。
+- TDD 首次新增 4 个用例时有 3 个失败；实现后 Manifest/CLI 定向 25 项及 SDK 全量 477 项通过，mypy 74 个源码文件、仓库 `.venv` 的 `pip check`、迁移守卫 post 模式和 `git diff --check` 均通过。
+
+该变更只补齐 S6 已确认的平台 wheel 边界，不把环境安装迁回 SDK 或 Daemon。
+
 ## 提交纪律
 
 每个小步必须依次完成失败测试、最小实现、定向验证、全量回归、本文档更新和独立 commit。任何新增架构问题先记录并与项目负责人确认，不在实现中静默扩大范围。

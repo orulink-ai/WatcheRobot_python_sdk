@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
+import venv
 from pathlib import Path
 
+import pytest
+import websockets
 from websockets.asyncio.client import connect
 
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
-from watcherobot.runtime.daemon.application.session import ApplicationChannel
+from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchError
+from watcherobot.runtime.daemon.application.session import (
+    ApplicationChannel,
+    SessionOccupiedError,
+)
 from tests.runtime.pairing_helpers import connect_runtime_hardware
 
 
@@ -53,6 +61,30 @@ async def main():
 asyncio.run(main())
 """
 
+PYTHON_IDENTITY_APPLICATION = """
+import asyncio
+import os
+from pathlib import Path
+import sys
+
+from websockets.asyncio.client import connect
+
+
+async def main():
+    Path(os.environ["PYTHON_IDENTITY_FILE"]).write_text(
+        sys.executable,
+        encoding="utf-8",
+    )
+    async with (
+        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"]),
+        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"]),
+    ):
+        await asyncio.Event().wait()
+
+
+asyncio.run(main())
+"""
+
 
 def _write_relay_application(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
@@ -75,6 +107,167 @@ def _write_relay_application(root: Path) -> None:
 def _write_exiting_application(root: Path) -> None:
     _write_relay_application(root)
     root.joinpath("app.py").write_text(EXITING_APPLICATION, encoding="utf-8")
+
+
+def _select_python_application(
+    runtime: DaemonRuntime,
+    application_dir: Path,
+) -> None:
+    runtime.select_application(
+        str(application_dir.resolve()),
+        "python",
+        str(Path(sys.executable).resolve()),
+    )
+
+
+def _create_test_python_environment(root: Path) -> Path:
+    venv.EnvBuilder(with_pip=False).create(root)
+    if sys.platform == "win32":
+        executable = root / "Scripts" / "python.exe"
+        site_packages = root / "Lib" / "site-packages"
+    else:
+        executable = root / "bin" / "python"
+        site_packages = (
+            root
+            / "lib"
+            / f"python{sys.version_info.major}.{sys.version_info.minor}"
+            / "site-packages"
+        )
+    site_packages.joinpath("watcher-test-dependencies.pth").write_text(
+        str(Path(websockets.__file__).resolve().parent.parent),
+        encoding="utf-8",
+    )
+    return executable.resolve()
+
+
+def test_same_daemon_switches_between_two_real_python_environments(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def scenario() -> None:
+        managed_root = tmp_path / "application-store"
+        app_a_dir = managed_root / "apps" / "app_a" / "source"
+        app_b_dir = managed_root / "apps" / "app_b" / "source"
+        _write_relay_application(app_a_dir)
+        _write_relay_application(app_b_dir)
+        app_a_dir.joinpath("app.json").write_text(
+            app_a_dir.joinpath("app.json")
+            .read_text(encoding="utf-8")
+            .replace('"test_app"', '"app_a"'),
+            encoding="utf-8",
+        )
+        app_b_dir.joinpath("app.json").write_text(
+            app_b_dir.joinpath("app.json")
+            .read_text(encoding="utf-8")
+            .replace('"test_app"', '"app_b"'),
+            encoding="utf-8",
+        )
+        app_a_dir.joinpath("app.py").write_text(
+            PYTHON_IDENTITY_APPLICATION,
+            encoding="utf-8",
+        )
+        app_b_dir.joinpath("app.py").write_text(
+            PYTHON_IDENTITY_APPLICATION,
+            encoding="utf-8",
+        )
+        python_a = _create_test_python_environment(
+            managed_root / "apps" / "app_a" / ".venv"
+        )
+        python_b = _create_test_python_environment(
+            managed_root / "apps" / "app_b" / ".venv"
+        )
+        runtime = DaemonRuntime(
+            application_dir=tmp_path / "unselected",
+            current_app="unselected",
+            managed_app_root=managed_root,
+            bundled_resource_root=tmp_path / "bundled-resources",
+            external_host="127.0.0.1",
+            external_port=0,
+            control_port=0,
+            pairing_udp_port=0,
+            preview_udp_port=0,
+        )
+        daemon_pid = os.getpid()
+        identity_a = tmp_path / "python-a.txt"
+        identity_b = tmp_path / "python-b.txt"
+
+        await runtime.start()
+        try:
+            runtime.select_application(
+                str(app_a_dir.resolve()),
+                "python",
+                str(python_a),
+            )
+            monkeypatch.setenv("PYTHON_IDENTITY_FILE", str(identity_a))
+            await runtime.start_application()
+            app_a_pid = runtime.application.process_id
+
+            with pytest.raises(SessionOccupiedError):
+                runtime.select_application(
+                    str(app_b_dir.resolve()),
+                    "python",
+                    str(python_b),
+                )
+
+            assert Path(identity_a.read_text(encoding="utf-8")).resolve() == python_a
+            await runtime.stop_application()
+
+            runtime.select_application(
+                str(app_b_dir.resolve()),
+                "python",
+                str(python_b),
+            )
+            monkeypatch.setenv("PYTHON_IDENTITY_FILE", str(identity_b))
+            await runtime.start_application()
+            app_b_pid = runtime.application.process_id
+
+            assert Path(identity_b.read_text(encoding="utf-8")).resolve() == python_b
+            assert app_a_pid is not None
+            assert app_b_pid is not None
+            assert app_a_pid != app_b_pid
+            assert os.getpid() == daemon_pid
+        finally:
+            await runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_daemon_selects_only_a_launcher_inside_its_fixed_root(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "application"
+    _write_relay_application(app_dir)
+    python_executable = Path(sys.executable).resolve()
+    runtime = DaemonRuntime(
+        application_dir=tmp_path / "unselected",
+        current_app="unselected",
+        managed_app_root=python_executable.parent,
+        bundled_resource_root=tmp_path / "bundled-resources",
+    )
+
+    selected = runtime.select_application(
+        str(app_dir.resolve()),
+        "python",
+        str(python_executable),
+    )
+
+    assert selected["current_app"] == "test_app"
+    assert runtime.application.launch_spec is not None
+    assert runtime.application.launch_spec.executable == python_executable
+
+    rejected = DaemonRuntime(
+        application_dir=tmp_path / "another-unselected",
+        current_app="unselected",
+        managed_app_root=tmp_path / "managed-only",
+        bundled_resource_root=tmp_path / "another-bundled-root",
+    )
+    with pytest.raises(ApplicationLaunchError) as captured:
+        rejected.select_application(
+            str(app_dir.resolve()),
+            "python",
+            str(python_executable),
+        )
+    assert captured.value.code == "invalid_application_launcher"
 
 
 def test_preview_frames_prefer_the_active_application_device_channel(
@@ -132,12 +325,13 @@ def test_active_application_owns_routing_then_desktop_control_recovers(
         runtime = DaemonRuntime(
             application_dir=app_dir,
             current_app="test_app",
-            python_executable=sys.executable,
+            managed_app_root=Path(sys.executable).resolve().parent,
             external_host="127.0.0.1",
             external_port=0,
             control_port=0,
             pairing_udp_port=0,
         )
+        _select_python_application(runtime, app_dir)
         await runtime.start()
         device = await _connect_as(runtime, "hardware")
         desktop = await _connect_as(runtime, "desktop")
@@ -223,13 +417,14 @@ def test_auto_start_runs_current_app_once_and_does_not_restart_after_exit(
         runtime = DaemonRuntime(
             application_dir=app_dir,
             current_app="test_app",
-            python_executable=sys.executable,
+            managed_app_root=Path(sys.executable).resolve().parent,
             external_host="127.0.0.1",
             external_port=0,
             control_port=0,
             pairing_udp_port=0,
             auto_start_application=True,
         )
+        _select_python_application(runtime, app_dir)
 
         await runtime.start()
         first_pid = runtime.application.process_id
@@ -262,12 +457,13 @@ def test_daemon_pairing_control_does_not_stop_the_current_application(
         runtime = DaemonRuntime(
             application_dir=app_dir,
             current_app="test_app",
-            python_executable=sys.executable,
+            managed_app_root=Path(sys.executable).resolve().parent,
             external_host="127.0.0.1",
             external_port=0,
             control_port=0,
             pairing_udp_port=0,
         )
+        _select_python_application(runtime, app_dir)
         await runtime.start()
 
         try:
@@ -297,12 +493,13 @@ def test_device_session_end_releases_daemon_slot_without_stopping_application(
         runtime = DaemonRuntime(
             application_dir=app_dir,
             current_app="test_app",
-            python_executable=sys.executable,
+            managed_app_root=Path(sys.executable).resolve().parent,
             external_host="127.0.0.1",
             external_port=0,
             control_port=0,
             pairing_udp_port=0,
         )
+        _select_python_application(runtime, app_dir)
         await runtime.start()
         device = await connect_runtime_hardware(runtime)
 

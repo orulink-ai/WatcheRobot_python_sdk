@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from watcherobot.runtime.daemon.application.launcher import ApplicationLauncher
 from watcherobot.runtime.daemon.application.logging import ApplicationLogService
 from watcherobot.runtime.daemon.application.runtime import ApplicationRuntimeManager
 
@@ -97,10 +98,18 @@ def test_runtime_captures_application_stdout_and_stderr(tmp_path: Path) -> None:
         manager = ApplicationRuntimeManager(
             application_dir=app_dir,
             current_app="logging_app",
-            python_executable=sys.executable,
+            application_launcher=ApplicationLauncher(
+                managed_app_root=Path(sys.executable).resolve().parent,
+                bundled_resource_root=tmp_path / "resources",
+            ),
             startup_timeout=3,
             stop_timeout=3,
             log_service=service,
+        )
+        manager.select_application(
+            app_dir,
+            launcher_kind="python",
+            launcher_executable=Path(sys.executable).resolve(),
         )
 
         await manager.start()

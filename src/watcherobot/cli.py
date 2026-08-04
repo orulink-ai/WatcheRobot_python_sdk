@@ -90,6 +90,12 @@ class CliError(RuntimeError):
     pass
 
 
+DESKTOP_APPLICATION_STORE_REQUIRED = (
+    "Application installation and local catalog management belong to the "
+    "Watcher Desktop Application Store"
+)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="watcherobot")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -204,36 +210,14 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 _print_json({"package": str(output)})
                 return 0
+            if args.app_command in {
+                "install",
+                "list",
+                "select",
+                "uninstall",
+            }:
+                raise CliError(DESKTOP_APPLICATION_STORE_REQUIRED)
             state, _reused = ensure_runtime()
-            if args.app_command == "install":
-                result = _request_json(
-                    state.control_url,
-                    "/daemon/applications/install",
-                    method="POST",
-                    payload={"package_path": str(args.package.resolve())},
-                )
-                _print_json(result)
-                return 0
-            if args.app_command == "list":
-                _print_json(
-                    _request_json(
-                        state.control_url,
-                        "/daemon/applications",
-                    )
-                )
-                return 0
-            if args.app_command == "select":
-                result = _request_json(
-                    state.control_url,
-                    "/daemon/applications/select",
-                    method="POST",
-                    payload={
-                        "app_id": args.app_id,
-                        "version": args.version,
-                    },
-                )
-                _print_json(result)
-                return 0
             if args.app_command == "start":
                 _print_json(
                     _request_json(
@@ -251,18 +235,6 @@ def main(argv: list[str] | None = None) -> int:
                         method="POST",
                     )
                 )
-                return 0
-            if args.app_command == "uninstall":
-                result = _request_json(
-                    state.control_url,
-                    "/daemon/applications/uninstall",
-                    method="POST",
-                    payload={
-                        "app_id": args.app_id,
-                        "version": args.version,
-                    },
-                )
-                _print_json(result)
                 return 0
         if args.command == "bluetooth":
             try:
@@ -821,6 +793,8 @@ def ensure_runtime() -> tuple[RuntimeProcessState, bool]:
         "watcherobot.runtime.daemon",
         "--state-root",
         str(state_root),
+        "--managed-app-root",
+        str(Path(sys.executable).resolve().parent),
     ]
     creation_flags = 0
     process_options: dict[str, Any] = {}
@@ -873,35 +847,26 @@ def stop_runtime() -> None:
 
 
 def run_application(application: Path) -> int:
-    state, _reused = ensure_runtime()
     application_path = Path(application).resolve()
     if application_path.suffix.lower() == ".wapp":
-        installed = _request_json(
-            state.control_url,
-            "/daemon/applications/install",
-            method="POST",
-            payload={"package_path": str(application_path)},
-        )["application"]
-        _request_json(
-            state.control_url,
-            "/daemon/applications/select",
-            method="POST",
-            payload={
-                "app_id": installed["id"],
-                "version": installed["version"],
+        raise CliError(DESKTOP_APPLICATION_STORE_REQUIRED)
+    if not application_path.is_dir():
+        raise CliError(
+            f"Application directory does not exist: {application_path}"
+        )
+    state, _reused = ensure_runtime()
+    _request_json(
+        state.control_url,
+        "/daemon/application/select",
+        method="POST",
+        payload={
+            "application_dir": str(application_path),
+            "launcher": {
+                "kind": "python",
+                "executable": str(Path(sys.executable).resolve()),
             },
-        )
-    else:
-        if not application_path.is_dir():
-            raise CliError(
-                f"Application directory does not exist: {application_path}"
-            )
-        _request_json(
-            state.control_url,
-            "/daemon/application/select",
-            method="POST",
-            payload={"application_dir": str(application_path)},
-        )
+        },
+    )
     _request_json(
         state.control_url,
         "/daemon/application/start",

@@ -119,34 +119,36 @@ def test_cli_runs_managed_application_and_leaves_runtime_alive(
         capsys.readouterr()
 
 
-def test_cli_packages_installs_and_runs_wapp_from_catalog(
+def test_cli_packages_wapp_but_does_not_install_it_through_daemon_catalog(
     tmp_path,
     monkeypatch,
     capsys,
 ) -> None:
-    state_root = tmp_path / "runtime"
     application_dir = tmp_path / "application"
     package_path = tmp_path / "cli-test.wapp"
     _write_application(application_dir)
-    monkeypatch.setenv("WATCHER_RUNTIME_STATE_ROOT", str(state_root))
-    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
-    monkeypatch.setenv("WATCHER_RUNTIME_EXTERNAL_PORT", "0")
-    monkeypatch.setenv("WATCHER_RUNTIME_PAIRING_PORT", "0")
 
-    try:
-        assert main(
-            [
-                "app",
-                "package",
-                str(application_dir),
-                str(package_path),
-            ]
-        ) == 0
-        capsys.readouterr()
-        assert main(["app", "run", str(package_path)]) == 0
-        assert main(["app", "list"]) == 0
-        installed = json.loads(capsys.readouterr().out)
-        assert installed["applications"][0]["id"] == "cli_test_app"
-    finally:
-        main(["daemon", "stop"])
-        capsys.readouterr()
+    def fail_if_called():
+        raise AssertionError("legacy catalog command started the Daemon")
+
+    monkeypatch.setattr("watcherobot.cli.ensure_runtime", fail_if_called)
+
+    assert main(
+        [
+            "app",
+            "package",
+            str(application_dir),
+            str(package_path),
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    assert main(["app", "run", str(package_path)]) == 2
+    assert main(["app", "install", str(package_path)]) == 2
+    assert main(["app", "list"]) == 2
+    assert main(["app", "select", "cli_test_app"]) == 2
+    assert main(["app", "uninstall", "cli_test_app"]) == 2
+
+    errors = capsys.readouterr().err.splitlines()
+    assert len(errors) == 5
+    assert all("Watcher Desktop Application Store" in line for line in errors)

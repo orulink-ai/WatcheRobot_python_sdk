@@ -140,6 +140,15 @@ def test_app_check_allows_local_venv_but_never_treats_it_as_source(
         (
             lambda root: _update_manifest(
                 root,
+                dependencies=[
+                    "watcherobot @ https://example.com/alternate.whl"
+                ],
+            ),
+            "app_dependency_invalid",
+        ),
+        (
+            lambda root: _update_manifest(
+                root,
                 requires_watcherobot=">=9,<10",
             ),
             "app_sdk_incompatible",

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 
@@ -237,12 +238,20 @@ def _metadata_from_payload(
     for index, dependency in enumerate(dependencies):
         normalized = dependency.strip()
         try:
-            Requirement(normalized)
+            dependency_requirement = Requirement(normalized)
         except InvalidRequirement as exc:
             raise ApplicationManifestError(
                 f"dependencies[{index}] must be a valid Python requirement",
                 code="app_dependency_invalid",
             ) from exc
+        if (
+            canonicalize_name(dependency_requirement.name) == "watcherobot"
+            and dependency_requirement.url is not None
+        ):
+            raise ApplicationManifestError(
+                "watcherobot dependencies must use the bundled watcherobot wheel",
+                code="app_dependency_invalid",
+            )
         normalized_dependencies.append(normalized)
 
     if watcherobot_version is not None and not _watcherobot_requirement_contains(
