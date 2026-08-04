@@ -119,6 +119,21 @@ OAuth 前置核对已完成：官方文档确认 Public App 支持 Device Code O
 
 S3 已完成。下一步唯一入口：进入 S4，先用 TDD 固定官方名单读取、缓存回退和完整 commit 快照下载的独立端口与错误合同，不接触 Daemon 运行时。
 
+### S4：官方名单与固定快照下载——进行中
+
+- 已明确职责边界：SDK 提供公开名单读取、严格解析和固定快照交付，Desktop 在后续阶段持有上一次成功名单缓存；SDK 不自行持久化 Desktop 缓存，也不决定正式安装目录。
+- 已从唯一 Manifest 实现中抽取不依赖本地源码文件的 `ApplicationManifestMetadata` 与 `parse_application_manifest()`。远端固定 commit 的 `app.json` 现在可复用同一字段白名单、依赖规则、App id、语义版本和 SDK 兼容校验；本地 `ApplicationManifest.load()` 继续额外检查固定 `app.py` 和图标文件。TDD 首次因新类型和解析函数不存在而收集失败，实现后远端元数据、原有 Manifest 和分发检查定向测试 27 项通过。
+- 已建立不携带凭据的 `MarketplaceHubClient` 公开读取端口和 `load_official_marketplace()` 聚合服务。服务固定读取官方 Dataset，在严格校验名单后逐条以完整 commit 读取 `app.json`，返回 Manifest 结构化字段、固定源码 URL 和当前 SDK `compatible` 标志；未来 SDK 版本的 App 仍可展示但不可安装。损坏名单、重复 Space、短 SHA、无效 Manifest、重复 App id 和远端失败均停止本次刷新并返回稳定错误，调用者可继续使用自己持有的旧缓存。TDD 首次因 `marketplace` 模块不存在而收集失败，实现后名单、原有提交规划和 Manifest 定向测试 41 项通过。
+- 已接入 `HuggingFaceMarketplaceHubClient` 无登录公开读取适配器，默认 `HfApi(token=False)`，明确禁止读取 HF CLI 或环境中的本机 Token。官方 Dataset 先观察 `main` 的完整 SHA，再以该 SHA 读取名单；Space 文件读取先确认仓库存在，再要求完整 commit 精确解析且只下载该 revision。仓库、commit 和必需文件不存在分别映射为内部稳定错误，浮动 revision 在联网前拒绝，传输错误不泄漏原始响应。TDD 首次因适配器模块不存在而收集失败，实现后公开适配器与名单服务 18 项通过；真实无凭据读取返回 Dataset commit `91e3d4d8732a04c21dc50c3ee93914606ee8993a` 和当前正式空名单。
+- 已建立 `download_application_snapshot()` 隔离下载与交付事务。调用者必须明确提供现有空目录；SDK 先在同一父目录的临时区域下载，核对返回 commit、文件数/总大小/符号链接、完整 Manifest、固定 `app.py`、SDK 兼容性以及 Space 名称与 App id，再复制到调用者 staging。远端、revision、Manifest 或复制失败均不会把未校验源码写入目标；成功结果不含 `install.json`，SDK 不决定 Desktop 正式目录。TDD 首次因 `download` 模块不存在而收集失败，实现后目标边界、浮动引用、固定交付、commit 不一致、Manifest 错误、身份错配、远端失败和重复固定快照 12 项通过。
+- Hugging Face 公开适配器已实现 `snapshot_download` 固定 revision 下载，只写 SDK 事务创建的现有空隔离目录，并再次确认 Space 存在、commit 精确解析和返回路径一致；下载后删除仅由 Hugging Face `local_dir` 模式生成的 `.cache/huggingface` 传输元数据。Fake API 覆盖固定 revision、非空目标和异常返回路径；真实下载 smoke Space 的已审核 commit `18c3966e898d6ca84b1868663d1b5b591f9f7606` 成功，只交付 `README.md`、`app.json`、`app.py`，Manifest id 为 `com.orulink.marketplace_smoke`，临时验收目录已清理。
+- CLI 已接入 `watcherobot app download --space-id ... --commit ... --target <staging>`，人类输出展示固定来源、完整 commit、目标目录和 Application 身份；`--jsonl` 只在 stdout 输出结构化进度、结果或稳定错误。命令复用唯一下载服务和无凭据公开 Hub 适配器，不启动 Daemon，不读取 Watcher OAuth 凭据，不创建目标目录，也不写 `install.json`。TDD 首次运行在第一项即因解析器没有 `download` 子命令失败；实现后新增 5 项及下载、公开适配器、发布和认证 CLI 定向共 38 项通过，mypy 73 个源码文件通过。
+- 已用真实命令从 `tianguiti/WatcherRobot-com.orulink.marketplace_smoke` 下载已审核固定 commit `18c3966e898d6ca84b1868663d1b5b591f9f7606`：退出码为 0，stdout 的三条进度事件和一条结果事件均为独立 JSON 对象，Hugging Face 下载进度只进入 stderr；staging 仍只包含 `README.md`、`app.json`、`app.py`，结果 commit、固定源码 URL 与 Manifest id 均正确，临时验收目录已清理。
+- 用户已确认 Desktop 获取官方名单的公开命令名为 `watcherobot app marketplace --jsonl`；现有 `app list` 继续只表示经 Daemon 查询本机已安装 App，两者不得混用。CLI 直接复用 `load_official_marketplace()` 与无凭据公开 Hub 适配器，提供人类输出和严格 JSONL，不启动 Daemon、不读取登录凭据、不写缓存或修改本地状态；缓存及刷新失败后的旧结果回退继续由 Desktop 负责。TDD 首次运行在第一项即因解析器没有 `marketplace` 子命令失败；实现后新增 5 项、名单/下载/Daemon 边界定向 33 项和 SDK 全量 455 项通过，mypy 73 个源码文件、`pip check`、迁移守卫 post 模式与 `git diff --check` 均通过。
+- 真实无登录命令验收返回退出码 0，stdout 仅有一条 `fetching_catalog` 进度事件和一条结果事件，stderr 为空；结果固定官方 Dataset commit 为 `91e3d4d8732a04c21dc50c3ee93914606ee8993a`，正式名单仍为空数组。首次验收脚本尝试使用当前 PowerShell/.NET 不可用的 `ProcessStartInfo.ArgumentList`，导致参数未传入并返回 argparse 退出码 2；改用兼容的 `Arguments` 后命令本身验收通过，该失败不属于 SDK 回归。
+
+S4 的公开名单服务、`app marketplace`、固定快照下载服务与 `app download` 路径已经闭合。下一步进入 S5，按既定文档实现 SDK Daemon 的受控 Application 启动合同，不改变内容无关路由边界。
+
 ## 提交纪律
 
 每个小步必须依次完成失败测试、最小实现、定向验证、全量回归、本文档更新和独立 commit。任何新增架构问题先记录并与项目负责人确认，不在实现中静默扩大范围。

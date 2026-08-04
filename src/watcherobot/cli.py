@@ -19,6 +19,11 @@ from urllib.request import Request, urlopen
 from watcherobot.application.catalog import package_application
 from watcherobot.distribution.check import check_application
 from watcherobot.distribution.credentials import SystemCredentialStore
+from watcherobot.distribution.download import (
+    DownloadError,
+    DownloadResult,
+    download_application_snapshot,
+)
 from watcherobot.distribution.events import (
     DistributionEvent,
     ErrorCode,
@@ -31,6 +36,9 @@ from watcherobot.distribution.events import (
     exit_code_for,
 )
 from watcherobot.distribution.hf_publish import HuggingFacePublishHubClient
+from watcherobot.distribution.hf_marketplace import (
+    HuggingFaceMarketplaceHubClient,
+)
 from watcherobot.distribution.hub_http import HuggingFaceHubClient
 from watcherobot.distribution.login import (
     LoginError,
@@ -40,10 +48,16 @@ from watcherobot.distribution.login import (
     login_status,
     logout,
 )
+from watcherobot.distribution.marketplace import (
+    MarketplaceError,
+    OfficialMarketplace,
+    load_official_marketplace,
+)
 from watcherobot.distribution.oauth_http import HuggingFaceOAuthClient
 from watcherobot.distribution.ports import (
     CredentialStore,
     HubClient,
+    MarketplaceHubClient,
     OAuthClient,
     PublishHubClient,
 )
@@ -109,6 +123,13 @@ def build_parser() -> argparse.ArgumentParser:
     publish = app_commands.add_parser("publish")
     publish.add_argument("application_dir", type=Path)
     publish.add_argument("--jsonl", action="store_true")
+    marketplace = app_commands.add_parser("marketplace")
+    marketplace.add_argument("--jsonl", action="store_true")
+    download = app_commands.add_parser("download")
+    download.add_argument("--space-id", required=True)
+    download.add_argument("--commit", required=True)
+    download.add_argument("--target", type=Path, required=True)
+    download.add_argument("--jsonl", action="store_true")
     install = app_commands.add_parser("install")
     install.add_argument("package", type=Path)
     app_commands.add_parser("list")
@@ -171,6 +192,10 @@ def main(argv: list[str] | None = None) -> int:
             return _run_application_logout(args)
         if args.command == "app" and args.app_command == "publish":
             return _run_application_publish(args)
+        if args.command == "app" and args.app_command == "marketplace":
+            return _run_application_marketplace(args)
+        if args.command == "app" and args.app_command == "download":
+            return _run_application_download(args)
         if args.command == "app":
             if args.app_command == "package":
                 output = package_application(
@@ -498,6 +523,176 @@ def _print_publish_error(
             print(f"已上传源码：{source_url}", file=sys.stderr)
         if isinstance(pr_url, str):
             print(f"现有名单 PR：{pr_url}", file=sys.stderr)
+    return exit_code_for(code)
+
+
+@dataclass(frozen=True)
+class _MarketplaceDependencies:
+    hub: MarketplaceHubClient
+
+
+class _HumanMarketplaceEventSink:
+    """Render non-sensitive official marketplace progress."""
+
+    def emit(self, event: DistributionEvent) -> None:
+        if isinstance(event, ProgressEvent):
+            print(event.message)
+
+
+def _build_marketplace_dependencies() -> _MarketplaceDependencies:
+    return _MarketplaceDependencies(hub=HuggingFaceMarketplaceHubClient())
+
+
+def _run_application_marketplace(args: argparse.Namespace) -> int:
+    dependencies = _build_marketplace_dependencies()
+    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    events: EventSink = event_writer or _HumanMarketplaceEventSink()
+    try:
+        result = load_official_marketplace(
+            hub=dependencies.hub,
+            events=events,
+        )
+    except KeyboardInterrupt:
+        return _print_marketplace_error(
+            ErrorCode.OPERATION_CANCELLED,
+            "获取官方 Application 名单已取消",
+            event_writer=event_writer,
+        )
+    except MarketplaceError as exc:
+        return _print_marketplace_error(
+            exc.code,
+            str(exc),
+            details=exc.details,
+            event_writer=event_writer,
+        )
+
+    if event_writer is not None:
+        event_writer.emit(ResultEvent(data=result.to_dict()))
+    else:
+        _print_marketplace_result(result)
+    return ExitCode.SUCCESS
+
+
+def _print_marketplace_result(result: OfficialMarketplace) -> None:
+    print(f"官方 Application 名单：{result.catalog_commit}")
+    print(f"Application 数量：{len(result.applications)}")
+    for application in result.applications:
+        compatibility = "兼容" if application.compatible else "不兼容"
+        print(
+            f"- {application.name} "
+            f"({application.app_id}@{application.version}, {compatibility})"
+        )
+
+
+def _print_marketplace_error(
+    code: ErrorCode,
+    message: str,
+    *,
+    event_writer: JsonLineEventWriter | None,
+    details: dict[str, object] | None = None,
+) -> int:
+    safe_details = dict(details or {})
+    if event_writer is not None:
+        event_writer.emit(
+            ErrorEvent(code=code, message=message, details=safe_details)
+        )
+    else:
+        print(message, file=sys.stderr)
+    return exit_code_for(code)
+
+
+@dataclass(frozen=True)
+class _DownloadDependencies:
+    hub: MarketplaceHubClient
+
+
+class _HumanDownloadEventSink:
+    """Render non-sensitive snapshot download progress."""
+
+    def emit(self, event: DistributionEvent) -> None:
+        if isinstance(event, ProgressEvent):
+            print(event.message)
+
+
+def _build_download_dependencies() -> _DownloadDependencies:
+    return _DownloadDependencies(hub=HuggingFaceMarketplaceHubClient())
+
+
+def _run_application_download(args: argparse.Namespace) -> int:
+    dependencies = _build_download_dependencies()
+    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    events: EventSink = event_writer or _HumanDownloadEventSink()
+    try:
+        result = download_application_snapshot(
+            space_id=args.space_id,
+            commit=args.commit,
+            target=args.target,
+            hub=dependencies.hub,
+            events=events,
+        )
+    except KeyboardInterrupt:
+        return _print_download_error(
+            ErrorCode.OPERATION_CANCELLED,
+            "Application 下载已取消",
+            event_writer=event_writer,
+        )
+    except ApplicationCompatibilityError as exc:
+        return _print_download_error(
+            ErrorCode.APP_SDK_INCOMPATIBLE,
+            str(exc),
+            event_writer=event_writer,
+        )
+    except ApplicationManifestError as exc:
+        return _print_download_error(
+            _manifest_error_code(exc),
+            str(exc),
+            event_writer=event_writer,
+        )
+    except ApplicationSourceError as exc:
+        return _print_download_error(
+            ErrorCode.APP_CONTENT_FORBIDDEN,
+            str(exc),
+            event_writer=event_writer,
+        )
+    except DownloadError as exc:
+        return _print_download_error(
+            exc.code,
+            str(exc),
+            details=exc.details,
+            event_writer=event_writer,
+        )
+
+    if event_writer is not None:
+        event_writer.emit(ResultEvent(data=result.to_dict()))
+    else:
+        _print_download_result(result)
+    return ExitCode.SUCCESS
+
+
+def _print_download_result(result: DownloadResult) -> None:
+    print(f"Application 下载成功：{result.space_id}@{result.commit}")
+    print(f"固定源码：{result.source_url}")
+    print(f"Staging：{result.target}")
+    print(
+        "Application："
+        f"{result.application.app_id}@{result.application.version}"
+    )
+
+
+def _print_download_error(
+    code: ErrorCode,
+    message: str,
+    *,
+    event_writer: JsonLineEventWriter | None,
+    details: dict[str, object] | None = None,
+) -> int:
+    safe_details = dict(details or {})
+    if event_writer is not None:
+        event_writer.emit(
+            ErrorEvent(code=code, message=message, details=safe_details)
+        )
+    else:
+        print(f"Application 下载失败：{message}", file=sys.stderr)
     return exit_code_for(code)
 
 

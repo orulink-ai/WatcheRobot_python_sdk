@@ -7,6 +7,11 @@ from .credentials import (
     CredentialStoreError,
     SystemCredentialStore,
 )
+from .download import (
+    DownloadError,
+    DownloadResult,
+    download_application_snapshot,
+)
 from .events import (
     DistributionEvent,
     ErrorCode,
@@ -18,6 +23,13 @@ from .events import (
     ResultEvent,
     exit_code_for,
 )
+from .hf_marketplace import HuggingFaceMarketplaceHubClient
+from .marketplace import (
+    MarketplaceApplication,
+    MarketplaceError,
+    OfficialMarketplace,
+    load_official_marketplace,
+)
 from .ports import (
     AccessToken,
     CredentialStore,
@@ -25,9 +37,13 @@ from .ports import (
     HubAuthenticationError,
     HubClient,
     HubError,
+    HubFileNotFound,
     HubIdentity,
     HubInvalidResponse,
     HubNetworkError,
+    HubRepositoryNotFound,
+    HubRevisionNotFound,
+    MarketplaceHubClient,
     OAuthClient,
     OAuthAuthorizationDenied,
     OAuthAuthorizationExpired,
@@ -65,6 +81,8 @@ __all__ = [
     "CREDENTIAL_SERVICE",
     "DEFAULT_OAUTH_REQUEST",
     "DeviceAuthorization",
+    "DownloadError",
+    "DownloadResult",
     "ErrorCode",
     "ErrorEvent",
     "EventSink",
@@ -72,10 +90,17 @@ __all__ = [
     "HubClient",
     "HubAuthenticationError",
     "HubError",
+    "HubFileNotFound",
     "HubIdentity",
     "HubInvalidResponse",
     "HubNetworkError",
+    "HubRepositoryNotFound",
+    "HubRevisionNotFound",
+    "HuggingFaceMarketplaceHubClient",
     "JsonLineEventWriter",
+    "MarketplaceApplication",
+    "MarketplaceError",
+    "MarketplaceHubClient",
     "OAuthClient",
     "OAuthAuthorizationDenied",
     "OAuthAuthorizationExpired",
@@ -87,6 +112,7 @@ __all__ = [
     "OAuthSlowDown",
     "OAUTH_CLIENT_ID",
     "OAUTH_SCOPES",
+    "OfficialMarketplace",
     "ProgressEvent",
     "ResultEvent",
     "SystemCredentialStore",
@@ -95,8 +121,10 @@ __all__ = [
     "LoginStatus",
     "check_application",
     "collect_application_source_files",
+    "download_application_snapshot",
     "exit_code_for",
     "login",
     "login_status",
+    "load_official_marketplace",
     "logout",
 ]

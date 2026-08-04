@@ -222,6 +222,33 @@ class PublishHubClient(Protocol):
     ) -> CatalogPullRequest: ...
 
 
+class MarketplaceHubClient(Protocol):
+    """Unauthenticated public reads required by the official marketplace."""
+
+    def read_public_catalog(
+        self,
+        *,
+        repo_id: str,
+        path: str,
+    ) -> CatalogDocument: ...
+
+    def read_space_file(
+        self,
+        *,
+        space_id: str,
+        commit: str,
+        path: str,
+    ) -> bytes: ...
+
+    def download_space_snapshot(
+        self,
+        *,
+        space_id: str,
+        commit: str,
+        target: Path,
+    ) -> RepositoryRevision: ...
+
+
 class HubError(RuntimeError):
     """Base failure raised by an authenticated Hub adapter."""
 
@@ -244,6 +271,18 @@ class HubRepositoryConflict(HubError):
 
 class HubCatalogConflict(HubError):
     """The catalog changed before its pull request could be created."""
+
+
+class HubRepositoryNotFound(HubError):
+    """A required public Hugging Face repository does not exist."""
+
+
+class HubRevisionNotFound(HubError):
+    """A required immutable repository revision does not exist."""
+
+
+class HubFileNotFound(HubError):
+    """A required file does not exist at the requested revision."""
 
 
 class OAuthFlowError(RuntimeError):

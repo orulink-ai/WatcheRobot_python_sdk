@@ -46,6 +46,24 @@ class CatalogEntry:
         return {"space_id": self.space_id, "commit": self.commit}
 
 
+def validate_catalog_reference(space_id: object, commit: object) -> CatalogEntry:
+    """Validate one immutable public Space reference from any caller."""
+
+    if (
+        not isinstance(space_id, str)
+        or _SPACE_ID_PATTERN.fullmatch(space_id) is None
+    ):
+        raise CatalogDocumentError("Catalog entry contains an invalid space_id")
+    if (
+        not isinstance(commit, str)
+        or _FULL_COMMIT_PATTERN.fullmatch(commit) is None
+    ):
+        raise CatalogDocumentError(
+            "Catalog entry commit must be a full lowercase SHA"
+        )
+    return CatalogEntry(space_id=space_id, commit=commit)
+
+
 @dataclass(frozen=True)
 class CatalogSubmissionPlan:
     """One network-free decision for the catalog submission step."""
@@ -71,7 +89,7 @@ def plan_catalog_submission(
 ) -> CatalogSubmissionPlan:
     """Plan an idempotent main-list update without mutating remote state."""
 
-    entries = _parse_entries(document.content)
+    entries = parse_catalog_entries(document.content)
     current = next(
         (entry for entry in entries if entry.space_id == space_id),
         None,
@@ -125,7 +143,9 @@ def plan_catalog_submission(
     )
 
 
-def _parse_entries(content: bytes) -> tuple[CatalogEntry, ...]:
+def parse_catalog_entries(content: bytes) -> tuple[CatalogEntry, ...]:
+    """Decode the strict public V1 catalog without performing network I/O."""
+
     try:
         payload = json.loads(content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -144,26 +164,11 @@ def _parse_entries(content: bytes) -> tuple[CatalogEntry, ...]:
             raise CatalogDocumentError(
                 "Each catalog entry must contain only space_id and commit"
             )
-        space_id = item["space_id"]
-        commit = item["commit"]
-        if (
-            not isinstance(space_id, str)
-            or _SPACE_ID_PATTERN.fullmatch(space_id) is None
-        ):
+        entry = validate_catalog_reference(item["space_id"], item["commit"])
+        if entry.space_id in seen_space_ids:
             raise CatalogDocumentError(
-                "Catalog entry contains an invalid space_id"
+                f"Catalog contains duplicate space_id: {entry.space_id}"
             )
-        if (
-            not isinstance(commit, str)
-            or _FULL_COMMIT_PATTERN.fullmatch(commit) is None
-        ):
-            raise CatalogDocumentError(
-                "Catalog entry commit must be a full lowercase SHA"
-            )
-        if space_id in seen_space_ids:
-            raise CatalogDocumentError(
-                f"Catalog contains duplicate space_id: {space_id}"
-            )
-        seen_space_ids.add(space_id)
-        entries.append(CatalogEntry(space_id=space_id, commit=commit))
+        seen_space_ids.add(entry.space_id)
+        entries.append(entry)
     return tuple(entries)

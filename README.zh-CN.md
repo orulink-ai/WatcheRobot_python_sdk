@@ -62,6 +62,8 @@ watcherobot app check .\examples\hello_robot
 watcherobot app login
 watcherobot app login --status
 watcherobot app publish .\examples\hello_robot
+watcherobot app marketplace --jsonl
+watcherobot app download --space-id <user>/WatcherRobot-<app_id> --commit <40-char-sha> --target .\staging\app
 watcherobot app logout
 watcherobot app install .\dist\hello_robot.wapp
 watcherobot app list
@@ -84,6 +86,18 @@ Hugging Face，验证身份后只把 Token 保存到 Watcher 专用的操作系�
 快照发布到公开的 `<hf_username>/WatcherRobot-<app_id>` Hugging Face Space。
 Space 只作为源码仓库，不生成网页；成功结果包含固定源码 commit，以及官方
 应用名单 PR 或其现有状态。该命令不启动 Daemon，并支持 `--jsonl`。
+
+`watcherobot app marketplace` 会公开读取并严格校验官方 Application 名单，
+以及每个审核固定 commit 上的 `app.json`。结果包含本次观察到的 Dataset commit、
+结构化 Application 信息、SDK 兼容性和固定源码链接。该命令无需登录 Hugging
+Face，不启动 Daemon，也不修改本地状态；Desktop 使用 `--jsonl`，并自行保存
+上一次成功结果作为本地缓存。
+
+`watcherobot app download --space-id ... --commit ... --target ...` 无需登录
+Hugging Face，会把 Space 的一个不可变固定版本下载到调用者预先创建的现有
+空 staging 目录。交付前会核对实际 commit、源码限制、唯一 Manifest、固定
+`app.py`、SDK 兼容性以及 Space 与 App 身份。该命令不启动 Daemon，不决定
+Desktop 正式安装目录，也不写入 `install.json`；Desktop 可使用 `--jsonl`。
 
 大型 Application 可以增加 `.wappignore`，使用 `tests/`、`.venv*/`、
 `*.tmp` 等 glob 规则排除非运行文件；`.wappignore` 本身不会进入安装包。

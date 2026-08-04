@@ -67,6 +67,8 @@ watcherobot app check .\examples\hello_robot
 watcherobot app login
 watcherobot app login --status
 watcherobot app publish .\examples\hello_robot
+watcherobot app marketplace --jsonl
+watcherobot app download --space-id <user>/WatcherRobot-<app_id> --commit <40-char-sha> --target .\staging\app
 watcherobot app logout
 watcherobot app install .\dist\hello_robot.wapp
 watcherobot app list
@@ -97,6 +99,21 @@ snapshot. The Space is a source repository only: publishing does not generate
 a web page. A successful result contains the fixed source commit and the
 official catalog pull request (or its existing status). The command does not
 start the Daemon and supports `--jsonl` for Desktop callers.
+
+`watcherobot app marketplace` publicly loads and validates the official
+Application list and each reviewed `app.json` at its fixed commit. The result
+contains the observed Dataset commit and structured Applications, including
+SDK compatibility and fixed source links. It needs no Hugging Face login,
+does not start the Daemon or mutate local state, and supports `--jsonl` for
+Desktop callers. Desktop owns any last-successful-result cache.
+
+`watcherobot app download --space-id ... --commit ... --target ...` publicly
+downloads one immutable Space revision into a caller-created, existing empty
+staging directory. It verifies the resolved commit, source limits, canonical
+Manifest, fixed `app.py`, SDK compatibility, and the Space/App identity before
+delivery. It needs no Hugging Face login, does not start the Daemon, does not
+choose the Desktop install directory or write `install.json`, and supports
+`--jsonl` for Desktop callers.
 
 For larger Applications, add a `.wappignore` file using glob patterns such as
 `tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not packaged.
