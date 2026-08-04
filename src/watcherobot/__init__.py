@@ -6,7 +6,7 @@ from .errors import (
     JobFailedError,
     WatcheRobotError,
 )
-from .audio import AudioPlayback, PCMAudio
+from .audio import AudioLiveStream, AudioPlayback, PCMAudio
 from .job import Job, JobState
 from .inputs import BackTouchEvent, InputDomain, InputEvent, RollerEvent, ScreenTouchEvent
 from .media import AudioFormat, AudioFrame, AudioRecording, ImageFrame, MicrophoneSession
@@ -39,6 +39,7 @@ from .vision import (
 __all__ = [
     "AudioFormat",
     "AudioFrame",
+    "AudioLiveStream",
     "AudioPlayback",
     "AudioRecording",
     "AuthenticationError",

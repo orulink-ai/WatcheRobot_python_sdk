@@ -190,5 +190,25 @@ the desktop itself continues to control only the Daemon.
 Applications that intentionally implement their own media protocol can use
 the advanced `ApplicationChannels` Device channel and consume raw WSPK frames.
 
+## Live speaker PCM
+
+Firmware advertising `audio.stream.live.v1` accepts an unlimited-duration,
+backpressured PCM stream. Each `write()` blocks when the device's fixed-size
+playback queue has no credit, so the SDK never grows an unbounded host buffer:
+
+```python
+with app.robot.audio.open_stream(
+    sample_rate_hz=24000,
+    channels=1,
+    sample_width_bytes=2,
+) as speaker:
+    speaker.write(pcm_chunk)
+```
+
+Normal context exit drains queued PCM and sends the WSPK `LAST` marker;
+exceptional exit calls `abort()` and immediately stops playback. The existing
+`play_file()` and `play_pcm()` APIs remain bounded file transfers with size and
+SHA-256 validation.
+
 See [examples](examples/README.md), [Runtime contract](docs/contracts/runtime-profile-index.md),
 the [microphone contract](docs/microphone-audio.md), and [troubleshooting](docs/troubleshooting.md).
