@@ -64,6 +64,9 @@ watcherobot daemon stop
 
 watcherobot app package .\examples\hello_robot .\dist\hello_robot.wapp
 watcherobot app check .\examples\hello_robot
+watcherobot app login
+watcherobot app login --status
+watcherobot app logout
 watcherobot app install .\dist\hello_robot.wapp
 watcherobot app list
 watcherobot app select example.hello_robot --version 1.0.0
@@ -77,6 +80,14 @@ watcherobot app uninstall example.hello_robot --version 1.0.0
 path, and the source set that can later be published. It does not start the
 Daemon. Desktop callers use `--jsonl`; stdout then contains only one
 `progress`, `result`, or `error` JSON object per line.
+
+`watcherobot app login` uses the Watcher Desktop public OAuth Device Flow. It
+prints the Hugging Face authorization URL and user code, then saves the token
+only in Watcher's operating-system credential entry after the identity has
+been verified. `--force` starts a new authorization even when the saved token
+is valid. `app login --status` verifies the saved identity, and `app logout`
+deletes only Watcher's credential. These commands do not start the Daemon and
+also support `--jsonl` for Desktop callers.
 
 For larger Applications, add a `.wappignore` file using glob patterns such as
 `tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not packaged.

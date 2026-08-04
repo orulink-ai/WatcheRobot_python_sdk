@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from watcherobot.distribution.ports import (
     AccessToken,
     CredentialStore,
+    DeviceAuthorization,
     HubClient,
     HubIdentity,
     OAuthClient,
@@ -17,7 +18,24 @@ class FakeOAuthClient:
     token: AccessToken
     last_request: OAuthRequest | None = None
 
-    def authorize(self, request: OAuthRequest) -> AccessToken:
+    def request_device_authorization(
+        self,
+        request: OAuthRequest,
+    ) -> DeviceAuthorization:
+        self.last_request = request
+        return DeviceAuthorization(
+            device_code="secret-device-code",
+            user_code="ABCD-EFGH",
+            verification_uri="https://hf.co/oauth/device",
+            expires_in=300,
+            interval=5,
+        )
+
+    def poll_device_token(
+        self,
+        request: OAuthRequest,
+        authorization: DeviceAuthorization,
+    ) -> AccessToken:
         self.last_request = request
         return self.token
 
@@ -58,7 +76,8 @@ def test_distribution_ports_accept_injected_fakes() -> None:
         scopes=("openid", "profile"),
     )
 
-    authorized = oauth.authorize(request)
+    device = oauth.request_device_authorization(request)
+    authorized = oauth.poll_device_token(request, device)
     credentials.save(authorized)
     identity = hub.whoami(credentials.load() or authorized)
 
@@ -71,6 +90,18 @@ def test_access_token_never_appears_in_repr() -> None:
 
     assert "hf_secret-token" not in repr(token)
     assert "hf_secret-token" not in str(token)
+
+
+def test_device_code_never_appears_in_repr() -> None:
+    authorization = DeviceAuthorization(
+        device_code="secret-device-code",
+        user_code="ABCD-EFGH",
+        verification_uri="https://hf.co/oauth/device",
+        expires_in=300,
+        interval=5,
+    )
+
+    assert "secret-device-code" not in repr(authorization)
 
 
 def test_oauth_request_is_immutable_and_keeps_scope_order() -> None:

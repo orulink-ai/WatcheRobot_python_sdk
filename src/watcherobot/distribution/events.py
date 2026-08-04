@@ -18,6 +18,11 @@ class ErrorCode(str, Enum):
     APP_DEPENDENCY_INVALID = "app_dependency_invalid"
     APP_CONTENT_FORBIDDEN = "app_content_forbidden"
     AUTH_REQUIRED = "auth_required"
+    AUTH_DENIED = "auth_denied"
+    AUTH_EXPIRED = "auth_expired"
+    AUTH_INVALID_RESPONSE = "auth_invalid_response"
+    AUTH_NETWORK_ERROR = "auth_network_error"
+    CREDENTIAL_STORE_ERROR = "credential_store_error"
     REMOTE_ERROR = "remote_error"
     OPERATION_CANCELLED = "operation_cancelled"
     INTERNAL_ERROR = "internal_error"
@@ -125,6 +130,21 @@ _VALIDATION_ERROR_CODES = frozenset(
         ErrorCode.APP_CONTENT_FORBIDDEN,
     }
 )
+_AUTH_ERROR_CODES = frozenset(
+    {
+        ErrorCode.AUTH_REQUIRED,
+        ErrorCode.AUTH_DENIED,
+        ErrorCode.AUTH_EXPIRED,
+        ErrorCode.AUTH_INVALID_RESPONSE,
+        ErrorCode.CREDENTIAL_STORE_ERROR,
+    }
+)
+_REMOTE_ERROR_CODES = frozenset(
+    {
+        ErrorCode.AUTH_NETWORK_ERROR,
+        ErrorCode.REMOTE_ERROR,
+    }
+)
 
 
 def exit_code_for(error_code: ErrorCode) -> ExitCode:
@@ -132,9 +152,9 @@ def exit_code_for(error_code: ErrorCode) -> ExitCode:
 
     if error_code in _VALIDATION_ERROR_CODES:
         return ExitCode.VALIDATION_ERROR
-    if error_code is ErrorCode.AUTH_REQUIRED:
+    if error_code in _AUTH_ERROR_CODES:
         return ExitCode.AUTH_ERROR
-    if error_code is ErrorCode.REMOTE_ERROR:
+    if error_code in _REMOTE_ERROR_CODES:
         return ExitCode.REMOTE_ERROR
     if error_code is ErrorCode.OPERATION_CANCELLED:
         return ExitCode.CANCELLED

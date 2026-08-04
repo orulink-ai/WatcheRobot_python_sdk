@@ -69,9 +69,36 @@ S1 已完成小步：
 2. `app check`，复用现有 Application manifest 解析与校验能力。
 3. 为后续 Hugging Face 发布、目录提交和安装定义可替换接口及 fake 实现。
 
-### S2：Hugging Face 登录——待实施
+### S2：Hugging Face 登录——已完成
 
-下一步唯一入口：先核对 Hugging Face 当前官方 OAuth 能力与已创建 Public OAuth App 的实际授权流程，再以 Fake 失败测试固定成功、等待、拒绝、过期、网络失败和取消合同。若官方能力与既定 Device Flow 假设不一致，必须先停止并更新架构决策，不得用个人 Access Token 绕行。
+OAuth 前置核对已完成：官方文档确认 Public App 支持 Device Code OAuth，四个既定 scope 均有效；对当前 Client ID 的脱敏实测返回 300 秒设备码，未授权 Token 轮询返回 `authorization_pending`。详细证据见 `hugging-face-oauth.md`。
+
+- 已新增不依赖网络、系统凭据或 Daemon 的登录编排服务，固定当前 Public Client ID 和四个最小 scope。
+- `DeviceAuthorization.device_code` 与 `AccessToken` 均不会进入 `repr/str`；等待事件只包含验证网址、用户码和有效期。
+- Fake 覆盖成功、`authorization_pending` 等待、服务端 slow down、拒绝、服务端/本地过期、网络失败和用户取消；只有 `whoami` 成功后才保存 Token。
+- TDD 首次因 DeviceAuthorization 与 login 模块不存在而收集失败；实现后分发测试 26 项、全量 313 项通过，mypy 63 个源码文件通过。
+- 新增 `HuggingFaceOAuthClient` 与可替换表单 HTTP Transport，严格调用官方 Device/Token 端点；缺失 `interval` 时使用实测兼容默认值 5 秒。
+- Token 轮询解析 `authorization_pending`、`slow_down`、`access_denied`、`expired_token`，校验 Bearer 类型和授予 scope；HTTP 响应 payload 默认不进入对象 `repr`。
+- OAuth HTTP TDD 首次因模块不存在而收集失败；Fake Transport 定向 11 项、全量 324 项通过，mypy 64 个源码文件通过。
+- 新增 `SystemCredentialStore`，只操作服务 `ai.orulink.watcher-desktop.huggingface` 下的 `oauth-access-token` 条目；读取、保存、删除错误均脱敏，删除不存在条目幂等。
+- 生产依赖锁定 `keyring>=25.7,<26`；Windows 真实后端识别为 `WinVaultKeyring`，使用独立 validation 服务名完成随机值写入/读取/删除闭环且已清理。
+- 凭据 TDD 首次因模块不存在而收集失败；Fake Keyring 4 项、全量 328 项、mypy 65 个源码文件和 `pip check` 均通过。
+- 新增最小 `HuggingFaceHubClient.whoami()`，只访问官方 `api/whoami-v2`；区分无效/过期 Token、Hub 暂时不可用和身份响应非法，所有异常均不包含 Authorization header 或响应正文。
+- Hub HTTP TDD 首次因模块不存在而收集失败；Fake Transport 8 项、全量 336 项通过，mypy 66 个源码文件通过。
+- 登录编排现已优先复用 Watcher 专用凭据中的有效 Token，并通过 `whoami` 重新确认身份；`force` 可显式跳过复用，重新执行 Device Flow。
+- 新增登录状态查询与退出服务：无效或过期 Token 只清理 Watcher 自己的凭据条目；Hub 网络暂时失败时保留本地 Token 并返回稳定错误；退出同样只删除该精确条目。
+- 登录结果通过 `reused` 明确区分缓存复用与新授权；凭据读写异常、身份验证异常和 OAuth 非法响应均映射为稳定、脱敏的认证错误。
+- 本小步定向登录测试 14 项、SDK 全量 343 项通过，mypy 66 个源码文件通过。
+- CLI 已新增 `app login`、`app login --status`、`app logout`，登录可用 `--force` 跳过缓存；三者均提供人类输出和 `--jsonl` 机器输出，且在 Daemon 启动分支之前直接调用分发服务。
+- Device Flow 的 JSONL `progress` 只输出授权网址、用户码和有效期；成功与错误事件均不包含访问 Token、Device Code 或 traceback。远程认证错误按既定退出码返回。
+- CLI TDD 首次因 `login/logout` 子命令不存在而 5 项失败；最小实现后 CLI 与登录定向测试 19 项、SDK 全量 348 项通过，mypy 66 个源码文件、`pip check` 与迁移守卫 post 模式均通过。
+- 首次使用普通账号执行真实 Device Flow 时，浏览器授权成功，但 Token 轮询遇到一次临时网络错误后立即终止；随后同一端点的脱敏连通性复查成功，确认需要增强瞬时网络容错，而不是修改 OAuth scope 或凭据合同。
+- 设备码申请、Token 轮询和身份查询现在分别最多尝试 3 次；只重试网络错误，拒绝、过期、非法响应和身份权限错误仍立即失败。Token 轮询以连续失败计数，收到正常 pending/slow-down 响应后重置计数，并继续服从 Device Code 总有效期。
+- 网络重试 TDD 首次新增 5 项全部失败；实现后认证定向测试 24 项、SDK 全量 353 项通过，mypy 66 个源码文件、`pip check` 与迁移守卫 post 模式均通过。
+- 使用非 `Orulink` 管理员账号 `tianguiti` 完成第二次真实 Device Flow：浏览器显示的权限仅为创建/管理本 OAuth App 创建的仓库以及创建讨论/PR，并明确不能访问该账号的其他仓库；CLI 返回身份且未输出 Token。
+- Windows 系统凭据真实闭环已通过：`login --status` 返回 `logged_in=true`，普通 `login` 返回 `reused=true` 且不发起新授权，`logout` 后连续状态查询返回 `logged_in=false`。验收结束时 Watcher 专用 OAuth 条目已清理。
+
+下一步唯一入口：进入 S3，先用 Fake Hub 固定公开 Space 的创建/更新、源码上传、完整 commit 和官方名单 PR 的服务合同，再接入真实 Hugging Face HTTP 实现。
 
 ## 提交纪律
 

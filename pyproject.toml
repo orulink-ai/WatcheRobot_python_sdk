@@ -14,6 +14,7 @@ dependencies = [
   "bleak>=3,<4",
   "av>=16,<17",
   "fastapi>=0.129,<1",
+  "keyring>=25.7,<26",
   "packaging>=24,<27",
   "psutil>=5.9,<8",
   "starlette>=0.51,<1",

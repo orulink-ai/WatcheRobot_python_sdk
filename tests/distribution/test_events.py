@@ -85,6 +85,12 @@ def test_stable_error_categories_map_to_process_exit_codes() -> None:
         exit_code_for(error_code) for error_code in validation_codes
     } == {ExitCode.VALIDATION_ERROR}
     assert exit_code_for(ErrorCode.AUTH_REQUIRED) is ExitCode.AUTH_ERROR
+    assert exit_code_for(ErrorCode.AUTH_DENIED) is ExitCode.AUTH_ERROR
+    assert exit_code_for(ErrorCode.AUTH_EXPIRED) is ExitCode.AUTH_ERROR
+    assert (
+        exit_code_for(ErrorCode.AUTH_NETWORK_ERROR)
+        is ExitCode.REMOTE_ERROR
+    )
     assert exit_code_for(ErrorCode.REMOTE_ERROR) is ExitCode.REMOTE_ERROR
     assert (
         exit_code_for(ErrorCode.OPERATION_CANCELLED)

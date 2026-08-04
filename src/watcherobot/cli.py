@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
 from typing import Any
@@ -17,15 +18,29 @@ from urllib.request import Request, urlopen
 
 from watcherobot.application.catalog import package_application
 from watcherobot.distribution.check import check_application
+from watcherobot.distribution.credentials import SystemCredentialStore
 from watcherobot.distribution.events import (
+    DistributionEvent,
     ErrorCode,
     ErrorEvent,
+    EventSink,
     ExitCode,
     JsonLineEventWriter,
     ProgressEvent,
     ResultEvent,
     exit_code_for,
 )
+from watcherobot.distribution.hub_http import HuggingFaceHubClient
+from watcherobot.distribution.login import (
+    LoginError,
+    LoginResult,
+    LoginStatus,
+    login,
+    login_status,
+    logout,
+)
+from watcherobot.distribution.oauth_http import HuggingFaceOAuthClient
+from watcherobot.distribution.ports import CredentialStore, HubClient, OAuthClient
 from watcherobot.distribution.source_files import ApplicationSourceError
 from watcherobot.provisioning import (
     BluetoothDevice,
@@ -73,6 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
     check = app_commands.add_parser("check")
     check.add_argument("application_dir", type=Path)
     check.add_argument("--jsonl", action="store_true")
+    login_command = app_commands.add_parser("login")
+    login_mode = login_command.add_mutually_exclusive_group()
+    login_mode.add_argument("--status", action="store_true")
+    login_mode.add_argument("--force", action="store_true")
+    login_command.add_argument("--jsonl", action="store_true")
+    logout_command = app_commands.add_parser("logout")
+    logout_command.add_argument("--jsonl", action="store_true")
     install = app_commands.add_parser("install")
     install.add_argument("package", type=Path)
     app_commands.add_parser("list")
@@ -129,6 +151,10 @@ def main(argv: list[str] | None = None) -> int:
             return run_application(args.application)
         if args.command == "app" and args.app_command == "check":
             return _run_application_check(args)
+        if args.command == "app" and args.app_command == "login":
+            return _run_application_login(args)
+        if args.command == "app" and args.app_command == "logout":
+            return _run_application_logout(args)
         if args.command == "app":
             if args.app_command == "package":
                 output = package_application(
@@ -250,6 +276,116 @@ def _run_application_check(args: argparse.Namespace) -> int:
     else:
         print(f"Application 有效：{result.app_id}@{result.version}")
     return ExitCode.SUCCESS
+
+
+@dataclass(frozen=True)
+class _AuthDependencies:
+    oauth: OAuthClient
+    credentials: CredentialStore
+    hub: HubClient
+
+
+class _HumanAuthEventSink:
+    """Render public Device Flow instructions for terminal users."""
+
+    def emit(self, event: DistributionEvent) -> None:
+        if not isinstance(event, ProgressEvent):
+            return
+        print(event.message)
+        verification_uri = event.data.get("verification_uri")
+        user_code = event.data.get("user_code")
+        expires_in = event.data.get("expires_in")
+        if isinstance(verification_uri, str):
+            print(f"打开：{verification_uri}")
+        if isinstance(user_code, str):
+            print(f"输入验证码：{user_code}")
+        if isinstance(expires_in, int):
+            print(f"验证码有效期：{expires_in} 秒")
+
+
+def _build_auth_dependencies() -> _AuthDependencies:
+    return _AuthDependencies(
+        oauth=HuggingFaceOAuthClient(),
+        credentials=SystemCredentialStore(),
+        hub=HuggingFaceHubClient(),
+    )
+
+
+def _run_application_login(args: argparse.Namespace) -> int:
+    dependencies = _build_auth_dependencies()
+    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    result: LoginStatus | LoginResult
+    try:
+        if args.status:
+            result = login_status(
+                credentials=dependencies.credentials,
+                hub=dependencies.hub,
+            )
+        else:
+            events: EventSink = event_writer or _HumanAuthEventSink()
+            result = login(
+                oauth=dependencies.oauth,
+                credentials=dependencies.credentials,
+                hub=dependencies.hub,
+                events=events,
+                force=bool(args.force),
+            )
+    except KeyboardInterrupt:
+        return _print_auth_error(
+            ErrorCode.OPERATION_CANCELLED,
+            "Hugging Face 登录已取消",
+            event_writer=event_writer,
+        )
+    except LoginError as exc:
+        return _print_auth_error(
+            exc.code,
+            str(exc),
+            event_writer=event_writer,
+        )
+
+    if event_writer is not None:
+        event_writer.emit(ResultEvent(data=result.to_dict()))
+    elif isinstance(result, LoginStatus):
+        if result.logged_in:
+            print(f"已登录 Hugging Face：{result.username}")
+        else:
+            print("尚未登录 Hugging Face")
+    elif result.reused:
+        print(f"已使用现有 Hugging Face 登录：{result.username}")
+    else:
+        print(f"Hugging Face 登录成功：{result.username}")
+    return ExitCode.SUCCESS
+
+
+def _run_application_logout(args: argparse.Namespace) -> int:
+    dependencies = _build_auth_dependencies()
+    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    try:
+        result = logout(credentials=dependencies.credentials)
+    except LoginError as exc:
+        return _print_auth_error(
+            exc.code,
+            str(exc),
+            event_writer=event_writer,
+        )
+    if event_writer is not None:
+        event_writer.emit(ResultEvent(data=result.to_dict()))
+    else:
+        print("已退出 Watcher 的 Hugging Face 登录")
+    return ExitCode.SUCCESS
+
+
+def _print_auth_error(
+    code: ErrorCode,
+    message: str,
+    *,
+    event_writer: JsonLineEventWriter | None,
+) -> int:
+    if event_writer is not None:
+        event_writer.emit(ErrorEvent(code=code, message=message))
+    else:
+        print(message, file=sys.stderr)
+    return exit_code_for(code)
 
 
 def _print_application_check_error(
