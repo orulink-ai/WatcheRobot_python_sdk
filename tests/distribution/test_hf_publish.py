@@ -189,6 +189,36 @@ def test_get_space_head_rejects_floating_or_missing_sha() -> None:
         )
 
 
+def test_read_space_file_pins_the_requested_commit(
+    tmp_path: Path,
+) -> None:
+    downloaded = tmp_path / "app.json"
+    downloaded.write_bytes(b'{"schema_version":1}')
+    api = FakeHfApi(downloaded_path=downloaded)
+    client, factory = _client(api)
+
+    content = client.read_space_file(
+        AccessToken("watcher-oauth-token"),
+        space_id=SPACE_ID,
+        commit=COMMIT,
+        path="app.json",
+    )
+
+    assert content == b'{"schema_version":1}'
+    assert factory.tokens == ["watcher-oauth-token"]
+    assert api.calls == [
+        (
+            "hf_hub_download",
+            {
+                "repo_id": SPACE_ID,
+                "repo_type": "space",
+                "filename": "app.json",
+                "revision": COMMIT,
+            },
+        )
+    ]
+
+
 def test_read_catalog_pins_download_to_observed_parent_commit(
     tmp_path: Path,
 ) -> None:

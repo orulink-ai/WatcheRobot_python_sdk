@@ -109,6 +109,10 @@ def test_cli_runs_managed_application_and_leaves_runtime_alive(
 
     try:
         assert main(["app", "run", str(application_dir)]) == 0
+        run_output = capsys.readouterr().out
+        assert f"Running Application: {application_dir.resolve()}" in run_output
+        assert "Press Ctrl+C to stop." in run_output
+        assert "Application finished: ended" in run_output
         assert main(["daemon", "status"]) == 0
         status = json.loads(capsys.readouterr().out)
         assert status["running"] is True
@@ -141,7 +145,8 @@ def test_cli_packages_wapp_but_does_not_install_it_through_daemon_catalog(
             str(package_path),
         ]
     ) == 0
-    capsys.readouterr()
+    package_output = capsys.readouterr().out
+    assert package_output == f"Application package created: {package_path}\n"
 
     assert main(["app", "run", str(package_path)]) == 2
     assert main(["app", "install", str(package_path)]) == 2

@@ -23,8 +23,6 @@ def _result() -> PublishResult:
         source_url=(
             f"https://huggingface.co/spaces/{SPACE_ID}/tree/{COMMIT}"
         ),
-        pr_url="https://huggingface.co/datasets/catalog/discussions/7",
-        pr_status="pending",
     )
 
 
@@ -42,27 +40,24 @@ def _install_success(monkeypatch):
         assert kwargs["identity_hub"] is dependencies.identity_hub
         assert kwargs["publish_hub"] is dependencies.publish_hub
         kwargs["events"].emit(
-            ProgressEvent(
-                stage="checking",
-                message="正在检查 Application",
-            )
+            ProgressEvent(stage="checking", message="Validating Application")
         )
         kwargs["events"].emit(
             ProgressEvent(
-                stage="updating_catalog",
-                message="正在准备官方应用名单申请",
-                data={"space_id": SPACE_ID, "commit": COMMIT},
+                stage="resolving_commit",
+                message="Resolving the immutable source commit",
+                data={"space_id": SPACE_ID},
             )
         )
         return _result()
 
     monkeypatch.setattr(
-        "watcherobot.cli._build_publish_dependencies",
+        "watcherobot.distribution.cli._build_publish_dependencies",
         lambda: dependencies,
         raising=False,
     )
     monkeypatch.setattr(
-        "watcherobot.cli.publish_application",
+        "watcherobot.distribution.cli.publish_application",
         fake_publish,
         raising=False,
     )
@@ -78,7 +73,7 @@ def _json_lines(output: str) -> list[dict[str, object]]:
     return [json.loads(line) for line in output.splitlines()]
 
 
-def test_cli_publish_jsonl_reuses_service_and_never_starts_daemon(
+def test_cli_publish_jsonl_only_returns_fixed_source(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -95,20 +90,21 @@ def test_cli_publish_jsonl_reuses_service_and_never_starts_daemon(
         {
             "type": "progress",
             "stage": "checking",
-            "message": "正在检查 Application",
+            "message": "Validating Application",
         },
         {
             "type": "progress",
-            "stage": "updating_catalog",
-            "message": "正在准备官方应用名单申请",
-            "data": {"space_id": SPACE_ID, "commit": COMMIT},
+            "stage": "resolving_commit",
+            "message": "Resolving the immutable source commit",
+            "data": {"space_id": SPACE_ID},
         },
         {"type": "result", "ok": True, "data": _result().to_dict()},
     ]
+    assert "catalog" not in captured.out.lower()
     assert "token" not in captured.out.lower()
 
 
-def test_cli_publish_human_output_shows_fixed_source_and_pr(
+def test_cli_publish_human_output_has_no_catalog_status(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -119,69 +115,49 @@ def test_cli_publish_human_output_shows_fixed_source_and_pr(
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert captured.err == ""
-    assert "正在检查 Application" in captured.out
+    assert captured.err == (
+        "Validating Application\n"
+        "Resolving the immutable source commit\n"
+    )
+    assert "Application source published" in captured.out
     assert SPACE_ID in captured.out
     assert f"/tree/{COMMIT}" in captured.out
-    assert "discussions/7" in captured.out
-    assert "pending" in captured.out
+    assert "Catalog" not in captured.out
+    assert "discussions/" not in captured.out
 
 
-def test_cli_publish_jsonl_emits_stable_remote_error_with_partial_result(
-    tmp_path: Path,
-    monkeypatch,
-    capsys,
-) -> None:
-    dependencies = SimpleNamespace(
-        credentials=object(),
-        identity_hub=object(),
-        publish_hub=object(),
-    )
+def test_cli_publish_maps_remote_error(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.setattr(
-        "watcherobot.cli._build_publish_dependencies",
-        lambda: dependencies,
+        "watcherobot.distribution.cli._build_publish_dependencies",
+        lambda: SimpleNamespace(
+            credentials=object(),
+            identity_hub=object(),
+            publish_hub=object(),
+        ),
         raising=False,
     )
 
     def fail_publish(*args, **kwargs):
         raise PublishError(
-            ErrorCode.CATALOG_PR_CONFLICT,
-            "该 Application 已有其他 commit 的待审核名单 PR",
-            details={
-                "space_id": SPACE_ID,
-                "commit": COMMIT,
-                "source_url": (
-                    f"https://huggingface.co/spaces/{SPACE_ID}/tree/{COMMIT}"
-                ),
-                "pr_url": "https://huggingface.co/datasets/catalog/discussions/6",
-            },
+            ErrorCode.REMOTE_ERROR,
+            "Unable to upload Application source",
         )
 
     monkeypatch.setattr(
-        "watcherobot.cli.publish_application",
+        "watcherobot.distribution.cli.publish_application",
         fail_publish,
         raising=False,
     )
 
     exit_code = main(["app", "publish", str(tmp_path), "--jsonl"])
 
-    captured = capsys.readouterr()
     assert exit_code == 4
-    assert captured.err == ""
-    assert _json_lines(captured.out) == [
+    assert _json_lines(capsys.readouterr().out) == [
         {
             "type": "error",
             "ok": False,
-            "code": "catalog_pr_conflict",
-            "message": "该 Application 已有其他 commit 的待审核名单 PR",
-            "details": {
-                "space_id": SPACE_ID,
-                "commit": COMMIT,
-                "source_url": (
-                    f"https://huggingface.co/spaces/{SPACE_ID}/tree/{COMMIT}"
-                ),
-                "pr_url": "https://huggingface.co/datasets/catalog/discussions/6",
-            },
+            "code": "remote_error",
+            "message": "Unable to upload Application source",
         }
     ]
 
@@ -192,7 +168,7 @@ def test_cli_publish_maps_local_source_error_to_validation_exit(
     capsys,
 ) -> None:
     monkeypatch.setattr(
-        "watcherobot.cli._build_publish_dependencies",
+        "watcherobot.distribution.cli._build_publish_dependencies",
         lambda: SimpleNamespace(
             credentials=object(),
             identity_hub=object(),
@@ -205,7 +181,7 @@ def test_cli_publish_maps_local_source_error_to_validation_exit(
         raise ApplicationSourceError("forbidden local content")
 
     monkeypatch.setattr(
-        "watcherobot.cli.publish_application",
+        "watcherobot.distribution.cli.publish_application",
         fail_publish,
         raising=False,
     )
@@ -224,7 +200,7 @@ def test_cli_publish_keyboard_interrupt_is_jsonl_cancellation(
     capsys,
 ) -> None:
     monkeypatch.setattr(
-        "watcherobot.cli._build_publish_dependencies",
+        "watcherobot.distribution.cli._build_publish_dependencies",
         lambda: SimpleNamespace(
             credentials=object(),
             identity_hub=object(),
@@ -237,7 +213,7 @@ def test_cli_publish_keyboard_interrupt_is_jsonl_cancellation(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(
-        "watcherobot.cli.publish_application",
+        "watcherobot.distribution.cli.publish_application",
         cancel_publish,
         raising=False,
     )
@@ -252,13 +228,13 @@ def test_cli_publish_keyboard_interrupt_is_jsonl_cancellation(
             "type": "error",
             "ok": False,
             "code": "operation_cancelled",
-            "message": "Application 发布已取消",
+            "message": "Application source publishing cancelled",
         }
     ]
 
 
 def test_default_publish_dependencies_use_real_hub_adapter() -> None:
-    from watcherobot.cli import _build_publish_dependencies
+    from watcherobot.distribution.cli import _build_publish_dependencies
 
     dependencies = _build_publish_dependencies()
 

@@ -11,10 +11,14 @@ from watcherobot.runtime.daemon.application.manifest import (
     parse_application_manifest,
 )
 
-from .catalog_submission import CatalogDocumentError, parse_catalog_entries
+from .catalog_submission import (
+    CATALOG_PATH,
+    CATALOG_REPO_ID,
+    CatalogDocumentError,
+    parse_catalog_entries,
+)
 from .events import ErrorCode, EventSink, ProgressEvent
 from .ports import HubError, MarketplaceHubClient
-from .publish import CATALOG_PATH, CATALOG_REPO_ID
 
 
 class MarketplaceError(RuntimeError):
@@ -126,7 +130,7 @@ def load_official_marketplace(
     sink.emit(
         ProgressEvent(
             stage="fetching_catalog",
-            message="正在获取官方 Application 名单",
+            message="Loading official Application marketplace",
         )
     )
     try:
@@ -137,7 +141,7 @@ def load_official_marketplace(
     except HubError as exc:
         raise MarketplaceError(
             ErrorCode.REMOTE_ERROR,
-            "获取最新的广场内容失败",
+            "Unable to load the latest Application marketplace",
         ) from exc
 
     try:
@@ -145,7 +149,7 @@ def load_official_marketplace(
     except CatalogDocumentError as exc:
         raise MarketplaceError(
             ErrorCode.CATALOG_INVALID,
-            "官方 Application 名单结构无效",
+            "The official Application marketplace is invalid",
         ) from exc
 
     installed_version = watcherobot_version or __version__
@@ -159,7 +163,7 @@ def load_official_marketplace(
         sink.emit(
             ProgressEvent(
                 stage="reading_manifest",
-                message="正在读取固定版本 Application 信息",
+                message="Reading immutable Application metadata",
                 data=source_details,
             )
         )
@@ -172,7 +176,7 @@ def load_official_marketplace(
         except HubError as exc:
             raise MarketplaceError(
                 ErrorCode.REMOTE_ERROR,
-                "获取最新的广场内容失败",
+                "Unable to load the latest Application marketplace",
                 details=source_details,
             ) from exc
         try:
@@ -180,20 +184,20 @@ def load_official_marketplace(
         except ApplicationManifestError as exc:
             raise MarketplaceError(
                 ErrorCode.CATALOG_INVALID,
-                "官方名单中的 Application Manifest 无效",
+                "An Application manifest in the official marketplace is invalid",
                 details=source_details,
             ) from exc
         expected_space_id = f"WatcherRobot-{metadata.app_id}"
         if entry.space_id.split("/", 1)[1] != expected_space_id:
             raise MarketplaceError(
                 ErrorCode.CATALOG_INVALID,
-                "官方名单中的 Space 与 Application id 不匹配",
+                "A marketplace Space does not match its Application ID",
                 details={**source_details, "id": metadata.app_id},
             )
         if metadata.app_id in seen_app_ids:
             raise MarketplaceError(
                 ErrorCode.CATALOG_INVALID,
-                "官方名单包含重复的 Application id",
+                "The official marketplace contains a duplicate Application ID",
                 details={**source_details, "id": metadata.app_id},
             )
         seen_app_ids.add(metadata.app_id)

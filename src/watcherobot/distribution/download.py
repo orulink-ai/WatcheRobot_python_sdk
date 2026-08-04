@@ -78,7 +78,7 @@ def download_application_snapshot(
     except CatalogDocumentError as exc:
         raise DownloadError(
             ErrorCode.CATALOG_INVALID,
-            "Application 下载来源必须使用合法 Space 和完整 commit",
+            "Application source must use a valid Space and complete commit",
         ) from exc
 
     sink: EventSink = events or _NullEvents()
@@ -89,7 +89,7 @@ def download_application_snapshot(
     sink.emit(
         ProgressEvent(
             stage="downloading_snapshot",
-            message="正在下载固定版本 Application 源码",
+            message="Downloading immutable Application source",
             data=details,
         )
     )
@@ -108,20 +108,20 @@ def download_application_snapshot(
         except HubError as exc:
             raise DownloadError(
                 ErrorCode.REMOTE_ERROR,
-                "下载固定版本 Application 源码失败",
+                "Unable to download immutable Application source",
                 details=details,
             ) from exc
         if revision.commit != reference.commit:
             raise DownloadError(
                 ErrorCode.CATALOG_INVALID,
-                "下载结果与请求的固定 commit 不一致",
+                "Downloaded source does not match the requested commit",
                 details=details,
             )
 
         sink.emit(
             ProgressEvent(
                 stage="validating_snapshot",
-                message="正在校验固定版本 Application",
+                message="Validating immutable Application source",
                 data=details,
             )
         )
@@ -134,14 +134,14 @@ def download_application_snapshot(
         if reference.space_id.split("/", 1)[1] != expected_space_name:
             raise DownloadError(
                 ErrorCode.CATALOG_INVALID,
-                "下载的 Application id 与 Space 不匹配",
+                "Downloaded Application ID does not match the Space",
                 details={**details, "id": application.app_id},
             )
 
         sink.emit(
             ProgressEvent(
                 stage="delivering_snapshot",
-                message="正在交付 Application 到调用者 staging",
+                message="Delivering Application to caller staging",
                 data=details,
             )
         )
@@ -156,7 +156,7 @@ def download_application_snapshot(
             _clear_directory(destination)
             raise DownloadError(
                 ErrorCode.INTERNAL_ERROR,
-                "无法写入调用者提供的 Application staging",
+                "Unable to write to the caller-provided Application staging",
                 details=details,
             ) from exc
 
@@ -174,18 +174,18 @@ def _require_empty_target(target: Path) -> Path:
     if requested.is_symlink() or not requested.is_dir():
         raise DownloadError(
             ErrorCode.APP_CONTENT_FORBIDDEN,
-            "Application 下载目标必须是调用者提供的现有空目录",
+            "Application target must be an existing empty caller-owned directory",
         )
     try:
         if any(requested.iterdir()):
             raise DownloadError(
                 ErrorCode.APP_CONTENT_FORBIDDEN,
-                "Application 下载目标必须为空目录",
+                "Application target directory must be empty",
             )
     except OSError as exc:
         raise DownloadError(
             ErrorCode.APP_CONTENT_FORBIDDEN,
-            "无法读取 Application 下载目标目录",
+            "Unable to read the Application target directory",
         ) from exc
     return requested.resolve()
 

@@ -11,12 +11,15 @@ Run an example without the desktop:
 watcherobot app run .\examples\hello_robot
 ```
 
-Package and run it through the Catalog:
+Optionally create a `.wapp` archive for package inspection:
 
 ```powershell
 watcherobot app package .\examples\hello_robot .\dist\hello_robot.wapp
-watcherobot app run .\dist\hello_robot.wapp
 ```
+
+The current SDK does not run or install this archive. `app run` accepts a
+source directory; Watcher Desktop installs reviewed Hugging Face fixed commits
+through its Application Store.
 
 Pairing and device ownership remain in the long-lived Runtime. Stopping an
 Application does not stop the Runtime or rebuild the device connection.

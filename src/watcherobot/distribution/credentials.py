@@ -48,7 +48,7 @@ class SystemCredentialStore:
             )
         except Exception as exc:
             raise CredentialStoreError(
-                "无法读取 Watcher Hugging Face 系统凭据"
+                "Unable to read the Watcher Hugging Face credential"
             ) from exc
         if value is None:
             return None
@@ -56,7 +56,7 @@ class SystemCredentialStore:
             return AccessToken(value)
         except ValueError as exc:
             raise CredentialStoreError(
-                "Watcher Hugging Face 系统凭据无效"
+                "The Watcher Hugging Face credential is invalid"
             ) from exc
 
     def save(self, token: AccessToken) -> None:
@@ -68,7 +68,7 @@ class SystemCredentialStore:
             )
         except Exception as exc:
             raise CredentialStoreError(
-                "无法保存 Watcher Hugging Face 系统凭据"
+                "Unable to save the Watcher Hugging Face credential"
             ) from exc
 
     def delete(self) -> None:
@@ -81,5 +81,5 @@ class SystemCredentialStore:
             )
         except Exception as exc:
             raise CredentialStoreError(
-                "无法删除 Watcher Hugging Face 系统凭据"
+                "Unable to delete the Watcher Hugging Face credential"
             ) from exc

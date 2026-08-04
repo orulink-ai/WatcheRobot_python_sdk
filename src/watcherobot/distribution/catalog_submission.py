@@ -14,6 +14,8 @@ _SPACE_ID_PATTERN = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$"
 )
 _PULL_REQUEST_TITLE_PREFIX = "WatcherRobot catalog: "
+CATALOG_REPO_ID = "Orulink/watcherobot-app-store"
+CATALOG_PATH = "app-list.json"
 
 
 class CatalogDocumentError(RuntimeError):

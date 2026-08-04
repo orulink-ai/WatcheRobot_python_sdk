@@ -138,6 +138,32 @@ class HuggingFacePublishHubClient:
             url=f"https://huggingface.co/spaces/{space_id}/tree/{commit}",
         )
 
+    def read_space_file(
+        self,
+        token: AccessToken,
+        *,
+        space_id: str,
+        commit: str,
+        path: str,
+    ) -> bytes:
+        api = self._api_factory(token.value)
+        try:
+            downloaded = api.hf_hub_download(
+                repo_id=space_id,
+                repo_type="space",
+                filename=path,
+                revision=commit,
+            )
+            if not isinstance(downloaded, str):
+                raise HubInvalidResponse(
+                    "Hugging Face source download returned an invalid path"
+                )
+            return Path(downloaded).read_bytes()
+        except HubInvalidResponse:
+            raise
+        except Exception as exc:
+            _raise_hub_error(exc)
+
     def read_catalog(
         self,
         token: AccessToken,

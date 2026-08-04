@@ -99,7 +99,17 @@ def test_cli_app_check_human_output_uses_same_check_result(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.err == ""
-    assert captured.out == "Application 有效：com.orulink.demo@1.2.3\n"
+    assert captured.out == (
+        "Application validated\n"
+        "\n"
+        "Name:             Demo\n"
+        "ID:               com.orulink.demo\n"
+        "Version:          1.2.3\n"
+        "SDK requirement:  >=0.1.0a1,<0.2\n"
+        "Dependencies:     httpx>=0.28,<1\n"
+        "Author:           Orulink\n"
+        "Description:      A demo Application\n"
+    )
 
 
 def test_app_check_allows_local_venv_but_never_treats_it_as_source(

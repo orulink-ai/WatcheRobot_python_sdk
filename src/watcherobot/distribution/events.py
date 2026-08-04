@@ -116,7 +116,7 @@ class JsonLineEventWriter:
     def emit(self, event: DistributionEvent) -> None:
         encoded = json.dumps(
             event.to_dict(),
-            ensure_ascii=False,
+            ensure_ascii=True,
             separators=(",", ":"),
         )
         self._output.write(encoded + "\n")

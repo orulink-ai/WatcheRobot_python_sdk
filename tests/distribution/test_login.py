@@ -155,7 +155,7 @@ def test_login_waits_for_authorization_verifies_identity_and_saves_token() -> No
     assert events.events == [
         ProgressEvent(
             stage="authorization_required",
-            message="请在浏览器中授权 Hugging Face 登录",
+            message="Authorize Hugging Face in your browser",
             data={
                 "verification_uri": "https://hf.co/oauth/device",
                 "user_code": "ABCD-EFGH",

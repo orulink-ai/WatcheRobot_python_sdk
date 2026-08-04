@@ -40,6 +40,7 @@ Issues = "https://github.com/orulink-ai/WatcheRobot_python_sdk/issues"
 
 [project.scripts]
 watcherobot = "watcherobot.cli:main"
+watcher-distribution = "watcherobot.distribution.cli:main"
 
 [project.optional-dependencies]
 test = [

@@ -9,7 +9,6 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
 from typing import Any
@@ -17,56 +16,16 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from watcherobot.application.catalog import package_application
-from watcherobot.distribution.check import check_application
-from watcherobot.distribution.credentials import SystemCredentialStore
-from watcherobot.distribution.download import (
-    DownloadError,
-    DownloadResult,
-    download_application_snapshot,
+from watcherobot.application.project import (
+    ApplicationProjectInitError,
+    ApplicationProjectInitResult,
+    init_application_project,
 )
-from watcherobot.distribution.events import (
-    DistributionEvent,
-    ErrorCode,
-    ErrorEvent,
-    EventSink,
-    ExitCode,
-    JsonLineEventWriter,
-    ProgressEvent,
-    ResultEvent,
-    exit_code_for,
+from watcherobot.distribution.cli import (
+    add_distribution_commands,
+    is_distribution_command,
+    run_command as run_distribution_command,
 )
-from watcherobot.distribution.hf_publish import HuggingFacePublishHubClient
-from watcherobot.distribution.hf_marketplace import (
-    HuggingFaceMarketplaceHubClient,
-)
-from watcherobot.distribution.hub_http import HuggingFaceHubClient
-from watcherobot.distribution.login import (
-    LoginError,
-    LoginResult,
-    LoginStatus,
-    login,
-    login_status,
-    logout,
-)
-from watcherobot.distribution.marketplace import (
-    MarketplaceError,
-    OfficialMarketplace,
-    load_official_marketplace,
-)
-from watcherobot.distribution.oauth_http import HuggingFaceOAuthClient
-from watcherobot.distribution.ports import (
-    CredentialStore,
-    HubClient,
-    MarketplaceHubClient,
-    OAuthClient,
-    PublishHubClient,
-)
-from watcherobot.distribution.publish import (
-    PublishError,
-    PublishResult,
-    publish_application,
-)
-from watcherobot.distribution.source_files import ApplicationSourceError
 from watcherobot.provisioning import (
     BluetoothDevice,
     BluetoothProvisioner,
@@ -80,10 +39,6 @@ from watcherobot.runtime.daemon.instance import (
     RuntimeStateStore,
     default_runtime_state_root,
 )
-from watcherobot.runtime.daemon.application.manifest import (
-    ApplicationCompatibilityError,
-    ApplicationManifestError,
-)
 
 
 class CliError(RuntimeError):
@@ -94,13 +49,22 @@ DESKTOP_APPLICATION_STORE_REQUIRED = (
     "Application installation and local catalog management belong to the "
     "Watcher Desktop Application Store"
 )
+_DESKTOP_ONLY_APP_COMMANDS = frozenset(
+    {"install", "list", "select", "uninstall"}
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="watcherobot")
+    parser = argparse.ArgumentParser(
+        prog="watcherobot",
+        description="WatcheRobot SDK command-line tools.",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    daemon = commands.add_parser("daemon")
+    daemon = commands.add_parser(
+        "daemon",
+        help="Start, inspect, or stop the SDK-owned Daemon",
+    )
     daemon_commands = daemon.add_subparsers(
         dest="daemon_command",
         required=True,
@@ -109,46 +73,80 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_commands.add_parser("status")
     daemon_commands.add_parser("stop")
 
-    app = commands.add_parser("app")
-    app_commands = app.add_subparsers(dest="app_command", required=True)
-    run = app_commands.add_parser("run")
-    run.add_argument("application", type=Path)
-    package = app_commands.add_parser("package")
-    package.add_argument("application_dir", type=Path)
-    package.add_argument("output", type=Path)
-    check = app_commands.add_parser("check")
-    check.add_argument("application_dir", type=Path)
-    check.add_argument("--jsonl", action="store_true")
-    login_command = app_commands.add_parser("login")
-    login_mode = login_command.add_mutually_exclusive_group()
-    login_mode.add_argument("--status", action="store_true")
-    login_mode.add_argument("--force", action="store_true")
-    login_command.add_argument("--jsonl", action="store_true")
-    logout_command = app_commands.add_parser("logout")
-    logout_command.add_argument("--jsonl", action="store_true")
-    publish = app_commands.add_parser("publish")
-    publish.add_argument("application_dir", type=Path)
-    publish.add_argument("--jsonl", action="store_true")
-    marketplace = app_commands.add_parser("marketplace")
-    marketplace.add_argument("--jsonl", action="store_true")
-    download = app_commands.add_parser("download")
-    download.add_argument("--space-id", required=True)
-    download.add_argument("--commit", required=True)
-    download.add_argument("--target", type=Path, required=True)
-    download.add_argument("--jsonl", action="store_true")
-    install = app_commands.add_parser("install")
-    install.add_argument("package", type=Path)
-    app_commands.add_parser("list")
-    select = app_commands.add_parser("select")
-    select.add_argument("app_id")
-    select.add_argument("--version")
-    app_commands.add_parser("start")
-    app_commands.add_parser("stop")
-    uninstall = app_commands.add_parser("uninstall")
-    uninstall.add_argument("app_id")
-    uninstall.add_argument("--version")
+    app = commands.add_parser(
+        "app",
+        help="Develop, run, publish, and inspect Applications",
+        description=(
+            "Application developer workflow. Distribution commands do not "
+            "start the Daemon; run/start/stop are Daemon-managed."
+        ),
+        epilog=(
+            "Typical workflow:\n"
+            "  watcherobot app init .\\my_app\n"
+            "  watcherobot app check .\\my_app\n"
+            "  watcherobot app run .\\my_app\n"
+            "  watcherobot app login\n"
+            "  watcherobot app publish .\\my_app\n"
+            "  watcherobot app submit .\\my_app\n"
+            "  watcherobot app marketplace\n\n"
+            "For manual use, omit --jsonl. Desktop automation uses --jsonl.\n"
+            "Installation, selection, and removal belong to Watcher Desktop."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    app_commands = app.add_subparsers(
+        dest="app_command",
+        required=True,
+        title="Application commands",
+        metavar="COMMAND",
+    )
+    init = app_commands.add_parser(
+        "init",
+        help="Create a publish-ready Application project",
+        description=(
+            "Create a publish-ready Application project. In an interactive "
+            "terminal, the command prompts for any metadata option that was "
+            "not provided."
+        ),
+    )
+    init.add_argument("directory", type=Path, help="New project directory")
+    init.add_argument("--id", dest="app_id", help="Unique Application ID")
+    init.add_argument("--name", help="Application display name")
+    init.add_argument("--author", help="Developer or organization name")
+    init.add_argument("--description", help="Short marketplace description")
+    run = app_commands.add_parser(
+        "run",
+        help="Run a source directory through the SDK Daemon",
+    )
+    run.add_argument(
+        "application",
+        type=Path,
+        help="Application source directory; .wapp archives belong to Desktop",
+    )
+    package = app_commands.add_parser(
+        "package",
+        help="Create a local .wapp archive for inspection",
+    )
+    package.add_argument(
+        "application_dir",
+        type=Path,
+        help="Application source directory",
+    )
+    package.add_argument("output", type=Path, help="Output .wapp path")
+    add_distribution_commands(app_commands)
+    app_commands.add_parser(
+        "start",
+        help="Start the Application currently selected by the Daemon",
+    )
+    app_commands.add_parser(
+        "stop",
+        help="Stop the currently running Application",
+    )
 
-    bluetooth = commands.add_parser("bluetooth")
+    bluetooth = commands.add_parser(
+        "bluetooth",
+        help="Provision robot Wi-Fi over Bluetooth",
+    )
     bluetooth_commands = bluetooth.add_subparsers(
         dest="bluetooth_command",
         required=True,
@@ -166,7 +164,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if _is_desktop_only_app_command(arguments):
+        print(
+            json.dumps(
+                {"error": DESKTOP_APPLICATION_STORE_REQUIRED},
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    args = build_parser().parse_args(arguments)
     try:
         if args.command == "daemon":
             if args.daemon_command == "start":
@@ -190,50 +198,39 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
         if args.command == "app" and args.app_command == "run":
             return run_application(args.application)
-        if args.command == "app" and args.app_command == "check":
-            return _run_application_check(args)
-        if args.command == "app" and args.app_command == "login":
-            return _run_application_login(args)
-        if args.command == "app" and args.app_command == "logout":
-            return _run_application_logout(args)
-        if args.command == "app" and args.app_command == "publish":
-            return _run_application_publish(args)
-        if args.command == "app" and args.app_command == "marketplace":
-            return _run_application_marketplace(args)
-        if args.command == "app" and args.app_command == "download":
-            return _run_application_download(args)
+        if args.command == "app" and args.app_command == "init":
+            return _run_application_init(args)
+        if is_distribution_command(args):
+            return run_distribution_command(args)
         if args.command == "app":
             if args.app_command == "package":
                 output = package_application(
                     args.application_dir,
                     args.output,
                 )
-                _print_json({"package": str(output)})
+                print(f"Application package created: {output}")
                 return 0
-            if args.app_command in {
-                "install",
-                "list",
-                "select",
-                "uninstall",
-            }:
-                raise CliError(DESKTOP_APPLICATION_STORE_REQUIRED)
             state, _reused = ensure_runtime()
             if args.app_command == "start":
-                _print_json(
-                    _request_json(
-                        state.control_url,
-                        "/daemon/application/start",
-                        method="POST",
-                    )
+                result = _request_json(
+                    state.control_url,
+                    "/daemon/application/start",
+                    method="POST",
+                )
+                _print_application_runtime_result(
+                    "Application started",
+                    result,
                 )
                 return 0
             if args.app_command == "stop":
-                _print_json(
-                    _request_json(
-                        state.control_url,
-                        "/daemon/application/stop",
-                        method="POST",
-                    )
+                result = _request_json(
+                    state.control_url,
+                    "/daemon/application/stop",
+                    method="POST",
+                )
+                _print_application_runtime_result(
+                    "Application stopped",
+                    result,
                 )
                 return 0
         if args.command == "bluetooth":
@@ -245,7 +242,11 @@ def main(argv: list[str] | None = None) -> int:
                 return _print_bluetooth_cancelled()
             except ValueError as exc:
                 raise CliError(str(exc)) from exc
-    except (CliError, BluetoothProvisioningError) as exc:
+    except (
+        ApplicationProjectInitError,
+        BluetoothProvisioningError,
+        CliError,
+    ) as exc:
         print(
             json.dumps({"error": str(exc)}, ensure_ascii=False),
             file=sys.stderr,
@@ -254,451 +255,77 @@ def main(argv: list[str] | None = None) -> int:
     raise CliError("unsupported command")
 
 
-def _run_application_check(args: argparse.Namespace) -> int:
-    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
-    if event_writer is not None:
-        event_writer.emit(
-            ProgressEvent(
-                stage="checking",
-                message="正在检查 Application",
-            )
-        )
-    try:
-        result = check_application(args.application_dir)
-    except ApplicationCompatibilityError as exc:
-        return _print_application_check_error(
-            ErrorCode.APP_SDK_INCOMPATIBLE,
-            str(exc),
-            event_writer=event_writer,
-        )
-    except ApplicationManifestError as exc:
-        return _print_application_check_error(
-            _manifest_error_code(exc),
-            str(exc),
-            event_writer=event_writer,
-        )
-    except ApplicationSourceError as exc:
-        return _print_application_check_error(
-            ErrorCode.APP_CONTENT_FORBIDDEN,
-            str(exc),
-            event_writer=event_writer,
-        )
-
-    if event_writer is not None:
-        event_writer.emit(ResultEvent(data=result.to_dict()))
-    else:
-        print(f"Application 有效：{result.app_id}@{result.version}")
-    return ExitCode.SUCCESS
-
-
-@dataclass(frozen=True)
-class _AuthDependencies:
-    oauth: OAuthClient
-    credentials: CredentialStore
-    hub: HubClient
-
-
-class _HumanAuthEventSink:
-    """Render public Device Flow instructions for terminal users."""
-
-    def emit(self, event: DistributionEvent) -> None:
-        if not isinstance(event, ProgressEvent):
-            return
-        print(event.message)
-        verification_uri = event.data.get("verification_uri")
-        user_code = event.data.get("user_code")
-        expires_in = event.data.get("expires_in")
-        if isinstance(verification_uri, str):
-            print(f"打开：{verification_uri}")
-        if isinstance(user_code, str):
-            print(f"输入验证码：{user_code}")
-        if isinstance(expires_in, int):
-            print(f"验证码有效期：{expires_in} 秒")
-
-
-def _build_auth_dependencies() -> _AuthDependencies:
-    return _AuthDependencies(
-        oauth=HuggingFaceOAuthClient(),
-        credentials=SystemCredentialStore(),
-        hub=HuggingFaceHubClient(),
+def _run_application_init(args: argparse.Namespace) -> int:
+    values = _application_init_metadata(args)
+    result = init_application_project(
+        args.directory,
+        app_id=values["app_id"],
+        name=values["name"],
+        author=values["author"],
+        description=values["description"],
     )
+    _print_application_init_result(result)
+    return 0
 
 
-def _run_application_login(args: argparse.Namespace) -> int:
-    dependencies = _build_auth_dependencies()
-    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
-    result: LoginStatus | LoginResult
-    try:
-        if args.status:
-            result = login_status(
-                credentials=dependencies.credentials,
-                hub=dependencies.hub,
-            )
-        else:
-            events: EventSink = event_writer or _HumanAuthEventSink()
-            result = login(
-                oauth=dependencies.oauth,
-                credentials=dependencies.credentials,
-                hub=dependencies.hub,
-                events=events,
-                force=bool(args.force),
-            )
-    except KeyboardInterrupt:
-        return _print_auth_error(
-            ErrorCode.OPERATION_CANCELLED,
-            "Hugging Face 登录已取消",
-            event_writer=event_writer,
-        )
-    except LoginError as exc:
-        return _print_auth_error(
-            exc.code,
-            str(exc),
-            event_writer=event_writer,
-        )
-
-    if event_writer is not None:
-        event_writer.emit(ResultEvent(data=result.to_dict()))
-    elif isinstance(result, LoginStatus):
-        if result.logged_in:
-            print(f"已登录 Hugging Face：{result.username}")
-        else:
-            print("尚未登录 Hugging Face")
-    elif result.reused:
-        print(f"已使用现有 Hugging Face 登录：{result.username}")
-    else:
-        print(f"Hugging Face 登录成功：{result.username}")
-    return ExitCode.SUCCESS
-
-
-def _run_application_logout(args: argparse.Namespace) -> int:
-    dependencies = _build_auth_dependencies()
-    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
-    try:
-        result = logout(credentials=dependencies.credentials)
-    except LoginError as exc:
-        return _print_auth_error(
-            exc.code,
-            str(exc),
-            event_writer=event_writer,
-        )
-    if event_writer is not None:
-        event_writer.emit(ResultEvent(data=result.to_dict()))
-    else:
-        print("已退出 Watcher 的 Hugging Face 登录")
-    return ExitCode.SUCCESS
-
-
-@dataclass(frozen=True)
-class _PublishDependencies:
-    credentials: CredentialStore
-    identity_hub: HubClient
-    publish_hub: PublishHubClient
-
-
-class _HumanPublishEventSink:
-    """Render non-sensitive publishing progress for terminal users."""
-
-    def emit(self, event: DistributionEvent) -> None:
-        if isinstance(event, ProgressEvent):
-            print(event.message)
-
-
-def _build_publish_dependencies() -> _PublishDependencies:
-    return _PublishDependencies(
-        credentials=SystemCredentialStore(),
-        identity_hub=HuggingFaceHubClient(),
-        publish_hub=HuggingFacePublishHubClient(),
+def _application_init_metadata(args: argparse.Namespace) -> dict[str, str]:
+    fields = (
+        ("app_id", "--id", "Application ID"),
+        ("name", "--name", "Application name"),
+        ("author", "--author", "Author"),
+        ("description", "--description", "Short description"),
     )
+    missing = [
+        option
+        for field, option, _label in fields
+        if not _has_text(getattr(args, field))
+    ]
+    if missing and not _is_interactive_terminal():
+        raise CliError(
+            "Missing Application metadata options for non-interactive use: "
+            + ", ".join(missing)
+        )
 
-
-def _run_application_publish(args: argparse.Namespace) -> int:
-    dependencies = _build_publish_dependencies()
-    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
-    events: EventSink = event_writer or _HumanPublishEventSink()
+    values: dict[str, str] = {}
     try:
-        result = publish_application(
-            args.application_dir,
-            credentials=dependencies.credentials,
-            identity_hub=dependencies.identity_hub,
-            publish_hub=dependencies.publish_hub,
-            events=events,
-        )
-    except KeyboardInterrupt:
-        return _print_publish_error(
-            ErrorCode.OPERATION_CANCELLED,
-            "Application 发布已取消",
-            event_writer=event_writer,
-        )
-    except ApplicationCompatibilityError as exc:
-        return _print_publish_error(
-            ErrorCode.APP_SDK_INCOMPATIBLE,
-            str(exc),
-            event_writer=event_writer,
-        )
-    except ApplicationManifestError as exc:
-        return _print_publish_error(
-            _manifest_error_code(exc),
-            str(exc),
-            event_writer=event_writer,
-        )
-    except ApplicationSourceError as exc:
-        return _print_publish_error(
-            ErrorCode.APP_CONTENT_FORBIDDEN,
-            str(exc),
-            event_writer=event_writer,
-        )
-    except PublishError as exc:
-        return _print_publish_error(
-            exc.code,
-            str(exc),
-            details=exc.details,
-            event_writer=event_writer,
-        )
-
-    if event_writer is not None:
-        event_writer.emit(ResultEvent(data=result.to_dict()))
-    else:
-        _print_publish_result(result)
-    return ExitCode.SUCCESS
-
-
-def _print_publish_result(result: PublishResult) -> None:
-    print(f"Application 发布成功：{result.space_id}@{result.commit}")
-    print(f"Space：{result.space_url}")
-    print(f"固定源码：{result.source_url}")
-    print(f"名单状态：{result.pr_status}")
-    if result.pr_url:
-        print(f"名单 PR：{result.pr_url}")
-
-
-def _print_publish_error(
-    code: ErrorCode,
-    message: str,
-    *,
-    event_writer: JsonLineEventWriter | None,
-    details: dict[str, object] | None = None,
-) -> int:
-    safe_details = dict(details or {})
-    if event_writer is not None:
-        event_writer.emit(
-            ErrorEvent(
-                code=code,
-                message=message,
-                details=safe_details,
+        for field, _option, label in fields:
+            supplied = getattr(args, field)
+            values[field] = (
+                supplied if _has_text(supplied) else input(f"{label}: ")
             )
-        )
-    else:
-        print(f"Application 发布失败：{message}", file=sys.stderr)
-        source_url = safe_details.get("source_url")
-        pr_url = safe_details.get("pr_url")
-        if isinstance(source_url, str):
-            print(f"已上传源码：{source_url}", file=sys.stderr)
-        if isinstance(pr_url, str):
-            print(f"现有名单 PR：{pr_url}", file=sys.stderr)
-    return exit_code_for(code)
+    except (EOFError, KeyboardInterrupt) as exc:
+        raise CliError("Application initialization cancelled") from exc
+    return values
 
 
-@dataclass(frozen=True)
-class _MarketplaceDependencies:
-    hub: MarketplaceHubClient
+def _has_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
-class _HumanMarketplaceEventSink:
-    """Render non-sensitive official marketplace progress."""
-
-    def emit(self, event: DistributionEvent) -> None:
-        if isinstance(event, ProgressEvent):
-            print(event.message)
+def _is_interactive_terminal() -> bool:
+    return sys.stdin.isatty()
 
 
-def _build_marketplace_dependencies() -> _MarketplaceDependencies:
-    return _MarketplaceDependencies(hub=HuggingFaceMarketplaceHubClient())
-
-
-def _run_application_marketplace(args: argparse.Namespace) -> int:
-    dependencies = _build_marketplace_dependencies()
-    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
-    events: EventSink = event_writer or _HumanMarketplaceEventSink()
-    try:
-        result = load_official_marketplace(
-            hub=dependencies.hub,
-            events=events,
-        )
-    except KeyboardInterrupt:
-        return _print_marketplace_error(
-            ErrorCode.OPERATION_CANCELLED,
-            "获取官方 Application 名单已取消",
-            event_writer=event_writer,
-        )
-    except MarketplaceError as exc:
-        return _print_marketplace_error(
-            exc.code,
-            str(exc),
-            details=exc.details,
-            event_writer=event_writer,
-        )
-
-    if event_writer is not None:
-        event_writer.emit(ResultEvent(data=result.to_dict()))
-    else:
-        _print_marketplace_result(result)
-    return ExitCode.SUCCESS
-
-
-def _print_marketplace_result(result: OfficialMarketplace) -> None:
-    print(f"官方 Application 名单：{result.catalog_commit}")
-    print(f"Application 数量：{len(result.applications)}")
-    for application in result.applications:
-        compatibility = "兼容" if application.compatible else "不兼容"
-        print(
-            f"- {application.name} "
-            f"({application.app_id}@{application.version}, {compatibility})"
-        )
-
-
-def _print_marketplace_error(
-    code: ErrorCode,
-    message: str,
-    *,
-    event_writer: JsonLineEventWriter | None,
-    details: dict[str, object] | None = None,
-) -> int:
-    safe_details = dict(details or {})
-    if event_writer is not None:
-        event_writer.emit(
-            ErrorEvent(code=code, message=message, details=safe_details)
-        )
-    else:
-        print(message, file=sys.stderr)
-    return exit_code_for(code)
-
-
-@dataclass(frozen=True)
-class _DownloadDependencies:
-    hub: MarketplaceHubClient
-
-
-class _HumanDownloadEventSink:
-    """Render non-sensitive snapshot download progress."""
-
-    def emit(self, event: DistributionEvent) -> None:
-        if isinstance(event, ProgressEvent):
-            print(event.message)
-
-
-def _build_download_dependencies() -> _DownloadDependencies:
-    return _DownloadDependencies(hub=HuggingFaceMarketplaceHubClient())
-
-
-def _run_application_download(args: argparse.Namespace) -> int:
-    dependencies = _build_download_dependencies()
-    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
-    events: EventSink = event_writer or _HumanDownloadEventSink()
-    try:
-        result = download_application_snapshot(
-            space_id=args.space_id,
-            commit=args.commit,
-            target=args.target,
-            hub=dependencies.hub,
-            events=events,
-        )
-    except KeyboardInterrupt:
-        return _print_download_error(
-            ErrorCode.OPERATION_CANCELLED,
-            "Application 下载已取消",
-            event_writer=event_writer,
-        )
-    except ApplicationCompatibilityError as exc:
-        return _print_download_error(
-            ErrorCode.APP_SDK_INCOMPATIBLE,
-            str(exc),
-            event_writer=event_writer,
-        )
-    except ApplicationManifestError as exc:
-        return _print_download_error(
-            _manifest_error_code(exc),
-            str(exc),
-            event_writer=event_writer,
-        )
-    except ApplicationSourceError as exc:
-        return _print_download_error(
-            ErrorCode.APP_CONTENT_FORBIDDEN,
-            str(exc),
-            event_writer=event_writer,
-        )
-    except DownloadError as exc:
-        return _print_download_error(
-            exc.code,
-            str(exc),
-            details=exc.details,
-            event_writer=event_writer,
-        )
-
-    if event_writer is not None:
-        event_writer.emit(ResultEvent(data=result.to_dict()))
-    else:
-        _print_download_result(result)
-    return ExitCode.SUCCESS
-
-
-def _print_download_result(result: DownloadResult) -> None:
-    print(f"Application 下载成功：{result.space_id}@{result.commit}")
-    print(f"固定源码：{result.source_url}")
-    print(f"Staging：{result.target}")
-    print(
-        "Application："
-        f"{result.application.app_id}@{result.application.version}"
+def _print_application_init_result(
+    result: ApplicationProjectInitResult,
+) -> None:
+    print("Application project created")
+    print()
+    fields = (
+        ("Directory", str(result.directory)),
+        ("ID", result.app_id),
+        ("Name", result.name),
+        ("Version", result.version),
+        ("SDK", result.requires_watcherobot),
     )
-
-
-def _print_download_error(
-    code: ErrorCode,
-    message: str,
-    *,
-    event_writer: JsonLineEventWriter | None,
-    details: dict[str, object] | None = None,
-) -> int:
-    safe_details = dict(details or {})
-    if event_writer is not None:
-        event_writer.emit(
-            ErrorEvent(code=code, message=message, details=safe_details)
-        )
-    else:
-        print(f"Application 下载失败：{message}", file=sys.stderr)
-    return exit_code_for(code)
-
-
-def _print_auth_error(
-    code: ErrorCode,
-    message: str,
-    *,
-    event_writer: JsonLineEventWriter | None,
-) -> int:
-    if event_writer is not None:
-        event_writer.emit(ErrorEvent(code=code, message=message))
-    else:
-        print(message, file=sys.stderr)
-    return exit_code_for(code)
-
-
-def _print_application_check_error(
-    code: ErrorCode,
-    message: str,
-    *,
-    event_writer: JsonLineEventWriter | None,
-) -> int:
-    if event_writer is not None:
-        event_writer.emit(ErrorEvent(code=code, message=message))
-    else:
-        print(f"Application 检查失败：{message}", file=sys.stderr)
-    return exit_code_for(code)
-
-
-def _manifest_error_code(error: ApplicationManifestError) -> ErrorCode:
-    try:
-        return ErrorCode(error.code)
-    except ValueError:
-        return ErrorCode.APP_MANIFEST_INVALID
+    label_width = max(len(label) + 1 for label, _value in fields)
+    for label, value in fields:
+        print(f"{label + ':':<{label_width}}  {value}")
+    print()
+    print("Next:")
+    print(f'  watcherobot app check "{result.directory}"')
+    print(f'  watcherobot app run "{result.directory}"')
+    print(f'  watcherobot app publish "{result.directory}"')
 
 
 def _print_bluetooth_cancelled() -> int:
@@ -854,6 +481,8 @@ def run_application(application: Path) -> int:
         raise CliError(
             f"Application directory does not exist: {application_path}"
         )
+    print(f"Running Application: {application_path}")
+    print("Press Ctrl+C to stop.")
     state, _reused = ensure_runtime()
     _request_json(
         state.control_url,
@@ -877,7 +506,9 @@ def run_application(application: Path) -> int:
             status = _request_json(state.control_url, "/daemon/status")
             application_status = status["application"]
             if application_status["state"] in {"ended", "error"}:
-                return 0 if application_status["state"] == "ended" else 1
+                final_state = str(application_status["state"])
+                print(f"Application finished: {final_state}")
+                return 0 if final_state == "ended" else 1
             time.sleep(0.1)
     except KeyboardInterrupt:
         _request_json(
@@ -885,6 +516,7 @@ def run_application(application: Path) -> int:
             "/daemon/application/stop",
             method="POST",
         )
+        print("Application stopped by user.")
         return 130
 
 
@@ -940,3 +572,28 @@ def _request_json(
 
 def _print_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+def _is_desktop_only_app_command(arguments: list[str]) -> bool:
+    return (
+        len(arguments) >= 2
+        and arguments[0] == "app"
+        and arguments[1] in _DESKTOP_ONLY_APP_COMMANDS
+    )
+
+
+def _print_application_runtime_result(
+    title: str,
+    payload: dict[str, Any],
+) -> None:
+    application = payload.get("application")
+    if not isinstance(application, dict):
+        _print_json(payload)
+        return
+    print(title)
+    print()
+    print(f"ID:     {application.get('current_app', 'Unknown')}")
+    print(f"State:  {application.get('state', 'unknown')}")
+    process_id = application.get("process_id")
+    if process_id is not None:
+        print(f"PID:    {process_id}")

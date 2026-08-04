@@ -5,6 +5,13 @@ SDK 是 WatcheRobot Runtime/Daemon 与 Application API 的唯一实现来源。�
 控制 API 运行。桌面端也使用同一份 Runtime/Daemon 实现启动内置默认
 Application 和通过 SDK 开发的 Application。
 
+当前版本从项目创建、运行到 Hugging Face 发布的逐步测试方法见
+[SDK Application 使用与测试指南](docs/application-marketplace/sdk-application-usage.zh-CN.md)；
+发给国际开发者时使用
+[English SDK Application Guide](docs/application-marketplace/sdk-application-usage.md)；
+稳定 JSONL、错误码和跨仓职责见
+[Application 广场文档入口](docs/application-marketplace/README.md)。
+
 ## 安装与运行
 
 在当前源码仓库中开发时，建议使用独立虚拟环境，并以 editable 方式安装：
@@ -57,20 +64,30 @@ watcherobot daemon start
 watcherobot daemon status
 watcherobot daemon stop
 
-watcherobot app package .\examples\hello_robot .\dist\hello_robot.wapp
-watcherobot app check .\examples\hello_robot
+watcherobot app init .\my_app
+watcherobot app package .\my_app .\dist\my_app.wapp
+watcherobot app check .\my_app
 watcherobot app login
 watcherobot app login --status
-watcherobot app publish .\examples\hello_robot
-watcherobot app marketplace --jsonl
+watcherobot app publish .\my_app
+watcherobot app submit .\my_app
+watcherobot app marketplace
+watcherobot app marketplace --details
 watcherobot app download --space-id <user>/WatcherRobot-<app_id> --commit <40-char-sha> --target .\staging\app
 watcherobot app logout
-watcherobot app install .\dist\hello_robot.wapp
-watcherobot app list
-watcherobot app select example.hello_robot --version 1.0.0
 watcherobot app start
 watcherobot app stop
 ```
+
+`.wapp` 命令只生成归档。当前 `app run` 只接受源码目录；安装、已安装列表、选择和
+卸载属于 Watcher Desktop Application Store，SDK CLI 会明确拒绝这些已经迁移的本地
+商店操作。
+
+`watcherobot app init <new-directory>` 会创建一个完整、可直接进入发布流程的项目，
+不会启动 Daemon，也不会覆盖已有路径。终端中会依次询问 Application ID、显示名称、
+作者和简介；脚本可以使用 `--id`、`--name`、`--author`、`--description` 一次性提供。
+生成的 `app.json` 初始版本为 `0.1.0`，SDK 兼容范围根据当前安装版本自动计算，并包含
+默认 `icon.svg`。
 
 `watcherobot app check <directory>` 会校验唯一的 `app.json`、固定入口
 `app.py`、SDK 兼容范围、标准 Python 依赖、图标路径和允许发布的源码集合，
@@ -82,16 +99,23 @@ Hugging Face，验证身份后只把 Token 保存到 Watcher 专用的操作系�
 `app login --status` 校验已保存身份，`app logout` 只删除 Watcher 凭据；这些
 命令均不启动 Daemon，并支持 `--jsonl`。
 
-`watcherobot app publish <directory>` 会先执行相同的本地检查，再把精确源码
-快照发布到公开的 `<hf_username>/WatcherRobot-<app_id>` Hugging Face Space。
-Space 只作为源码仓库，不生成网页；成功结果包含固定源码 commit，以及官方
-应用名单 PR 或其现有状态。该命令不启动 Daemon，并支持 `--jsonl`。
+`watcherobot app publish <directory>` 会先执行相同的本地检查，再把精确源码快照
+发布到公开的 `<hf_username>/WatcherRobot-<app_id>` Hugging Face Space。Space
+只作为源码仓库，不生成网页；成功结果只包含 Space 和固定源码 commit，不读取或
+修改官方 Catalog。该命令不启动 Daemon，并支持 `--jsonl`。
+
+`watcherobot app submit <directory>` 要求 `description`、`author`、`icon` 三项应用
+广场信息均为非空，校验已经发布的固定快照，然后在不上传源码的前提下创建或复用
+官方名单 PR。可用 `--commit <40-char-sha>` 指定已发布版本；省略时提交 Space 当前
+HEAD。PR 会直接展示审核用 Manifest、固定源码链接和固定版本图标。
 
 `watcherobot app marketplace` 会公开读取并严格校验官方 Application 名单，
 以及每个审核固定 commit 上的 `app.json`。结果包含本次观察到的 Dataset commit、
 结构化 Application 信息、SDK 兼容性和固定源码链接。该命令无需登录 Hugging
 Face，不启动 Daemon，也不修改本地状态；Desktop 使用 `--jsonl`，并自行保存
 上一次成功结果作为本地缓存。
+开发者默认看到兼容性表格，使用 `--details` 查看完整 Manifest、固定源码 URL、commit
+和依赖；只有 Desktop 或其他机器调用方才使用 `--jsonl`。
 
 `watcherobot app download --space-id ... --commit ... --target ...` 无需登录
 Hugging Face，会把 Space 的一个不可变固定版本下载到调用者预先创建的现有

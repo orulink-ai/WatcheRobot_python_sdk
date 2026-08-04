@@ -100,7 +100,9 @@ OAuth 前置核对已完成：官方文档确认 Public App 支持 Device Code O
 
 下一步唯一入口：进入 S3，先用 Fake Hub 固定公开 Space 的创建/更新、源码上传、完整 commit 和官方名单 PR 的服务合同，再接入真实 Hugging Face HTTP 实现。
 
-### S3：Space 发布与官方名单 PR——进行中
+### S3：Space 发布与官方名单 PR——已完成
+
+> 历史说明：本节记录的是最初用于跑通闭环的合并式 `publish` 行为。当前命令合同已经把源码发布和 Catalog 提交拆开，现状以本文后面的“源码发布与 Catalog 提交职责拆分”以及 `distribution-contract.md` 为准。
 
 - 已确认 Space 唯一命名规则为 `<hf_username>/WatcherRobot-<app_id>`；例如 `tianguiti/WatcherRobot-com.orulink.demo`。
 - 同一 Hugging Face 身份与同一 `app.json.id` 始终映射到同一个 Space；若同名 Space 不是由 Watcher Desktop OAuth App 创建，则发布必须失败，不得改写开发者已有仓库。
@@ -119,7 +121,7 @@ OAuth 前置核对已完成：官方文档确认 Public App 支持 Device Code O
 
 S3 已完成。下一步唯一入口：进入 S4，先用 TDD 固定官方名单读取、缓存回退和完整 commit 快照下载的独立端口与错误合同，不接触 Daemon 运行时。
 
-### S4：官方名单与固定快照下载——进行中
+### S4：官方名单与固定快照下载——已完成
 
 - 已明确职责边界：SDK 提供公开名单读取、严格解析和固定快照交付，Desktop 在后续阶段持有上一次成功名单缓存；SDK 不自行持久化 Desktop 缓存，也不决定正式安装目录。
 - 已从唯一 Manifest 实现中抽取不依赖本地源码文件的 `ApplicationManifestMetadata` 与 `parse_application_manifest()`。远端固定 commit 的 `app.json` 现在可复用同一字段白名单、依赖规则、App id、语义版本和 SDK 兼容校验；本地 `ApplicationManifest.load()` 继续额外检查固定 `app.py` 和图标文件。TDD 首次因新类型和解析函数不存在而收集失败，实现后远端元数据、原有 Manifest 和分发检查定向测试 27 项通过。
@@ -134,7 +136,7 @@ S3 已完成。下一步唯一入口：进入 S4，先用 TDD 固定官方名单
 
 S4 的公开名单服务、`app marketplace`、固定快照下载服务与 `app download` 路径已经闭合。下一步进入 S5，按既定文档实现 SDK Daemon 的受控 Application 启动合同，不改变内容无关路由边界。
 
-### S5：SDK Daemon 受控启动器合同——进行中
+### S5：SDK Daemon 受控启动器合同——已完成
 
 - 修改前事实：`ApplicationRuntimeManager` 构造时固定保存一个 `python_executable`，`select_application()` 只替换 Application 目录；源码模式始终用 Daemon Python 执行 `app.py`，冻结模式始终执行当前 Runtime 二进制的 `--application` 分支，因此尚不能表达每 App Python 或独立默认 App 启动单元。
 - 已建立独立 `ApplicationLauncher` / `ApplicationLaunchSpec` 合同。启动器类型只允许 `python` 和 `bundled`；规格只产生 `<受控 Python> <固定 app.py>` 或 `watcher-default-app` 两种命令，不携带调用方参数或 shell 字符串。Python 启动器必须位于启动时固定的 App 受管根，bundled 启动器与默认 Application 目录必须位于固定资源根；普通 Python Application 的已校验源码可以与其环境根分开，以兼容开发者 `app run <源码目录>`。解析真实路径后再次做包含关系检查，路径逃逸、缺失/不可执行文件、任意可执行文件名、第三方 bundled 与默认 App Python 均在生成进程命令前拒绝。
@@ -154,6 +156,26 @@ S5 已完成。下一步唯一入口：进入 S6，在 `WatcheRobot_client` 建�
 - TDD 首次新增 4 个用例时有 3 个失败；实现后 Manifest/CLI 定向 25 项及 SDK 全量 477 项通过，mypy 74 个源码文件、仓库 `.venv` 的 `pip check`、迁移守卫 post 模式和 `git diff --check` 均通过。
 
 该变更只补齐 S6 已确认的平台 wheel 边界，不把环境安装迁回 SDK 或 Daemon。
+
+### Application CLI 可用性收口
+
+- 用户真实执行 `app marketplace --jsonl` 后确认机器事件不适合作为开发者日常界面，因此输出模式现已明确分层：默认模式面向开发者，`--details` 面向人工完整审阅，`--jsonl` 只面向 Desktop 或自动化。
+- `app marketplace` 默认输出英文兼容性表格，只保留状态、版本、名称和 Application ID；`--details` 输出完整 SDK 要求、依赖、作者、说明、固定源码 URL 与 40 位 commit。真实官方 Dataset 的两条已合并记录已分别通过紧凑视图、详细视图和 JSONL 读取验证。
+- `check`、`login/logout`、`publish`、`marketplace`、`download` 的默认结果与错误前缀统一为英文标签；发布、广场和下载进度进入 stderr，成功摘要保留在 stdout。JSONL 的事件类型、stage、code、data、details 和退出码不变，`message` 统一为英文辅助文案。
+- `app --help` 现在说明开发、运行、认证、发布、广场、下载和当前 Application 启停的真实用途及 Daemon 边界；已经迁移到 Desktop 的 `install/list/select/uninstall` 不再出现在帮助页，旧调用仍返回明确迁移错误且不会启动 Daemon。
+- 新增 [Application CLI Quick Reference](application-cli-reference.md)，英文/中文指南均改为默认人工模式优先，并把 `--jsonl` 单独标记为 Desktop 机器合同。
+- 应用广场最小信息门禁现由 `app submit` 持有：本地 `check/run` 和 `app publish` 允许 `description`、`author`、`icon` 缺省；只有提交 Catalog 审核时要求三项均为非空。新建 Catalog PR 直接展示固定快照的名称、ID、版本、作者、简介、SDK 要求、依赖、图标路径、固定版本图标和源码链接；官方 `app-list.json` 继续只保存 `space_id + commit`，避免产生第二份可漂移元数据。
+- 新增开发者入口 `watcherobot app init <new-directory>`，交互式收集或通过参数接收 ID、名称、作者、简介，并生成可直接 `check/run/publish` 的 `app.json`、`app.py`、README、默认 SVG 图标和 `.gitignore`。初始 App 版本固定为 `0.1.0`，SDK 范围根据当前版本计算；目标已存在、字段非法或生成校验失败时拒绝覆盖。该命令不加入 Desktop `watcher-distribution` sidecar，也不启动 Daemon。
+- TDD 首次运行新增与修改的帮助、表格、详细视图和英文摘要用例时有 8 项失败；实现后 Application CLI 聚焦用例、分发目录用例和 Runtime CLI 用例全部通过。SDK 全量 499 项、mypy 75 个源码文件、`pip check` 和 `git diff --check` 通过。
+- 真实公开调用已验证两个入口：`watcherobot app marketplace` 和 `--details` 分别显示当前两条正式记录的表格与完整固定来源；`watcher-distribution app marketplace --jsonl` 返回相同 Dataset commit `8ccb4394ef76284a61a9bb0c49c499174843efda`，事件字段保持原合同且所有辅助消息为英文。
+
+### 源码发布与 Catalog 提交职责拆分——当前合同
+
+- `watcherobot app publish <directory>` 现在只做本地校验、Hugging Face 登录校验、公开 Space 创建/更新、完整源码上传和固定 commit 解析；结果只包含 `space_id`、`commit`、`space_url`、`source_url`，不读取或修改官方 Catalog。
+- 新增 `watcherobot app submit <directory> [--commit <sha>]`。该命令不调用 Space 创建或源码上传，只读取固定 commit 上的 `app.json` 和图标，要求远端 Manifest 与本地项目一致，再创建或复用官方 Catalog PR。省略 `--commit` 时解析当前 Space HEAD；显式参数只接受 40 位小写 SHA。
+- `description`、`author`、`icon` 的完整性门禁从 `publish` 移到 `submit`，因此开发者可以先反复发布测试源码，稳定后再单独发起应用广场审核。
+- `watcher-distribution app` 同步公开 `submit`，继续保持短进程、JSONL 和不启动 Daemon 的边界。Desktop 后续应把“发布到 Hugging Face”和“提交应用广场审核”呈现为两个独立动作。
+- TDD 首次运行因 `watcherobot.distribution.submit` 不存在而在收集阶段失败；实现后服务与 CLI 聚焦测试证明 `publish` 只发生 `ensure/upload/head`，`submit` 不发生 `ensure/upload`，并覆盖显式 commit、固定源码核对、元数据门禁、已收录、PR 复用和 PR 冲突。
 
 ## 提交纪律
 

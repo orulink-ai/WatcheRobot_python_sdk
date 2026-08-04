@@ -167,7 +167,7 @@ class HubClient(Protocol):
 
 
 class PublishHubClient(Protocol):
-    """Remote repository operations required by Application publishing."""
+    """Remote writes and authenticated reads for publish/submit commands."""
 
     def ensure_public_space(
         self,
@@ -192,6 +192,15 @@ class PublishHubClient(Protocol):
         *,
         space_id: str,
     ) -> RepositoryRevision: ...
+
+    def read_space_file(
+        self,
+        token: AccessToken,
+        *,
+        space_id: str,
+        commit: str,
+        path: str,
+    ) -> bytes: ...
 
     def read_catalog(
         self,

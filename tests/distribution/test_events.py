@@ -55,6 +55,8 @@ def test_json_line_writer_emits_one_compact_object_per_event() -> None:
         },
     ]
     assert output.getvalue().endswith("\n")
+    assert output.getvalue().isascii()
+    assert "\\u6b63\\u5728\\u68c0\\u67e5" in output.getvalue()
 
 
 def test_event_models_do_not_share_mutable_default_data() -> None:

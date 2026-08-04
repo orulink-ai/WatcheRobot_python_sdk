@@ -124,18 +124,18 @@ def login(
     except OAuthNetworkError as exc:
         raise LoginError(
             ErrorCode.AUTH_NETWORK_ERROR,
-            "无法连接 Hugging Face 登录服务",
+            "Unable to connect to the Hugging Face login service",
         ) from exc
     except OAuthInvalidResponse as exc:
         raise LoginError(
             ErrorCode.AUTH_INVALID_RESPONSE,
-            "Hugging Face 登录服务返回了无效响应",
+            "The Hugging Face login service returned an invalid response",
         ) from exc
 
     events.emit(
         ProgressEvent(
             stage="authorization_required",
-            message="请在浏览器中授权 Hugging Face 登录",
+            message="Authorize Hugging Face in your browser",
             data={
                 "verification_uri": authorization.verification_uri,
                 "user_code": authorization.user_code,
@@ -151,12 +151,12 @@ def login(
         if cancelled():
             raise LoginError(
                 ErrorCode.OPERATION_CANCELLED,
-                "Hugging Face 登录已取消",
+                "Hugging Face login cancelled",
             )
         if monotonic() >= deadline:
             raise LoginError(
                 ErrorCode.AUTH_EXPIRED,
-                "Hugging Face 登录授权已过期",
+                "Hugging Face authorization expired",
             )
         try:
             token = oauth.poll_device_token(request, authorization)
@@ -169,24 +169,24 @@ def login(
         except OAuthAuthorizationDenied as exc:
             raise LoginError(
                 ErrorCode.AUTH_DENIED,
-                "Hugging Face 登录授权被拒绝",
+                "Hugging Face authorization was denied",
             ) from exc
         except OAuthAuthorizationExpired as exc:
             raise LoginError(
                 ErrorCode.AUTH_EXPIRED,
-                "Hugging Face 登录授权已过期",
+                "Hugging Face authorization expired",
             ) from exc
         except OAuthNetworkError as exc:
             consecutive_network_failures += 1
             if consecutive_network_failures >= _MAX_NETWORK_ATTEMPTS:
                 raise LoginError(
                     ErrorCode.AUTH_NETWORK_ERROR,
-                    "无法连接 Hugging Face 登录服务",
+                    "Unable to connect to the Hugging Face login service",
                 ) from exc
         except OAuthInvalidResponse as exc:
             raise LoginError(
                 ErrorCode.AUTH_INVALID_RESPONSE,
-                "Hugging Face 登录服务返回了无效响应",
+                "The Hugging Face login service returned an invalid response",
             ) from exc
         sleep(min(interval, max(0.0, deadline - monotonic())))
 
@@ -196,7 +196,7 @@ def login(
     except CredentialStoreError as exc:
         raise LoginError(
             ErrorCode.CREDENTIAL_STORE_ERROR,
-            "无法保存 Watcher Hugging Face 系统凭据",
+            "Unable to save the Watcher Hugging Face credential",
         ) from exc
     return LoginResult(
         username=identity.username,
@@ -217,7 +217,7 @@ def login_status(
     except CredentialStoreError as exc:
         raise LoginError(
             ErrorCode.CREDENTIAL_STORE_ERROR,
-            "无法读取 Watcher Hugging Face 系统凭据",
+            "Unable to read the Watcher Hugging Face credential",
         ) from exc
     if token is None:
         return LoginStatus(logged_in=False)
@@ -230,12 +230,12 @@ def login_status(
     except HubNetworkError as exc:
         raise LoginError(
             ErrorCode.AUTH_NETWORK_ERROR,
-            "无法连接 Hugging Face 身份服务",
+            "Unable to connect to the Hugging Face identity service",
         ) from exc
     except HubInvalidResponse as exc:
         raise LoginError(
             ErrorCode.AUTH_INVALID_RESPONSE,
-            "Hugging Face 身份服务返回了无效响应",
+            "The Hugging Face identity service returned an invalid response",
         ) from exc
     return LoginStatus(
         logged_in=True,
@@ -262,17 +262,17 @@ def _verify_identity(
     except HubAuthenticationError as exc:
         raise LoginError(
             ErrorCode.AUTH_INVALID_RESPONSE,
-            "Hugging Face 登录身份验证失败",
+            "Hugging Face identity verification failed",
         ) from exc
     except HubNetworkError as exc:
         raise LoginError(
             ErrorCode.AUTH_NETWORK_ERROR,
-            "无法连接 Hugging Face 身份服务",
+            "Unable to connect to the Hugging Face identity service",
         ) from exc
     except HubInvalidResponse as exc:
         raise LoginError(
             ErrorCode.AUTH_INVALID_RESPONSE,
-            "Hugging Face 身份服务返回了无效响应",
+            "The Hugging Face identity service returned an invalid response",
         ) from exc
 
 
@@ -282,7 +282,7 @@ def _delete_credential(credentials: CredentialStore) -> None:
     except CredentialStoreError as exc:
         raise LoginError(
             ErrorCode.CREDENTIAL_STORE_ERROR,
-            "无法删除 Watcher Hugging Face 系统凭据",
+            "Unable to delete the Watcher Hugging Face credential",
         ) from exc
 
 

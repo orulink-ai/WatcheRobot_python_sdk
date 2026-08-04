@@ -49,19 +49,19 @@ def _install_success(monkeypatch, target: Path):
         kwargs["events"].emit(
             ProgressEvent(
                 stage="downloading_snapshot",
-                message="正在下载固定版本 Application 源码",
+                message="Downloading immutable Application source",
                 data={"space_id": SPACE_ID, "commit": COMMIT},
             )
         )
         return _result(target)
 
     monkeypatch.setattr(
-        "watcherobot.cli._build_download_dependencies",
+        "watcherobot.distribution.cli._build_download_dependencies",
         lambda: dependencies,
         raising=False,
     )
     monkeypatch.setattr(
-        "watcherobot.cli.download_application_snapshot",
+        "watcherobot.distribution.cli.download_application_snapshot",
         fake_download,
         raising=False,
     )
@@ -108,7 +108,7 @@ def test_cli_download_jsonl_reuses_service_and_never_starts_daemon(
         {
             "type": "progress",
             "stage": "downloading_snapshot",
-            "message": "正在下载固定版本 Application 源码",
+            "message": "Downloading immutable Application source",
             "data": {"space_id": SPACE_ID, "commit": COMMIT},
         },
         {"type": "result", "ok": True, "data": _result(tmp_path).to_dict()},
@@ -137,7 +137,8 @@ def test_cli_download_human_output_shows_fixed_source_and_target(
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert captured.err == ""
+    assert captured.err == "Downloading immutable Application source\n"
+    assert "Application downloaded" in captured.out
     assert SPACE_ID in captured.out
     assert COMMIT in captured.out
     assert str(tmp_path.resolve()) in captured.out
@@ -149,7 +150,7 @@ def test_cli_download_jsonl_maps_stable_download_error(
     capsys,
 ) -> None:
     monkeypatch.setattr(
-        "watcherobot.cli._build_download_dependencies",
+        "watcherobot.distribution.cli._build_download_dependencies",
         lambda: SimpleNamespace(hub=object()),
         raising=False,
     )
@@ -157,12 +158,12 @@ def test_cli_download_jsonl_maps_stable_download_error(
     def fail_download(**kwargs):
         raise DownloadError(
             ErrorCode.REMOTE_ERROR,
-            "下载固定版本 Application 源码失败",
+            "Unable to download immutable Application source",
             details={"space_id": SPACE_ID, "commit": COMMIT},
         )
 
     monkeypatch.setattr(
-        "watcherobot.cli.download_application_snapshot",
+        "watcherobot.distribution.cli.download_application_snapshot",
         fail_download,
         raising=False,
     )
@@ -189,7 +190,7 @@ def test_cli_download_jsonl_maps_stable_download_error(
             "type": "error",
             "ok": False,
             "code": "remote_error",
-            "message": "下载固定版本 Application 源码失败",
+            "message": "Unable to download immutable Application source",
             "details": {"space_id": SPACE_ID, "commit": COMMIT},
         }
     ]
@@ -201,7 +202,7 @@ def test_cli_download_keyboard_interrupt_is_jsonl_cancellation(
     capsys,
 ) -> None:
     monkeypatch.setattr(
-        "watcherobot.cli._build_download_dependencies",
+        "watcherobot.distribution.cli._build_download_dependencies",
         lambda: SimpleNamespace(hub=object()),
         raising=False,
     )
@@ -210,7 +211,7 @@ def test_cli_download_keyboard_interrupt_is_jsonl_cancellation(
         raise KeyboardInterrupt
 
     monkeypatch.setattr(
-        "watcherobot.cli.download_application_snapshot",
+        "watcherobot.distribution.cli.download_application_snapshot",
         cancel_download,
         raising=False,
     )
@@ -236,7 +237,7 @@ def test_cli_download_keyboard_interrupt_is_jsonl_cancellation(
 
 
 def test_default_download_dependencies_use_public_hub_adapter() -> None:
-    from watcherobot.cli import _build_download_dependencies
+    from watcherobot.distribution.cli import _build_download_dependencies
 
     dependencies = _build_download_dependencies()
 

@@ -64,7 +64,7 @@ def _install_fakes(monkeypatch, *, token: AccessToken | None = None):
         hub=FakeHub(),
     )
     monkeypatch.setattr(
-        "watcherobot.cli._build_auth_dependencies",
+        "watcherobot.distribution.cli._build_auth_dependencies",
         lambda: dependencies,
         raising=False,
     )
@@ -96,7 +96,7 @@ def test_cli_app_login_jsonl_emits_instructions_and_never_starts_daemon(
         {
             "type": "progress",
             "stage": "authorization_required",
-            "message": "请在浏览器中授权 Hugging Face 登录",
+            "message": "Authorize Hugging Face in your browser",
             "data": {
                 "verification_uri": "https://hf.co/oauth/device",
                 "user_code": "ABCD-EFGH",
@@ -169,6 +169,32 @@ def test_cli_app_logout_jsonl_deletes_exact_watcher_credential(
     assert credentials.delete_calls == 1
 
 
+def test_cli_app_login_status_human_output_is_english(monkeypatch, capsys) -> None:
+    _install_fakes(monkeypatch, token=AccessToken("hf_stored-token"))
+
+    exit_code = main(["app", "login", "--status"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out == "Logged in to Hugging Face as: developer\n"
+
+
+def test_cli_app_logout_human_output_is_english(monkeypatch, capsys) -> None:
+    _oauth, credentials = _install_fakes(
+        monkeypatch,
+        token=AccessToken("hf_stored-token"),
+    )
+
+    exit_code = main(["app", "logout"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.err == ""
+    assert captured.out == "Signed out of Watcher's Hugging Face login\n"
+    assert credentials.delete_calls == 1
+
+
 def test_cli_app_login_jsonl_maps_sanitized_remote_error(
     monkeypatch,
     capsys,
@@ -179,7 +205,7 @@ def test_cli_app_login_jsonl_maps_sanitized_remote_error(
         hub=FakeHub(),
     )
     monkeypatch.setattr(
-        "watcherobot.cli._build_auth_dependencies",
+        "watcherobot.distribution.cli._build_auth_dependencies",
         lambda: dependencies,
         raising=False,
     )
@@ -194,7 +220,7 @@ def test_cli_app_login_jsonl_maps_sanitized_remote_error(
             "type": "error",
             "ok": False,
             "code": "auth_network_error",
-            "message": "无法连接 Hugging Face 登录服务",
+            "message": "Unable to connect to the Hugging Face login service",
         }
     ]
     assert "hf_private-token" not in captured.out
@@ -211,7 +237,11 @@ def test_cli_app_login_human_output_shows_authorization_and_identity(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.err == ""
-    assert "https://hf.co/oauth/device" in captured.out
-    assert "ABCD-EFGH" in captured.out
-    assert "developer" in captured.out
+    assert captured.out.splitlines() == [
+        "Authorize Hugging Face in your browser",
+        "Open: https://hf.co/oauth/device",
+        "Enter code: ABCD-EFGH",
+        "Code expires in: 300 seconds",
+        "Hugging Face login successful: developer",
+    ]
     assert "hf_private-token" not in captured.out
