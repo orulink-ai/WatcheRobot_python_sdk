@@ -53,7 +53,15 @@ class UninstallApplicationRequest(BaseModel):
 
 
 class MaintenanceInstallRequest(BaseModel):
-    package_path: str
+    package_path: str = ""
+    port: str = ""
+    transport: str = "serial"
+    volume_id: str = ""
+    release_version: str = ""
+    release_asset: str = ""
+
+
+class MaintenanceDeviceInfoRequest(BaseModel):
     port: str
 
 
@@ -124,8 +132,25 @@ class ApplicationController(Protocol):
     def maintenance_ports(self) -> list[dict[str, Any]]:
         """List local serial ports available for maintenance."""
 
+    def maintenance_releases(self, kind: str) -> list[dict[str, Any]]:
+        """List compatible official Release packages."""
+
+    def maintenance_volumes(self) -> list[dict[str, Any]]:
+        """List writable Windows SD-card reader volumes."""
+
+    def maintenance_device_info(self, port: str) -> dict[str, Any]:
+        """Read firmware and SD resource versions from one serial device."""
+
     def start_maintenance_job(
-        self, kind: str, package_path: str, port: str
+        self,
+        kind: str,
+        package_path: str,
+        port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
+        release_version: str = "",
+        release_asset: str = "",
     ) -> dict[str, Any]:
         """Start a non-blocking firmware or SD resource job."""
 
@@ -341,6 +366,24 @@ class DaemonControlAPI:
         async def maintenance_ports() -> dict[str, Any]:
             return {"ports": self._controller.maintenance_ports()}
 
+        @app.get("/daemon/maintenance/releases/{kind}")
+        async def maintenance_releases(kind: str) -> Any:
+            try:
+                return {"releases": self._controller.maintenance_releases(kind)}
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=400, content={"error": "release_unavailable", "message": str(exc)})
+
+        @app.get("/daemon/maintenance/volumes")
+        async def maintenance_volumes() -> dict[str, Any]:
+            return {"volumes": self._controller.maintenance_volumes()}
+
+        @app.post("/daemon/maintenance/device-info")
+        async def maintenance_device_info(request: MaintenanceDeviceInfoRequest) -> Any:
+            try:
+                return {"device": self._controller.maintenance_device_info(request.port)}
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=409, content={"error": "device_info_unavailable", "message": str(exc)})
+
         @app.post("/daemon/maintenance/firmware", status_code=202)
         async def install_firmware(request: MaintenanceInstallRequest) -> Any:
             return self._start_maintenance("firmware", request)
@@ -377,7 +420,13 @@ class DaemonControlAPI:
     def _start_maintenance(self, kind: str, request: MaintenanceInstallRequest) -> Any:
         try:
             job = self._controller.start_maintenance_job(
-                kind, request.package_path, request.port
+                kind,
+                request.package_path,
+                request.port,
+                transport=request.transport,
+                volume_id=request.volume_id,
+                release_version=request.release_version,
+                release_asset=request.release_asset,
             )
         except MaintenanceError as exc:
             return JSONResponse(status_code=409, content={"error": "maintenance_unavailable", "message": str(exc)})

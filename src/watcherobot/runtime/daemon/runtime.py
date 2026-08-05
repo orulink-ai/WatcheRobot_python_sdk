@@ -33,7 +33,7 @@ from watcherobot.runtime.daemon.connections.websocket_server import (
 )
 from watcherobot.runtime.daemon.control.rest import DaemonControlServer
 from watcherobot.runtime.daemon.logging import DaemonLogService
-from watcherobot.runtime.daemon.maintenance import MaintenanceService
+from watcherobot.runtime.daemon.maintenance import MaintenanceError, MaintenanceService
 from watcherobot.runtime.daemon.pairing.protocol import (
     DeviceSessionEnd,
     HardwareHello,
@@ -267,10 +267,38 @@ class DaemonRuntime:
     def maintenance_ports(self) -> list[dict[str, object]]:
         return self.maintenance.ports()
 
+    def maintenance_releases(self, kind: str) -> list[dict[str, object]]:
+        try:
+            return self.maintenance.releases(kind)
+        except Exception as exc:
+            raise MaintenanceError(str(exc)) from exc
+
+    def maintenance_volumes(self) -> list[dict[str, object]]:
+        return self.maintenance.volumes()
+
+    def maintenance_device_info(self, port: str) -> dict[str, object]:
+        return self.maintenance.device_info(port)
+
     def start_maintenance_job(
-        self, kind: str, package_path: str, port: str
+        self,
+        kind: str,
+        package_path: str,
+        port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
+        release_version: str = "",
+        release_asset: str = "",
     ) -> dict[str, object]:
-        return self.maintenance.start(kind, package_path, port)
+        return self.maintenance.start(
+            kind,
+            package_path,
+            port,
+            transport=transport,
+            volume_id=volume_id,
+            release_version=release_version,
+            release_asset=release_asset,
+        )
 
     def maintenance_job(self, job_id: str) -> dict[str, object]:
         return self.maintenance.get(job_id)

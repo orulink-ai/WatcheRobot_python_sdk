@@ -24,6 +24,9 @@ from zipfile import BadZipFile, ZipFile
 import serial
 from serial.tools import list_ports
 
+from .card_reader import install_package as install_card_package, list_volumes
+from .releases import acquire_release_package, list_releases
+
 PROTOCOL_PREFIX = "WRSD/2"
 DEFAULT_BAUD = 115200
 TRANSFER_BAUD = 460800
@@ -49,6 +52,11 @@ class MaintenanceJob:
     kind: str
     port: str
     package_path: str
+    transport: str = "serial"
+    volume_id: str = ""
+    source_type: str = "local"
+    release_version: str = ""
+    release_asset: str = ""
     status: str = "queued"
     phase: str = "queued"
     progress: int = 0
@@ -63,6 +71,11 @@ class MaintenanceJob:
             "kind": self.kind,
             "port": self.port,
             "package_path": self.package_path,
+            "transport": self.transport,
+            "volume_id": self.volume_id,
+            "source_type": self.source_type,
+            "release_version": self.release_version,
+            "release_asset": self.release_asset,
             "status": self.status,
             "phase": self.phase,
             "progress": self.progress,
@@ -97,15 +110,72 @@ class MaintenanceService:
             })
         return sorted(result, key=lambda item: _port_sort_key(str(item["device"])))
 
-    def start(self, kind: str, package_path: str, port: str) -> dict[str, Any]:
-        if kind not in {"firmware", "sd_resources"}:
-            raise MaintenanceError(f"Unsupported maintenance job: {kind}")
-        package = Path(package_path).expanduser().resolve()
-        if not package.is_file():
-            raise MaintenanceError(f"Selected package does not exist: {package}")
+    def releases(self, kind: str) -> list[dict[str, Any]]:
+        return list_releases(kind)
+
+    def volumes(self) -> list[dict[str, Any]]:
+        return list_volumes()
+
+    def device_info(self, port: str) -> dict[str, Any]:
         normalized_port = port.strip()
         if not normalized_port:
             raise MaintenanceError("Select a serial port first.")
+        with self._lock:
+            if self._active_job_id is not None:
+                active = self._jobs.get(self._active_job_id)
+                if active is not None and active.status in {"queued", "running"}:
+                    raise MaintenanceError("A maintenance operation is currently using the device port.")
+        protocol: _SerialProtocol | None = None
+        try:
+            protocol = _SerialProtocol(normalized_port)
+            protocol.set_read_timeout(0.25)
+            for _ in range(4):
+                protocol.send("HELLO")
+                try:
+                    return _parse_ready_device_info(protocol.receive(1.25, ("READY",)))
+                except MaintenanceError:
+                    continue
+            raise MaintenanceError("设备没有响应版本查询，当前固件版本显示为未知。")
+        except serial.SerialException as exc:
+            raise MaintenanceError(f"无法打开 {normalized_port} 查询设备版本：{exc}") from exc
+        finally:
+            if protocol is not None:
+                try:
+                    protocol.close()
+                except serial.SerialException:
+                    pass
+
+    def start(
+        self,
+        kind: str,
+        package_path: str,
+        port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
+        release_version: str = "",
+        release_asset: str = "",
+    ) -> dict[str, Any]:
+        if kind not in {"firmware", "sd_resources"}:
+            raise MaintenanceError(f"Unsupported maintenance job: {kind}")
+        if transport not in {"serial", "card_reader"}:
+            raise MaintenanceError(f"Unsupported maintenance transport: {transport}")
+        if transport == "card_reader" and kind != "sd_resources":
+            raise MaintenanceError("Only SD resources can be installed through a card reader.")
+        source_type = "release" if release_version or release_asset else "local"
+        if source_type == "release":
+            if not release_version or not release_asset:
+                raise MaintenanceError("Select both an official Release version and its install package.")
+            package = None
+        else:
+            package = Path(package_path).expanduser().resolve()
+            if not package.is_file():
+                raise MaintenanceError(f"Selected package does not exist: {package}")
+        normalized_port = port.strip()
+        if transport == "serial" and not normalized_port:
+            raise MaintenanceError("Select a serial port first.")
+        if transport == "card_reader" and not volume_id:
+            raise MaintenanceError("Select an SD-card reader first.")
         with self._lock:
             if self._active_job_id is not None:
                 active = self._jobs[self._active_job_id]
@@ -115,7 +185,12 @@ class MaintenanceService:
                 id=uuid.uuid4().hex,
                 kind=kind,
                 port=normalized_port,
-                package_path=str(package),
+                package_path=str(package) if package is not None else "",
+                transport=transport,
+                volume_id=volume_id,
+                source_type=source_type,
+                release_version=release_version,
+                release_asset=release_asset,
             )
             self._jobs[job.id] = job
             self._active_job_id = job.id
@@ -168,25 +243,56 @@ class MaintenanceService:
             return job.payload()
 
     def _run(self, job_id: str) -> None:
-        self._update(job_id, status="running", phase="validating", progress=1,
-                     message="开始校验用户选择的本地文件。")
         with self._lock:
             job = self._jobs[job_id]
-            kind, package_path, port = job.kind, Path(job.package_path), job.port
+            kind, port, transport, volume_id = job.kind, job.port, job.transport, job.volume_id
+        self._update(
+            job_id,
+            status="running",
+            phase="validating",
+            progress=1,
+            message=(
+                "开始获取并校验官方 Release 安装包。"
+                if job.source_type == "release"
+                else "开始校验用户选择的本地文件。"
+            ),
+        )
         try:
             callback = lambda phase, progress, message: self._update(
                 job_id, phase=phase, progress=progress, message=message
             )
+            if job.source_type == "release":
+                package_path = acquire_release_package(
+                    kind,
+                    job.release_version,
+                    job.release_asset,
+                    callback,
+                )
+                with self._lock:
+                    self._jobs[job_id].package_path = str(package_path)
+            else:
+                package_path = Path(job.package_path)
             if kind == "firmware":
                 _flash_firmware(package_path, port, callback)
+            elif transport == "card_reader":
+                install_card_package(package_path, volume_id, callback)
             elif kind == "sd_resources":
                 _install_sd_resources(package_path, port, callback)
             else:
                 with self._lock:
                     composition, sd_package = self._work_requests[job_id]
                 _install_work(composition, sd_package, port, callback)
-            self._update(job_id, status="succeeded", phase="done", progress=100,
-                         message="操作完成，设备已重新启动。")
+            self._update(
+                job_id,
+                status="succeeded",
+                phase="done",
+                progress=100,
+                message=(
+                    "SD 卡写入完成，可安全移除读卡器并装回设备。"
+                    if transport == "card_reader"
+                    else "操作完成，设备已重新启动。"
+                ),
+            )
         except Exception as exc:
             self._update(job_id, status="failed", phase="failed", error=str(exc),
                          message=f"失败：{exc}")
@@ -225,6 +331,62 @@ class MaintenanceService:
 def _port_sort_key(device: str) -> tuple[int, str]:
     suffix = device.upper().removeprefix("COM")
     return (int(suffix), device) if suffix.isdigit() else (9999, device)
+
+
+def _parse_ready_device_info(parts: list[str]) -> dict[str, Any]:
+    """Parse the backward-compatible WRSD/2 READY response."""
+
+    if len(parts) < 6 or parts[0:2] != [PROTOCOL_PREFIX, "READY"]:
+        raise MaintenanceError("设备返回了无效的维护状态。")
+    sd_value = parts[2]
+    firmware_value = next(
+        (token.removeprefix("fw=") for token in parts[6:] if token.startswith("fw=")),
+        "",
+    )
+    capabilities = sorted({
+        capability
+        for token in parts[6:]
+        if token.startswith("caps=")
+        for capability in token.removeprefix("caps=").split(",")
+        if capability
+    })
+    return {
+        "firmware_version": firmware_value if firmware_value and firmware_value.lower() != "none" else None,
+        "sd_version": sd_value if VERSION_PATTERN.fullmatch(sd_value) else None,
+        "sd_state": parts[3],
+        "free_bytes": int(parts[4]) if parts[4].isdigit() else 0,
+        "total_bytes": int(parts[5]) if parts[5].isdigit() else 0,
+        "capabilities": capabilities,
+    }
+
+
+@dataclass(frozen=True)
+class _SerialResourceInstallPlan:
+    deferred_replace: bool
+    required_before_upload: int
+
+
+def _serial_resource_install_plan(
+    device_info: dict[str, Any],
+    *,
+    archive_size: int,
+    expanded_size: int,
+) -> _SerialResourceInstallPlan:
+    free_bytes = int(device_info.get("free_bytes") or 0)
+    upload_required = archive_size + SPACE_RESERVE_BYTES
+    full_required = upload_required + expanded_size
+    capabilities = device_info.get("capabilities")
+    if isinstance(capabilities, list) and "deferred_replace" in capabilities:
+        if free_bytes < upload_required:
+            raise MaintenanceError(
+                f"SD 卡可用空间仅 {free_bytes} 字节，接收压缩包至少需要 {upload_required} 字节。"
+            )
+        return _SerialResourceInstallPlan(True, upload_required)
+    if free_bytes < full_required:
+        raise MaintenanceError(
+            "当前固件不支持先校验压缩包再清理旧资源，且 SD 卡空间不足。请先烧录兼容固件后再安装资源。"
+        )
+    return _SerialResourceInstallPlan(False, full_required)
 
 
 def _parse_flash_zip(path: Path) -> tuple[dict[str, str], list[tuple[int, str, bytes]]]:
@@ -541,8 +703,12 @@ class _SerialProtocol:
         self._serial.dtr = False
         self._serial.rts = False
         self._serial.open()
+        self._transfer_baud_active = False
 
     def close(self) -> None:
+        if not self._serial.is_open:
+            return
+        self._restore_default_baud()
         self._serial.close()
 
     def send(self, command: str) -> None:
@@ -575,8 +741,42 @@ class _SerialProtocol:
                 return parts
         raise MaintenanceError("等待设备响应超时，请确认已先安装支持 SD 串口维护的固件。")
 
+    def _wait_for_ready(self, attempts: int) -> list[str] | None:
+        for _ in range(attempts):
+            self.send("HELLO")
+            try:
+                return self.receive(2, ("READY",))
+            except MaintenanceError:
+                continue
+        return None
+
+    def _restore_default_baud(self) -> None:
+        if not self._transfer_baud_active:
+            return
+        try:
+            self.send(f"BAUD {DEFAULT_BAUD}")
+            self.receive(3, ("OK",))
+        except (MaintenanceError, serial.SerialException):
+            pass
+        finally:
+            time.sleep(0.15)
+            self._serial.baudrate = DEFAULT_BAUD
+            self._serial.reset_input_buffer()
+            self._transfer_baud_active = False
+
+    def _recover_default_baud(self) -> bool:
+        self._serial.baudrate = TRANSFER_BAUD
+        self._serial.reset_input_buffer()
+        if self._wait_for_ready(2) is None:
+            self._serial.baudrate = DEFAULT_BAUD
+            self._serial.reset_input_buffer()
+            return False
+        self._transfer_baud_active = True
+        self._restore_default_baud()
+        return True
+
     def handshake(self) -> list[str]:
-        for _ in range(10):
+        for _ in range(20):
             self.send("HELLO")
             try:
                 ready = self.receive(2, ("READY",))
@@ -590,6 +790,7 @@ class _SerialProtocol:
         time.sleep(0.15)
         self._serial.baudrate = TRANSFER_BAUD
         self._serial.reset_input_buffer()
+        self._transfer_baud_active = True
         self.send("HELLO")
         return self.receive(3, ("READY",))
 
@@ -730,14 +931,22 @@ def _install_sd_resources(path: Path, port: str, progress: Progress) -> None:
         ready = protocol.handshake()
         if len(ready) < 6 or ready[3] != "mounted":
             raise MaintenanceError("设备 SD 卡未挂载，请检查卡片并重启设备。")
-        progress("clearing", 10, "正在清理设备中原有的官方资源。")
-        protocol.send("REPLACE")
-        replaced = protocol.receive(REPLACEMENT_TIMEOUT_SECONDS, ("OK",))
-        required = package.size + package.expanded_size + SPACE_RESERVE_BYTES
-        if len(replaced) < 6 or replaced[2] != "REPLACE" or replaced[5] != "ESP_OK":
-            raise MaintenanceError("设备未能进入资源替换模式。")
-        if int(replaced[3]) < required:
-            raise MaintenanceError("SD 卡剩余空间不足，无法安装所选资源包。")
+        device_info = _parse_ready_device_info(ready)
+        install_plan = _serial_resource_install_plan(
+            device_info,
+            archive_size=package.size,
+            expanded_size=package.expanded_size,
+        )
+        if install_plan.deferred_replace:
+            progress("preparing", 10, "设备将先接收并校验压缩包，再清理旧官方资源；用户作品会保留。")
+            protocol.send("REPLACE")
+            replaced = protocol.receive(REPLACEMENT_TIMEOUT_SECONDS, ("OK",))
+            if len(replaced) < 6 or replaced[2] != "REPLACE" or replaced[5] != "ESP_OK":
+                raise MaintenanceError("设备未能进入安全资源替换模式。")
+            if int(replaced[3]) < install_plan.required_before_upload:
+                raise MaintenanceError("SD 卡剩余空间不足，无法先接收并校验所选资源包。")
+        else:
+            progress("preparing", 10, "当前设备空间可同时容纳旧资源和新资源，开始安全写入。")
         protocol.send(f"BEGIN {package.version} {package.size} {package.expanded_size} "
                       f"{package.file_count} {package.object_count} {package.sha256}")
         begin = protocol.receive(10, ("OK",))

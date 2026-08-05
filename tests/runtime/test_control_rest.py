@@ -48,6 +48,7 @@ class _ControllerStub:
             },
         ]
         self.work_requests: list[tuple[dict, str, str]] = []
+        self.maintenance_requests: list[dict] = []
         self.active_maintenance = {"id": "firmware-job", "kind": "firmware", "status": "running"}
 
     def application_status(self) -> dict:
@@ -133,6 +134,31 @@ class _ControllerStub:
     def start_maintenance_work(self, composition: dict, sd_package_path: str, port: str) -> dict:
         self.work_requests.append((composition, sd_package_path, port))
         return {"id": "work-job", "kind": "work", "status": "queued"}
+
+    def maintenance_ports(self) -> list[dict]:
+        return [{"device": "COM29", "description": "USB", "hwid": "USB", "vid": 1, "pid": 2}]
+
+    def maintenance_releases(self, kind: str) -> list[dict]:
+        return [{"version": "v0.0.8", "name": kind, "published_at": "", "prerelease": False, "assets": []}]
+
+    def maintenance_volumes(self) -> list[dict]:
+        return [{"id": "E:\\|1234", "root": "E:\\", "current_version": "v0.0.7"}]
+
+    def maintenance_device_info(self, port: str) -> dict:
+        return {"port": port, "firmware_version": "V2.4.1", "sd_version": "v0.0.8"}
+
+    def start_maintenance_job(
+        self,
+        kind: str,
+        package_path: str,
+        port: str,
+        **options,
+    ) -> dict:
+        self.maintenance_requests.append({"kind": kind, "package_path": package_path, "port": port, **options})
+        return {"id": "maintenance-job", "kind": kind, "status": "queued"}
+
+    def maintenance_job(self, job_id: str) -> dict:
+        return {"id": job_id, "kind": "firmware", "status": "running"}
 
     def active_maintenance_job(self) -> dict | None:
         return self.active_maintenance
@@ -284,6 +310,27 @@ def test_control_rest_returns_active_maintenance_job() -> None:
 
     controller.active_maintenance = None
     assert client.get("/daemon/maintenance/jobs/active").json() == {"job": None}
+
+
+def test_control_rest_adds_release_reader_and_device_info_without_breaking_local_install() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    assert client.get("/daemon/maintenance/releases/firmware").status_code == 200
+    assert client.get("/daemon/maintenance/volumes").json()["volumes"][0]["current_version"] == "v0.0.7"
+    assert client.post("/daemon/maintenance/device-info", json={"port": "COM29"}).json()["device"]["firmware_version"] == "V2.4.1"
+
+    legacy = client.post("/daemon/maintenance/firmware", json={"package_path": "firmware.zip", "port": "COM29"})
+    assert legacy.status_code == 202
+    assert controller.maintenance_requests[-1]["transport"] == "serial"
+
+    reader = client.post("/daemon/maintenance/sd-resources", json={
+        "package_path": "resources.tar.gz",
+        "transport": "card_reader",
+        "volume_id": "E:\\|1234",
+    })
+    assert reader.status_code == 202
+    assert controller.maintenance_requests[-1]["volume_id"] == "E:\\|1234"
 
 
 def test_control_rest_allows_only_local_desktop_origins() -> None:
