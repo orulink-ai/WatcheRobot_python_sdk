@@ -10,6 +10,7 @@ from watcherobot.runtime.daemon.pairing.protocol import (
     LAN_PAIRING_VERSION,
     DeviceSessionEnd,
     HardwareHello,
+    MediaHello,
     PairAccept,
     PairBusy,
     PairCancel,
@@ -18,8 +19,10 @@ from watcherobot.runtime.daemon.pairing.protocol import (
     build_device_state_event,
     build_hardware_hello_ack,
     build_hardware_hello_nack,
+    build_media_hello_ack,
     encode_udp_message,
     parse_hardware_hello,
+    parse_media_hello,
     parse_device_session_end,
     parse_udp_message,
     redact_sensitive_fields,
@@ -49,6 +52,7 @@ def test_protocol_vectors_fix_name_version_and_message_shapes(vectors) -> None:
     assert isinstance(parse_udp_message(valid["pair_busy"]), PairBusy)
     assert isinstance(parse_udp_message(valid["pair_cancel"]), PairCancel)
     assert isinstance(parse_hardware_hello(valid["hardware_hello"]), HardwareHello)
+    assert isinstance(parse_media_hello(valid["media_hello"]), MediaHello)
     assert isinstance(parse_device_session_end(valid["session_end"]), DeviceSessionEnd)
 
     hello_data = valid["hardware_hello"]["data"]
@@ -57,6 +61,11 @@ def test_protocol_vectors_fix_name_version_and_message_shapes(vectors) -> None:
     assert "capabilities" not in hello_data
     assert "pairing_code" not in hello_data
     assert valid["hello_ack"]["data"]["negotiated"]["audio_uplink"]["codec"] == "opus"
+    assert valid["hello_ack"]["data"]["negotiated"]["video_uplink"] == {
+        "transport": "websocket_sidecar",
+        "hello_type": "sys.media.hello",
+        "version": 1,
+    }
 
 
 @pytest.mark.parametrize("pairing_code", ["000000", "999999"])
@@ -174,3 +183,16 @@ def test_hardware_ack_nack_and_state_event_have_stable_envelopes(vectors) -> Non
     assert build_device_state_event(
         vectors["valid"]["device_state"]["data"],
     ) == vectors["valid"]["device_state"]
+    assert build_media_hello_ack() == vectors["valid"]["media_hello_ack"]
+
+
+def test_media_hello_rejects_wrong_channel_version_and_unknown_fields(vectors) -> None:
+    valid = vectors["valid"]["media_hello"]
+    for field, value in (("channel", "audio"), ("version", 2)):
+        payload = {**valid, "data": {**valid["data"], field: value}}
+        with pytest.raises(PairingProtocolError, match=field):
+            parse_media_hello(payload)
+
+    payload = {**valid, "data": {**valid["data"], "device_id": "legacy"}}
+    with pytest.raises(PairingProtocolError, match="unknown fields"):
+        parse_media_hello(payload)

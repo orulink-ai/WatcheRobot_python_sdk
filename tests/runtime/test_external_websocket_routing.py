@@ -41,6 +41,29 @@ def _hello(role: str, **metadata) -> str:
     )
 
 
+def _media_hello(**metadata) -> str:
+    return json.dumps(
+        {
+            "type": "sys.media.hello",
+            "code": 0,
+            "data": {
+                "pairing_protocol": "watcher-lan-pairing",
+                "pairing_version": "1.0",
+                "pair_request_id": "21a9dbf05ea3443480e62076f79a3b12",
+                "daemon_instance_id": "f730f29e670c49f7a3320c4314eb9805",
+                "session_token": (
+                    "f84a1e16ce6f35f14d167f227a93ea93"
+                    "d1a9c4d9eb5517112030f2839d57ae4b"
+                ),
+                "mode": "desktop_link",
+                "channel": "video",
+                "version": 1,
+                **metadata,
+            },
+        }
+    )
+
+
 async def _connect_as(server: ExternalWebSocketServer, role: str):
     websocket = await connect(server.url, max_size=None)
     await websocket.send(_hello(role))
@@ -79,6 +102,34 @@ def test_no_application_routes_desktop_and_device_frames_unchanged() -> None:
         finally:
             await desktop.close()
             await device.close()
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_desktop_hello_preserves_preview_delivery_capability() -> None:
+    async def scenario() -> None:
+        server = ExternalWebSocketServer(host="127.0.0.1", port=0)
+        await server.start()
+        desktop = await connect(server.url, max_size=None)
+        await desktop.send(
+            _hello(
+                "desktop",
+                client_name="media-debugger",
+                capabilities=["face_tracking.preview.credit.v1"],
+            )
+        )
+        await asyncio.wait_for(desktop.recv(), timeout=1)
+        try:
+            [connection] = server.registry.connections_for(
+                ExternalClientRole.DESKTOP
+            )
+            assert connection.metadata == {
+                "client_name": "media-debugger",
+                "capabilities": ["face_tracking.preview.credit.v1"],
+            }
+        finally:
+            await desktop.close()
             await server.stop()
 
     asyncio.run(scenario())
@@ -269,5 +320,67 @@ def test_device_session_end_is_acknowledged_and_not_routed() -> None:
             await desktop.close()
             await device.close()
             await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_video_sidecar_requires_matching_online_control_and_routes_video() -> None:
+    async def scenario() -> None:
+        server = ExternalWebSocketServer(
+            host="127.0.0.1",
+            port=0,
+            hardware_hello_authorizer=_allow_hardware,
+        )
+        await server.start()
+        desktop = await _connect_as(server, "desktop")
+        orphan = await connect(server.url, max_size=None)
+        await orphan.send(_media_hello())
+        await asyncio.wait_for(orphan.wait_closed(), timeout=1)
+        assert orphan.close_code == server.CLOSE_MEDIA_CONTROL_REQUIRED
+
+        device = await _connect_as(server, "hardware")
+        media = await connect(server.url, max_size=None)
+        await media.send(_media_hello())
+        ack = json.loads(await asyncio.wait_for(media.recv(), timeout=1))
+        assert ack["data"] == {
+            "type": "sys.media.hello",
+            "channel": "video",
+            "version": 1,
+        }
+        video = b"WSPK\x02\x00" + b"\x01\x00\x00\x00\x00\x00\x00\x00"
+        await media.send(video)
+        assert await asyncio.wait_for(desktop.recv(), timeout=1) == video
+
+        await device.close()
+        await asyncio.wait_for(media.wait_closed(), timeout=1)
+        assert media.close_code == 1001
+        await desktop.close()
+        await orphan.close()
+        await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_video_sidecar_failure_does_not_close_control() -> None:
+    async def scenario() -> None:
+        server = ExternalWebSocketServer(
+            host="127.0.0.1",
+            port=0,
+            hardware_hello_authorizer=_allow_hardware,
+        )
+        await server.start()
+        device = await _connect_as(server, "hardware")
+        media = await connect(server.url, max_size=None)
+        await media.send(_media_hello())
+        await asyncio.wait_for(media.recv(), timeout=1)
+        await media.send(b"WSPK\x01\x00")
+        await asyncio.wait_for(media.wait_closed(), timeout=1)
+        assert media.close_code == server.CLOSE_INVALID_MEDIA_FRAME
+
+        await device.send(json.dumps({"type": "sys.ping", "data": {}}))
+        pong = json.loads(await asyncio.wait_for(device.recv(), timeout=1))
+        assert pong["type"] == "sys.pong"
+        await device.close()
+        await server.stop()
 
     asyncio.run(scenario())

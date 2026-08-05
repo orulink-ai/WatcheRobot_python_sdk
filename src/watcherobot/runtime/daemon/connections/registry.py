@@ -15,6 +15,7 @@ class ExternalClientRole(str, Enum):
     UNKNOWN = "unknown"
     DESKTOP = "desktop"
     DEVICE = "hardware"
+    MEDIA = "media"
 
 
 class ConnectionRegistryError(RuntimeError):
@@ -88,6 +89,51 @@ class ExternalConnectionRegistry:
         else:
             connection.metadata = {}
         return declared_role
+
+    def find_device_control(
+        self,
+        *,
+        pair_request_id: str,
+        daemon_instance_id: str,
+        session_token: str,
+        peer_ip: str,
+    ) -> ExternalConnection | None:
+        for connection in self.connections_for(ExternalClientRole.DEVICE):
+            metadata = connection.metadata
+            if (
+                metadata.get("pair_request_id") == pair_request_id
+                and metadata.get("daemon_instance_id") == daemon_instance_id
+                and metadata.get("session_token") == session_token
+                and metadata.get("peer_ip") == peer_ip
+            ):
+                return connection
+        return None
+
+    def bind_media(
+        self,
+        connection: ExternalConnection,
+        control: ExternalConnection,
+    ) -> None:
+        if connection.role is not ExternalClientRole.UNKNOWN:
+            raise ClientRoleLockedError("media connection role is already locked")
+        connection.role = ExternalClientRole.MEDIA
+        connection.metadata = {"control_websocket": control.websocket}
+
+    async def close_media_for_control(
+        self,
+        control: ExternalConnection,
+        *,
+        code: int,
+        reason: str,
+    ) -> int:
+        sidecars = [
+            connection
+            for connection in self.connections_for(ExternalClientRole.MEDIA)
+            if connection.metadata.get("control_websocket") is control.websocket
+        ]
+        for connection in sidecars:
+            await connection.websocket.close(code=code, reason=reason)
+        return len(sidecars)
 
     def connections_for(
         self,

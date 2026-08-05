@@ -25,8 +25,10 @@ from watcherobot.runtime.daemon.pairing.protocol import (
     PairingProtocolError,
     build_hardware_hello_ack,
     build_hardware_hello_nack,
+    build_media_hello_ack,
     parse_device_session_end,
     parse_hardware_hello,
+    parse_media_hello,
 )
 from watcherobot.runtime.daemon.pairing.session import PairingSessionError
 from watcherobot.runtime.daemon.routing.raw import RawFrameRouter
@@ -42,7 +44,7 @@ DeviceSessionEndListener = Callable[
 ]
 BusinessFrameListener = Callable[
     [ExternalConnection, str | bytes],
-    Awaitable[None] | None,
+    Awaitable[bool | None] | bool | None,
 ]
 ExternalDisconnectListener = Callable[
     [ExternalConnection],
@@ -61,6 +63,8 @@ class ExternalWebSocketServer:
     CLOSE_DEVICE_SLOT_OCCUPIED = 4412
     CLOSE_PAIRING_PROTOCOL_MISMATCH = 4413
     CLOSE_DESKTOP_LOOPBACK_REQUIRED = 4414
+    CLOSE_MEDIA_CONTROL_REQUIRED = 4415
+    CLOSE_INVALID_MEDIA_FRAME = 4416
 
     def __init__(
         self,
@@ -158,7 +162,9 @@ class ExternalWebSocketServer:
                     return
 
                 async for frame in websocket:
-                    if self._is_control_message(frame, "sys.client.hello"):
+                    if self._is_control_message(frame, "sys.client.hello") or self._is_control_message(
+                        frame, "sys.media.hello"
+                    ):
                         await websocket.close(
                             code=self.CLOSE_ROLE_LOCKED,
                             reason="client role is already locked",
@@ -176,6 +182,15 @@ class ExternalWebSocketServer:
                             )
                         )
                         continue
+                    if connection.role is ExternalClientRole.MEDIA:
+                        if not self._is_video_frame(frame):
+                            await websocket.close(
+                                code=self.CLOSE_INVALID_MEDIA_FRAME,
+                                reason="video sidecar accepts WSPK video only",
+                            )
+                            return
+                        await self.router.route_external(connection, frame)
+                        continue
                     if (
                         connection.role is ExternalClientRole.DEVICE
                         and self._is_control_message(
@@ -192,12 +207,20 @@ class ExternalWebSocketServer:
                             frame,
                         )
                         if inspect.isawaitable(result):
-                            await result
+                            result = await result
+                        if result is True:
+                            continue
                     await self.router.route_external(connection, frame)
             except ConnectionClosed:
                 pass
         finally:
             removed = self.registry.remove(websocket)
+            if removed is not None and removed.role is ExternalClientRole.DEVICE:
+                await self.registry.close_media_for_control(
+                    removed,
+                    code=1001,
+                    reason="control connection closed",
+                )
             if (
                 removed is not None
                 and self._external_disconnect_listener is not None
@@ -298,6 +321,9 @@ class ExternalWebSocketServer:
         connection: ExternalConnection,
         frame: str | bytes,
     ) -> bool:
+        if self._is_control_message(frame, "sys.media.hello"):
+            return await self._handle_media_hello(connection, frame)
+
         payload = self._parse_control_payload(frame, "sys.client.hello")
         if payload is None:
             await connection.websocket.close(
@@ -395,8 +421,29 @@ class ExternalWebSocketServer:
             )
             return False
 
+        if role is ExternalClientRole.DESKTOP:
+            capabilities = payload.get("capabilities", [])
+            connection.metadata = {
+                "client_name": str(payload.get("client_name", "")),
+                "capabilities": (
+                    list(capabilities)
+                    if isinstance(capabilities, list)
+                    and all(isinstance(item, str) for item in capabilities)
+                    else []
+                ),
+            }
+
         if role is ExternalClientRole.DEVICE:
             assert hardware_ack is not None
+            assert hello is not None
+            connection.metadata.update(
+                {
+                    "pair_request_id": hello.pair_request_id,
+                    "daemon_instance_id": hello.daemon_instance_id,
+                    "session_token": hello.session_token,
+                    "peer_ip": self._peer_ip(connection.websocket),
+                }
+            )
             acknowledgement = hardware_ack
         else:
             acknowledgement = {
@@ -412,6 +459,37 @@ class ExternalWebSocketServer:
                 acknowledgement,
                 separators=(",", ":"),
             )
+        )
+        return True
+
+    async def _handle_media_hello(
+        self,
+        connection: ExternalConnection,
+        frame: str | bytes,
+    ) -> bool:
+        try:
+            hello = parse_media_hello(frame)
+        except PairingProtocolError:
+            await connection.websocket.close(
+                code=self.CLOSE_MEDIA_CONTROL_REQUIRED,
+                reason="invalid sys.media.hello",
+            )
+            return False
+        control = self.registry.find_device_control(
+            pair_request_id=hello.pair_request_id,
+            daemon_instance_id=hello.daemon_instance_id,
+            session_token=hello.session_token,
+            peer_ip=self._peer_ip(connection.websocket),
+        )
+        if control is None:
+            await connection.websocket.close(
+                code=self.CLOSE_MEDIA_CONTROL_REQUIRED,
+                reason="matching control connection required",
+            )
+            return False
+        self.registry.bind_media(connection, control)
+        await connection.websocket.send(
+            json.dumps(build_media_hello_ack(), separators=(",", ":"))
         )
         return True
 
@@ -480,3 +558,12 @@ class ExternalWebSocketServer:
         ):
             return None
         return dict(message["data"])
+
+    @staticmethod
+    def _is_video_frame(frame: str | bytes) -> bool:
+        return (
+            isinstance(frame, bytes)
+            and len(frame) >= 14
+            and frame[:4] == b"WSPK"
+            and frame[4] == 2
+        )

@@ -62,6 +62,7 @@ class DaemonApplicationTransport:
         self._audio_credits = 0
         self._audio_slots_per_packet = 1
         self._audio_flow_error: str | None = None
+        self._audio_live_first_frame = True
 
     def set_callbacks(
         self,
@@ -143,6 +144,35 @@ class DaemonApplicationTransport:
             self._send_audio_stream(bytes(pcm), stream_id, chunk_bytes)
         )
 
+    def begin_live_audio_stream(self, *, stream_id: int, chunk_bytes: int = 960) -> None:
+        self._submit(self._begin_live_audio_stream(stream_id, chunk_bytes)).result(
+            timeout=self.command_timeout + 1.0
+        )
+
+    def write_live_audio_stream(
+        self,
+        pcm: bytes,
+        *,
+        stream_id: int,
+        sequence: int,
+        chunk_bytes: int = 960,
+    ) -> int:
+        return self._submit(
+            self._write_live_audio_stream(
+                bytes(pcm), stream_id, sequence, chunk_bytes
+            )
+        ).result(timeout=self.command_timeout + 1.0)
+
+    def end_live_audio_stream(self, *, stream_id: int, sequence: int) -> None:
+        self._submit(self._end_live_audio_stream(stream_id, sequence)).result(
+            timeout=self.command_timeout + 1.0
+        )
+
+    def cancel_live_audio_stream(self, *, stream_id: int) -> None:
+        self._submit(self._cancel_live_audio_stream(stream_id)).result(
+            timeout=self.command_timeout + 1.0
+        )
+
     def send_desktop(self, frame: str | bytes) -> Future[None]:
         return self._submit(self._send(ApplicationChannel.DESKTOP, frame))
 
@@ -207,12 +237,21 @@ class DaemonApplicationTransport:
                 self._disconnect_callback()
         communicator_task.cancel()
         stop_task.cancel()
+        await self._fail_audio_flow("disconnected")
         await asyncio.gather(
             communicator_task,
             stop_task,
             return_exceptions=True,
         )
         self._communicators = None
+
+    async def _fail_audio_flow(self, reason: str) -> None:
+        condition = self._audio_credit_condition
+        if condition is None:
+            return
+        async with condition:
+            self._audio_flow_error = reason
+            condition.notify_all()
 
     async def _send(
         self,
@@ -296,6 +335,89 @@ class DaemonApplicationTransport:
                     self._audio_credits = 0
                     self._audio_slots_per_packet = 1
 
+    async def _begin_live_audio_stream(
+        self,
+        stream_id: int,
+        chunk_bytes: int = 960,
+    ) -> None:
+        if chunk_bytes <= 0 or chunk_bytes > 4096 or chunk_bytes % 2 != 0:
+            raise ValueError("chunk_bytes must be an even value between 2 and 4096")
+        if self._audio_credit_condition is None:
+            self._audio_credit_condition = asyncio.Condition()
+        async with self._audio_credit_condition:
+            self._audio_flow_stream_id = stream_id
+            self._audio_slots_per_packet = max(
+                1,
+                (chunk_bytes + AUDIO_DEVICE_SLOT_BYTES - 1)
+                // AUDIO_DEVICE_SLOT_BYTES,
+            )
+            self._audio_credits = 4
+            self._audio_flow_error = None
+            self._audio_live_first_frame = True
+            self._audio_credit_condition.notify_all()
+
+    async def _write_live_audio_stream(
+        self,
+        pcm: bytes,
+        stream_id: int,
+        sequence: int,
+        chunk_bytes: int = 960,
+    ) -> int:
+        if not pcm:
+            return sequence
+        if len(pcm) % 2 != 0:
+            raise ValueError("PCM chunk ends with a partial sample")
+        for offset in range(0, len(pcm), chunk_bytes):
+            await self._take_audio_credit(stream_id)
+            payload = pcm[offset : offset + chunk_bytes]
+            await self._send(
+                ApplicationChannel.DEVICE,
+                build_wspk(
+                    FRAME_AUDIO,
+                    FLAG_FIRST if self._audio_live_first_frame else 0,
+                    stream_id,
+                    sequence,
+                    payload,
+                ),
+            )
+            self._audio_live_first_frame = False
+            sequence = (sequence + 1) & 0xFFFFFFFF
+        return sequence
+
+    async def _end_live_audio_stream(self, stream_id: int, sequence: int) -> None:
+        condition = self._audio_credit_condition
+        if condition is None:
+            raise WatcheRobotError("audio flow control is not initialized")
+        try:
+            await self._send(
+                ApplicationChannel.DEVICE,
+                build_wspk(
+                    FRAME_AUDIO,
+                    FLAG_LAST,
+                    stream_id,
+                    sequence,
+                    b"",
+                ),
+            )
+        finally:
+            async with condition:
+                if self._audio_flow_stream_id == stream_id:
+                    self._audio_flow_stream_id = 0
+                    self._audio_credits = 0
+                    self._audio_slots_per_packet = 1
+                    condition.notify_all()
+
+    async def _cancel_live_audio_stream(self, stream_id: int) -> None:
+        condition = self._audio_credit_condition
+        if condition is None:
+            return
+        async with condition:
+            if self._audio_flow_stream_id == stream_id:
+                self._audio_flow_stream_id = 0
+                self._audio_credits = 0
+                self._audio_flow_error = "cancelled"
+                condition.notify_all()
+
     async def _take_audio_credit(self, stream_id: int) -> None:
         condition = self._audio_credit_condition
         if condition is None:
@@ -308,12 +430,12 @@ class DaemonApplicationTransport:
                     or self._audio_credits > 0
                     or self._audio_flow_error is not None
                 )
-                if self._audio_flow_stream_id != stream_id:
-                    raise WatcheRobotError("audio stream was replaced")
                 if self._audio_flow_error is not None:
                     raise WatcheRobotError(
                         f"audio stream failed: {self._audio_flow_error}"
                     )
+                if self._audio_flow_stream_id != stream_id:
+                    raise WatcheRobotError("audio stream was replaced")
                 self._audio_credits -= 1
 
         try:

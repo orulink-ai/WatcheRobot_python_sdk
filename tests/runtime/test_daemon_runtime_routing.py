@@ -8,6 +8,7 @@ from pathlib import Path
 from websockets.asyncio.client import connect
 
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
+from watcherobot.runtime.daemon.preview.delivery import PreviewRelayFrame
 from watcherobot.runtime.daemon.application.session import ApplicationChannel
 from tests.runtime.pairing_helpers import connect_runtime_hardware
 
@@ -101,8 +102,18 @@ def test_preview_frames_prefer_the_active_application_device_channel(
 
         runtime.application.bridge.send_to_application = capture  # type: ignore[method-assign]
 
-        assert await runtime._publish_preview_frame(b"FTW1") == 1
-        assert delivered == [(ApplicationChannel.DEVICE, b"FTW1")]
+        frame = PreviewRelayFrame(
+            stream_id=1,
+            sequence=2,
+            telemetry='{"v":1,"kind":"frame","seq":2}',
+            image=b"FTW1",
+            completed_at=1.0,
+        )
+        assert await runtime._publish_preview_bundle(frame) == 1
+        assert delivered == [
+            (ApplicationChannel.DEVICE, frame.telemetry),
+            (ApplicationChannel.DEVICE, frame.image),
+        ]
 
     asyncio.run(scenario())
 

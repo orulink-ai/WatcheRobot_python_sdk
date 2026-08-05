@@ -61,7 +61,7 @@ class RawFrameRouter:
                 ExternalClientRole.DEVICE,
                 frame,
             )
-        if source.role is ExternalClientRole.DEVICE:
+        if source.role in (ExternalClientRole.DEVICE, ExternalClientRole.MEDIA):
             return await self._registry.send_to_role(
                 ExternalClientRole.DESKTOP,
                 frame,
@@ -88,6 +88,6 @@ def _application_channel_for_external(
 ) -> ApplicationChannel | None:
     if role is ExternalClientRole.DESKTOP:
         return ApplicationChannel.DESKTOP
-    if role is ExternalClientRole.DEVICE:
+    if role in (ExternalClientRole.DEVICE, ExternalClientRole.MEDIA):
         return ApplicationChannel.DEVICE
     return None
