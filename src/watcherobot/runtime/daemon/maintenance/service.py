@@ -24,8 +24,29 @@ from zipfile import BadZipFile, ZipFile
 import serial
 from serial.tools import list_ports
 
-from .card_reader import install_package as install_card_package, list_volumes
+from .card_reader import (
+    delete_work as delete_card_work,
+    install_package as install_card_package,
+    install_work_package as install_card_work_package,
+    list_volumes,
+    list_works as list_card_works,
+    read_work as read_card_work,
+)
 from .releases import acquire_release_package, list_releases
+from .work_assets import MAX_SOURCE_BYTES_BY_KIND
+from .works import (
+    MAX_WORK_BYTES,
+    MAX_WORKS,
+    WORK_ID_PATTERN,
+    WorkDocumentError,
+    PortableWorkPackage,
+    build_portable_work_package,
+    hydrate_creator_assets,
+    invalid_work_summary,
+    normalize_work_document,
+    read_portable_work_package,
+    validate_package_dependencies,
+)
 
 PROTOCOL_PREFIX = "WRSD/2"
 DEFAULT_BAUD = 115200
@@ -37,6 +58,9 @@ SPACE_RESERVE_BYTES = 4 * 1024 * 1024
 REPLACEMENT_TIMEOUT_SECONDS = 300
 FIRMWARE_READY_TIMEOUT_SECONDS = 45
 SD_ACTIVATION_TIMEOUT_SECONDS = 900
+WORK_DISCOVERY_HANDSHAKE_ATTEMPTS = 4
+WORK_DISCOVERY_RESPONSE_TIMEOUT_SECONDS = 0.75
+WORK_ASSET_CHECK_TIMEOUT_SECONDS = 2.0
 VERSION_PATTERN = re.compile(r"^v\d+\.\d+\.\d+$")
 WRITING_PERCENT = re.compile(r"(?:\((\d+(?:\.\d+)?)\s*%\)|\]\s+(\d+(?:\.\d+)?)%)")
 WRITING_ADDRESS = re.compile(r"Writing at 0x([0-9a-fA-F]+)")
@@ -95,8 +119,9 @@ class MaintenanceService:
     def __init__(self) -> None:
         self._jobs: dict[str, MaintenanceJob] = {}
         self._lock = threading.Lock()
+        self._serial_work_list_lock = threading.Lock()
         self._active_job_id: str | None = None
-        self._work_requests: dict[str, tuple[dict[str, Any], Path]] = {}
+        self._work_requests: dict[str, tuple[dict[str, Any] | None, Path | None]] = {}
 
     def ports(self) -> list[dict[str, Any]]:
         result = []
@@ -115,6 +140,50 @@ class MaintenanceService:
 
     def volumes(self) -> list[dict[str, Any]]:
         return list_volumes()
+
+    def works(self, *, transport: str, port: str = "", volume_id: str = "") -> list[dict[str, Any]]:
+        if transport not in {"serial", "card_reader"}:
+            raise MaintenanceError("请选择设备端口或 SD 读卡器。")
+        with self._lock:
+            if self._active_job_id is not None:
+                active = self._jobs.get(self._active_job_id)
+                if active is not None and active.status in {"queued", "running"}:
+                    raise MaintenanceError("设备维护操作进行中，暂时无法读取作品。")
+        if transport == "card_reader":
+            if not volume_id:
+                raise MaintenanceError("请先选择 SD 读卡器。")
+            try:
+                return list_card_works(volume_id)
+            except Exception as exc:
+                raise MaintenanceError(str(exc)) from exc
+        normalized_port = port.strip()
+        if not normalized_port:
+            raise MaintenanceError("请先选择设备端口。")
+        if not self._serial_work_list_lock.acquire(blocking=False):
+            raise MaintenanceError("该设备端口正在读取 SD 作品，请等待当前读取完成。")
+        try:
+            return _list_serial_works(normalized_port)
+        finally:
+            self._serial_work_list_lock.release()
+
+    def read_work(self, *, transport: str, work_id: str, port: str = "", volume_id: str = "") -> dict[str, Any]:
+        if not WORK_ID_PATTERN.fullmatch(work_id):
+            raise MaintenanceError("作品标识无效。")
+        with self._lock:
+            if self._active_job_id is not None:
+                active = self._jobs.get(self._active_job_id)
+                if active is not None and active.status in {"queued", "running"}:
+                    raise MaintenanceError("设备维护操作进行中，暂时无法导入作品。")
+        if transport == "card_reader":
+            if not volume_id:
+                raise MaintenanceError("请先选择 SD 读卡器。")
+            try:
+                return read_card_work(volume_id, work_id)
+            except Exception as exc:
+                raise MaintenanceError(str(exc)) from exc
+        if transport != "serial" or not port.strip():
+            raise MaintenanceError("请先选择设备端口。")
+        return _read_serial_work(port.strip(), work_id)
 
     def device_info(self, port: str) -> dict[str, Any]:
         normalized_port = port.strip()
@@ -199,16 +268,27 @@ class MaintenanceService:
 
     def start_work(
         self,
-        composition: dict[str, Any],
-        sd_package_path: str,
+        composition: dict[str, Any] | None,
+        package_path: str,
         port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
     ) -> dict[str, Any]:
-        package = Path(sd_package_path).expanduser().resolve()
-        if not package.is_file():
-            raise MaintenanceError("Select the matching SD resource package before burning a work.")
+        if transport not in {"serial", "card_reader"}:
+            raise MaintenanceError("请选择设备端口或 SD 读卡器。")
+        package = Path(package_path).expanduser().resolve() if package_path.strip() else None
+        if package is not None and not package.is_file():
+            raise MaintenanceError("选择的作品 ZIP 不存在。")
+        if package is None and not isinstance(composition, dict):
+            raise MaintenanceError("请选择作品 ZIP，或先在创作模式保存作品。")
+        if package is not None and composition is not None:
+            raise MaintenanceError("作品 ZIP 与当前作品不能同时作为烧录来源。")
         normalized_port = port.strip()
-        if not normalized_port:
+        if transport == "serial" and not normalized_port:
             raise MaintenanceError("Select a serial port first.")
+        if transport == "card_reader" and not volume_id:
+            raise MaintenanceError("请先选择 SD 读卡器。")
         with self._lock:
             if self._active_job_id is not None:
                 active = self._jobs[self._active_job_id]
@@ -218,13 +298,63 @@ class MaintenanceService:
                 id=uuid.uuid4().hex,
                 kind="work",
                 port=normalized_port,
-                package_path=str(package),
+                package_path=str(package) if package is not None else "",
+                transport=transport,
+                volume_id=volume_id,
             )
             self._jobs[job.id] = job
             self._work_requests[job.id] = (composition, package)
             self._active_job_id = job.id
         threading.Thread(target=self._run, args=(job.id,), daemon=True).start()
         return job.payload()
+
+    def export_work_package(self, composition: dict[str, Any]) -> dict[str, Any]:
+        try:
+            package = build_portable_work_package(composition)
+        except WorkDocumentError as exc:
+            raise MaintenanceError(str(exc)) from exc
+        output_root = Path(tempfile.gettempdir()) / "watcherobot-work-packages"
+        output_root.mkdir(parents=True, exist_ok=True)
+        output = output_root / f"{package.work_id}-{uuid.uuid4().hex[:8]}.watcher-work.zip"
+        output.write_bytes(package.zip_payload)
+        return {
+            "path": str(output),
+            "file_name": f"{package.work_id}.watcher-work.zip",
+            "work_id": package.work_id,
+            "revision": package.revision,
+        }
+
+    def import_work_package(self, package_path: str) -> dict[str, Any]:
+        try:
+            package = read_portable_work_package(Path(package_path).expanduser().resolve())
+            hydrated = hydrate_creator_assets(package.work, package.files)
+            return normalize_work_document(
+                hydrated,
+                expected_id=package.work_id,
+                source="local",
+            )
+        except (OSError, WorkDocumentError) as exc:
+            raise MaintenanceError(str(exc)) from exc
+
+    def delete_work(self, *, transport: str, work_id: str, port: str = "", volume_id: str = "") -> None:
+        if not WORK_ID_PATTERN.fullmatch(work_id):
+            raise MaintenanceError("作品标识无效。")
+        with self._lock:
+            if self._active_job_id is not None:
+                active = self._jobs.get(self._active_job_id)
+                if active is not None and active.status in {"queued", "running"}:
+                    raise MaintenanceError("设备维护操作进行中，暂时无法删除作品。")
+        if transport == "card_reader":
+            if not volume_id:
+                raise MaintenanceError("请先选择 SD 读卡器。")
+            try:
+                delete_card_work(volume_id, work_id)
+            except Exception as exc:
+                raise MaintenanceError(str(exc)) from exc
+            return
+        if transport != "serial" or not port.strip():
+            raise MaintenanceError("请先选择设备端口。")
+        _delete_serial_work(port.strip(), work_id)
 
     def get(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -274,21 +404,34 @@ class MaintenanceService:
                 package_path = Path(job.package_path)
             if kind == "firmware":
                 _flash_firmware(package_path, port, callback)
+            elif kind == "work":
+                with self._lock:
+                    composition, selected_package = self._work_requests[job_id]
+                try:
+                    work_package = (
+                        read_portable_work_package(selected_package)
+                        if selected_package is not None
+                        else build_portable_work_package(composition or {})
+                    )
+                except WorkDocumentError as exc:
+                    raise MaintenanceError(str(exc)) from exc
+                if transport == "card_reader":
+                    install_card_work_package(work_package, volume_id, callback)
+                else:
+                    _install_work(work_package, port, callback)
             elif transport == "card_reader":
                 install_card_package(package_path, volume_id, callback)
             elif kind == "sd_resources":
                 _install_sd_resources(package_path, port, callback)
-            else:
-                with self._lock:
-                    composition, sd_package = self._work_requests[job_id]
-                _install_work(composition, sd_package, port, callback)
             self._update(
                 job_id,
                 status="succeeded",
                 phase="done",
                 progress=100,
                 message=(
-                    "SD 卡写入完成，可安全移除读卡器并装回设备。"
+                    "作品写入完成，可在设备或 SDK 中按作品 ID 运行。"
+                    if kind == "work"
+                    else "SD 卡写入完成，可安全移除读卡器并装回设备。"
                     if transport == "card_reader"
                     else "操作完成，设备已重新启动。"
                 ),
@@ -571,14 +714,6 @@ class _SdPackage:
     object_count: int
 
 
-@dataclass(frozen=True)
-class _WorkPackage:
-    work_id: str
-    name: str
-    payload: bytes
-    sha256: str
-
-
 def _inspect_sd_package(path: Path) -> _SdPackage:
     try:
         with tarfile.open(path, "r:gz") as archive:
@@ -599,97 +734,13 @@ def _inspect_sd_package(path: Path) -> _SdPackage:
                       sum(item.name.startswith("assets/") for item in members))
 
 
-def _safe_work_id(name: str) -> str:
-    value = re.sub(r"[^a-z0-9_]+", "_", name.lower()).strip("_")
-    if not value or not value[0].isalpha():
-        value = f"work_{value}"
-    return value[:23].rstrip("_") or "work"
+def _build_work_package(composition: dict[str, Any]) -> PortableWorkPackage:
+    """Build one self-contained, portable work package without an official SD archive."""
 
-
-def _read_official_catalog(path: Path) -> dict[str, Any]:
     try:
-        with tarfile.open(path, "r:gz") as archive:
-            handle = archive.extractfile(archive.getmember("official_catalog.json"))
-            if handle is None:
-                raise MaintenanceError("SD package is missing official_catalog.json.")
-            value = json.load(handle)
-    except (KeyError, OSError, tarfile.TarError, json.JSONDecodeError) as exc:
-        raise MaintenanceError(f"Invalid SD package catalog: {exc}") from exc
-    if not isinstance(value, dict) or not isinstance(value.get("expressions"), list):
-        raise MaintenanceError("SD package catalog has no expression list.")
-    return value
-
-
-def _build_work_package(composition: dict[str, Any], sd_package: Path) -> _WorkPackage:
-    name = str(composition.get("name") or "Untitled work").strip()[:64]
-    clips = composition.get("clips")
-    if not isinstance(clips, list) or not clips:
-        raise MaintenanceError("The current work has no timeline clips.")
-    entries = {
-        item.get("id"): item
-        for item in _read_official_catalog(sd_package).get("expressions", [])
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
-    }
-    tracks: list[dict[str, Any]] = []
-    kind_map = {
-        "expression": ("animation", "anim", "animation"),
-        "action": ("action", "action", "action"),
-        "sound": ("sound", "sfx", "sound"),
-    }
-    for clip in clips:
-        if not isinstance(clip, dict) or clip.get("kind") == "light":
-            continue
-        clip_kind = clip.get("kind")
-        resource_id = clip.get("resourceId")
-        if clip_kind not in kind_map or not isinstance(resource_id, str):
-            raise MaintenanceError("The work contains an unsupported timeline clip.")
-        catalog_key, asset_kind, track_type = kind_map[clip_kind]
-        entry = entries.get(resource_id)
-        assets = {}
-        if isinstance(entry, dict):
-            device = entry.get("device")
-            if isinstance(device, dict) and isinstance(device.get("assets"), dict):
-                assets = device["assets"]
-            elif isinstance(entry.get("assets"), dict):
-                assets = entry["assets"]
-        asset = assets.get(catalog_key) if isinstance(assets, dict) else None
-        if not isinstance(asset, dict):
-            raise MaintenanceError(f"Official asset {resource_id} is missing from the selected SD package.")
-        start_ms = int(clip.get("startMs", 0))
-        duration_ms = max(1, int(clip.get("durationMs", 1)))
-        tracks.append({
-            "type": track_type,
-            "start_ms": max(0, start_ms),
-            "duration_ms": duration_ms,
-            "asset": {
-                "source": "official",
-                "resource_id": resource_id,
-                "kind": asset_kind,
-                "sha256": asset.get("sha256"),
-                "size": asset.get("size"),
-                "format": asset.get("format"),
-            },
-        })
-    if not tracks:
-        raise MaintenanceError("The work has no animation, action, or sound clips to burn.")
-    work_id = _safe_work_id(name)
-    work = {
-        "schema_version": 1,
-        "work_id": work_id,
-        "name": name,
-        "duration_ms": max(item["start_ms"] + item["duration_ms"] for item in tracks),
-        "tracks": tracks,
-    }
-    buffer = BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
-        payload = json.dumps(work, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        for filename in ("work.json", "work_manifest.json"):
-            info = tarfile.TarInfo(filename)
-            info.size = len(payload)
-            info.mtime = 0
-            archive.addfile(info, BytesIO(payload))
-    data = buffer.getvalue()
-    return _WorkPackage(work_id, name, data, hashlib.sha256(data).hexdigest())
+        return build_portable_work_package(composition)
+    except WorkDocumentError as exc:
+        raise MaintenanceError(str(exc)) from exc
 
 
 class _SerialProtocol:
@@ -775,11 +826,16 @@ class _SerialProtocol:
         self._restore_default_baud()
         return True
 
-    def handshake(self) -> list[str]:
-        for _ in range(20):
+    def handshake(
+        self,
+        *,
+        attempts: int = 20,
+        response_timeout_seconds: float = 2.0,
+    ) -> list[str]:
+        for _ in range(attempts):
             self.send("HELLO")
             try:
-                ready = self.receive(2, ("READY",))
+                ready = self.receive(response_timeout_seconds, ("READY",))
                 break
             except MaintenanceError:
                 continue
@@ -793,6 +849,230 @@ class _SerialProtocol:
         self._transfer_baud_active = True
         self.send("HELLO")
         return self.receive(3, ("READY",))
+
+
+def _receive_work_payload(
+    protocol: _SerialProtocol,
+    command: str,
+    *,
+    timeout_seconds: float = 15.0,
+    max_bytes: int = MAX_WORK_BYTES,
+) -> bytes:
+    protocol.send(command)
+    protocol.set_read_timeout(0.25)
+    deadline = time.monotonic() + timeout_seconds
+    expected_sequence = 0
+    payload = bytearray()
+    while time.monotonic() < deadline:
+        text = protocol.read_line()
+        marker = text.find(PROTOCOL_PREFIX + " ")
+        if marker < 0:
+            continue
+        parts = text[marker:].split(maxsplit=3)
+        if len(parts) < 2:
+            continue
+        if parts[1] == "ERROR":
+            raise MaintenanceError("设备无法读取 SD 作品：" + " ".join(parts[2:]))
+        if parts[1] == "WORK_DATA":
+            if len(parts) != 4:
+                raise MaintenanceError("设备返回了不完整的作品数据块。")
+            try:
+                sequence = int(parts[2])
+                chunk = base64.b64decode(parts[3], validate=True)
+            except (ValueError, TypeError) as exc:
+                raise MaintenanceError("设备返回的作品数据块编码无效。") from exc
+            if sequence != expected_sequence:
+                raise MaintenanceError("设备返回的作品数据块顺序不连续。")
+            if not chunk or len(payload) + len(chunk) > max_bytes:
+                raise MaintenanceError(f"设备返回的作品数据超过 {max_bytes // 1024} KB 限制。")
+            payload.extend(chunk)
+            expected_sequence += 1
+            continue
+        if parts[1] != "WORK_DONE":
+            continue
+        if len(parts) != 4:
+            raise MaintenanceError("设备返回的作品完成帧无效。")
+        try:
+            expected_size = int(parts[2])
+            expected_crc = int(parts[3], 16)
+        except ValueError as exc:
+            raise MaintenanceError("设备返回的作品校验信息无效。") from exc
+        if expected_size != len(payload) or zlib.crc32(payload) & 0xFFFFFFFF != expected_crc:
+            raise MaintenanceError("设备返回的作品内容校验失败，请重试。")
+        return bytes(payload)
+    raise MaintenanceError("读取设备 SD 作品超时，请确认固件支持作品读取。")
+
+
+def _receive_work_document(
+    protocol: _SerialProtocol,
+    command: str,
+    *,
+    timeout_seconds: float = 15.0,
+    max_bytes: int = MAX_WORK_BYTES,
+) -> dict[str, Any]:
+    payload = _receive_work_payload(
+        protocol,
+        command,
+        timeout_seconds=timeout_seconds,
+        max_bytes=max_bytes,
+    )
+    try:
+        document = json.loads(payload.decode("utf-8-sig"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise MaintenanceError("设备上的作品文件不是有效 JSON。") from exc
+    if not isinstance(document, dict):
+        raise MaintenanceError("设备上的作品文件必须是 JSON 对象。")
+    return document
+
+
+def _read_serial_work(port: str, work_id: str) -> dict[str, Any]:
+    protocol: _SerialProtocol | None = None
+    try:
+        protocol = _SerialProtocol(port)
+        ready = protocol.handshake()
+        info = _parse_ready_device_info(ready)
+        if len(ready) < 4 or ready[3] != "mounted":
+            raise MaintenanceError("设备 SD 卡未挂载。")
+        document = _receive_work_document(protocol, f"WORK_GET {work_id}")
+        normalized = normalize_work_document(document, expected_id=work_id, source="serial")
+        creator = document.get("creator")
+        assets = creator.get("assets", []) if isinstance(creator, dict) else []
+        if assets and "work_files_v1" not in info.get("capabilities", []):
+            raise MaintenanceError("当前固件无法读取作品源素材，请先更新 ESP32 固件。")
+        files: dict[str, bytes] = {}
+        for asset in assets:
+            relative = asset.get("sourcePath") if isinstance(asset, dict) else None
+            expected_size = asset.get("size") if isinstance(asset, dict) else None
+            asset_kind = asset.get("kind") if isinstance(asset, dict) else None
+            if (
+                not isinstance(relative, str)
+                or not relative.startswith("sources/")
+                or not isinstance(expected_size, int)
+                or expected_size <= 0
+                or asset_kind not in MAX_SOURCE_BYTES_BY_KIND
+                or expected_size > MAX_SOURCE_BYTES_BY_KIND[asset_kind]
+            ):
+                raise MaintenanceError("设备作品包含无效的源素材路径。")
+            # 460800 波特率下还包含 Base64 与逐行协议开销；超时必须随素材大小增长，
+            # 否则较大的合法 GIF/音频会在数据仍持续到达时被误判为读取失败。
+            timeout_seconds = max(30.0, expected_size / 40_000.0 + 30.0)
+            files[relative] = _receive_work_payload(
+                protocol,
+                f"WORK_FILE {work_id} {relative}",
+                timeout_seconds=timeout_seconds,
+                max_bytes=expected_size,
+            )
+        hydrated = hydrate_creator_assets(document, files)
+        normalized["creator"] = hydrated.get("creator")
+        return normalized
+    except serial.SerialException as exc:
+        raise MaintenanceError(f"无法打开 {port} 导入 SD 作品：{exc}") from exc
+    except WorkDocumentError as exc:
+        raise MaintenanceError(str(exc)) from exc
+    finally:
+        if protocol is not None:
+            try:
+                protocol.close()
+            except serial.SerialException:
+                pass
+
+
+def _check_serial_work_assets(protocol: _SerialProtocol, work_id: str) -> list[str]:
+    protocol.send(f"WORK_CHECK {work_id}")
+    protocol.set_read_timeout(0.25)
+    deadline = time.monotonic() + WORK_ASSET_CHECK_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        text = protocol.read_line()
+        marker = text.find(PROTOCOL_PREFIX + " ")
+        if marker < 0:
+            continue
+        parts = text[marker:].split(maxsplit=3)
+        if len(parts) >= 4 and parts[1:3] == ["OK", "WORK_CHECK"] and parts[3] == work_id:
+            return []
+        if len(parts) >= 3 and parts[1:3] == ["ERROR", "work_assets_missing"]:
+            return [parts[3] if len(parts) == 4 else "设备端素材缺失或损坏"]
+    return ["设备端素材检查超时"]
+
+
+def _list_serial_works(port: str) -> list[dict[str, Any]]:
+    protocol: _SerialProtocol | None = None
+    try:
+        protocol = _SerialProtocol(port)
+        ready = protocol.handshake(
+            attempts=WORK_DISCOVERY_HANDSHAKE_ATTEMPTS,
+            response_timeout_seconds=WORK_DISCOVERY_RESPONSE_TIMEOUT_SECONDS,
+        )
+        if len(ready) < 6 or ready[3] != "mounted":
+            raise MaintenanceError("设备 SD 卡未挂载。")
+        capabilities = set(_parse_ready_device_info(ready).get("capabilities", []))
+        catalog = _receive_work_document(protocol, "WORK_LIST")
+        raw_works = catalog.get("works")
+        if not isinstance(raw_works, list):
+            raise MaintenanceError("设备作品目录格式无效。")
+        if len(raw_works) > MAX_WORKS:
+            raise MaintenanceError("设备作品数量超过 64 个限制。")
+        result: list[dict[str, Any]] = []
+        for item in raw_works:
+            work_id = item.get("id") if isinstance(item, dict) else None
+            name = item.get("name") if isinstance(item, dict) else None
+            if not isinstance(work_id, str) or not WORK_ID_PATTERN.fullmatch(work_id):
+                continue
+            try:
+                document = _receive_work_document(protocol, f"WORK_GET {work_id}")
+                normalized = normalize_work_document(document, expected_id=work_id, source="serial")
+                if "work_check_v2" in capabilities:
+                    normalized["missing_assets"] = _check_serial_work_assets(protocol, work_id)
+                result.append(normalized)
+            except (MaintenanceError, WorkDocumentError) as exc:
+                result.append(invalid_work_summary(
+                    work_id,
+                    source="serial",
+                    name=name if isinstance(name, str) and name.strip() else None,
+                    error=str(exc),
+                ))
+        return sorted(result, key=lambda item: (not item["is_valid"], str(item["name"]).casefold()))
+    except serial.SerialException as exc:
+        raise MaintenanceError(f"无法打开 {port} 读取 SD 作品：{exc}") from exc
+    finally:
+        if protocol is not None:
+            try:
+                protocol.close()
+            except serial.SerialException:
+                pass
+
+
+def _serial_official_catalog(protocol: _SerialProtocol) -> dict[str, Any]:
+    try:
+        document = _receive_work_document(protocol, "WORK_RESOURCES", max_bytes=128 * 1024)
+    except MaintenanceError as exc:
+        raise MaintenanceError(
+            "当前固件不支持作品素材校验，请先烧录支持 work_resources 的最新固件。"
+        ) from exc
+    if not isinstance(document.get("expressions"), list):
+        raise MaintenanceError("设备 SD 官方素材目录格式无效。")
+    return document
+
+
+def _delete_serial_work(port: str, work_id: str) -> None:
+    protocol: _SerialProtocol | None = None
+    try:
+        protocol = _SerialProtocol(port)
+        ready = protocol.handshake()
+        info = _parse_ready_device_info(ready)
+        if "work_delete" not in info.get("capabilities", []):
+            raise MaintenanceError("当前固件不支持通过端口删除 SD 作品，请先更新固件。")
+        protocol.send(f"WORK_DELETE {work_id}")
+        completed = protocol.receive(60, ("OK",))
+        if len(completed) < 4 or completed[2:4] != ["WORK_DELETE", work_id]:
+            raise MaintenanceError("设备返回了不匹配的作品删除结果。")
+    except serial.SerialException as exc:
+        raise MaintenanceError(f"无法打开 {port} 删除 SD 作品：{exc}") from exc
+    finally:
+        if protocol is not None:
+            try:
+                protocol.close()
+            except serial.SerialException:
+                pass
 
 
 def _wait_for_firmware_ready(port: str, progress: Progress) -> list[str]:
@@ -982,12 +1262,10 @@ def _install_sd_resources(path: Path, port: str, progress: Progress) -> None:
 
 
 def _install_work(
-    composition: dict[str, Any],
-    sd_package: Path,
+    package: PortableWorkPackage,
     port: str,
     progress: Progress,
 ) -> None:
-    package = _build_work_package(composition, sd_package)
     progress("validating", 5, f"作品 {package.name} 已校验，正在内存中生成设备作品包。")
     try:
         protocol = _SerialProtocol(port)
@@ -998,7 +1276,32 @@ def _install_work(
         ready = protocol.handshake()
         if len(ready) < 6 or ready[3] != "mounted":
             raise MaintenanceError("Device SD card is not mounted.")
-        protocol.send(f"WORK_BEGIN {package.work_id} {len(package.payload)} {package.sha256}")
+        info = _parse_ready_device_info(ready)
+        capabilities = set(info.get("capabilities", []))
+        required = {"work_write_v2", "work_resources"}
+        if not required.issubset(capabilities):
+            raise MaintenanceError("当前固件不支持 v2 作品写入与素材校验，请先更新固件。")
+        # The device keeps the compressed upload and extracted incoming work
+        # at the same time, then atomically replaces the previous revision.
+        # Compressed size alone is not a safe estimate for AnimPack/PCM files.
+        required_free = (
+            len(package.payload)
+            + package.expanded_size_bytes
+            + SPACE_RESERVE_BYTES
+        )
+        free_bytes = int(info.get("free_bytes") or 0)
+        if free_bytes < required_free:
+            raise MaintenanceError(
+                f"设备 SD 卡空间不足：安装作品至少需要 {required_free / (1024 * 1024):.1f} MB，"
+                f"当前可用 {free_bytes / (1024 * 1024):.1f} MB。官方资源和其他作品不会被自动删除。"
+            )
+        try:
+            validate_package_dependencies(package, _serial_official_catalog(protocol))
+        except WorkDocumentError as exc:
+            raise MaintenanceError(str(exc)) from exc
+        protocol.send(
+            f"WORK_BEGIN {package.work_id} {len(package.payload)} {package.sha256} {package.expanded_size_bytes}"
+        )
         begin = protocol.receive(10, ("OK",))
         chunk_size = _negotiate_chunk_size(begin)
         sent = 0

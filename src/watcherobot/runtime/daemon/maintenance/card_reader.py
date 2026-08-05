@@ -15,6 +15,18 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
+from .works import (
+    MAX_WORK_BYTES,
+    MAX_WORKS,
+    WORK_ID_PATTERN,
+    WorkDocumentError,
+    PortableWorkPackage,
+    hydrate_creator_assets,
+    invalid_work_summary,
+    normalize_work_document,
+    validate_package_dependencies,
+)
+
 
 VERSION_PATTERN = re.compile(r"^v\d+\.\d+\.\d+$")
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
@@ -145,6 +157,160 @@ def list_volumes() -> list[dict[str, Any]]:
         except OSError:
             continue
     return [item.payload() for item in sorted(result, key=lambda item: str(item.root))]
+
+
+_WORK_ASSET_SPECS = {
+    "animation": ("anim", "animpack-v2", "anim", ".animpack"),
+    "action": ("action", "firmware-action-json-v1", "actions", ".json"),
+    "sound": ("sfx", "pcm-s16le-24khz-mono", "sfx", ".pcm"),
+}
+
+
+def _asset_file_matches(root: Path, asset: Any, track_type: str, *, work_root: Path | None = None) -> bool:
+    expected_kind, expected_format, directory, extension = _WORK_ASSET_SPECS[track_type]
+    if not isinstance(asset, dict):
+        return False
+    sha256 = asset.get("sha256")
+    size = asset.get("size")
+    if (
+        asset.get("kind") != expected_kind
+        or asset.get("format") != expected_format
+        or not isinstance(sha256, str)
+        or not SHA256_PATTERN.fullmatch(sha256)
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or size <= 0
+    ):
+        return False
+    if work_root is None:
+        path = root / "watche" / "assets" / directory / f"{sha256}{extension}"
+    else:
+        relative = asset.get("path")
+        expected = f"{directory}/{sha256}{extension}"
+        if relative != expected:
+            return False
+        path = work_root.joinpath(*PurePosixPath(relative).parts)
+    try:
+        if not path.is_file() or path.stat().st_size != size:
+            return False
+        with path.open("rb") as handle:
+            return _sha256_stream(handle) == sha256
+    except OSError:
+        return False
+
+
+def _work_missing_assets(
+    root: Path,
+    work_root: Path,
+    work: dict[str, Any],
+    official_catalog: dict[str, Any],
+) -> list[str]:
+    official_entries = {
+        item.get("id"): item
+        for item in official_catalog.get("expressions", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    try:
+        local_catalog = json.loads((work_root / "resource_catalog.json").read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        local_catalog = {}
+    local_entries = {
+        item.get("id"): item
+        for item in local_catalog.get("expressions", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    } if isinstance(local_catalog, dict) else {}
+    missing: set[str] = set()
+    for track in work["composition"]["tracks"]:
+        track_type = track["type"]
+        asset_ref = track["asset"]
+        resource_id = asset_ref["resource_id"]
+        local = asset_ref.get("source") == "work"
+        entry = (local_entries if local else official_entries).get(resource_id)
+        assets = entry.get("assets") if isinstance(entry, dict) else None
+        asset = assets.get(track_type) if isinstance(assets, dict) else None
+        if not _asset_file_matches(root, asset, track_type, work_root=work_root if local else None):
+            missing.add(f"{resource_id}/{track_type}")
+    return sorted(missing)
+
+
+def list_works(volume_id: str) -> list[dict[str, Any]]:
+    volume = _resolve_volume(volume_id)
+    if not volume.root.is_dir():
+        raise CardReaderError("所选 SD 卡当前不可用。")
+    works_root = volume.root / "watche" / "works"
+    if not works_root.is_dir():
+        return []
+    try:
+        official_catalog = _read_official_catalog(volume.root)
+    except CardReaderError:
+        official_catalog = {"expressions": []}
+    result: list[dict[str, Any]] = []
+    directories = sorted(
+        (
+            item
+            for item in works_root.iterdir()
+            if item.is_dir() and WORK_ID_PATTERN.fullmatch(item.name)
+        ),
+        key=lambda item: item.name,
+    )
+    for directory in directories[:MAX_WORKS]:
+        work_path = directory / "work.json"
+        modified_at = None
+        try:
+            stat = work_path.stat()
+            if stat.st_size <= 0 or stat.st_size > MAX_WORK_BYTES:
+                raise WorkDocumentError("作品文件大小无效。")
+            modified_at = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
+            document = json.loads(work_path.read_text(encoding="utf-8-sig"))
+            normalized = normalize_work_document(
+                document,
+                expected_id=directory.name,
+                source="card_reader",
+                modified_at=modified_at,
+            )
+            normalized["missing_assets"] = _work_missing_assets(
+                volume.root,
+                directory,
+                normalized,
+                official_catalog,
+            )
+            result.append(normalized)
+        except (OSError, UnicodeError, json.JSONDecodeError, WorkDocumentError) as exc:
+            result.append(invalid_work_summary(
+                directory.name,
+                source="card_reader",
+                error=str(exc),
+                modified_at=modified_at,
+            ))
+    return sorted(result, key=lambda item: (not item["is_valid"], str(item["name"]).casefold()))
+
+
+def read_work(volume_id: str, work_id: str) -> dict[str, Any]:
+    """Read one editable work and hydrate only its declared source media."""
+
+    if not WORK_ID_PATTERN.fullmatch(work_id):
+        raise CardReaderError("作品标识无效。")
+    volume = _resolve_volume(volume_id)
+    work_root = volume.root / "watche" / "works" / work_id
+    work_path = work_root / "work.json"
+    try:
+        document = json.loads(work_path.read_text(encoding="utf-8-sig"))
+        normalized = normalize_work_document(document, expected_id=work_id, source="card_reader")
+        creator = document.get("creator")
+        files: dict[str, bytes] = {}
+        for asset in creator.get("assets", []) if isinstance(creator, dict) else []:
+            relative = asset.get("sourcePath") if isinstance(asset, dict) else None
+            if not isinstance(relative, str) or not relative.startswith("sources/"):
+                raise WorkDocumentError("作品源素材路径无效。")
+            path = work_root.joinpath(*PurePosixPath(relative).parts)
+            if not path.is_file() or path.stat().st_size > 8 * 1024 * 1024:
+                raise WorkDocumentError(f"作品源素材 {relative} 缺失或过大。")
+            files[relative] = path.read_bytes()
+        hydrated = hydrate_creator_assets(document, files)
+        normalized["creator"] = hydrated.get("creator")
+        return normalized
+    except (OSError, UnicodeError, json.JSONDecodeError, WorkDocumentError) as exc:
+        raise CardReaderError(f"读取 SD 作品失败：{exc}") from exc
 
 
 def _resolve_volume(volume_id: str) -> VolumeInfo:
@@ -384,6 +550,13 @@ def _write_json_atomic(path: Path, document: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def _write_bytes_atomic(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_bytes(payload)
+    os.replace(temporary, path)
+
+
 def _target_path(watche: Path, current: Path, relative: str) -> Path:
     parts = PurePosixPath(relative).parts
     return watche.joinpath(*parts) if parts[0] == "assets" else current.joinpath(*parts)
@@ -450,29 +623,7 @@ def _extract(path: Path, watche: Path, staging: Path, plan: ArchivePlan, progres
             progress("reader_writing", 25 + index * 45 // max(1, len(files)), f"正在写入资源：{index}/{len(files)}")
 
 
-def _collect_work_asset_hashes(works: Path) -> set[str]:
-    hashes: set[str] = set()
-    if not works.is_dir():
-        return hashes
-    for manifest_path in works.glob("*/work.json"):
-        try:
-            document = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            continue
-        stack: list[Any] = [document]
-        while stack:
-            value = stack.pop()
-            if isinstance(value, dict):
-                sha256 = value.get("sha256")
-                if isinstance(sha256, str) and SHA256_PATTERN.fullmatch(sha256):
-                    hashes.add(sha256)
-                stack.extend(value.values())
-            elif isinstance(value, list):
-                stack.extend(value)
-    return hashes
-
-
-def _cleanup_unreferenced_assets(watche: Path, plan: ArchivePlan) -> None:
+def _unreferenced_assets(watche: Path, plan: ArchivePlan) -> list[Path]:
     keep_paths = {
         item["path"]
         for item in plan.manifest["files"]
@@ -480,16 +631,21 @@ def _cleanup_unreferenced_assets(watche: Path, plan: ArchivePlan) -> None:
         and isinstance(item.get("path"), str)
         and item["path"].startswith("assets/")
     }
-    keep_hashes = _collect_work_asset_hashes(watche / "works")
     assets = watche / "assets"
     if not assets.is_dir():
-        return
-    for asset in assets.rglob("*"):
-        if not asset.is_file():
-            continue
-        relative = asset.relative_to(watche).as_posix()
-        if relative not in keep_paths and asset.stem not in keep_hashes:
-            asset.unlink()
+        return []
+    return [
+        asset
+        for asset in assets.rglob("*")
+        if asset.is_file() and asset.relative_to(watche).as_posix() not in keep_paths
+    ]
+
+
+def _cleanup_unreferenced_assets(watche: Path, plan: ArchivePlan) -> None:
+    """Clean only the official content-addressed store; never inspect works."""
+
+    for asset in _unreferenced_assets(watche, plan):
+        asset.unlink()
 
 
 def _cleanup_managed_layout(watche: Path) -> None:
@@ -554,6 +710,16 @@ def _install_to_root(path: Path, root: Path, progress: Progress) -> str:
             os.replace(backup, current)
         _remove(staging)
         transaction.unlink(missing_ok=True)
+    required_bytes = _required_install_bytes(watche, plan)
+    free_bytes = shutil.disk_usage(root).free
+    reclaimable_bytes = sum(path.stat().st_size for path in _unreferenced_assets(watche, plan))
+    if free_bytes + reclaimable_bytes < required_bytes + SPACE_RESERVE_BYTES:
+        required_mb = (required_bytes + SPACE_RESERVE_BYTES) / (1024 * 1024)
+        free_mb = (free_bytes + reclaimable_bytes) / (1024 * 1024)
+        raise CardReaderError(
+            f"SD 卡空间不足：安装官方资源至少需要 {required_mb:.1f} MB，清理旧官方资源后可用 {free_mb:.1f} MB。"
+            "作者作品不会被删除，请释放空间或更换 SD 卡。"
+        )
     _cleanup_unreferenced_assets(watche, plan)
     _cleanup_managed_layout(watche)
     system.mkdir(parents=True, exist_ok=True)
@@ -565,14 +731,6 @@ def _install_to_root(path: Path, root: Path, progress: Progress) -> str:
     _write_json_atomic(system / "layout.json", {"layout_id": "watche-resource-layout", "layout_revision": 2})
     for name in LEGACY_ROOT_ENTRIES:
         _remove(root / name)
-    required_bytes = _required_install_bytes(watche, plan)
-    free_bytes = shutil.disk_usage(root).free
-    if free_bytes < required_bytes + SPACE_RESERVE_BYTES:
-        required_mb = (required_bytes + SPACE_RESERVE_BYTES) / (1024 * 1024)
-        free_mb = free_bytes / (1024 * 1024)
-        raise CardReaderError(
-            f"SD 卡真实剩余空间不足：安装至少需要 {required_mb:.1f} MB，当前可用 {free_mb:.1f} MB。"
-        )
     _write_json_atomic(transaction, {
         "schema_version": 1,
         "phase": "extracting",
@@ -612,3 +770,128 @@ def install_package(path: Path, volume_id: str, progress: Progress) -> str:
     volume = _resolve_volume(volume_id)
     _validate_volume(volume)
     return _install_to_root(path, volume.root, progress)
+
+
+def _read_official_catalog(root: Path) -> dict[str, Any]:
+    path = root / "watche" / "official" / "current" / "official_catalog.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise CardReaderError("目标 SD 卡没有可用的官方素材目录，请先安装 SD 官方资源。") from exc
+    if not isinstance(document, dict):
+        raise CardReaderError("目标 SD 卡的官方素材目录格式无效。")
+    return document
+
+
+def _rebuild_works_catalog(root: Path) -> None:
+    works_root = root / "watche" / "works"
+    works_root.mkdir(parents=True, exist_ok=True)
+    works: list[dict[str, Any]] = []
+    for directory in sorted(works_root.iterdir(), key=lambda item: item.name):
+        if not directory.is_dir() or not WORK_ID_PATTERN.fullmatch(directory.name):
+            continue
+        try:
+            document = json.loads((directory / "work.json").read_text(encoding="utf-8-sig"))
+            normalized = normalize_work_document(document, expected_id=directory.name, source="card_reader")
+        except (OSError, UnicodeError, json.JSONDecodeError, WorkDocumentError):
+            continue
+        works.append({
+            "id": normalized["id"],
+            "name": normalized["name"],
+            "revision": normalized["revision"],
+            "duration_ms": normalized["duration_ms"],
+        })
+    _write_json_atomic(works_root / "works_catalog.json", {
+        "format": "watche-user-works-catalog",
+        "schema_version": 2,
+        "works": works[:MAX_WORKS],
+    })
+
+
+def _install_work_to_root(package: PortableWorkPackage, root: Path, progress: Progress) -> str:
+    try:
+        validate_package_dependencies(package, _read_official_catalog(root))
+    except WorkDocumentError as exc:
+        raise CardReaderError(str(exc)) from exc
+    works_root = root / "watche" / "works"
+    works_root.mkdir(parents=True, exist_ok=True)
+    required_bytes = package.expanded_size_bytes + SPACE_RESERVE_BYTES
+    free_bytes = shutil.disk_usage(root).free
+    if free_bytes < required_bytes:
+        raise CardReaderError(
+            f"SD 卡空间不足，作品至少需要 {required_bytes / (1024 * 1024):.1f} MB，"
+            f"当前可用 {free_bytes / (1024 * 1024):.1f} MB。官方资源和其他作品不会被自动删除。"
+        )
+    target = works_root / package.work_id
+    existing_work_count = sum(
+        1
+        for entry in works_root.iterdir()
+        if entry.is_dir() and WORK_ID_PATTERN.fullmatch(entry.name)
+    )
+    if not target.exists() and existing_work_count >= MAX_WORKS:
+        raise CardReaderError(f"SD 卡作品数量已达到 {MAX_WORKS} 个上限，请先删除不需要的作品。")
+    staging = works_root / f".{package.work_id}.incoming"
+    rollback = works_root / f".{package.work_id}.rollback"
+    _remove(staging)
+    _remove(rollback)
+    staging.mkdir()
+    progress("work_reader_writing", 30, f"正在写入作品 {package.name}。")
+    try:
+        for relative, payload in package.files.items():
+            _write_bytes_atomic(staging.joinpath(*PurePosixPath(relative).parts), payload)
+        _write_bytes_atomic(
+            staging / "work_manifest.json",
+            json.dumps(package.manifest, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        )
+        written = json.loads((staging / "work.json").read_text(encoding="utf-8-sig"))
+        normalize_work_document(written, expected_id=package.work_id, source="card_reader")
+        progress("work_reader_verifying", 70, "正在校验作品文件与素材依赖。")
+        if target.exists():
+            os.replace(target, rollback)
+        os.replace(staging, target)
+        try:
+            _rebuild_works_catalog(root)
+        except Exception:
+            _remove(target)
+            if rollback.exists():
+                os.replace(rollback, target)
+            _rebuild_works_catalog(root)
+            raise
+        _remove(rollback)
+    except Exception:
+        _remove(staging)
+        if not target.exists() and rollback.exists():
+            os.replace(rollback, target)
+        raise
+    progress("work_reader_completed", 99, f"作品 {package.name} 已写入 SD 卡，官方资源和其他作品未改动。")
+    return package.work_id
+
+
+def install_work_package(package: PortableWorkPackage, volume_id: str, progress: Progress) -> str:
+    volume = _resolve_volume(volume_id)
+    _validate_volume(volume)
+    return _install_work_to_root(package, volume.root, progress)
+
+
+def _delete_work_from_root(root: Path, work_id: str) -> None:
+    if not WORK_ID_PATTERN.fullmatch(work_id):
+        raise CardReaderError("作品标识无效。")
+    works_root = root / "watche" / "works"
+    target = works_root / work_id
+    if not target.is_dir():
+        raise CardReaderError("所选作品已不存在。")
+    rollback = works_root / f".{work_id}.delete"
+    _remove(rollback)
+    os.replace(target, rollback)
+    try:
+        _rebuild_works_catalog(root)
+    except Exception:
+        os.replace(rollback, target)
+        raise
+    _remove(rollback)
+
+
+def delete_work(volume_id: str, work_id: str) -> None:
+    volume = _resolve_volume(volume_id)
+    _validate_volume(volume)
+    _delete_work_from_root(volume.root, work_id)

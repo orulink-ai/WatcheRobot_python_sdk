@@ -36,3 +36,40 @@ SD card directly. To remove an installed work, use
 `app.robot.capabilities` reports supported capability domains, not the full
 installed resource catalog. Missing resources are rejected by the device with
 `not_found`.
+
+### Portable work packages and SD lifecycle
+
+The Daemon owns the maintenance implementation used by Watcher Desktop. A
+portable work uses the `.watcher-work.zip` suffix and contains a versioned
+`work.json`, `work_manifest.json`, and any work-local assets. The stable
+`work_id` identifies the work across computers and SD cards; editing and
+installing it again increments `revision` and replaces only that work.
+
+The maintenance REST surface is deliberately transport-neutral:
+
+- `POST /daemon/maintenance/works/export` builds a portable ZIP from a Creator
+  composition.
+- `POST /daemon/maintenance/works/import` validates a local ZIP and returns the
+  exact editable Creator timeline.
+- `POST /daemon/maintenance/works/list` reads works through either `serial` or
+  `card_reader` and reports missing animation, action, or sound assets.
+- `POST /daemon/maintenance/works/read` reads one selected work plus its
+  declared Creator source media so another desktop can continue editing it.
+- `POST /daemon/maintenance/works/delete` removes one work without changing
+  official resources or other works.
+- `POST /daemon/maintenance/work` writes one composition or portable package
+  through the selected transport.
+
+Reader writes are atomic at `/watche/works/<work_id>` and preserve
+`/watche/official`, `/watche/assets`, and every other work. Serial writes use the
+firmware `WRSD/2` work transaction and require the advertised work capabilities.
+Neither path opens a second device business channel: application playback still
+uses `robot.works.play()` through the Daemon-managed Device channel.
+
+Official assets are referenced by resource ID. Work-local servo actions are
+bundled into the portable package and registered in the work-local resource
+catalog. Supported local GIF/images are converted to AnimPack v2 and local
+audio is converted to mono 24 kHz PCM; the original source files remain inside
+the work so importing from a reader or device port restores an editable
+timeline. Unsupported or oversized source media fails before installation
+instead of producing a work that cannot play on the device.

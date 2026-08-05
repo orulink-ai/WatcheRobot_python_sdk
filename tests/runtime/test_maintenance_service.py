@@ -219,47 +219,95 @@ def test_firmware_boot_probe_rejects_restart_loop() -> None:
         probe.feed("ESP-ROM:esp32s3-20210327")
 
 
-def test_work_package_is_built_in_memory_from_official_catalog(tmp_path: Path) -> None:
-    sd_package = tmp_path / "resources.tar.gz"
-    catalog = {
-        "expressions": [{
-            "id": "happy",
-            "device": {"assets": {"animation": {
-                "kind": "anim", "sha256": "a" * 64, "size": 123,
-                "format": "animpack-v2",
-            }}},
-        }],
-    }
-    manifest = {"schema_version": 2, "layout_revision": 2, "bundle_version": "v0.0.2"}
-    with tarfile.open(sd_package, "w:gz") as archive:
-        for name, value in (("official_catalog.json", catalog), ("resource_manifest.json", manifest)):
-            payload = json.dumps(value).encode()
-            info = tarfile.TarInfo(name)
-            info.size = len(payload)
-            archive.addfile(info, BytesIO(payload))
-
+def test_work_package_uses_stable_work_id_and_embeds_editable_source() -> None:
     package = _build_work_package({
-        "name": "My Work",
+        "kind": "watcher.creator-composition",
+        "version": 2,
+        "workId": "w_9f4d2a1c",
+        "revision": 3,
+        "name": "中文作品",
         "clips": [{"kind": "expression", "resourceId": "happy", "startMs": 0, "durationMs": 500}],
-    }, sd_package)
+    })
 
-    assert package.work_id == "my_work"
+    assert package.work_id == "w_9f4d2a1c"
     with tarfile.open(fileobj=BytesIO(package.payload), mode="r:gz") as archive:
         assert sorted(archive.getnames()) == ["work.json", "work_manifest.json"]
         work = json.load(archive.extractfile("work.json"))
-    assert work["tracks"][0]["asset"]["sha256"] == "a" * 64
+        manifest = json.load(archive.extractfile("work_manifest.json"))
+    assert work["schema_version"] == 2
+    assert work["revision"] == 3
+    assert work["creator"]["workId"] == "w_9f4d2a1c"
+    assert work["tracks"][0]["asset"] == {
+        "source": "official",
+        "resource_id": "happy",
+        "kind": "anim",
+    }
+    assert manifest["dependencies"] == [{"resource_id": "happy", "kinds": ["animation"]}]
 
 
-def test_work_package_rejects_unknown_official_asset(tmp_path: Path) -> None:
-    sd_package = tmp_path / "resources.tar.gz"
-    with tarfile.open(sd_package, "w:gz") as archive:
-        payload = json.dumps({"expressions": []}).encode()
-        info = tarfile.TarInfo("official_catalog.json")
-        info.size = len(payload)
-        archive.addfile(info, BytesIO(payload))
+def test_work_package_bundles_creator_action_tracks_without_requiring_official_action() -> None:
+    package = _build_work_package({
+        "kind": "watcher.creator-composition",
+        "version": 2,
+        "workId": "portable_action",
+        "revision": 2,
+        "name": "Portable action",
+        "clips": [{
+            "id": "custom-action-1",
+            "kind": "action",
+            "resourceId": "custom-action-1720000000",
+            "label": "自定义动作",
+            "startMs": 0,
+            "durationMs": 1000,
+            "actionTracks": {
+                "xDeg": [
+                    {"id": "x0", "axis": "xDeg", "timeMs": 0, "frameNumber": 0, "angleDeg": 90, "source": "draft"},
+                    {"id": "x1", "axis": "xDeg", "timeMs": 1000, "frameNumber": 50, "angleDeg": 120, "source": "draft"},
+                ],
+                "yDeg": [
+                    {"id": "y0", "axis": "yDeg", "timeMs": 0, "frameNumber": 0, "angleDeg": 100, "source": "draft"},
+                ],
+            },
+        }],
+    })
 
-    with pytest.raises(MaintenanceError, match="missing"):
+    with tarfile.open(fileobj=BytesIO(package.payload), mode="r:gz") as archive:
+        names = sorted(archive.getnames())
+        work = json.load(archive.extractfile("work.json"))
+        manifest = json.load(archive.extractfile("work_manifest.json"))
+        catalog = json.load(archive.extractfile("resource_catalog.json"))
+        action_name = next(name for name in names if name.startswith("actions/"))
+        action = json.load(archive.extractfile(action_name))
+
+    assert names == sorted(["work.json", "work_manifest.json", "resource_catalog.json", action_name])
+    assert work["tracks"][0]["asset"]["source"] == "work"
+    assert work["tracks"][0]["asset"]["resource_id"].startswith("wa_")
+    assert manifest["dependencies"] == []
+    assert manifest["bundled_assets"][0]["path"] == action_name
+    assert catalog["expressions"][0]["assets"]["action"]["path"] == action_name
+    assert action["animated_objects"][0]["object_name"] == "body_x"
+    assert action["animated_objects"][1]["object_name"] == "head_y"
+
+
+def test_work_package_rejects_invalid_explicit_work_id() -> None:
+    with pytest.raises(MaintenanceError, match="work_id"):
         _build_work_package({
+            "workId": "../../escape",
             "name": "Missing",
-            "clips": [{"kind": "expression", "resourceId": "missing", "startMs": 0, "durationMs": 500}],
-        }, sd_package)
+            "clips": [{"kind": "expression", "resourceId": "happy", "startMs": 0, "durationMs": 500}],
+        })
+
+
+def test_legacy_compositions_with_chinese_names_do_not_share_one_work_id() -> None:
+    first = _build_work_package({
+        "name": "早安作品",
+        "clips": [{"kind": "expression", "resourceId": "happy", "startMs": 0, "durationMs": 500}],
+    })
+    second = _build_work_package({
+        "name": "晚安作品",
+        "clips": [{"kind": "expression", "resourceId": "happy", "startMs": 0, "durationMs": 500}],
+    })
+
+    assert first.work_id.startswith("work_")
+    assert second.work_id.startswith("work_")
+    assert first.work_id != second.work_id

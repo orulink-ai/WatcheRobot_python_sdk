@@ -279,6 +279,30 @@ class DaemonRuntime:
     def maintenance_device_info(self, port: str) -> dict[str, object]:
         return self.maintenance.device_info(port)
 
+    def maintenance_works(
+        self,
+        *,
+        transport: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> list[dict[str, object]]:
+        return self.maintenance.works(transport=transport, port=port, volume_id=volume_id)
+
+    def read_maintenance_work(
+        self,
+        *,
+        transport: str,
+        work_id: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> dict[str, object]:
+        return self.maintenance.read_work(
+            transport=transport,
+            work_id=work_id,
+            port=port,
+            volume_id=volume_id,
+        )
+
     def start_maintenance_job(
         self,
         kind: str,
@@ -308,11 +332,41 @@ class DaemonRuntime:
 
     def start_maintenance_work(
         self,
-        composition: dict[str, object],
-        sd_package_path: str,
+        composition: dict[str, object] | None,
+        package_path: str,
         port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
     ) -> dict[str, object]:
-        return self.maintenance.start_work(composition, sd_package_path, port)
+        return self.maintenance.start_work(
+            composition,
+            package_path,
+            port,
+            transport=transport,
+            volume_id=volume_id,
+        )
+
+    def export_maintenance_work(self, composition: dict[str, object]) -> dict[str, object]:
+        return self.maintenance.export_work_package(composition)
+
+    def import_maintenance_work(self, package_path: str) -> dict[str, object]:
+        return self.maintenance.import_work_package(package_path)
+
+    def delete_maintenance_work(
+        self,
+        *,
+        transport: str,
+        work_id: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> None:
+        self.maintenance.delete_work(
+            transport=transport,
+            work_id=work_id,
+            port=port,
+            volume_id=volume_id,
+        )
 
     async def wait_for_shutdown(self) -> None:
         await self._shutdown_event.wait()

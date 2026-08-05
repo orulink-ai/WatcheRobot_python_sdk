@@ -15,6 +15,7 @@ dependencies = [
   "av>=16,<17",
   "fastapi>=0.129,<1",
   "packaging>=24,<27",
+  "Pillow>=11,<13",
   "psutil>=5.9,<8",
   "pyserial>=3.5,<4",
   "esptool>=4.8,<6",

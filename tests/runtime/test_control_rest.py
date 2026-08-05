@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import httpx
 from fastapi.testclient import TestClient
@@ -48,6 +49,7 @@ class _ControllerStub:
             },
         ]
         self.work_requests: list[tuple[dict, str, str]] = []
+        self.work_read_requests: list[dict] = []
         self.maintenance_requests: list[dict] = []
         self.active_maintenance = {"id": "firmware-job", "kind": "firmware", "status": "running"}
 
@@ -131,8 +133,16 @@ class _ControllerStub:
             if event["id"] > after_id
         ]
 
-    def start_maintenance_work(self, composition: dict, sd_package_path: str, port: str) -> dict:
-        self.work_requests.append((composition, sd_package_path, port))
+    def start_maintenance_work(
+        self,
+        composition: dict | None,
+        package_path: str,
+        port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
+    ) -> dict:
+        self.work_requests.append((composition, package_path, port, transport, volume_id))
         return {"id": "work-job", "kind": "work", "status": "queued"}
 
     def maintenance_ports(self) -> list[dict]:
@@ -146,6 +156,26 @@ class _ControllerStub:
 
     def maintenance_device_info(self, port: str) -> dict:
         return {"port": port, "firmware_version": "V2.4.1", "sd_version": "v0.0.8"}
+
+    def read_maintenance_work(
+        self,
+        *,
+        transport: str,
+        work_id: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> dict:
+        self.work_read_requests.append({
+            "transport": transport,
+            "work_id": work_id,
+            "port": port,
+            "volume_id": volume_id,
+        })
+        return {
+            "id": work_id,
+            "name": "SD 作品",
+            "composition": {"kind": "watcher.creator-composition", "clips": []},
+        }
 
     def start_maintenance_job(
         self,
@@ -288,15 +318,35 @@ def test_control_rest_starts_creator_work_install() -> None:
 
     response = client.post("/daemon/maintenance/work", json={
         "composition": {"name": "Demo", "clips": []},
-        "sd_package_path": "D:/resources.tar.gz",
         "port": "COM29",
+        "transport": "serial",
     })
 
     assert response.status_code == 202
     assert response.json()["job"]["id"] == "work-job"
     assert controller.work_requests == [(
-        {"name": "Demo", "clips": []}, "D:/resources.tar.gz", "COM29",
+        {"name": "Demo", "clips": []}, "", "COM29", "serial", "",
     )]
+
+
+def test_control_rest_reads_an_editable_work_from_sd() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    response = client.post("/daemon/maintenance/works/read", json={
+        "transport": "card_reader",
+        "volume_id": "E:\\|1234",
+        "work_id": "demo_work",
+    })
+
+    assert response.status_code == 200
+    assert response.json()["work"]["id"] == "demo_work"
+    assert controller.work_read_requests == [{
+        "transport": "card_reader",
+        "work_id": "demo_work",
+        "port": "",
+        "volume_id": "E:\\|1234",
+    }]
 
 
 def test_control_rest_returns_active_maintenance_job() -> None:
@@ -391,6 +441,41 @@ def test_control_server_binds_and_serves_status() -> None:
                 response = await client.get(f"{server.base_url}/daemon/status")
             assert response.status_code == 200
             assert response.json()["application"]["state"] == "not_running"
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_slow_maintenance_io_does_not_block_daemon_status() -> None:
+    async def scenario() -> None:
+        controller = _ControllerStub()
+
+        def slow_works(**_kwargs: object) -> list[dict]:
+            time.sleep(0.4)
+            return []
+
+        controller.maintenance_works = slow_works  # type: ignore[method-assign]
+        server = DaemonControlServer(
+            controller=controller,
+            host="127.0.0.1",
+            port=0,
+        )
+        await server.start()
+        try:
+            async with httpx.AsyncClient() as client:
+                started = time.monotonic()
+                works_request = asyncio.create_task(client.post(
+                    f"{server.base_url}/daemon/maintenance/works/list",
+                    json={"transport": "card_reader", "volume_id": "E:\\\\|1234"},
+                ))
+                await asyncio.sleep(0.05)
+                status = await client.get(f"{server.base_url}/daemon/status")
+                status_elapsed = time.monotonic() - started
+                works = await works_request
+            assert status.status_code == 200
+            assert status_elapsed < 0.25
+            assert works.status_code == 200
         finally:
             await server.stop()
 
