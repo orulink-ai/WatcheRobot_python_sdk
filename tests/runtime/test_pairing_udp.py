@@ -251,7 +251,7 @@ def test_udp_service_expires_discovery_and_notifies_state() -> None:
         states: list[dict[str, object]] = []
         service = PairingUdpService(
             session=session,
-            clock=lambda: 20.0,
+            clock=lambda: 40.0,
             interface_provider=lambda: (),
             channel_factory=FakeChannelFactory(),
             state_listener=lambda snapshot: states.append(dict(snapshot)),

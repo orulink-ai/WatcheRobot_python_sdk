@@ -12,6 +12,7 @@ from watcherobot.runtime.daemon.preview.udp_protocol import (
     build_preview_bundle,
     encode_preview_datagrams,
 )
+from watcherobot.runtime.daemon.preview.delivery import PreviewRelayFrame
 from watcherobot.runtime.daemon.preview.udp_service import FaceTrackingUdpPreviewService
 
 
@@ -159,6 +160,60 @@ def test_service_can_publish_to_managed_application_sink() -> None:
         assert isinstance(published[0], str)
         assert json.loads(published[0])["seq"] == 17
         assert published[1] == b"FTW1" + bytes(20) + b"jpeg"
+        await service.stop()
+
+    asyncio.run(scenario())
+
+
+def test_service_can_publish_an_atomic_preview_pair_to_credit_delivery() -> None:
+    async def scenario() -> None:
+        published: list[PreviewRelayFrame] = []
+
+        async def publish(frame: PreviewRelayFrame) -> int:
+            published.append(frame)
+            return 1
+
+        service = FaceTrackingUdpPreviewService(
+            session=connected_session(),
+            registry=FakeRegistry(),
+            bundle_publisher=publish,
+            port=0,
+        )
+        await service.start()
+        for packet in packets(sequence=19):
+            service.handle_datagram(packet, (PEER_IP, 50000))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert len(published) == 1
+        assert published[0].stream_id == 123
+        assert published[0].sequence == 19
+        assert json.loads(published[0].telemetry)["seq"] == 19
+        assert published[0].image == b"FTW1" + bytes(20) + b"jpeg"
+        await service.stop()
+
+    asyncio.run(scenario())
+
+
+def test_service_refresh_rebinds_listener_and_accepts_new_preview() -> None:
+    async def scenario() -> None:
+        registry = FakeRegistry()
+        service = FaceTrackingUdpPreviewService(
+            session=connected_session(), registry=registry, port=0
+        )
+        await service.start()
+        previous_transport = service._transport
+
+        await service.refresh_listener()
+
+        assert service.bound_port > 0
+        assert service._transport is not previous_transport
+        for packet in packets(sequence=23):
+            service.handle_datagram(packet, (PEER_IP, 50000))
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert service.stats.published_frames == 1
+        assert json.loads(registry.frames[0][1])["seq"] == 23
         await service.stop()
 
     asyncio.run(scenario())

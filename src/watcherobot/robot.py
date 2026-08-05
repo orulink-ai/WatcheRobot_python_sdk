@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from ._internal.audio_status import AudioStatusKind, classify_audio_status
 from .errors import CommandError, WatcheRobotError
-from .audio import AudioPlayback, PCMAudio, load_pcm_wave
+from .audio import AudioLiveStream, AudioPlayback, PCMAudio, load_pcm_wave
 from .job import Job, JobState
 from .inputs import InputDomain, parse_input_event
 from .media import AudioFormat, AudioRecording, ImageFrame, MicrophoneSession
@@ -139,6 +139,28 @@ class AudioDomain(_Domain):
                 ),
             )
         )
+
+    def open_stream(
+        self,
+        *,
+        sample_rate_hz: int = 24000,
+        channels: int = 1,
+        sample_width_bytes: int = 2,
+    ) -> AudioLiveStream:
+        audio_format = AudioFormat(
+            sample_rate_hz=sample_rate_hz,
+            channels=channels,
+            sample_width_bytes=sample_width_bytes,
+            encoding="pcm_s16le",
+        )
+        if audio_format != AudioFormat(
+            sample_rate_hz=24000,
+            channels=1,
+            sample_width_bytes=2,
+            encoding="pcm_s16le",
+        ):
+            raise ValueError("live playback requires PCM S16LE, 24000 Hz, mono")
+        return self._robot._open_live_audio_stream()
 
     def stop(self) -> None:
         self._robot._stop_audio_playback()
@@ -302,6 +324,7 @@ class WatcheRobot:
         self._audio_playback_lock = threading.Lock()
         self._audio_api_lock = threading.Lock()
         self._audio_playback: AudioPlayback | None = None
+        self._live_audio_stream: AudioLiveStream | None = None
         self._audio_send_future: Any | None = None
         self._audio_cleanup_future: Any | None = None
         self._audio_cleanup_required = False
@@ -351,6 +374,13 @@ class WatcheRobot:
         if microphone is not None and not microphone.closed:
             try:
                 microphone.close()
+            except Exception:
+                pass
+        with self._audio_playback_lock:
+            live_stream = self._live_audio_stream
+        if live_stream is not None and not live_stream.closed:
+            try:
+                live_stream.abort()
             except Exception:
                 pass
         with self._face_tracking_lock:
@@ -425,6 +455,8 @@ class WatcheRobot:
             send_future.cancel()
 
     def _start_local_audio(self, sound_id: str) -> Job:
+        self._close_microphone_for_speaker()
+        self._abort_active_live_audio()
         with self._audio_api_lock:
             self._begin_audio_transition()
             try:
@@ -439,6 +471,8 @@ class WatcheRobot:
     def _start_audio_playback(self, audio: PCMAudio) -> AudioPlayback:
         if "audio.stream" not in self.capabilities:
             raise WatcheRobotError("robot firmware does not advertise audio.stream")
+        self._close_microphone_for_speaker()
+        self._abort_active_live_audio()
         with self._audio_api_lock:
             self._begin_audio_transition()
             with self._audio_playback_lock:
@@ -490,6 +524,121 @@ class WatcheRobot:
 
             send_future.add_done_callback(finish_send)
             return playback
+
+    def _allocate_audio_stream_id(self) -> int:
+        with self._audio_playback_lock:
+            stream_id = self._next_audio_stream_id
+            self._next_audio_stream_id = 1 if stream_id >= 0xFFFF else stream_id + 1
+        return stream_id
+
+    def _close_microphone_for_speaker(self) -> None:
+        with self._media_lock:
+            microphone = self._microphone
+        if microphone is not None and not microphone.closed:
+            microphone.close()
+
+    def _abort_active_live_audio(self) -> bool:
+        with self._audio_playback_lock:
+            stream = self._live_audio_stream
+        if stream is not None and not stream.closed:
+            stream.abort()
+            return True
+        return False
+
+    def _open_live_audio_stream(self) -> AudioLiveStream:
+        if "audio.stream.live.v1" not in self.capabilities:
+            raise WatcheRobotError(
+                "robot firmware does not advertise audio.stream.live.v1; upgrade firmware"
+            )
+        self._close_microphone_for_speaker()
+        self._abort_active_live_audio()
+        stream_id = self._allocate_audio_stream_id()
+        with self._audio_api_lock:
+            self._begin_audio_transition()
+            device_started = False
+            try:
+                self._command(
+                    "ctrl.audio.stream.begin",
+                    {
+                        "mode": "live",
+                        "stream_id": stream_id,
+                        "sample_rate_hz": 24000,
+                        "channels": 1,
+                        "sample_width_bytes": 2,
+                    },
+                )
+                device_started = True
+                self._transport.begin_live_audio_stream(
+                    stream_id=stream_id,
+                    chunk_bytes=960,
+                )
+            except Exception:
+                if device_started:
+                    try:
+                        self._transport.cancel_live_audio_stream(stream_id=stream_id)
+                    except Exception:
+                        pass
+                    try:
+                        self._command("ctrl.audio.stop", {})
+                    except Exception:
+                        pass
+                self._end_audio_transition(command_succeeded=False)
+                raise
+            self._replace_audio_playback()
+            stream = AudioLiveStream(
+                stream_id,
+                self._write_live_audio_stream,
+                self._close_live_audio_stream,
+                self._abort_live_audio_stream,
+            )
+            with self._audio_playback_lock:
+                self._live_audio_stream = stream
+            self._end_audio_transition(command_succeeded=True)
+            return stream
+
+    def _write_live_audio_stream(
+        self,
+        stream: AudioLiveStream,
+        payload: bytes,
+        sequence: int,
+    ) -> int:
+        with self._audio_playback_lock:
+            if self._live_audio_stream is not stream:
+                raise WatcheRobotError("audio live stream was replaced")
+        return self._transport.write_live_audio_stream(
+            payload,
+            stream_id=stream.stream_id,
+            sequence=sequence,
+            chunk_bytes=960,
+        )
+
+    def _close_live_audio_stream(self, stream: AudioLiveStream, sequence: int) -> None:
+        with self._audio_api_lock:
+            with self._audio_playback_lock:
+                if self._live_audio_stream is not stream:
+                    return
+            self._transport.end_live_audio_stream(
+                stream_id=stream.stream_id,
+                sequence=sequence,
+            )
+            with self._audio_playback_lock:
+                if self._live_audio_stream is stream:
+                    self._live_audio_stream = None
+
+    def _abort_live_audio_stream(self, stream: AudioLiveStream) -> None:
+        with self._audio_api_lock:
+            with self._audio_playback_lock:
+                if self._live_audio_stream is not stream:
+                    return
+            try:
+                try:
+                    self._transport.cancel_live_audio_stream(stream_id=stream.stream_id)
+                finally:
+                    self._command("ctrl.audio.stop", {})
+            finally:
+                with self._audio_playback_lock:
+                    if self._live_audio_stream is stream:
+                        self._live_audio_stream = None
 
     def _begin_audio_transition(self) -> None:
         while True:
@@ -566,6 +715,8 @@ class WatcheRobot:
             self._end_audio_transition(command_succeeded=True)
 
     def _stop_audio_playback(self) -> None:
+        if self._abort_active_live_audio():
+            return
         with self._audio_api_lock:
             self._begin_audio_transition()
             try:
@@ -579,6 +730,7 @@ class WatcheRobot:
     def _open_microphone(self, *, queue_size: int, decode_opus: bool) -> MicrophoneSession:
         if queue_size <= 0:
             raise ValueError("queue_size must be positive")
+        self._abort_active_live_audio()
         with self._media_lock:
             if self._closed or self._closing:
                 raise WatcheRobotError("robot connection is closed")
@@ -943,6 +1095,11 @@ class WatcheRobot:
         self.inputs._close("disconnected")
         if microphone is not None:
             microphone._mark_remote_closed()
+        with self._audio_playback_lock:
+            live_stream = self._live_audio_stream
+            self._live_audio_stream = None
+        if live_stream is not None:
+            live_stream._mark_closed()
         with self._face_tracking_lock:
             preview = self._face_tracking_preview
             self._face_tracking_preview = None

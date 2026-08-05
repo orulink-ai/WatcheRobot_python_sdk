@@ -5,6 +5,7 @@ from concurrent.futures import Future
 import pytest
 
 from watcherobot import Job
+from watcherobot.audio import AudioLiveStream
 from watcherobot.errors import CommandError, WatcheRobotError
 from watcherobot.robot import WatcheRobot
 from watcherobot.protocol import (
@@ -29,6 +30,7 @@ class FakeTransport:
             "motion",
             "audio",
             "audio.stream",
+            "audio.stream.live.v1",
             "light",
             "microphone",
             "camera.capture",
@@ -38,6 +40,7 @@ class FakeTransport:
         self.next_session_id = 100
         self.closed = False
         self.audio_streams = []
+        self.live_audio_frames = []
 
     def set_callbacks(self, message_callback, binary_callback, disconnect_callback):
         self.message_callback = message_callback
@@ -69,6 +72,23 @@ class FakeTransport:
         future = Future()
         future.set_result({"type": "sys.ack", "code": 0, "data": {}})
         return future
+
+    def begin_live_audio_stream(self, *, stream_id, chunk_bytes=960):
+        self.live_audio_frames.append(("begin", stream_id, chunk_bytes))
+
+    def write_live_audio_stream(self, pcm, *, stream_id, sequence, chunk_bytes=960):
+        payload = bytes(pcm)
+        for offset in range(0, len(payload), chunk_bytes):
+            chunk = payload[offset : offset + chunk_bytes]
+            self.live_audio_frames.append(("data", stream_id, sequence, chunk))
+            sequence = (sequence + 1) & 0xFFFFFFFF
+        return sequence
+
+    def end_live_audio_stream(self, *, stream_id, sequence):
+        self.live_audio_frames.append(("end", stream_id, sequence))
+
+    def cancel_live_audio_stream(self, *, stream_id):
+        self.live_audio_frames.append(("cancel", stream_id))
 
 
 class FakeOpusDecoder:
@@ -129,6 +149,222 @@ def test_robot_supports_negotiated_capabilities():
     assert not robot.supports("video.stream")
     with pytest.raises(ValueError, match="capability must be a non-empty string"):
         robot.supports("")
+
+
+def test_live_audio_stream_writes_incremental_pcm_without_a_total_size():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    stream = robot.audio.open_stream()
+    stream.write(b"\x01\x00" * 600)
+    stream.write(b"\x02\x00")
+    stream.close()
+
+    assert stream.closed
+    assert transport.commands == [
+        (
+            "ctrl.audio.stream.begin",
+            {
+                "mode": "live",
+                "stream_id": stream.stream_id,
+                "sample_rate_hz": 24000,
+                "channels": 1,
+                "sample_width_bytes": 2,
+            },
+        )
+    ]
+    assert transport.live_audio_frames == [
+        ("begin", stream.stream_id, 960),
+        ("data", stream.stream_id, 0, b"\x01\x00" * 480),
+        ("data", stream.stream_id, 1, b"\x01\x00" * 120),
+        ("data", stream.stream_id, 2, b"\x02\x00"),
+        ("end", stream.stream_id, 3),
+    ]
+
+
+def test_live_audio_stream_context_aborts_on_exception():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with robot.audio.open_stream() as stream:
+            stream.write(b"\x01\x00")
+            raise RuntimeError("boom")
+
+    assert stream.closed
+    assert transport.live_audio_frames[-1] == ("cancel", stream.stream_id)
+    assert transport.commands[-1] == ("ctrl.audio.stop", {})
+
+
+def test_live_audio_stream_requires_negotiated_capability():
+    transport = FakeTransport()
+    transport.capabilities = tuple(
+        capability
+        for capability in transport.capabilities
+        if capability != "audio.stream.live.v1"
+    )
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(WatcheRobotError, match="audio.stream.live.v1"):
+        robot.audio.open_stream()
+
+
+def test_live_audio_stream_setup_failure_stops_the_authorized_device_stream():
+    class BeginFailingTransport(FakeTransport):
+        def begin_live_audio_stream(self, *, stream_id, chunk_bytes=960):
+            raise WatcheRobotError("local media channel is disconnected")
+
+    transport = BeginFailingTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(WatcheRobotError, match="media channel"):
+        robot.audio.open_stream()
+
+    assert transport.commands[-2][0] == "ctrl.audio.stream.begin"
+    assert transport.commands[-1] == ("ctrl.audio.stop", {})
+
+
+def test_live_audio_stream_close_and_abort_are_idempotent():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    closed = robot.audio.open_stream()
+    closed.close()
+    closed.close()
+    closed.abort()
+    assert [frame[0] for frame in transport.live_audio_frames].count("end") == 1
+
+    aborted = robot.audio.open_stream()
+    aborted.abort()
+    aborted.abort()
+    aborted.close()
+    assert [frame[0] for frame in transport.live_audio_frames].count("cancel") == 1
+
+
+def test_live_audio_stream_abort_wakes_a_blocked_write_immediately():
+    write_started = threading.Event()
+    write_released = threading.Event()
+    aborted = threading.Event()
+
+    def write_callback(_stream, _payload, sequence):
+        write_started.set()
+        assert write_released.wait(1)
+        raise WatcheRobotError("audio stream failed: cancelled")
+
+    def abort_callback(_stream):
+        aborted.set()
+        write_released.set()
+
+    stream = AudioLiveStream(
+        7,
+        write_callback,
+        lambda _stream, _sequence: None,
+        abort_callback,
+    )
+    errors = []
+
+    def write_audio() -> None:
+        try:
+            stream.write(b"\x01\x00")
+        except Exception as error:
+            errors.append(error)
+
+    writer = threading.Thread(target=write_audio)
+    writer.start()
+    assert write_started.wait(1)
+
+    stream.abort()
+    writer.join(1)
+
+    assert aborted.is_set()
+    assert stream.closed
+    assert not writer.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], WatcheRobotError)
+
+
+def test_live_audio_stream_close_failure_falls_back_to_device_stop():
+    class EndFailingTransport(FakeTransport):
+        def end_live_audio_stream(self, *, stream_id, sequence):
+            raise WatcheRobotError("connection lost while sending LAST")
+
+    transport = EndFailingTransport()
+    robot = WatcheRobot._from_transport(transport)
+    stream = robot.audio.open_stream()
+
+    with pytest.raises(WatcheRobotError, match="sending LAST"):
+        stream.close()
+
+    assert stream.closed
+    assert transport.live_audio_frames[-1] == ("cancel", stream.stream_id)
+    assert transport.commands[-1] == ("ctrl.audio.stop", {})
+
+
+def test_audio_stop_aborts_a_live_stream_only_once():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    stream = robot.audio.open_stream()
+
+    robot.audio.stop()
+
+    assert stream.closed
+    assert transport.commands.count(("ctrl.audio.stop", {})) == 1
+
+
+def test_live_audio_stream_rejects_partial_samples_and_wrong_format():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    stream = robot.audio.open_stream()
+    with pytest.raises(ValueError, match="partial sample"):
+        stream.write(b"\x01")
+    stream.abort()
+
+    with pytest.raises(ValueError, match="24000 Hz"):
+        robot.audio.open_stream(sample_rate_hz=48000)
+
+
+def test_live_audio_stream_is_not_limited_by_the_file_playback_size():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    stream = robot.audio.open_stream()
+    block = b"\x01\x00" * (512 * 1024)
+    for _ in range(5):
+        stream.write(block)
+    stream.close()
+
+    sent_bytes = sum(
+        len(frame[3])
+        for frame in transport.live_audio_frames
+        if frame[0] == "data"
+    )
+    assert sent_bytes == 5 * 1024 * 1024
+
+
+def test_opening_microphone_aborts_active_live_speaker_stream_first():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport, opus_decoder_factory=FakeOpusDecoder)
+    stream = robot.audio.open_stream()
+
+    microphone = robot.microphone.open()
+
+    assert stream.closed
+    assert transport.commands[-2:] == [
+        ("ctrl.audio.stop", {}),
+        ("ctrl.microphone.open", {"sample_rate_hz": 16000}),
+    ]
+    microphone.close()
+
+
+def test_opening_live_speaker_stream_closes_active_robot_microphone_first():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport, opus_decoder_factory=FakeOpusDecoder)
+    microphone = robot.microphone.open()
+
+    stream = robot.audio.open_stream()
+
+    assert microphone.closed
+    assert transport.commands[-2][0] == "ctrl.microphone.close"
+    assert transport.commands[-1][0] == "ctrl.audio.stream.begin"
+    stream.abort()
 
 
 @pytest.mark.parametrize("duration_ms", [0, -1, 1.5, True, 65536])

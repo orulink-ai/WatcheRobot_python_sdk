@@ -91,6 +91,123 @@ def test_preview_disconnect_stops_device_without_recentering() -> None:
     asyncio.run(scenario())
 
 
+def test_preview_start_refreshes_udp_listener_before_forwarding() -> None:
+    async def scenario() -> None:
+        listener_refreshed = asyncio.Event()
+
+        async def refresh_listener() -> None:
+            listener_refreshed.set()
+
+        broker = FaceTrackingPreviewBroker(
+            on_preview_start=refresh_listener,
+        )
+        server = ExternalWebSocketServer(
+            host="127.0.0.1",
+            port=0,
+            hardware_hello_authorizer=_allow_hardware,
+            business_frame_listener=broker.observe_frame,
+        )
+        broker.bind_registry(server.registry)
+        await server.start()
+        desktop = await _connect_as(server, "desktop")
+        device = await _connect_as(server, "hardware")
+        try:
+            start = json.dumps(
+                {
+                    "type": "ctrl.face_tracking.preview.start",
+                    "data": {"command_id": "preview-start-refresh"},
+                }
+            )
+            await desktop.send(start)
+            assert await asyncio.wait_for(device.recv(), timeout=1) == start
+            assert listener_refreshed.is_set()
+        finally:
+            await desktop.close()
+            await device.close()
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_preview_consumed_ack_is_handled_by_daemon_without_reaching_device() -> None:
+    async def scenario() -> None:
+        acknowledgements: list[tuple[object, int]] = []
+        acknowledged = asyncio.Event()
+
+        def acknowledge(connection, sequence: int) -> bool:
+            acknowledgements.append((connection.websocket, sequence))
+            acknowledged.set()
+            return True
+
+        broker = FaceTrackingPreviewBroker(on_preview_ack=acknowledge)
+        server = ExternalWebSocketServer(
+            host="127.0.0.1",
+            port=0,
+            hardware_hello_authorizer=_allow_hardware,
+            business_frame_listener=broker.observe_frame,
+        )
+        broker.bind_registry(server.registry)
+        await server.start()
+        desktop = await _connect_as(server, "desktop")
+        device = await _connect_as(server, "hardware")
+        try:
+            await desktop.send(
+                json.dumps(
+                    {
+                        "type": "daemon.face_tracking.preview.consumed",
+                        "code": 0,
+                        "data": {"sequence": 31},
+                    }
+                )
+            )
+            await asyncio.wait_for(acknowledged.wait(), timeout=1)
+            assert len(acknowledgements) == 1
+            assert acknowledgements[0][1] == 31
+            try:
+                await asyncio.wait_for(device.recv(), timeout=0.05)
+            except asyncio.TimeoutError:
+                pass
+            else:
+                raise AssertionError("preview consumption ACK leaked to device")
+        finally:
+            await desktop.close()
+            await device.close()
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_malformed_preview_consumed_ack_is_forwarded_without_crashing() -> None:
+    async def scenario() -> None:
+        broker = FaceTrackingPreviewBroker()
+        server = ExternalWebSocketServer(
+            host="127.0.0.1",
+            port=0,
+            hardware_hello_authorizer=_allow_hardware,
+            business_frame_listener=broker.observe_frame,
+        )
+        broker.bind_registry(server.registry)
+        await server.start()
+        desktop = await _connect_as(server, "desktop")
+        device = await _connect_as(server, "hardware")
+        malformed = json.dumps(
+            {
+                "type": "daemon.face_tracking.preview.consumed",
+                "code": 0,
+                "data": [],
+            }
+        )
+        try:
+            await desktop.send(malformed)
+            assert await asyncio.wait_for(device.recv(), timeout=1) == malformed
+        finally:
+            await desktop.close()
+            await device.close()
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
 def test_normal_preview_stop_disarms_disconnect_cleanup() -> None:
     async def scenario() -> None:
         broker = FaceTrackingPreviewBroker()

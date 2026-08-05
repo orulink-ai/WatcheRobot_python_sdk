@@ -30,6 +30,11 @@ recording.save("recording.wav")
 
 ## Responsibility boundary
 
+The opposite direction uses `robot.audio.open_stream()` for 24 kHz mono
+PCM16. Robot-microphone upload and robot-speaker playback are real-time but
+half-duplex: opening either direction first closes the other. Camera preview
+does not participate in this arbitration.
+
 The Runtime/Daemon owns the physical device WebSocket, WSPK framing,
 connection lifecycle, and source-aware routing. It must keep device media
 payloads opaque when forwarding them to an Application; it does not decode,
