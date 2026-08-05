@@ -71,8 +71,36 @@
             "frame_duration_ms": 60,
             "packetization": "one_opus_packet_per_wspk",
             "version": 1
+          },
+          "video_uplink": {
+            "transport": "websocket_sidecar",
+            "hello_type": "sys.media.hello",
+            "version": 1
           }
         }
+      }
+    },
+    "media_hello": {
+      "type": "sys.media.hello",
+      "code": 0,
+      "data": {
+        "pairing_protocol": "watcher-lan-pairing",
+        "pairing_version": "1.0",
+        "pair_request_id": "21a9dbf05ea3443480e62076f79a3b12",
+        "daemon_instance_id": "f730f29e670c49f7a3320c4314eb9805",
+        "session_token": "f84a1e16ce6f35f14d167f227a93ea93d1a9c4d9eb5517112030f2839d57ae4b",
+        "mode": "desktop_link",
+        "channel": "video",
+        "version": 1
+      }
+    },
+    "media_hello_ack": {
+      "type": "sys.ack",
+      "code": 0,
+      "data": {
+        "type": "sys.media.hello",
+        "channel": "video",
+        "version": 1
       }
     },
     "session_end": {

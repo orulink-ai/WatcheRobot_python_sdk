@@ -50,6 +50,18 @@ _HELLO_DATA_FIELDS = frozenset(
         "mode",
     }
 )
+_MEDIA_HELLO_DATA_FIELDS = frozenset(
+    {
+        "pairing_protocol",
+        "pairing_version",
+        "pair_request_id",
+        "daemon_instance_id",
+        "session_token",
+        "mode",
+        "channel",
+        "version",
+    }
+)
 _SESSION_END_FIELDS = frozenset({"type", "code", "data"})
 _SESSION_END_DATA_FIELDS = frozenset({"pair_request_id", "reason"})
 _SENSITIVE_FIELDS = frozenset({"pairing_code", "session_token"})
@@ -96,6 +108,16 @@ class HardwareHello:
     daemon_instance_id: str
     session_token: str
     mode: str
+
+
+@dataclass(frozen=True)
+class MediaHello:
+    pair_request_id: str
+    daemon_instance_id: str
+    session_token: str
+    mode: str
+    channel: str
+    version: int
 
 
 @dataclass(frozen=True)
@@ -289,6 +311,35 @@ def parse_hardware_hello(payload: RawPayload) -> HardwareHello:
     )
 
 
+def parse_media_hello(payload: RawPayload) -> MediaHello:
+    """Parse a video sidecar hello bound to an online control session."""
+
+    message = _decode_object(payload, max_bytes=MAX_HELLO_PAYLOAD_BYTES)
+    _require_exact_fields(message, _HELLO_FIELDS)
+    _require_literal(message, "type", "sys.media.hello")
+    if type(message.get("code")) is not int or message["code"] != 0:
+        raise PairingProtocolError("code must be integer zero")
+    data = message.get("data")
+    if not isinstance(data, Mapping):
+        raise PairingProtocolError("data must be a JSON object")
+    data = dict(data)
+    _require_exact_fields(data, _MEDIA_HELLO_DATA_FIELDS)
+    _require_literal(data, "pairing_protocol", LAN_PAIRING_PROTOCOL)
+    _require_literal(data, "pairing_version", LAN_PAIRING_VERSION)
+    channel = _require_literal(data, "channel", "video")
+    version = data.get("version")
+    if type(version) is not int or version != 1:
+        raise PairingProtocolError("version must be integer one")
+    return MediaHello(
+        pair_request_id=_require_lower_hex(data, "pair_request_id", _LOWER_HEX_32),
+        daemon_instance_id=_require_lower_hex(data, "daemon_instance_id", _LOWER_HEX_32),
+        session_token=_require_lower_hex(data, "session_token", _LOWER_HEX_64),
+        mode=_require_literal(data, "mode", LAN_PAIRING_TARGET_MODE),
+        channel=channel,
+        version=version,
+    )
+
+
 def parse_device_session_end(payload: RawPayload) -> DeviceSessionEnd:
     """Parse the hardware's explicit normal session termination."""
 
@@ -390,9 +441,22 @@ def build_hardware_hello_ack() -> dict[str, object]:
                     "frame_duration_ms": 60,
                     "packetization": "one_opus_packet_per_wspk",
                     "version": 1,
-                }
+                },
+                "video_uplink": {
+                    "transport": "websocket_sidecar",
+                    "hello_type": "sys.media.hello",
+                    "version": 1,
+                },
             },
         },
+    }
+
+
+def build_media_hello_ack() -> dict[str, object]:
+    return {
+        "type": "sys.ack",
+        "code": 0,
+        "data": {"type": "sys.media.hello", "channel": "video", "version": 1},
     }
 
 def build_hardware_hello_nack(
