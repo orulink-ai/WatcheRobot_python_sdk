@@ -140,7 +140,10 @@ def test_live_audio_stream_blocks_on_device_credit_and_wakes_on_status() -> None
                 chunk_bytes=960,
             )
         )
-        await asyncio.sleep(0)
+        for _ in range(100):
+            if len(sent) == 4:
+                break
+            await asyncio.sleep(0)
         assert len(sent) == 4
         assert not write.done()
 
