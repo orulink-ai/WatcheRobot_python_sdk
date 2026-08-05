@@ -128,6 +128,20 @@ def test_accept_moves_to_connecting_and_never_exposes_secrets() -> None:
     assert SESSION_TOKEN not in snapshot_text
 
 
+def test_default_discovery_window_accepts_a_slow_local_device_response() -> None:
+    session = make_session()
+    session.start_pairing(
+        pairing_code="123456",
+        target_mode="desktop_link",
+        websocket_port=8765,
+        now=10.0,
+    )
+
+    assert session.expire(now=25.0) is False
+    session.accept_device(make_accept(), peer_ip="192.168.3.25", now=25.0)
+    assert session.state is DevicePairingState.CONNECTING
+
+
 def test_hardware_hello_is_the_only_transition_to_online() -> None:
     session = make_session()
     session.start_pairing(
@@ -203,7 +217,7 @@ def test_abnormal_disconnect_reserves_slot_for_same_session_reconnect() -> None:
 @pytest.mark.parametrize(
     ("advance", "expected_error"),
     [
-        (("discovering", 20.0), "pairing_not_found"),
+        (("discovering", 40.0), "pairing_not_found"),
         (("connecting", 23.0), "device_connect_timeout"),
         (("reconnecting", 51.0), "reconnect_timeout"),
     ],

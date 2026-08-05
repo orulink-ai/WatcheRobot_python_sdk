@@ -84,6 +84,34 @@ def test_no_application_routes_desktop_and_device_frames_unchanged() -> None:
     asyncio.run(scenario())
 
 
+def test_desktop_hello_preserves_preview_delivery_capability() -> None:
+    async def scenario() -> None:
+        server = ExternalWebSocketServer(host="127.0.0.1", port=0)
+        await server.start()
+        desktop = await connect(server.url, max_size=None)
+        await desktop.send(
+            _hello(
+                "desktop",
+                client_name="media-debugger",
+                capabilities=["face_tracking.preview.credit.v1"],
+            )
+        )
+        await asyncio.wait_for(desktop.recv(), timeout=1)
+        try:
+            [connection] = server.registry.connections_for(
+                ExternalClientRole.DESKTOP
+            )
+            assert connection.metadata == {
+                "client_name": "media-debugger",
+                "capabilities": ["face_tracking.preview.credit.v1"],
+            }
+        finally:
+            await desktop.close()
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
 def test_desktop_role_is_restricted_to_loopback_peers() -> None:
     assert ExternalWebSocketServer.is_loopback_address("127.0.0.1")
     assert ExternalWebSocketServer.is_loopback_address("::1")

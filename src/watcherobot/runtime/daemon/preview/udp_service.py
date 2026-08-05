@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 from ..connections.registry import ExternalClientRole, ExternalConnectionRegistry
 from ..pairing.session import DevicePairingSession
 from .udp_feedback import encode_preview_ack
+from .delivery import PreviewRelayFrame
 from .udp_protocol import (
     CompletedPreviewFrame,
     FaceTrackingUdpProtocolError,
@@ -50,6 +51,7 @@ class FaceTrackingUdpPreviewService:
         session: DevicePairingSession,
         registry: ExternalConnectionRegistry,
         publisher: Callable[[str | bytes], Awaitable[int]] | None = None,
+        bundle_publisher: Callable[[PreviewRelayFrame], Awaitable[int]] | None = None,
         host: str = "0.0.0.0",
         port: int = 37022,
         clock: Callable[[], float] = time.monotonic,
@@ -57,6 +59,7 @@ class FaceTrackingUdpPreviewService:
         self._session = session
         self._registry = registry
         self._publisher_callback = publisher
+        self._bundle_publisher_callback = bundle_publisher
         self._host = host
         self._port = port
         self._clock = clock
@@ -195,17 +198,29 @@ class FaceTrackingUdpPreviewService:
                     raise FaceTrackingUdpProtocolError(
                         "preview telemetry is not an object"
                     )
+                telemetry = json.dumps(payload, separators=(",", ":"))
+            except (FaceTrackingUdpProtocolError, json.JSONDecodeError):
+                self.stats.invalid_datagrams += 1
+                continue
+            bundle_publisher = self._bundle_publisher_callback
+            if bundle_publisher is not None:
+                await bundle_publisher(
+                    PreviewRelayFrame(
+                        stream_id=frame.stream_id,
+                        sequence=frame.sequence,
+                        telemetry=telemetry,
+                        image=image,
+                        completed_at=completed_at,
+                    )
+                )
+            else:
                 published_at = self._clock()
                 payload["relay"] = [
                     int(round(completed_at * 1000)),
                     round(max(0.0, published_at - completed_at) * 1000, 1),
                 ]
-                telemetry = json.dumps(payload, separators=(",", ":"))
-            except (FaceTrackingUdpProtocolError, json.JSONDecodeError):
-                self.stats.invalid_datagrams += 1
-                continue
-            await self._publish(telemetry)
-            await self._publish(image)
+                await self._publish(json.dumps(payload, separators=(",", ":")))
+                await self._publish(image)
             self.stats.published_frames += 1
 
     async def _publish(self, frame: str | bytes) -> int:

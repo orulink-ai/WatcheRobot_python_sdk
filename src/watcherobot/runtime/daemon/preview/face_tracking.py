@@ -19,15 +19,18 @@ class FaceTrackingPreviewBroker:
 
     START_TYPE = "ctrl.face_tracking.preview.start"
     STOP_TYPE = "ctrl.face_tracking.preview.stop"
+    CONSUMED_TYPE = "daemon.face_tracking.preview.consumed"
 
     def __init__(
         self,
         registry: ExternalConnectionRegistry | None = None,
         *,
         on_preview_start: Callable[[], Awaitable[None]] | None = None,
+        on_preview_ack: Callable[[ExternalConnection, int], bool] | None = None,
     ) -> None:
         self._registry = registry
         self._on_preview_start = on_preview_start
+        self._on_preview_ack = on_preview_ack
         self._owners: set[object] = set()
         self._application_owner = object()
         self._command_sequence = count(1)
@@ -41,10 +44,16 @@ class FaceTrackingPreviewBroker:
         self,
         source: ExternalConnection,
         frame: str | bytes,
-    ) -> None:
+    ) -> bool:
         if source.role is not ExternalClientRole.DESKTOP:
-            return
+            return False
+        acknowledged_sequence = self._consumed_sequence(frame)
+        if acknowledged_sequence is not None:
+            if self._on_preview_ack is not None:
+                self._on_preview_ack(source, acknowledged_sequence)
+            return True
         await self._observe_owner(source.websocket, frame)
+        return False
 
     async def observe_application_frame(
         self,
@@ -117,3 +126,25 @@ class FaceTrackingPreviewBroker:
         if not isinstance(command_id, str) or not command_id:
             return None
         return message_type
+
+    @classmethod
+    def _consumed_sequence(cls, frame: str | bytes) -> int | None:
+        if not isinstance(frame, str):
+            return None
+        try:
+            message = json.loads(frame)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(message, dict):
+            return None
+        if message.get("type") != cls.CONSUMED_TYPE:
+            return None
+        data = message.get("data")
+        if not isinstance(data, dict):
+            return None
+        sequence = data.get("sequence")
+        if not isinstance(sequence, int) or isinstance(sequence, bool):
+            return None
+        if sequence < 0 or sequence > 0xFFFFFFFF:
+            return None
+        return sequence

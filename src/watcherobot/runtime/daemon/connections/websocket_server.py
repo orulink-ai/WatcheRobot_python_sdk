@@ -42,7 +42,7 @@ DeviceSessionEndListener = Callable[
 ]
 BusinessFrameListener = Callable[
     [ExternalConnection, str | bytes],
-    Awaitable[None] | None,
+    Awaitable[bool | None] | bool | None,
 ]
 ExternalDisconnectListener = Callable[
     [ExternalConnection],
@@ -192,7 +192,9 @@ class ExternalWebSocketServer:
                             frame,
                         )
                         if inspect.isawaitable(result):
-                            await result
+                            result = await result
+                        if result is True:
+                            continue
                     await self.router.route_external(connection, frame)
             except ConnectionClosed:
                 pass
@@ -394,6 +396,18 @@ class ExternalWebSocketServer:
                 reason="client role is already locked",
             )
             return False
+
+        if role is ExternalClientRole.DESKTOP:
+            capabilities = payload.get("capabilities", [])
+            connection.metadata = {
+                "client_name": str(payload.get("client_name", "")),
+                "capabilities": (
+                    list(capabilities)
+                    if isinstance(capabilities, list)
+                    and all(isinstance(item, str) for item in capabilities)
+                    else []
+                ),
+            }
 
         if role is ExternalClientRole.DEVICE:
             assert hardware_ack is not None

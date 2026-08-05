@@ -26,6 +26,7 @@ from watcherobot.runtime.daemon.application.session import (
 )
 from watcherobot.runtime.daemon.connections.registry import (
     ExternalClientRole,
+    ExternalConnection,
     ExternalConnectionRegistry,
 )
 from watcherobot.runtime.daemon.connections.websocket_server import (
@@ -45,6 +46,10 @@ from watcherobot.runtime.daemon.pairing.session import (
 from watcherobot.runtime.daemon.pairing.udp import PairingUdpService
 from watcherobot.runtime.daemon.preview.face_tracking import (
     FaceTrackingPreviewBroker,
+)
+from watcherobot.runtime.daemon.preview.delivery import (
+    LatestPreviewDelivery,
+    PreviewRelayFrame,
 )
 from watcherobot.runtime.daemon.preview.udp_service import (
     FaceTrackingUdpPreviewService,
@@ -114,9 +119,14 @@ class DaemonRuntime:
         )
         self._clock = clock
         self.connection_registry = connection_registry
+        self.preview_delivery = LatestPreviewDelivery(
+            connection_registry,
+            clock=clock,
+        )
         self.face_tracking_preview = FaceTrackingPreviewBroker(
             connection_registry,
             on_preview_start=self._refresh_preview_udp_listener,
+            on_preview_ack=self._acknowledge_preview_frame,
         )
         self.application.bridge.set_frame_callback(
             self._route_application_frame
@@ -133,7 +143,7 @@ class DaemonRuntime:
             device_disconnect_listener=self._device_disconnected,
             device_session_end_listener=self._device_session_ended,
             business_frame_listener=self.face_tracking_preview.observe_frame,
-            external_disconnect_listener=(self.face_tracking_preview.connection_lost),
+            external_disconnect_listener=self._external_connection_lost,
         )
         self.pairing_udp = PairingUdpService(
             session=self.device_pairing,
@@ -145,8 +155,9 @@ class DaemonRuntime:
         self.preview_udp = FaceTrackingUdpPreviewService(
             session=self.device_pairing,
             registry=connection_registry,
-            publisher=self._publish_preview_frame,
+            bundle_publisher=self._publish_preview_bundle,
             port=preview_udp_port,
+            clock=clock,
         )
         self.control_server = DaemonControlServer(
             controller=self,
@@ -159,6 +170,7 @@ class DaemonRuntime:
         self._shutdown_event = asyncio.Event()
 
     async def _refresh_preview_udp_listener(self) -> None:
+        self.preview_delivery.discard_pending()
         await self.preview_udp.refresh_listener()
         self.logs.record(
             "Preview UDP listener refreshed "
@@ -205,6 +217,7 @@ class DaemonRuntime:
         await self.control_server.stop()
         await self.application.stop()
         await self.preview_udp.stop()
+        await self.preview_delivery.stop()
         await self.pairing_udp.stop()
         await self.external_server.stop()
 
@@ -366,7 +379,10 @@ class DaemonRuntime:
             if device["online"] and peer_ip is not None
             else None
         )
-        device["preview_transport"] = self.preview_udp.snapshot()
+        device["preview_transport"] = {
+            **self.preview_udp.snapshot(),
+            "delivery": self.preview_delivery.snapshot(),
+        }
         return {"device": device}
 
     async def _authorize_hardware_hello(
@@ -432,20 +448,38 @@ class DaemonRuntime:
             )
         return delivered
 
-    async def _publish_preview_frame(self, frame: str | bytes) -> int:
+    def _acknowledge_preview_frame(
+        self,
+        connection: ExternalConnection,
+        sequence: int,
+    ) -> bool:
+        return self.preview_delivery.acknowledge(
+            connection.websocket,
+            sequence=sequence,
+        )
+
+    async def _external_connection_lost(
+        self,
+        connection: ExternalConnection,
+    ) -> None:
+        self.preview_delivery.connection_lost(connection.websocket)
+        await self.face_tracking_preview.connection_lost(connection)
+
+    async def _publish_preview_bundle(self, frame: PreviewRelayFrame) -> int:
         if self.application.registry.active_run is not None:
             try:
                 await self.application.bridge.send_to_application(
                     ApplicationChannel.DEVICE,
-                    frame,
+                    frame.telemetry,
+                )
+                await self.application.bridge.send_to_application(
+                    ApplicationChannel.DEVICE,
+                    frame.image,
                 )
             except ChannelNotConnectedError:
                 return 0
             return 1
-        return await self.connection_registry.send_to_role(
-            ExternalClientRole.DESKTOP,
-            frame,
-        )
+        return self.preview_delivery.offer(frame)
 
 
 def _catalog_entry_payload(entry: CatalogEntry) -> dict[str, object]:
