@@ -45,7 +45,6 @@ _EXCLUDED_FILE_SUFFIXES = frozenset(
         ".pyc",
         ".pyo",
         ".pth",
-        ".wapp",
     }
 )
 

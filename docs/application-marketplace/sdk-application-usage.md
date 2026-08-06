@@ -247,7 +247,7 @@ Publishing rules:
 - The public static Space is named
   `<hf_username>/WatcherRobot-<app_id>`.
 - The complete validated source set is uploaded. Git metadata, virtual
-  environments, caches, credentials, and `.wappignore` matches are excluded.
+  environments, caches, credentials, and `.watcherignore` matches are excluded.
 - The result contains `space_id`, an immutable 40-character `commit`, and a
   fixed source URL. It contains no Catalog or PR state.
 - Re-publishing identical source does not create a meaningless commit.

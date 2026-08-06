@@ -97,16 +97,7 @@ def test_readmes_describe_sdk_store_commands_but_not_daemon_selection() -> None:
         assert "watcherobot app list" in document
         assert "watcherobot app uninstall" in document
         assert re.search(r"(?m)^watcherobot app select\b", document) is None
-
-    documents = [
-        *readmes,
-        (ROOT / "examples" / "README.md").read_text(encoding="utf-8"),
-    ]
-    for document in documents:
-        assert re.search(
-            r"(?m)^watcherobot app run .*\.wapp\s*$",
-            document,
-        ) is None
+        assert "watcherobot app package" not in document
 
 
 def test_distribution_contract_covers_current_version_and_commands() -> None:

@@ -1,4 +1,4 @@
-"""Shared Application source ignore rules for packaging and publishing."""
+"""Shared Application source ignore rules for validation and publishing."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 
 
-APPLICATION_IGNORE_FILE = ".wappignore"
+APPLICATION_IGNORE_FILE = ".watcherignore"
 
 
 class ApplicationIgnoreError(RuntimeError):

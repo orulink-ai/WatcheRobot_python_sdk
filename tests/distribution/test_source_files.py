@@ -25,7 +25,7 @@ def test_source_file_set_excludes_local_and_generated_content(
     _write(tmp_path / ".pytest_cache" / "state", "cache")
     _write(tmp_path / ".mypy_cache" / "state", "cache")
     _write(tmp_path / "build" / "artifact.bin", "build")
-    _write(tmp_path / "dist" / "demo.wapp", "package")
+    _write(tmp_path / "dist" / "generated-artifact.zip", "artifact")
     _write(tmp_path / ".idea" / "workspace.xml", "local")
     _write(tmp_path / ".vscode" / "settings.json", "local")
     _write(tmp_path / "pyvenv.cfg", "home=C:/Python")
@@ -42,13 +42,13 @@ def test_source_file_set_excludes_local_and_generated_content(
     ]
 
 
-def test_source_file_set_honors_wappignore_and_never_uploads_the_ignore_file(
+def test_source_file_set_honors_watcherignore_and_never_uploads_the_ignore_file(
     tmp_path: Path,
 ) -> None:
     _write(tmp_path / "app.json", "{}")
     _write(tmp_path / "app.py", "print('demo')")
     _write(
-        tmp_path / ".wappignore",
+        tmp_path / ".watcherignore",
         "artifacts/\n*.log\nface_recognition_demo/data/\n",
     )
     _write(tmp_path / "artifacts" / "camera.jpg", "private")

@@ -396,7 +396,7 @@ def test_control_rest_does_not_own_application_catalog_mutation() -> None:
     assert (
         client.post(
             "/daemon/applications/install",
-            json={"package_path": "C:/downloads/demo.wapp"},
+            json={"application_id": "demo"},
         ).status_code
         == 404
     )

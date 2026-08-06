@@ -167,8 +167,9 @@ the installation record. `app list --store-root ...` reads installed records and
 `app uninstall --store-root ... --app-id ...` moves one App to recoverable local
 trash. These commands never start or contact the Daemon.
 
-For larger Applications, add a `.wappignore` file using glob patterns such as
-`tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not packaged.
+For larger Applications, add a `.watcherignore` file using glob patterns such as
+`tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not included in the
+published snapshot.
 
 ## Bluetooth Wi-Fi provisioning
 

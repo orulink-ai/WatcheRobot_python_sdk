@@ -69,10 +69,10 @@ Add the missing requirements to app.json before publishing.
 
 ```text
 Application source must not include a Python environment or runtime artifact: <path>
-Remove it or add it to .wappignore, then run app check again.
+Remove it or add it to .watcherignore, then run app check again.
 ```
 
-检查应只针对“即将上传的文件集合”，不能因为开发者本地存在被 `.wappignore` 正确排除的环境目录而拒绝整个项目。
+检查应只针对“即将上传的文件集合”，不能因为开发者本地存在被 `.watcherignore` 正确排除的环境目录而拒绝整个项目。
 
 ## 3. 验收用例
 
@@ -81,7 +81,7 @@ Remove it or add it to .wappignore, then run app check again.
 1. `requirements.txt` 有 `Pillow>=10`、`app.json` 缺失时，`check` 和 `publish` 都显示差异；
 2. `app.json` 完整声明依赖时，不因保留开发用 `requirements.txt` 而失败；
 3. `.portable-smoke/runtime/Lib/site-packages/...` 在上传集合中时被阻断，且不发生网络调用；
-4. 本地 `.venv` 已由 `.wappignore` 排除时，`check` 通过且上传集合不包含它；
+4. 本地 `.venv` 已由 `.watcherignore` 排除时，`check` 通过且上传集合不包含它；
 5. JSONL 保持稳定错误码、路径字段和英文辅助文案，Desktop 可直接展示。
 
 ## 4. 待确认的产品决策

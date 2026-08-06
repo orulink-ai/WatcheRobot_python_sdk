@@ -254,7 +254,7 @@ Desktop 或其他机器调用方才使用 `--jsonl`：
 发布规则：
 
 - Space 固定命名为 `<hf_username>/WatcherRobot-<app_id>`，类型为公开 static Space。
-- 上传的是校验后的完整源码集合；`.git`、`.venv`、缓存、凭据和 `.wappignore` 命中的内容
+- 上传的是校验后的完整源码集合；`.git`、`.venv`、缓存、凭据和 `.watcherignore` 命中的内容
   不会发布。
 - 成功结果只包含 `space_id`、完整 40 位 `commit` 和固定源码 URL，不包含 Catalog 或 PR 状态。
 - 同一源码重复发布不会制造无意义的新 commit。

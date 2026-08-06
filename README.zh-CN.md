@@ -140,8 +140,8 @@ Desktop 使用 `--jsonl`。
 `app uninstall --store-root ... --app-id ...` 将一个 App 移到可恢复的本地回收目录。这些命令
 不会启动或连接 Daemon。
 
-大型 Application 可以增加 `.wappignore`，使用 `tests/`、`.venv*/`、
-`*.tmp` 等 glob 规则排除非运行文件；`.wappignore` 本身不会进入安装包。
+大型 Application 可以增加 `.watcherignore`，使用 `tests/`、`.venv*/`、
+`*.tmp` 等 glob 规则排除非运行文件；`.watcherignore` 本身不会进入发布快照。
 
 ## 蓝牙 Wi-Fi 配网
 
