@@ -10,7 +10,6 @@ import sys
 import time
 from pathlib import Path
 
-from watcherobot.application.catalog import ApplicationCatalog
 from watcherobot.runtime.daemon.instance import (
     RuntimeAlreadyRunningError,
     RuntimeInstanceLock,
@@ -48,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=int(os.environ.get("WATCHER_RUNTIME_PREVIEW_UDP_PORT", "37022")),
     )
+    parser.add_argument("--managed-app-root", type=Path)
+    parser.add_argument("--bundled-resource-root", type=Path)
     return parser
 
 
@@ -61,17 +62,25 @@ async def run_runtime(args: argparse.Namespace) -> int:
         return 3
 
     state_store.remove()
-    application_dir, current_app = _initial_application(state_root)
     runtime = DaemonRuntime(
-        application_dir=application_dir,
-        current_app=current_app,
+        application_dir=state_root / "unselected",
+        current_app=None,
         external_port=args.external_port,
         control_port=args.control_port,
         pairing_udp_port=args.pairing_port,
         preview_udp_port=args.preview_udp_port,
         application_log_dir=state_root / "logs" / "applications",
         daemon_log_path=state_root / "logs" / "daemon.jsonl",
-        catalog_root=state_root / "catalog",
+        managed_app_root=(
+            Path(args.managed_app_root).resolve()
+            if args.managed_app_root is not None
+            else state_root / "application-store"
+        ),
+        bundled_resource_root=(
+            Path(args.bundled_resource_root).resolve()
+            if args.bundled_resource_root is not None
+            else state_root / "bundled-resources"
+        ),
     )
     loop = asyncio.get_running_loop()
 
@@ -109,13 +118,6 @@ async def run_runtime(args: argparse.Namespace) -> int:
         state_store.remove()
         await runtime.stop()
         instance_lock.release()
-
-
-def _initial_application(state_root: Path) -> tuple[Path, str | None]:
-    selected = ApplicationCatalog(state_root / "catalog").selected()
-    if selected is None:
-        return state_root / "unselected", None
-    return selected.path, selected.app_id
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -93,16 +93,18 @@ def _fit_frame(frame: Image.Image) -> Image.Image:
 
 def _rgb565_swapped(frame: Image.Image) -> bytes:
     payload = bytearray(DISPLAY_SIZE * DISPLAY_SIZE * 2)
-    offset = 0
-    for red, green, blue, alpha in frame.getdata():
+    rgba = frame.convert("RGBA").tobytes()
+    output_offset = 0
+    for pixel_offset in range(0, len(rgba), 4):
+        red, green, blue, alpha = rgba[pixel_offset:pixel_offset + 4]
         if alpha != 255:
             red = red * alpha // 255
             green = green * alpha // 255
             blue = blue * alpha // 255
         value = ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3)
-        payload[offset] = value >> 8
-        payload[offset + 1] = value & 0xFF
-        offset += 2
+        payload[output_offset] = value >> 8
+        payload[output_offset + 1] = value & 0xFF
+        output_offset += 2
     return bytes(payload)
 
 
@@ -167,7 +169,7 @@ def _audio_payload(source: bytes) -> bytes:
             if stream is None:
                 raise WorkAssetError("音频文件没有可解码的音轨。")
             resampler = AudioResampler(format="s16", layout="mono", rate=24000)
-            decoded = container.decode(stream)
+            decoded = container.decode(audio=stream.index)
             for source_frame in decoded:
                 for frame in resampler.resample(source_frame):
                     output.extend(bytes(frame.planes[0])[:frame.samples * 2])

@@ -17,13 +17,14 @@ def write_application(
     app_id: str = "com.orulink.demo",
     requires_watcherobot: str | None = ">=1.0,<2.0",
     extra: dict[str, object] | None = None,
+    dependencies: list[str] | None = None,
 ) -> None:
     payload: dict[str, object] = {
         "schema_version": 1,
         "id": app_id,
         "name": "Demo",
         "version": "1.0.0",
-        "dependencies": [],
+        "dependencies": dependencies or [],
     }
     if requires_watcherobot is not None:
         payload["requires_watcherobot"] = requires_watcherobot
@@ -86,6 +87,73 @@ def test_manifest_rejects_invalid_requirement_syntax(tmp_path) -> None:
         match="requires_watcherobot",
     ):
         ApplicationManifest.load(tmp_path, watcherobot_version="1.5.0")
+
+
+def test_manifest_accepts_standard_python_requirements(tmp_path) -> None:
+    write_application(
+        tmp_path,
+        dependencies=[
+            "httpx>=0.28,<1",
+            "demo-extra[image] @ https://example.com/demo-extra.whl",
+        ],
+    )
+
+    manifest = ApplicationManifest.load(
+        tmp_path,
+        watcherobot_version="1.5.0",
+    )
+
+    assert manifest.dependencies == (
+        "httpx>=0.28,<1",
+        "demo-extra[image] @ https://example.com/demo-extra.whl",
+    )
+
+
+def test_manifest_allows_watcherobot_version_constraint_from_bundled_wheel(
+    tmp_path,
+) -> None:
+    write_application(tmp_path, dependencies=["watcherobot>=1.0,<2.0"])
+
+    manifest = ApplicationManifest.load(
+        tmp_path,
+        watcherobot_version="1.5.0",
+    )
+
+    assert manifest.dependencies == ("watcherobot>=1.0,<2.0",)
+
+
+@pytest.mark.parametrize(
+    "dependency",
+    [
+        "watcherobot @ https://example.com/watcherobot.whl",
+        "Watcherobot @ file:///tmp/watcherobot",
+    ],
+)
+def test_manifest_rejects_watcherobot_direct_reference(tmp_path, dependency: str) -> None:
+    write_application(tmp_path, dependencies=[dependency])
+
+    with pytest.raises(
+        ApplicationManifestError,
+        match="bundled watcherobot wheel",
+    ) as captured:
+        ApplicationManifest.load(tmp_path, watcherobot_version="1.5.0")
+
+    assert captured.value.code == "app_dependency_invalid"
+
+
+def test_manifest_rejects_invalid_python_requirement(tmp_path) -> None:
+    write_application(
+        tmp_path,
+        dependencies=["not a requirement ???"],
+    )
+
+    with pytest.raises(
+        ApplicationManifestError,
+        match=r"dependencies\[0\]",
+    ) as captured:
+        ApplicationManifest.load(tmp_path, watcherobot_version="1.5.0")
+
+    assert captured.value.code == "app_dependency_invalid"
 
 
 @pytest.mark.parametrize(

@@ -5,17 +5,13 @@ from __future__ import annotations
 import json
 import asyncio
 import secrets
-import sys
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from watcherobot.application.catalog import (
-    ApplicationCatalog,
-    CatalogEntry,
-)
 from watcherobot.runtime.daemon.application.bridge import ChannelNotConnectedError
 from watcherobot.runtime.daemon.application.logging import ApplicationLogService
+from watcherobot.runtime.daemon.application.launcher import ApplicationLauncher
 from watcherobot.runtime.daemon.application.runtime import (
     ApplicationRuntimeError,
     ApplicationRuntimeManager,
@@ -61,7 +57,6 @@ class DaemonRuntime:
         *,
         application_dir: Path,
         current_app: str | None,
-        python_executable: str = sys.executable,
         external_host: str = "0.0.0.0",
         external_port: int = 8765,
         control_host: str = "127.0.0.1",
@@ -71,7 +66,8 @@ class DaemonRuntime:
         daemon_log_path: Path | None = None,
         pairing_udp_port: int = 37021,
         preview_udp_port: int = 0,
-        catalog_root: Path | None = None,
+        managed_app_root: Path | None = None,
+        bundled_resource_root: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         connection_registry = ExternalConnectionRegistry()
@@ -93,17 +89,16 @@ class DaemonRuntime:
                 frame,
             ),
         )
+        application_parent = Path(application_dir).resolve().parent
+        application_launcher = ApplicationLauncher(
+            managed_app_root=managed_app_root or application_parent,
+            bundled_resource_root=bundled_resource_root or application_parent,
+        )
         self.application = ApplicationRuntimeManager(
             application_dir=application_dir,
             current_app=current_app,
-            python_executable=python_executable,
+            application_launcher=application_launcher,
             log_service=self.application_logs,
-        )
-        self.catalog = ApplicationCatalog(
-            catalog_root or Path(application_dir).resolve().parent / "catalog",
-            is_runtime_active=lambda: (
-                self.application.registry.active_run is not None
-            ),
         )
         self.router = RawFrameRouter(
             connection_registry,
@@ -222,40 +217,24 @@ class DaemonRuntime:
         await self.application.stop()
         self.logs.record(f"Application stopped (app_id={app_id})")
 
-    def select_application(self, application_dir: str) -> dict[str, object]:
-        self.application.select_application(Path(application_dir))
+    def select_application(
+        self,
+        application_dir: str,
+        launcher_kind: str,
+        launcher_executable: str,
+    ) -> dict[str, object]:
+        self.application.select_application(
+            Path(application_dir),
+            launcher_kind=launcher_kind,
+            launcher_executable=Path(launcher_executable),
+        )
         self.logs.record(
             "Application selected "
             f"(app_id={self.application.registry.current_app}, "
-            f"path={Path(application_dir).resolve()})"
+            f"path={Path(application_dir).resolve()}, "
+            f"launcher={launcher_kind})"
         )
         return self.application_status()
-
-    def list_catalog_applications(self) -> list[dict[str, object]]:
-        return [_catalog_entry_payload(entry) for entry in self.catalog.list()]
-
-    def install_application_package(
-        self,
-        package_path: str,
-    ) -> dict[str, object]:
-        entry = self.catalog.install(Path(package_path))
-        return _catalog_entry_payload(entry)
-
-    def select_catalog_application(
-        self,
-        app_id: str,
-        version: str | None,
-    ) -> dict[str, object]:
-        entry = self.catalog.select(app_id, version=version)
-        self.application.select_application(entry.path)
-        return self.application_status()
-
-    def uninstall_catalog_application(
-        self,
-        app_id: str,
-        version: str | None,
-    ) -> None:
-        self.catalog.uninstall(app_id, version=version)
 
     def request_shutdown(self) -> None:
         self.logs.record("Daemon shutdown requested")
@@ -546,13 +525,3 @@ class DaemonRuntime:
             ExternalClientRole.DESKTOP,
             frame,
         )
-
-
-def _catalog_entry_payload(entry: CatalogEntry) -> dict[str, object]:
-    return {
-        "id": entry.app_id,
-        "name": entry.name,
-        "version": entry.version,
-        "path": str(entry.path),
-        "requires_watcherobot": entry.requires_watcherobot,
-    }

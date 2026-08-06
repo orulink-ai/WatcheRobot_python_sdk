@@ -169,7 +169,10 @@ def _normalize_action_axis(value: Any, axis: str, duration_ms: int) -> list[dict
             raise WorkDocumentError(f"自定义动作 {axis} 第 {index + 1} 个关键帧格式无效。")
         try:
             time_ms = int(keyframe.get("timeMs", 0))
-            angle_deg = int(round(float(keyframe.get("angleDeg"))))
+            angle_value = keyframe.get("angleDeg")
+            if not isinstance(angle_value, (int, float, str)):
+                raise TypeError("angleDeg must be numeric")
+            angle_deg = int(round(float(angle_value)))
         except (TypeError, ValueError) as exc:
             raise WorkDocumentError(f"自定义动作 {axis} 第 {index + 1} 个关键帧无效。") from exc
         if time_ms < 0 or time_ms > duration_ms or angle_deg < 0 or angle_deg > 180:
@@ -248,10 +251,10 @@ def build_portable_work_package(composition: dict[str, Any]) -> PortableWorkPack
     converted_assets: dict[str, ConvertedWorkAsset] = {}
     try:
         for raw_asset in raw_assets:
-            converted = convert_creator_asset(raw_asset)
-            if converted.source_id in converted_assets:
-                raise WorkDocumentError(f"作品包含重复的自定义素材：{converted.source_id}")
-            converted_assets[converted.source_id] = converted
+            converted_asset = convert_creator_asset(raw_asset)
+            if converted_asset.source_id in converted_assets:
+                raise WorkDocumentError(f"作品包含重复的自定义素材：{converted_asset.source_id}")
+            converted_assets[converted_asset.source_id] = converted_asset
     except WorkAssetError as exc:
         raise WorkDocumentError(str(exc)) from exc
 
@@ -280,28 +283,28 @@ def build_portable_work_package(composition: dict[str, Any]) -> PortableWorkPack
         original_resource_id = str(clip["resourceId"])
         resource_id = original_resource_id
         source = "official"
-        converted = converted_assets.get(original_resource_id)
-        if converted is not None:
-            if (track_type == "animation") != (converted.kind == "expression"):
+        selected_asset = converted_assets.get(original_resource_id)
+        if selected_asset is not None:
+            if (track_type == "animation") != (selected_asset.kind == "expression"):
                 raise WorkDocumentError(f"自定义素材 {original_resource_id} 与时间线片段类型不一致。")
-            resource_id = converted.resource_id
+            resource_id = selected_asset.resource_id
             source = "work"
-            package_files[converted.device_path] = converted.device_payload
-            package_files[converted.source_path] = converted.source_payload
-            bundled_assets[converted.device_path] = {
+            package_files[selected_asset.device_path] = selected_asset.device_payload
+            package_files[selected_asset.source_path] = selected_asset.source_payload
+            bundled_assets[selected_asset.device_path] = {
                 "resource_id": resource_id,
-                **converted.device_asset,
+                **selected_asset.device_asset,
             }
-            asset_key = "animation" if converted.kind == "expression" else "sound"
+            asset_key = "animation" if selected_asset.kind == "expression" else "sound"
             work_catalog_entries[resource_id] = {
                 "id": resource_id,
                 "display_name": str(clip["label"])[:64],
                 "source_record_id": work_id,
                 "order": len(work_catalog_entries),
-                "assets": {asset_key: converted.device_asset},
+                "assets": {asset_key: selected_asset.device_asset},
             }
-            if converted.creator_asset not in used_creator_assets:
-                used_creator_assets.append(converted.creator_asset)
+            if selected_asset.creator_asset not in used_creator_assets:
+                used_creator_assets.append(selected_asset.creator_asset)
         elif track_type == "action" and clip.get("actionTracks") is not None:
             resource_id, path, payload, asset = _build_action_asset(clip)
             source = "work"
@@ -636,7 +639,7 @@ def normalize_work_document(
             raise WorkDocumentError("v2 作品的 creator 内容与作品标识不一致。")
         creator = dict(raw_creator)
 
-    normalized_document = {
+    normalized_document: dict[str, Any] = {
         "format": WORK_FORMAT if schema_version == WORK_SCHEMA_VERSION else None,
         "schema_version": schema_version,
         "work_id": work_id,

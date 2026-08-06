@@ -10,14 +10,10 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-from watcherobot.application.catalog import (
-    ApplicationCatalogError,
-    CatalogNotFoundError,
-    CatalogPackageError,
-)
 from watcherobot.runtime.daemon.application.runtime import ApplicationStartError
+from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchError
 from watcherobot.runtime.daemon.application.manifest import (
     ApplicationManifestError,
 )
@@ -34,22 +30,18 @@ class PairDeviceRequest(BaseModel):
     target_mode: str
 
 
+class ApplicationLauncherRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    executable: str
+
+
 class SelectApplicationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     application_dir: str
-
-
-class InstallApplicationRequest(BaseModel):
-    package_path: str
-
-
-class SelectCatalogApplicationRequest(BaseModel):
-    app_id: str
-    version: str | None = None
-
-
-class UninstallApplicationRequest(BaseModel):
-    app_id: str
-    version: str | None = None
+    launcher: ApplicationLauncherRequest
 
 
 class MaintenanceInstallRequest(BaseModel):
@@ -129,7 +121,12 @@ class ApplicationController(Protocol):
     async def disconnect_device(self) -> bool:
         """Explicitly release the Daemon-owned device session."""
 
-    def select_application(self, application_dir: str) -> dict[str, Any]:
+    def select_application(
+        self,
+        application_dir: str,
+        launcher_kind: str,
+        launcher_executable: str,
+    ) -> dict[str, Any]:
         """Select a validated Application without restarting the Runtime."""
 
     def request_shutdown(self) -> None:
@@ -137,29 +134,6 @@ class ApplicationController(Protocol):
 
     def daemon_logs(self, after_id: int = 0) -> list[dict[str, Any]]:
         """Return current-session Daemon logs newer than ``after_id``."""
-
-    def list_catalog_applications(self) -> list[dict[str, Any]]:
-        """List installed Application versions."""
-
-    def install_application_package(
-        self,
-        package_path: str,
-    ) -> dict[str, Any]:
-        """Install one validated .wapp package."""
-
-    def select_catalog_application(
-        self,
-        app_id: str,
-        version: str | None,
-    ) -> dict[str, Any]:
-        """Select one installed Application version."""
-
-    def uninstall_catalog_application(
-        self,
-        app_id: str,
-        version: str | None,
-    ) -> None:
-        """Remove one non-protected installed Application."""
 
     def maintenance_ports(self) -> list[dict[str, Any]]:
         """List local serial ports available for maintenance."""
@@ -308,7 +282,11 @@ class DaemonControlAPI:
             request: SelectApplicationRequest,
         ) -> Any:
             try:
-                self._controller.select_application(request.application_dir)
+                self._controller.select_application(
+                    request.application_dir,
+                    request.launcher.kind,
+                    request.launcher.executable,
+                )
             except SessionOccupiedError as exc:
                 return JSONResponse(
                     status_code=409,
@@ -325,56 +303,20 @@ class DaemonControlAPI:
                         "message": str(exc),
                     },
                 )
+            except ApplicationLaunchError as exc:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": exc.code,
+                        "message": str(exc),
+                    },
+                )
             return self._status_response()
 
         @app.post("/daemon/stop", status_code=202)
         async def stop_daemon() -> dict[str, bool]:
             self._controller.request_shutdown()
             return {"stopping": True}
-
-        @app.get("/daemon/applications")
-        async def list_applications() -> dict[str, Any]:
-            return {
-                "applications": self._controller.list_catalog_applications()
-            }
-
-        @app.post("/daemon/applications/install", status_code=201)
-        async def install_application(
-            request: InstallApplicationRequest,
-        ) -> Any:
-            try:
-                installed = self._controller.install_application_package(
-                    request.package_path
-                )
-            except ApplicationCatalogError as exc:
-                return _catalog_error_response(exc)
-            return {"application": installed}
-
-        @app.post("/daemon/applications/select")
-        async def select_catalog_application(
-            request: SelectCatalogApplicationRequest,
-        ) -> Any:
-            try:
-                self._controller.select_catalog_application(
-                    request.app_id,
-                    request.version,
-                )
-            except ApplicationCatalogError as exc:
-                return _catalog_error_response(exc)
-            return self._status_response()
-
-        @app.post("/daemon/applications/uninstall")
-        async def uninstall_application(
-            request: UninstallApplicationRequest,
-        ) -> Any:
-            try:
-                self._controller.uninstall_catalog_application(
-                    request.app_id,
-                    request.version,
-                )
-            except ApplicationCatalogError as exc:
-                return _catalog_error_response(exc)
-            return {"uninstalled": True}
 
         @app.get("/daemon/devices")
         async def get_devices() -> dict[str, Any]:
@@ -683,19 +625,3 @@ class DaemonControlServer:
                 raise RuntimeError("Daemon control server stopped during startup")
             await asyncio.sleep(0.01)
         raise TimeoutError("Daemon control server startup timed out")
-
-
-def _catalog_error_response(error: ApplicationCatalogError) -> JSONResponse:
-    if isinstance(error, CatalogNotFoundError):
-        status_code = 404
-    elif isinstance(error, CatalogPackageError):
-        status_code = 400
-    else:
-        status_code = 409
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "error": type(error).__name__,
-            "message": str(error),
-        },
-    )

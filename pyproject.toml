@@ -14,6 +14,8 @@ dependencies = [
   "bleak>=3,<4",
   "av>=16,<17",
   "fastapi>=0.129,<1",
+  "huggingface-hub>=1.26,<2",
+  "keyring>=25.7,<26",
   "packaging>=24,<27",
   "Pillow>=11,<13",
   "psutil>=5.9,<8",
@@ -41,6 +43,7 @@ Issues = "https://github.com/orulink-ai/WatcheRobot_python_sdk/issues"
 
 [project.scripts]
 watcherobot = "watcherobot.cli:main"
+watcher-distribution = "watcherobot.distribution.cli:main"
 
 [project.optional-dependencies]
 test = [
@@ -48,6 +51,7 @@ test = [
   "mypy>=1.10,<2",
   "pytest>=8",
   "types-psutil>=5.9",
+  "types-pyserial>=3.5",
 ]
 
 [tool.hatch.build.targets.wheel]
