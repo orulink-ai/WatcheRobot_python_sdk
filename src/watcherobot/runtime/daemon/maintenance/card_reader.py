@@ -62,6 +62,13 @@ class CardReaderError(RuntimeError):
     """The selected card or resource archive is unsafe or invalid."""
 
 
+def _windows_kernel32() -> Any:
+    loader = getattr(ctypes, "windll", None)
+    if loader is None:
+        raise CardReaderError("Windows volume APIs are unavailable on this platform")
+    return loader.kernel32
+
+
 @dataclass(frozen=True)
 class VolumeInfo:
     id: str
@@ -105,12 +112,13 @@ def _installed_version(root: Path) -> str | None:
 
 
 def _volume_details(root: Path) -> tuple[str, str, int]:
+    kernel32 = _windows_kernel32()
     volume_name = ctypes.create_unicode_buffer(261)
     filesystem_name = ctypes.create_unicode_buffer(261)
     serial_number = ctypes.c_ulong(0)
     maximum_component = ctypes.c_ulong(0)
     flags = ctypes.c_ulong(0)
-    ok = ctypes.windll.kernel32.GetVolumeInformationW(
+    ok = kernel32.GetVolumeInformationW(
         str(root),
         volume_name,
         len(volume_name),
@@ -144,13 +152,14 @@ def _inspect_volume(root: Path) -> VolumeInfo:
 def list_volumes() -> list[dict[str, Any]]:
     if sys.platform != "win32":
         return []
-    mask = ctypes.windll.kernel32.GetLogicalDrives()
+    kernel32 = _windows_kernel32()
+    mask = kernel32.GetLogicalDrives()
     result: list[VolumeInfo] = []
     for index in range(26):
         if not mask & (1 << index):
             continue
         root = Path(f"{chr(ord('A') + index)}:\\")
-        if ctypes.windll.kernel32.GetDriveTypeW(str(root)) != 2:
+        if kernel32.GetDriveTypeW(str(root)) != 2:
             continue
         try:
             result.append(_inspect_volume(root))
