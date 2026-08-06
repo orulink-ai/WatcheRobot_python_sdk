@@ -4,10 +4,13 @@ import hashlib
 import json
 import platform
 from pathlib import Path
+from types import SimpleNamespace
 
+import watcherobot.distribution.install as install_module
 from watcherobot.distribution.install import (
     ApplicationEnvironmentCommand,
     ApplicationEnvironmentOutput,
+    SystemApplicationEnvironmentRunner,
     install_application,
     list_installed_applications,
     uninstall_application,
@@ -72,6 +75,98 @@ class FakeEnvironmentRunner:
                 stdout=b"watcherobot==0.1.1a1\nrequests==2.32.0\n"
             )
         return ApplicationEnvironmentOutput()
+
+
+def test_runtime_publication_retries_one_transient_filesystem_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "published-source"
+    _write_source(source)
+    runtime = tmp_path / "runtime-source"
+    _write_runtime(runtime)
+    real_copytree = install_module.shutil.copytree
+    runtime_copy_attempts = 0
+
+    def flaky_copytree(*args, **kwargs):
+        nonlocal runtime_copy_attempts
+        if Path(args[0]) == runtime:
+            runtime_copy_attempts += 1
+            if runtime_copy_attempts == 1:
+                raise OSError("temporary Windows file lock")
+        return real_copytree(*args, **kwargs)
+
+    monkeypatch.setattr(install_module.shutil, "copytree", flaky_copytree)
+    monkeypatch.setattr(install_module.time, "sleep", lambda _: None)
+
+    installed = install_application(
+        space_id=SPACE_ID,
+        commit=COMMIT,
+        store_root=tmp_path / "application-store",
+        runtime_root=runtime,
+        hub=FakeHub(source),
+        environment_runner=FakeEnvironmentRunner(),
+    )
+
+    assert installed.application_id == "com.example.demo"
+    assert runtime_copy_attempts == 2
+
+
+def test_environment_runner_retries_one_transient_nonzero_exit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    attempts = 0
+
+    def flaky_run(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        return SimpleNamespace(
+            returncode=1 if attempts == 1 else 0,
+            stdout=b"",
+            stderr=b"temporary file lock" if attempts == 1 else b"",
+        )
+
+    monkeypatch.setattr(install_module.subprocess, "run", flaky_run)
+    monkeypatch.setattr(install_module.time, "sleep", lambda _: None)
+    command = ApplicationEnvironmentCommand(
+        stage="installing_dependencies",
+        executable=tmp_path / "uv.exe",
+        arguments=("pip", "install"),
+        current_dir=tmp_path,
+        environment_root=tmp_path / ".venv",
+    )
+
+    output = SystemApplicationEnvironmentRunner().run(command)
+
+    assert output == ApplicationEnvironmentOutput()
+    assert attempts == 2
+
+
+def test_invalid_cached_runtime_is_archived_and_rebuilt(tmp_path: Path) -> None:
+    source = tmp_path / "published-source"
+    _write_source(source)
+    runtime = tmp_path / "runtime-source"
+    _write_runtime(runtime)
+    store_root = tmp_path / "application-store"
+    stale_runtime = store_root / "runtime"
+    stale_runtime.mkdir(parents=True)
+    stale_runtime.joinpath("invalid.txt").write_text("stale", encoding="utf-8")
+
+    installed = install_application(
+        space_id=SPACE_ID,
+        commit=COMMIT,
+        store_root=store_root,
+        runtime_root=runtime,
+        hub=FakeHub(source),
+        environment_runner=FakeEnvironmentRunner(),
+    )
+
+    archived_runtimes = list(store_root.joinpath("trash").glob("*-runtime"))
+    assert installed.application_id == "com.example.demo"
+    assert store_root.joinpath("runtime/runtime.json").is_file()
+    assert len(archived_runtimes) == 1
+    assert archived_runtimes[0].joinpath("invalid.txt").read_text(encoding="utf-8") == "stale"
 
 
 def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) -> None:

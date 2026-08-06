@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -29,6 +30,8 @@ from .ports import MarketplaceHubClient
 _RUNTIME_MANIFEST = "runtime.json"
 _RUNTIME_TREE_PREFIX = b"watcher-application-runtime-tree-sha256-v1\0"
 _MAX_OUTPUT_BYTES = 1024 * 1024
+_MAX_LOCAL_OPERATION_ATTEMPTS = 2
+_LOCAL_OPERATION_RETRY_DELAY_SECONDS = 0.25
 _APPLICATION_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _RUNTIME_SCHEMA_VERSION = 1
 
@@ -97,35 +100,52 @@ class SystemApplicationEnvironmentRunner:
             }
         )
         environment.update(dict(command.environment))
-        try:
-            completed = subprocess.run(
-                [str(command.executable), *command.arguments],
-                cwd=command.current_dir,
-                env=environment,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
-                timeout=300,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
+            try:
+                completed = subprocess.run(
+                    [str(command.executable), *command.arguments],
+                    cwd=command.current_dir,
+                    env=environment,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                    timeout=300,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise ApplicationInstallError(
+                    ErrorCode.INTERNAL_ERROR,
+                    "Application environment command failed",
+                ) from exc
+            except OSError as exc:
+                if attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
+                    time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
+                    continue
+                raise ApplicationInstallError(
+                    ErrorCode.INTERNAL_ERROR,
+                    "Application environment command failed",
+                ) from exc
+            if (
+                len(completed.stdout) > _MAX_OUTPUT_BYTES
+                or len(completed.stderr) > _MAX_OUTPUT_BYTES
+            ):
+                raise ApplicationInstallError(
+                    ErrorCode.INTERNAL_ERROR,
+                    "Application environment command failed",
+                )
+            if completed.returncode == 0:
+                return ApplicationEnvironmentOutput(
+                    stdout=completed.stdout,
+                    stderr=completed.stderr,
+                )
+            if attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
+                time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
+                continue
             raise ApplicationInstallError(
                 ErrorCode.INTERNAL_ERROR,
                 "Application environment command failed",
-            ) from exc
-        if (
-            completed.returncode != 0
-            or len(completed.stdout) > _MAX_OUTPUT_BYTES
-            or len(completed.stderr) > _MAX_OUTPUT_BYTES
-        ):
-            raise ApplicationInstallError(
-                ErrorCode.INTERNAL_ERROR,
-                "Application environment command failed",
             )
-        return ApplicationEnvironmentOutput(
-            stdout=completed.stdout,
-            stderr=completed.stderr,
-        )
+        raise AssertionError("unreachable")
 
 
 @dataclass(frozen=True)
@@ -374,34 +394,57 @@ def _open_store(store_root: Path) -> _StorePaths:
 
 def _prepare_runtime(paths: _StorePaths, source_root: Path) -> _RuntimeResources:
     source = _load_runtime(source_root)
-    if paths.runtime.exists():
-        current = _load_runtime(paths.runtime)
-        if current.runtime_id != source.runtime_id:
+    if paths.runtime.is_symlink() or paths.runtime.exists():
+        try:
+            current = _load_runtime(paths.runtime)
+        except ApplicationInstallError:
+            _archive_cached_runtime(paths)
+        else:
+            if current.runtime_id == source.runtime_id:
+                return current
+            _archive_cached_runtime(paths)
+    for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
+        staging = paths.staging / f"{uuid.uuid4().hex}-runtime"
+        try:
+            shutil.copytree(source.root, staging, copy_function=shutil.copy2)
+            copied = _load_runtime(staging)
+            if copied.runtime_id != source.runtime_id:
+                raise ApplicationInstallError(
+                    ErrorCode.INTERNAL_ERROR,
+                    "Copied Application Runtime does not match the requested Runtime",
+                )
+            os.replace(staging, paths.runtime)
+            return _load_runtime(paths.runtime)
+        except ApplicationInstallError:
+            _remove_tree(staging)
+            raise
+        except OSError as exc:
+            _remove_tree(staging)
+            if attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
+                time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
+                continue
             raise ApplicationInstallError(
                 ErrorCode.INTERNAL_ERROR,
-                "Installed Application Runtime does not match the requested Runtime",
-            )
-        return current
-    staging = paths.staging / f"{uuid.uuid4().hex}-runtime"
-    try:
-        shutil.copytree(source.root, staging, copy_function=shutil.copy2)
-        copied = _load_runtime(staging)
-        if copied.runtime_id != source.runtime_id:
+                "Unable to prepare Application Runtime",
+            ) from exc
+    raise AssertionError("unreachable")
+
+
+def _archive_cached_runtime(paths: _StorePaths) -> None:
+    trash_root = paths.trash / f"{uuid.uuid4().hex}-runtime"
+    for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
+        try:
+            os.replace(paths.runtime, trash_root)
+            return
+        except OSError as exc:
+            if attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
+                time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
+                continue
             raise ApplicationInstallError(
                 ErrorCode.INTERNAL_ERROR,
-                "Copied Application Runtime does not match the requested Runtime",
-            )
-        os.replace(staging, paths.runtime)
-        return _load_runtime(paths.runtime)
-    except ApplicationInstallError:
-        _remove_tree(staging)
-        raise
-    except OSError as exc:
-        _remove_tree(staging)
-        raise ApplicationInstallError(
-            ErrorCode.INTERNAL_ERROR,
-            "Unable to prepare Application Runtime",
-        ) from exc
+                "Unable to replace cached Application Runtime",
+            ) from exc
+    raise AssertionError("unreachable")
 
 
 def _load_runtime(runtime_root: Path) -> _RuntimeResources:

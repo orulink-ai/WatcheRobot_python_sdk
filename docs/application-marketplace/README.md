@@ -4,6 +4,7 @@
 
 - [SDK Application Development and Publishing Guide](sdk-application-usage.md): English developer setup, Device Flow, publishing, catalog, and immutable-download acceptance steps.
 - [Application CLI Quick Reference](application-cli-reference.md): all supported commands, human output, `--details`, JSONL automation, and Daemon boundaries.
+- [Application 发布前质量门禁（待实施）](publishing-quality-gates.zh-CN.md)：已发现的依赖声明、Python 环境误上传问题，以及后续发布提醒/检查的验收清单。
 - [SDK Application 使用与测试指南](sdk-application-usage.zh-CN.md)：中文开发环境、最小项目、运行、Device Flow、公开发布、正式名单和固定快照的可执行步骤。
 - [分发合同](distribution-contract.md)：当前版本、命令、JSONL、错误码、退出码以及 Desktop/Daemon/Hugging Face 边界。
 - [实施进度](implementation-progress.md)：每个阶段已经完成的工程事实、测试证据和历史基线。
