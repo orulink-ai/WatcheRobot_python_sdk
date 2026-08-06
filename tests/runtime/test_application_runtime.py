@@ -19,6 +19,7 @@ from watcherobot.runtime.daemon.application.launcher import (
     ApplicationLauncherKind,
 )
 from watcherobot.runtime.daemon.application.session import (
+    ApplicationNotSelectedError,
     ApplicationState,
     SessionOccupiedError,
 )
@@ -322,6 +323,26 @@ def test_runtime_requires_a_controlled_launch_spec_before_starting(
 
     asyncio.run(scenario())
 
+
+def test_runtime_represents_an_unselected_application_explicitly(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        manager = ApplicationRuntimeManager(
+            application_dir=tmp_path / "unselected",
+            current_app=None,
+            application_launcher=ApplicationLauncher(
+                managed_app_root=tmp_path / "application-store",
+                bundled_resource_root=tmp_path / "bundled-resources",
+            ),
+        )
+
+        assert manager.registry.current_app is None
+        assert manager.last_state is ApplicationState.NOT_SELECTED
+        with pytest.raises(ApplicationNotSelectedError):
+            await manager.start()
+
+    asyncio.run(scenario())
 
 def test_runtime_can_select_another_application_without_restarting_itself(
     tmp_path: Path,

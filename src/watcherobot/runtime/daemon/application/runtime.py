@@ -21,6 +21,7 @@ from watcherobot.runtime.daemon.application.launcher import (
 from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 from watcherobot.runtime.daemon.application.session import (
     ApplicationChannel,
+    ApplicationNotSelectedError,
     ApplicationRun,
     ApplicationSessionRegistry,
     ApplicationState,
@@ -46,13 +47,17 @@ class ApplicationRuntimeManager:
         self,
         *,
         application_dir: Path,
-        current_app: str,
+        current_app: str | None,
         application_launcher: ApplicationLauncher,
         startup_timeout: float = DEFAULT_APPLICATION_STARTUP_TIMEOUT,
         stop_timeout: float = 5.0,
         log_service: ApplicationLogService | None = None,
     ) -> None:
-        self._application_dir = Path(application_dir).resolve()
+        self._application_dir = (
+            Path(application_dir).resolve()
+            if current_app is not None
+            else None
+        )
         self._application_launcher = application_launcher
         self._launch_spec: ApplicationLaunchSpec | None = None
         self._startup_timeout = startup_timeout
@@ -63,7 +68,11 @@ class ApplicationRuntimeManager:
             registry=self.registry,
             on_channel_lost=self._on_channel_lost,
         )
-        self.last_state = ApplicationState.NOT_RUNNING
+        self.last_state = (
+            ApplicationState.NOT_RUNNING
+            if current_app is not None
+            else ApplicationState.NOT_SELECTED
+        )
         self.last_exit_code: int | None = None
         self._process: asyncio.subprocess.Process | None = None
         self._monitor_task: asyncio.Task[None] | None = None
@@ -114,6 +123,8 @@ class ApplicationRuntimeManager:
             if self._process is not None or self.registry.active_run is not None:
                 raise SessionOccupiedError("an Application process already exists")
 
+            if self._application_dir is None or self.registry.current_app is None:
+                raise ApplicationNotSelectedError("No Application is selected")
             if self._launch_spec is None:
                 raise ApplicationStartError(
                     "No controlled Application launch specification is selected"

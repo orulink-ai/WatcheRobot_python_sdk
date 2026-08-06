@@ -29,6 +29,7 @@ from watcherobot.runtime.daemon.connections.websocket_server import (
 )
 from watcherobot.runtime.daemon.control.rest import DaemonControlServer
 from watcherobot.runtime.daemon.logging import DaemonLogService
+from watcherobot.runtime.daemon.maintenance import MaintenanceError, MaintenanceService
 from watcherobot.runtime.daemon.pairing.protocol import (
     DeviceSessionEnd,
     HardwareHello,
@@ -55,7 +56,7 @@ class DaemonRuntime:
         self,
         *,
         application_dir: Path,
-        current_app: str,
+        current_app: str | None,
         external_host: str = "0.0.0.0",
         external_port: int = 8765,
         control_host: str = "127.0.0.1",
@@ -140,6 +141,7 @@ class DaemonRuntime:
             publisher=self._publish_preview_frame,
             port=preview_udp_port,
         )
+        self.maintenance = MaintenanceService()
         self.control_server = DaemonControlServer(
             controller=self,
             host=control_host,
@@ -241,6 +243,113 @@ class DaemonRuntime:
     def daemon_logs(self, after_id: int = 0) -> list[dict[str, object]]:
         return [dict(event) for event in self.logs.recent(after_id=after_id)]
 
+    def maintenance_ports(self) -> list[dict[str, object]]:
+        return self.maintenance.ports()
+
+    def maintenance_releases(self, kind: str) -> list[dict[str, object]]:
+        try:
+            return self.maintenance.releases(kind)
+        except Exception as exc:
+            raise MaintenanceError(str(exc)) from exc
+
+    def maintenance_volumes(self) -> list[dict[str, object]]:
+        return self.maintenance.volumes()
+
+    def validate_maintenance_package(self, kind: str, package_path: str) -> dict[str, object]:
+        return self.maintenance.validate_package(kind, package_path)
+
+    def maintenance_device_info(self, port: str) -> dict[str, object]:
+        return self.maintenance.device_info(port)
+
+    def maintenance_works(
+        self,
+        *,
+        transport: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> list[dict[str, object]]:
+        return self.maintenance.works(transport=transport, port=port, volume_id=volume_id)
+
+    def read_maintenance_work(
+        self,
+        *,
+        transport: str,
+        work_id: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> dict[str, object]:
+        return self.maintenance.read_work(
+            transport=transport,
+            work_id=work_id,
+            port=port,
+            volume_id=volume_id,
+        )
+
+    def start_maintenance_job(
+        self,
+        kind: str,
+        package_path: str,
+        port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
+        release_version: str = "",
+        release_asset: str = "",
+    ) -> dict[str, object]:
+        return self.maintenance.start(
+            kind,
+            package_path,
+            port,
+            transport=transport,
+            volume_id=volume_id,
+            release_version=release_version,
+            release_asset=release_asset,
+        )
+
+    def maintenance_job(self, job_id: str) -> dict[str, object]:
+        return self.maintenance.get(job_id)
+
+    def active_maintenance_job(self) -> dict[str, object] | None:
+        return self.maintenance.active()
+
+    def start_maintenance_work(
+        self,
+        composition: dict[str, object] | None,
+        package_path: str,
+        port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
+    ) -> dict[str, object]:
+        return self.maintenance.start_work(
+            composition,
+            package_path,
+            port,
+            transport=transport,
+            volume_id=volume_id,
+        )
+
+    def export_maintenance_work(self, composition: dict[str, object]) -> dict[str, object]:
+        return self.maintenance.export_work_package(composition)
+
+    def import_maintenance_work(self, package_path: str) -> dict[str, object]:
+        return self.maintenance.import_work_package(package_path)
+
+    def delete_maintenance_work(
+        self,
+        *,
+        transport: str,
+        work_id: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> None:
+        self.maintenance.delete_work(
+            transport=transport,
+            work_id=work_id,
+            port=port,
+            volume_id=volume_id,
+        )
+
     async def wait_for_shutdown(self) -> None:
         await self._shutdown_event.wait()
 
@@ -321,6 +430,7 @@ class DaemonRuntime:
         run = self.application.registry.active_run
         state = run.state if run is not None else self.application.last_state
         return {
+            "selected": self.application.registry.current_app is not None,
             "current_app": self.application.registry.current_app,
             "state": state.value,
             "process_id": self.application.process_id,

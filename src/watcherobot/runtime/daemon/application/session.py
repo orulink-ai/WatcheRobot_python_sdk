@@ -8,6 +8,7 @@ from enum import Enum
 
 
 class ApplicationState(str, Enum):
+    NOT_SELECTED = "not_selected"
     NOT_RUNNING = "not_running"
     STARTING = "starting"
     RUNNING = "running"
@@ -22,6 +23,10 @@ class ApplicationChannel(str, Enum):
 
 class ApplicationSessionError(RuntimeError):
     """Base error for Application runtime-session operations."""
+
+
+class ApplicationNotSelectedError(ApplicationSessionError):
+    """Raised when an Application operation requires a selection."""
 
 
 class SessionOccupiedError(ApplicationSessionError):
@@ -43,15 +48,12 @@ class ApplicationRun:
 class ApplicationSessionRegistry:
     """Own the selected Application and its only allowed runtime session."""
 
-    def __init__(self, *, current_app: str) -> None:
-        normalized_app_id = str(current_app or "").strip()
-        if not normalized_app_id:
-            raise ValueError("current_app must not be empty")
-        self._current_app = normalized_app_id
+    def __init__(self, *, current_app: str | None) -> None:
+        self._current_app = _normalize_optional_app_id(current_app)
         self._active_run: ApplicationRun | None = None
 
     @property
-    def current_app(self) -> str:
+    def current_app(self) -> str | None:
         return self._current_app
 
     @property
@@ -71,6 +73,8 @@ class ApplicationSessionRegistry:
     def begin_start(self) -> ApplicationRun:
         if self._active_run is not None:
             raise SessionOccupiedError("an Application session already exists")
+        if self._current_app is None:
+            raise ApplicationNotSelectedError("No Application is selected")
         run = ApplicationRun(
             app_id=self._current_app,
             credential=secrets.token_urlsafe(32),
@@ -135,3 +139,8 @@ class ApplicationSessionRegistry:
                 "credential does not belong to the current Application run"
             )
         return run
+
+
+def _normalize_optional_app_id(app_id: str | None) -> str | None:
+    normalized = str(app_id or "").strip()
+    return normalized or None

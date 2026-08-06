@@ -3,8 +3,9 @@
 The SDK is the single owner of the WatcheRobot Runtime/Daemon and the public
 Application API. Programs built with this package are managed Applications:
 they can run without the desktop through the CLI and Runtime control API. The
-desktop uses this same Runtime/Daemon implementation to launch the bundled
-default Application and SDK-built Applications.
+desktop uses this same Runtime/Daemon implementation. The Daemon can start
+without a selected Application; Desktop may then install, select, and start an
+SDK-built Application through the Catalog and control APIs.
 
 The Application Marketplace SDK contracts, versions, error codes, and
 implementation evidence are indexed in

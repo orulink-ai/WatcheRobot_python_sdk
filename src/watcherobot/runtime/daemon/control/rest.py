@@ -17,8 +17,12 @@ from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchErr
 from watcherobot.runtime.daemon.application.manifest import (
     ApplicationManifestError,
 )
-from watcherobot.runtime.daemon.application.session import SessionOccupiedError
+from watcherobot.runtime.daemon.application.session import (
+    ApplicationNotSelectedError,
+    SessionOccupiedError,
+)
 from watcherobot.runtime.daemon.pairing.session import PairingSessionError
+from watcherobot.runtime.daemon.maintenance import MaintenanceError
 
 
 class PairDeviceRequest(BaseModel):
@@ -38,6 +42,57 @@ class SelectApplicationRequest(BaseModel):
 
     application_dir: str
     launcher: ApplicationLauncherRequest
+
+
+class MaintenanceInstallRequest(BaseModel):
+    package_path: str = ""
+    port: str = ""
+    transport: str = "serial"
+    volume_id: str = ""
+    release_version: str = ""
+    release_asset: str = ""
+
+
+class MaintenanceDeviceInfoRequest(BaseModel):
+    port: str
+
+
+class MaintenancePackageValidationRequest(BaseModel):
+    kind: str
+    package_path: str
+
+
+class MaintenanceWorkRequest(BaseModel):
+    composition: dict[str, Any] | None = None
+    package_path: str = ""
+    port: str = ""
+    transport: str = "serial"
+    volume_id: str = ""
+
+
+class MaintenanceWorkPackageRequest(BaseModel):
+    package_path: str
+
+
+class MaintenanceWorkExportRequest(BaseModel):
+    composition: dict[str, Any]
+
+
+class MaintenanceWorkDeleteRequest(BaseModel):
+    transport: str = "serial"
+    work_id: str
+    port: str = ""
+    volume_id: str = ""
+
+
+class MaintenanceWorksQuery(BaseModel):
+    transport: str = "serial"
+    port: str = ""
+    volume_id: str = ""
+
+
+class MaintenanceWorkReadRequest(MaintenanceWorksQuery):
+    work_id: str
 
 
 class ApplicationController(Protocol):
@@ -80,6 +135,86 @@ class ApplicationController(Protocol):
     def daemon_logs(self, after_id: int = 0) -> list[dict[str, Any]]:
         """Return current-session Daemon logs newer than ``after_id``."""
 
+    def maintenance_ports(self) -> list[dict[str, Any]]:
+        """List local serial ports available for maintenance."""
+
+    def maintenance_releases(self, kind: str) -> list[dict[str, Any]]:
+        """List compatible official Release packages."""
+
+    def maintenance_volumes(self) -> list[dict[str, Any]]:
+        """List writable Windows SD-card reader volumes."""
+
+    def validate_maintenance_package(self, kind: str, package_path: str) -> dict[str, Any]:
+        """Validate a local firmware or SD resource package."""
+
+    def maintenance_device_info(self, port: str) -> dict[str, Any]:
+        """Read firmware and SD resource versions from one serial device."""
+
+    def maintenance_works(
+        self,
+        *,
+        transport: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> list[dict[str, Any]]:
+        """Read user works from a device SD card or card reader."""
+
+    def read_maintenance_work(
+        self,
+        *,
+        transport: str,
+        work_id: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> dict[str, Any]:
+        """Read one work together with its editable source media."""
+
+    def start_maintenance_job(
+        self,
+        kind: str,
+        package_path: str,
+        port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
+        release_version: str = "",
+        release_asset: str = "",
+    ) -> dict[str, Any]:
+        """Start a non-blocking firmware or SD resource job."""
+
+    def maintenance_job(self, job_id: str) -> dict[str, Any]:
+        """Return a maintenance job snapshot."""
+
+    def active_maintenance_job(self) -> dict[str, Any] | None:
+        """Return the currently running maintenance job, if any."""
+
+    def start_maintenance_work(
+        self,
+        composition: dict[str, Any] | None,
+        package_path: str,
+        port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
+    ) -> dict[str, Any]:
+        """Build and install the current Creator Mode work."""
+
+    def export_maintenance_work(self, composition: dict[str, Any]) -> dict[str, Any]:
+        """Build a portable work ZIP in the local daemon cache."""
+
+    def import_maintenance_work(self, package_path: str) -> dict[str, Any]:
+        """Validate and read a local portable work ZIP."""
+
+    def delete_maintenance_work(
+        self,
+        *,
+        transport: str,
+        work_id: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> None:
+        """Delete one user work without touching official resources."""
+
 class DaemonControlAPI:
     """Expose lifecycle management without carrying business traffic."""
 
@@ -111,6 +246,14 @@ class DaemonControlAPI:
         async def start_application() -> Any:
             try:
                 await self._controller.start_application()
+            except ApplicationNotSelectedError as exc:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "error": "application_not_selected",
+                        "message": str(exc),
+                    },
+                )
             except SessionOccupiedError as exc:
                 return JSONResponse(
                     status_code=409,
@@ -234,7 +377,159 @@ class DaemonControlAPI:
                 **self._controller.device_status(),
             }
 
+        @app.get("/daemon/maintenance/ports")
+        async def maintenance_ports() -> dict[str, Any]:
+            ports = await asyncio.to_thread(self._controller.maintenance_ports)
+            return {"ports": ports}
+
+        @app.get("/daemon/maintenance/releases/{kind}")
+        async def maintenance_releases(kind: str) -> Any:
+            try:
+                releases = await asyncio.to_thread(self._controller.maintenance_releases, kind)
+                return {"releases": releases}
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=400, content={"error": "release_unavailable", "message": str(exc)})
+
+        @app.get("/daemon/maintenance/volumes")
+        async def maintenance_volumes() -> dict[str, Any]:
+            volumes = await asyncio.to_thread(self._controller.maintenance_volumes)
+            return {"volumes": volumes}
+
+        @app.post("/daemon/maintenance/packages/validate")
+        async def validate_maintenance_package(request: MaintenancePackageValidationRequest) -> Any:
+            try:
+                package = await asyncio.to_thread(
+                    self._controller.validate_maintenance_package,
+                    request.kind,
+                    request.package_path,
+                )
+                return {"package": package}
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=400, content={"error": "invalid_package", "message": str(exc)})
+
+        @app.post("/daemon/maintenance/device-info")
+        async def maintenance_device_info(request: MaintenanceDeviceInfoRequest) -> Any:
+            try:
+                device = await asyncio.to_thread(
+                    self._controller.maintenance_device_info,
+                    request.port,
+                )
+                return {"device": device}
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=409, content={"error": "device_info_unavailable", "message": str(exc)})
+
+        @app.post("/daemon/maintenance/firmware", status_code=202)
+        async def install_firmware(request: MaintenanceInstallRequest) -> Any:
+            return self._start_maintenance("firmware", request)
+
+        @app.post("/daemon/maintenance/sd-resources", status_code=202)
+        async def install_sd_resources(request: MaintenanceInstallRequest) -> Any:
+            return self._start_maintenance("sd_resources", request)
+
+        @app.post("/daemon/maintenance/work", status_code=202)
+        async def install_work(request: MaintenanceWorkRequest) -> Any:
+            try:
+                job = self._controller.start_maintenance_work(
+                    request.composition,
+                    request.package_path,
+                    request.port,
+                    transport=request.transport,
+                    volume_id=request.volume_id,
+                )
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=409, content={"error": "maintenance_unavailable", "message": str(exc)})
+            return {"job": job}
+
+        @app.post("/daemon/maintenance/works/list")
+        async def maintenance_works(request: MaintenanceWorksQuery) -> Any:
+            try:
+                works = await asyncio.to_thread(
+                    self._controller.maintenance_works,
+                    transport=request.transport,
+                    port=request.port,
+                    volume_id=request.volume_id,
+                )
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=409, content={"error": "work_library_unavailable", "message": str(exc)})
+            return {"works": works}
+
+        @app.post("/daemon/maintenance/works/read")
+        async def read_maintenance_work(request: MaintenanceWorkReadRequest) -> Any:
+            try:
+                work = await asyncio.to_thread(
+                    self._controller.read_maintenance_work,
+                    transport=request.transport,
+                    work_id=request.work_id,
+                    port=request.port,
+                    volume_id=request.volume_id,
+                )
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=409, content={"error": "work_read_failed", "message": str(exc)})
+            return {"work": work}
+
+        @app.post("/daemon/maintenance/works/export")
+        async def export_work(request: MaintenanceWorkExportRequest) -> Any:
+            try:
+                package = await asyncio.to_thread(
+                    self._controller.export_maintenance_work,
+                    request.composition,
+                )
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=400, content={"error": "invalid_work", "message": str(exc)})
+            return {"package": package}
+
+        @app.post("/daemon/maintenance/works/import")
+        async def import_work(request: MaintenanceWorkPackageRequest) -> Any:
+            try:
+                work = await asyncio.to_thread(
+                    self._controller.import_maintenance_work,
+                    request.package_path,
+                )
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=400, content={"error": "invalid_work_package", "message": str(exc)})
+            return {"work": work}
+
+        @app.post("/daemon/maintenance/works/delete")
+        async def delete_work(request: MaintenanceWorkDeleteRequest) -> Any:
+            try:
+                await asyncio.to_thread(
+                    self._controller.delete_maintenance_work,
+                    transport=request.transport,
+                    work_id=request.work_id,
+                    port=request.port,
+                    volume_id=request.volume_id,
+                )
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=409, content={"error": "work_delete_failed", "message": str(exc)})
+            return {"deleted": True}
+
+        @app.get("/daemon/maintenance/jobs/active")
+        async def active_maintenance_job() -> dict[str, Any]:
+            return {"job": self._controller.active_maintenance_job()}
+
+        @app.get("/daemon/maintenance/jobs/{job_id}")
+        async def maintenance_job(job_id: str) -> Any:
+            try:
+                return {"job": self._controller.maintenance_job(job_id)}
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=404, content={"error": "maintenance_job_not_found", "message": str(exc)})
+
         return app
+
+    def _start_maintenance(self, kind: str, request: MaintenanceInstallRequest) -> Any:
+        try:
+            job = self._controller.start_maintenance_job(
+                kind,
+                request.package_path,
+                request.port,
+                transport=request.transport,
+                volume_id=request.volume_id,
+                release_version=request.release_version,
+                release_asset=request.release_asset,
+            )
+        except MaintenanceError as exc:
+            return JSONResponse(status_code=409, content={"error": "maintenance_unavailable", "message": str(exc)})
+        return {"job": job}
 
     def _status_response(self) -> dict[str, Any]:
         return {"application": self._controller.application_status()}
@@ -278,6 +573,7 @@ class DaemonControlServer:
             lifespan="off",
             access_log=False,
             log_level="warning",
+            log_config=None,
         )
         server = uvicorn.Server(config)
         server.install_signal_handlers = lambda: None  # type: ignore[attr-defined]

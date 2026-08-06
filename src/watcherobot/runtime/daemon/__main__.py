@@ -64,7 +64,7 @@ async def run_runtime(args: argparse.Namespace) -> int:
     state_store.remove()
     runtime = DaemonRuntime(
         application_dir=state_root / "unselected",
-        current_app="unselected",
+        current_app=None,
         external_port=args.external_port,
         control_port=args.control_port,
         pairing_udp_port=args.pairing_port,
@@ -97,7 +97,13 @@ async def run_runtime(args: argparse.Namespace) -> int:
             pass
 
     try:
-        await runtime.start()
+        try:
+            await runtime.start()
+        except Exception as exc:
+            runtime.logs.record(
+                f"Daemon Runtime startup failed ({type(exc).__name__}: {exc})"
+            )
+            raise
         state_store.write(
             RuntimeProcessState(
                 pid=os.getpid(),

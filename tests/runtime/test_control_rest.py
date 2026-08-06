@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import httpx
 from fastapi.testclient import TestClient
@@ -8,11 +9,13 @@ from fastapi.testclient import TestClient
 from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchError
 from watcherobot.runtime.daemon.application.runtime import ApplicationStartError
 from watcherobot.runtime.daemon.application.session import (
+    ApplicationNotSelectedError,
     ApplicationRun,
     ApplicationState,
     SessionOccupiedError,
 )
 from watcherobot.runtime.daemon.control.rest import DaemonControlAPI, DaemonControlServer
+from watcherobot.runtime.daemon.maintenance import MaintenanceError
 from watcherobot.runtime.daemon.pairing.session import PairingSessionError
 
 
@@ -49,6 +52,10 @@ class _ControllerStub:
                 "timestamp_ms": 2_000,
             },
         ]
+        self.work_requests: list[tuple[dict, str, str]] = []
+        self.work_read_requests: list[dict] = []
+        self.maintenance_requests: list[dict] = []
+        self.active_maintenance = {"id": "firmware-job", "kind": "firmware", "status": "running"}
 
     def application_status(self) -> dict:
         return {
@@ -137,6 +144,71 @@ class _ControllerStub:
             for event in self.logs
             if event["id"] > after_id
         ]
+
+    def start_maintenance_work(
+        self,
+        composition: dict | None,
+        package_path: str,
+        port: str,
+        *,
+        transport: str = "serial",
+        volume_id: str = "",
+    ) -> dict:
+        self.work_requests.append((composition, package_path, port, transport, volume_id))
+        return {"id": "work-job", "kind": "work", "status": "queued"}
+
+    def maintenance_ports(self) -> list[dict]:
+        return [{"device": "COM29", "description": "USB", "hwid": "USB", "vid": 1, "pid": 2}]
+
+    def maintenance_releases(self, kind: str) -> list[dict]:
+        return [{"version": "v0.0.8", "name": kind, "published_at": "", "prerelease": False, "assets": []}]
+
+    def maintenance_volumes(self) -> list[dict]:
+        return [{"id": "E:\\|1234", "root": "E:\\", "current_version": "v0.0.7"}]
+
+    def validate_maintenance_package(self, kind: str, package_path: str) -> dict:
+        if package_path == "invalid.zip":
+            raise MaintenanceError("固件 ZIP 缺少 flash_args.txt。")
+        return {"kind": kind, "package_path": package_path}
+
+    def maintenance_device_info(self, port: str) -> dict:
+        return {"port": port, "firmware_version": "V2.4.1", "sd_version": "v0.0.8"}
+
+    def read_maintenance_work(
+        self,
+        *,
+        transport: str,
+        work_id: str,
+        port: str = "",
+        volume_id: str = "",
+    ) -> dict:
+        self.work_read_requests.append({
+            "transport": transport,
+            "work_id": work_id,
+            "port": port,
+            "volume_id": volume_id,
+        })
+        return {
+            "id": work_id,
+            "name": "SD 作品",
+            "composition": {"kind": "watcher.creator-composition", "clips": []},
+        }
+
+    def start_maintenance_job(
+        self,
+        kind: str,
+        package_path: str,
+        port: str,
+        **options,
+    ) -> dict:
+        self.maintenance_requests.append({"kind": kind, "package_path": package_path, "port": port, **options})
+        return {"id": "maintenance-job", "kind": kind, "status": "queued"}
+
+    def maintenance_job(self, job_id: str) -> dict:
+        return {"id": job_id, "kind": "firmware", "status": "running"}
+
+    def active_maintenance_job(self) -> dict | None:
+        return self.active_maintenance
 
 
 def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None:
@@ -241,10 +313,109 @@ def test_control_rest_reports_occupied_and_start_failure() -> None:
     assert occupied.status_code == 409
     assert occupied.json()["error"] == "application_occupied"
 
+    controller.start_error = ApplicationNotSelectedError(
+        "No Application is selected"
+    )
+    unselected = client.post("/daemon/application/start")
+    assert unselected.status_code == 409
+    assert unselected.json() == {
+        "error": "application_not_selected",
+        "message": "No Application is selected",
+    }
+
     controller.start_error = ApplicationStartError("entrypoint failed")
     failed = client.post("/daemon/application/start")
     assert failed.status_code == 500
     assert failed.json()["error"] == "application_start_failed"
+
+
+def test_control_rest_starts_creator_work_install() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    response = client.post("/daemon/maintenance/work", json={
+        "composition": {"name": "Demo", "clips": []},
+        "port": "COM29",
+        "transport": "serial",
+    })
+
+    assert response.status_code == 202
+    assert response.json()["job"]["id"] == "work-job"
+    assert controller.work_requests == [(
+        {"name": "Demo", "clips": []}, "", "COM29", "serial", "",
+    )]
+
+
+def test_control_rest_reads_an_editable_work_from_sd() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    response = client.post("/daemon/maintenance/works/read", json={
+        "transport": "card_reader",
+        "volume_id": "E:\\|1234",
+        "work_id": "demo_work",
+    })
+
+    assert response.status_code == 200
+    assert response.json()["work"]["id"] == "demo_work"
+    assert controller.work_read_requests == [{
+        "transport": "card_reader",
+        "work_id": "demo_work",
+        "port": "",
+        "volume_id": "E:\\|1234",
+    }]
+
+
+def test_control_rest_returns_active_maintenance_job() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    response = client.get("/daemon/maintenance/jobs/active")
+
+    assert response.status_code == 200
+    assert response.json() == {"job": controller.active_maintenance}
+
+    controller.active_maintenance = None
+    assert client.get("/daemon/maintenance/jobs/active").json() == {"job": None}
+
+
+def test_control_rest_adds_release_reader_and_device_info_without_breaking_local_install() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    assert client.get("/daemon/maintenance/releases/firmware").status_code == 200
+    assert client.get("/daemon/maintenance/volumes").json()["volumes"][0]["current_version"] == "v0.0.7"
+    assert client.post("/daemon/maintenance/device-info", json={"port": "COM29"}).json()["device"]["firmware_version"] == "V2.4.1"
+
+    legacy = client.post("/daemon/maintenance/firmware", json={"package_path": "firmware.zip", "port": "COM29"})
+    assert legacy.status_code == 202
+    assert controller.maintenance_requests[-1]["transport"] == "serial"
+
+    reader = client.post("/daemon/maintenance/sd-resources", json={
+        "package_path": "resources.tar.gz",
+        "transport": "card_reader",
+        "volume_id": "E:\\|1234",
+    })
+    assert reader.status_code == 202
+    assert controller.maintenance_requests[-1]["volume_id"] == "E:\\|1234"
+
+
+def test_control_rest_validates_local_package_before_install() -> None:
+    client = TestClient(DaemonControlAPI(controller=_ControllerStub()).create_app())
+
+    valid = client.post("/daemon/maintenance/packages/validate", json={
+        "kind": "firmware",
+        "package_path": "firmware.zip",
+    })
+    invalid = client.post("/daemon/maintenance/packages/validate", json={
+        "kind": "firmware",
+        "package_path": "invalid.zip",
+    })
+
+    assert valid.status_code == 200
+    assert valid.json()["package"]["kind"] == "firmware"
+    assert invalid.status_code == 400
+    assert "flash_args.txt" in invalid.json()["message"]
 
 
 def test_control_rest_allows_only_local_desktop_origins() -> None:
@@ -305,6 +476,41 @@ def test_control_server_binds_and_serves_status() -> None:
                 response = await client.get(f"{server.base_url}/daemon/status")
             assert response.status_code == 200
             assert response.json()["application"]["state"] == "not_running"
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_slow_maintenance_io_does_not_block_daemon_status() -> None:
+    async def scenario() -> None:
+        controller = _ControllerStub()
+
+        def slow_works(**_kwargs: object) -> list[dict]:
+            time.sleep(0.4)
+            return []
+
+        controller.maintenance_works = slow_works  # type: ignore[method-assign]
+        server = DaemonControlServer(
+            controller=controller,
+            host="127.0.0.1",
+            port=0,
+        )
+        await server.start()
+        try:
+            async with httpx.AsyncClient() as client:
+                started = time.monotonic()
+                works_request = asyncio.create_task(client.post(
+                    f"{server.base_url}/daemon/maintenance/works/list",
+                    json={"transport": "card_reader", "volume_id": "E:\\\\|1234"},
+                ))
+                await asyncio.sleep(0.05)
+                status = await client.get(f"{server.base_url}/daemon/status")
+                status_elapsed = time.monotonic() - started
+                works = await works_request
+            assert status.status_code == 200
+            assert status_elapsed < 0.25
+            assert works.status_code == 200
         finally:
             await server.stop()
 
