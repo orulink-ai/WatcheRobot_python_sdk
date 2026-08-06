@@ -186,16 +186,6 @@ JSONL 最后一行是 `type=result`、`ok=true`。
 如果当前 Daemon 由 Watcher Desktop 管理，不要使用上述命令终止它；应从 Desktop 退出当前
 Application。
 
-### 4.4 可选打包检查
-
-```powershell
-New-Item -ItemType Directory -Force .\dist | Out-Null
-.\.venv\Scripts\watcherobot.exe app package .\my_sdk_test .\dist\sdk-test.wapp
-```
-
-这只生成 `.wapp` 归档，不等于上架或安装。当前 `app run` 只接受源码目录，Desktop 应用广场
-则从官方名单中的 Hugging Face 固定 commit 安装。
-
 ## 5. 第二阶段：Hugging Face 登录测试
 
 浏览器中的 Hugging Face 登录不等于 SDK 分发登录。SDK 使用 Watcher Desktop Public OAuth

@@ -177,15 +177,6 @@ device connection after the Application exits. `Ctrl+C` requests an Application
 stop and returns exit code `130`. If Watcher Desktop owns the current Daemon, stop
 the Application from Desktop instead of stopping that Daemon from the CLI.
 
-Optional archive validation:
-
-```powershell
-New-Item -ItemType Directory -Force .\dist | Out-Null
-.\.venv\Scripts\watcherobot.exe app package .\my_sdk_test .\dist\sdk-test.wapp
-```
-
-This creates an archive only. It does not install or publish the Application.
-
 ## 5. Sign in to Hugging Face
 
 Browser sign-in does not authenticate the SDK distribution tool. The SDK uses the

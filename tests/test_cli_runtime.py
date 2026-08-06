@@ -5,8 +5,6 @@ import os
 import time
 from pathlib import Path
 
-import pytest
-
 from watcherobot import cli as watcherobot_cli
 from watcherobot.cli import main
 from watcherobot.distribution.install import InstalledApplication
@@ -65,7 +63,6 @@ def test_cli_status_reports_not_running_for_empty_user_state(
 
 def test_windows_background_daemon_uses_pythonw_redirector(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     scripts_dir = tmp_path / ".venv" / "Scripts"
     scripts_dir.mkdir(parents=True)
@@ -73,9 +70,13 @@ def test_windows_background_daemon_uses_pythonw_redirector(
     pythonw = scripts_dir / "pythonw.exe"
     python.write_bytes(b"python redirector")
     pythonw.write_bytes(b"pythonw redirector")
-    monkeypatch.setattr(watcherobot_cli.os, "name", "nt")
-
-    assert watcherobot_cli._background_python_executable(python) == pythonw.resolve()
+    assert (
+        watcherobot_cli._background_python_executable(
+            python,
+            is_windows=True,
+        )
+        == pythonw.resolve()
+    )
 
 
 def test_cli_starts_reuses_and_stops_the_unique_runtime(
@@ -276,39 +277,3 @@ def test_cli_rejects_missing_or_broken_installed_application(
         == 2
     )
     assert "Installed Application was not found" in capsys.readouterr().err
-
-
-def test_cli_packages_wapp_but_does_not_install_it_through_daemon_catalog(
-    tmp_path,
-    monkeypatch,
-    capsys,
-) -> None:
-    application_dir = tmp_path / "application"
-    package_path = tmp_path / "cli-test.wapp"
-    _write_application(application_dir)
-
-    def fail_if_called():
-        raise AssertionError("legacy catalog command started the Daemon")
-
-    monkeypatch.setattr("watcherobot.cli.ensure_runtime", fail_if_called)
-
-    assert main(
-        [
-            "app",
-            "package",
-            str(application_dir),
-            str(package_path),
-        ]
-    ) == 0
-    package_output = capsys.readouterr().out
-    assert package_output == f"Application package created: {package_path}\n"
-
-    assert main(["app", "run", str(package_path)]) == 2
-    assert main(["app", "install", str(package_path)]) == 2
-    assert main(["app", "list"]) == 2
-    assert main(["app", "select", "cli_test_app"]) == 2
-    assert main(["app", "uninstall", "cli_test_app"]) == 2
-
-    errors = capsys.readouterr().err.splitlines()
-    assert len(errors) == 5
-    assert all("Watcher Desktop Application Store" in line for line in errors)

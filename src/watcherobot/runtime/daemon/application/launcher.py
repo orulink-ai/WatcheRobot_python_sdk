@@ -37,6 +37,7 @@ class ApplicationLaunchSpec:
     application_dir: Path
     kind: ApplicationLauncherKind
     executable: Path
+    is_windows: bool
 
     @property
     def entrypoint(self) -> Path:
@@ -46,7 +47,13 @@ class ApplicationLaunchSpec:
     def command(self) -> tuple[Path, ...]:
         if self.kind is ApplicationLauncherKind.BUNDLED:
             return (self.executable,)
-        return (_python_executable_for_application(self.executable), self.entrypoint)
+        return (
+            _python_executable_for_application(
+                self.executable,
+                is_windows=self.is_windows,
+            ),
+            self.entrypoint,
+        )
 
 
 class ApplicationLauncher:
@@ -58,10 +65,12 @@ class ApplicationLauncher:
         managed_app_root: Path,
         bundled_resource_root: Path,
         default_app_id: str = DEFAULT_APPLICATION_ID,
+        is_windows: bool | None = None,
     ) -> None:
         self._managed_app_root = Path(managed_app_root).resolve()
         self._bundled_resource_root = Path(bundled_resource_root).resolve()
         self._default_app_id = default_app_id
+        self._is_windows = os.name == "nt" if is_windows is None else is_windows
 
     def build_spec(
         self,
@@ -89,6 +98,7 @@ class ApplicationLauncher:
             executable,
             controlled_root=controlled_root,
             kind=launcher_kind,
+            is_windows=self._is_windows,
         )
         if (
             launcher_kind is ApplicationLauncherKind.BUNDLED
@@ -102,6 +112,7 @@ class ApplicationLauncher:
             application_dir=selected_dir,
             kind=launcher_kind,
             executable=resolved_executable,
+            is_windows=self._is_windows,
         )
 
 
@@ -154,6 +165,7 @@ def _require_controlled_executable(
     *,
     controlled_root: Path,
     kind: ApplicationLauncherKind,
+    is_windows: bool,
 ) -> Path:
     requested = Path(executable)
     if not requested.is_absolute():
@@ -167,7 +179,7 @@ def _require_controlled_executable(
             "Application launcher executable does not exist"
         ) from exc
     if not resolved.is_file() or (
-        os.name != "nt" and not os.access(resolved, os.X_OK)
+        not is_windows and not os.access(resolved, os.X_OK)
     ):
         raise ApplicationLaunchError(
             "Application launcher executable is not executable"
@@ -176,7 +188,11 @@ def _require_controlled_executable(
         raise ApplicationLaunchError(
             "Application launcher executable must stay inside its controlled root"
         )
-    _require_platform_executable_name(resolved, kind=kind)
+    _require_platform_executable_name(
+        resolved,
+        kind=kind,
+        is_windows=is_windows,
+    )
     return resolved
 
 
@@ -184,18 +200,19 @@ def _require_platform_executable_name(
     executable: Path,
     *,
     kind: ApplicationLauncherKind,
+    is_windows: bool,
 ) -> None:
     name = executable.name.lower()
     if kind is ApplicationLauncherKind.PYTHON:
         valid = (
             name == "python.exe"
-            if os.name == "nt"
+            if is_windows
             else _POSIX_PYTHON_NAME.fullmatch(name) is not None
         )
     else:
         expected = (
             "watcher-default-app.exe"
-            if os.name == "nt"
+            if is_windows
             else "watcher-default-app"
         )
         valid = name == expected
@@ -205,7 +222,11 @@ def _require_platform_executable_name(
         )
 
 
-def _python_executable_for_application(executable: Path) -> Path:
+def _python_executable_for_application(
+    executable: Path,
+    *,
+    is_windows: bool,
+) -> Path:
     """Use the windowless interpreter for managed Python Applications on Windows.
 
     A Windows virtual environment's ``python.exe`` is a redirector.  It starts
@@ -216,7 +237,7 @@ def _python_executable_for_application(executable: Path) -> Path:
     captured by the Daemon when available.
     """
 
-    if os.name != "nt":
+    if not is_windows:
         return executable
     pythonw = executable.with_name("pythonw.exe")
     if pythonw.is_file():

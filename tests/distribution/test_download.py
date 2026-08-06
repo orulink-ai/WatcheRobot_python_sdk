@@ -170,7 +170,9 @@ def test_download_validates_in_isolation_then_delivers_exact_source(
             "icon": "",
         },
     }
-    assert [path.relative_to(target).as_posix() for path in target.rglob("*")] == [
+    assert sorted(
+        path.relative_to(target).as_posix() for path in target.rglob("*")
+    ) == [
         "app.json",
         "app.py",
         "source",

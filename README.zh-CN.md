@@ -65,7 +65,6 @@ watcherobot daemon status
 watcherobot daemon stop
 
 watcherobot app init .\my_app
-watcherobot app package .\my_app .\dist\my_app.wapp
 watcherobot app check .\my_app
 watcherobot app login
 watcherobot app login --status
@@ -83,7 +82,7 @@ watcherobot app start
 watcherobot app stop
 ```
 
-`.wapp` 命令只生成归档，`app run` 只接受源码目录。SDK 负责下载、安装、已安装列表和
+`app run` 只接受源码目录，用于本地开发。SDK 负责下载、安装、已安装列表和
 卸载：它在一个 SDK App Store 根目录下安装审核过的固定快照，为每个 App 创建独立 `.venv`，
 并记录安装的 commit。`--runtime-root` 必须指向 Desktop 随包的锁定 Application Runtime。
 当前 Application 的选择、启动和停止仍属于 Daemon 管理操作。

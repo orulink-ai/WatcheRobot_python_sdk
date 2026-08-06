@@ -38,7 +38,6 @@ watcherobot app marketplace --details
 | `init` | Create a publish-ready project without overwriting an existing path | No | Directory, ID, version, SDK range, and next commands |
 | `check` | Validate `app.json`, `app.py`, SDK compatibility, dependencies, and publishable files | No | Manifest summary |
 | `run` | Select and run a source directory through the SDK Daemon | Yes or reuses it | Start path and final state |
-| `package` | Create a local `.wapp` archive for inspection | No | Created package path |
 | `login` | Authorize Hugging Face Device Flow; `--status` checks identity and `--force` replaces a valid login | No | Browser URL, code, expiry, and identity |
 | `logout` | Remove only the Watcher Hugging Face credential | No | Sign-out confirmation |
 | `publish` | Upload a public immutable Space snapshot without changing the official catalog | No | Space, commit, and fixed source URL |

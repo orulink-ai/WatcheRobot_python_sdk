@@ -15,7 +15,6 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from watcherobot.application.catalog import package_application
 from watcherobot.application.project import (
     ApplicationProjectInitError,
     ApplicationProjectInitResult,
@@ -47,12 +46,6 @@ from watcherobot.runtime.daemon.instance import (
 
 class CliError(RuntimeError):
     pass
-
-
-DAEMON_SELECTION_REQUIRED = (
-    "Daemon selection is controlled by the Desktop or a Daemon management client"
-)
-_DESKTOP_ONLY_APP_COMMANDS = frozenset({"select"})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -123,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "application",
         type=Path,
-        help="Application source directory; .wapp archives belong to Desktop",
+        help="Application source directory",
     )
     run_installed = app_commands.add_parser(
         "run-installed",
@@ -145,16 +138,6 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Installed Application ID to run",
     )
-    package = app_commands.add_parser(
-        "package",
-        help="Create a local .wapp archive for inspection",
-    )
-    package.add_argument(
-        "application_dir",
-        type=Path,
-        help="Application source directory",
-    )
-    package.add_argument("output", type=Path, help="Output .wapp path")
     add_distribution_commands(app_commands)
     app_commands.add_parser(
         "start",
@@ -187,15 +170,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    if _is_desktop_only_app_command(arguments):
-        print(
-            json.dumps(
-                {"error": DAEMON_SELECTION_REQUIRED},
-                ensure_ascii=False,
-            ),
-            file=sys.stderr,
-        )
-        return 2
     args = build_parser().parse_args(arguments)
     try:
         if args.command == "daemon":
@@ -230,13 +204,6 @@ def main(argv: list[str] | None = None) -> int:
         if is_distribution_command(args):
             return run_distribution_command(args)
         if args.command == "app":
-            if args.app_command == "package":
-                output = package_application(
-                    args.application_dir,
-                    args.output,
-                )
-                print(f"Application package created: {output}")
-                return 0
             state, _reused = ensure_runtime()
             if args.app_command == "start":
                 result = _request_json(
@@ -508,11 +475,16 @@ def ensure_runtime(
     raise CliError(f"Runtime failed to start. {details}".strip())
 
 
-def _background_python_executable(executable: Path) -> Path:
+def _background_python_executable(
+    executable: Path,
+    *,
+    is_windows: bool | None = None,
+) -> Path:
     """Select a Python interpreter that cannot allocate a Windows terminal."""
 
     resolved = Path(executable).resolve()
-    if os.name != "nt" or resolved.name.lower() != "python.exe":
+    running_on_windows = os.name == "nt" if is_windows is None else is_windows
+    if not running_on_windows or resolved.name.lower() != "python.exe":
         return resolved
     pythonw = resolved.with_name("pythonw.exe")
     if pythonw.is_file():
@@ -536,8 +508,6 @@ def stop_runtime() -> None:
 
 def run_application(application: Path) -> int:
     application_path = Path(application).resolve()
-    if application_path.suffix.lower() == ".wapp":
-        raise CliError(DAEMON_SELECTION_REQUIRED)
     if not application_path.is_dir():
         raise CliError(
             f"Application directory does not exist: {application_path}"
@@ -710,14 +680,6 @@ def _request_json(
 
 def _print_json(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
-
-
-def _is_desktop_only_app_command(arguments: list[str]) -> bool:
-    return (
-        len(arguments) >= 2
-        and arguments[0] == "app"
-        and arguments[1] in _DESKTOP_ONLY_APP_COMMANDS
-    )
 
 
 def _print_application_runtime_result(

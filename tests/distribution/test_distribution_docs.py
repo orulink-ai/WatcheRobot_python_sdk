@@ -36,7 +36,6 @@ def test_application_cli_reference_separates_human_and_machine_usage() -> None:
     for command in (
         "check",
         "run",
-        "package",
         "login",
         "logout",
         "publish",

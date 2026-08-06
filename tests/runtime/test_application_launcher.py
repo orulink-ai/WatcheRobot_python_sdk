@@ -11,7 +11,6 @@ from watcherobot.runtime.daemon.application.launcher import (
     ApplicationLauncher,
     ApplicationLauncherKind,
 )
-from watcherobot.runtime.daemon.application import launcher as application_launcher
 
 
 def _write_application(root: Path, *, app_id: str) -> Path:
@@ -83,7 +82,6 @@ def test_python_launcher_builds_only_the_fixed_app_entrypoint(
 
 def test_windows_python_launcher_uses_pythonw_for_the_fixed_entrypoint(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Avoid the Windows venv redirector creating a second console window."""
 
@@ -98,8 +96,8 @@ def test_windows_python_launcher_uses_pythonw_for_the_fixed_entrypoint(
     launcher = ApplicationLauncher(
         managed_app_root=managed_root,
         bundled_resource_root=tmp_path / "resources",
+        is_windows=True,
     )
-    monkeypatch.setattr(application_launcher.os, "name", "nt")
 
     spec = launcher.build_spec(
         application_dir=application_dir,

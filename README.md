@@ -71,7 +71,6 @@ watcherobot daemon status
 watcherobot daemon stop
 
 watcherobot app init .\my_app
-watcherobot app package .\my_app .\dist\my_app.wapp
 watcherobot app check .\my_app
 watcherobot app login
 watcherobot app login --status
@@ -89,12 +88,12 @@ watcherobot app start
 watcherobot app stop
 ```
 
-The `.wapp` command only creates an archive and `app run` accepts a source
-directory. The SDK owns download, installation, inventory, and removal. It
-installs every reviewed immutable snapshot below one SDK App Store root, creates
-one isolated `.venv` per App, and records the installed commit. `--runtime-root`
-must point to the locked Application Runtime bundled with Desktop. Selecting,
-starting, and stopping the current Application remain Daemon management actions.
+`app run` accepts a source directory for local development. The SDK owns
+download, installation, inventory, and removal. It installs every reviewed
+immutable snapshot below one SDK App Store root, creates one isolated `.venv`
+per App, and records the installed commit. `--runtime-root` must point to the
+locked Application Runtime bundled with Desktop. Selecting, starting, and
+stopping the current Application remain Daemon management actions.
 
 `watcherobot app run-installed --store-root ... --app-id ...` is the SDK
 developer-test path for an App installed into a custom store. It reads the SDK

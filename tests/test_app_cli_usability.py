@@ -25,7 +25,6 @@ def test_app_help_describes_the_supported_developer_workflow(capsys) -> None:
         "init",
         "run",
         "run-installed",
-        "package",
         "check",
         "login",
         "logout",
@@ -41,6 +40,7 @@ def test_app_help_describes_the_supported_developer_workflow(capsys) -> None:
     ):
         assert re.search(rf"(?m)^\s+{command}\s+", output)
     assert not re.search(r"(?m)^\s+select(?:\s+|$)", output)
+    assert not re.search(r"(?m)^\s+package(?:\s+|$)", output)
     assert "Typical workflow" in output
     assert "For manual use, omit --jsonl" in output
 
@@ -76,7 +76,6 @@ def test_distribution_sidecar_help_contains_only_distribution_commands(
         "init",
         "run",
         "run-installed",
-        "package",
         "start",
         "stop",
     ):

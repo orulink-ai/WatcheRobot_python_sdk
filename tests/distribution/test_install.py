@@ -211,7 +211,15 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
     ]
     assert applications[0].to_dict()["launcher"] == {
         "kind": "python",
-        "executable": str(installed.application_root / ".venv/Scripts/python.exe"),
+        "executable": str(
+            installed.application_root
+            / ".venv"
+            / (
+                "Scripts/python.exe"
+                if platform.system() == "Windows"
+                else "bin/python"
+            )
+        ),
     }
     assert applications[0].to_dict()["application_directory"] == str(
         installed.application_root / "source"
