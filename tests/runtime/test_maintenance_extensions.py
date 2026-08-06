@@ -39,6 +39,13 @@ from watcherobot.runtime.daemon.maintenance.works import (
 )
 
 
+def test_card_reader_reports_missing_windows_volume_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delattr(card_reader.ctypes, "windll", raising=False)
+
+    with pytest.raises(CardReaderError, match="Windows volume APIs"):
+        card_reader._windows_kernel32()
+
+
 def _bundle_hash(entries: dict[str, str]) -> str:
     digest = hashlib.sha256()
     for relative, sha256 in sorted(entries.items()):
