@@ -38,6 +38,7 @@ CREATOR_COMPOSITION_KIND = "watcher.creator-composition"
 CREATOR_COMPOSITION_VERSION = 2
 WORK_PACKAGE_FILES = {"work.json", "work_manifest.json"}
 CREATOR_RESOURCE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+CREATOR_CLIP_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,96}$")
 
 
 class WorkDocumentError(ValueError):
@@ -144,9 +145,12 @@ def _normalize_creator_clip(value: Any, index: int) -> dict[str, Any] | None:
         raise WorkDocumentError(f"作品第 {index + 1} 个片段时间超出范围。")
     clip_id = value.get("id")
     label = value.get("label")
+    normalized_clip_id = clip_id.strip() if isinstance(clip_id, str) and clip_id.strip() else f"clip-{index + 1}"
+    if CREATOR_CLIP_ID_PATTERN.fullmatch(normalized_clip_id) is None:
+        raise WorkDocumentError(f"作品第 {index + 1} 个片段 clip_id 格式无效。")
     normalized = dict(value)
     normalized.update({
-        "id": clip_id.strip() if isinstance(clip_id, str) and clip_id.strip() else f"clip-{index + 1}",
+        "id": normalized_clip_id,
         "kind": kind,
         "resourceId": resource_id,
         "label": label.strip() if isinstance(label, str) and label.strip() else resource_id,
@@ -313,6 +317,7 @@ def build_portable_work_package(composition: dict[str, Any]) -> PortableWorkPack
         else:
             dependencies.setdefault(resource_id, set()).add(track_type)
         tracks.append({
+            "clip_id": str(clip["id"]),
             "type": track_type,
             "start_ms": int(clip["startMs"]),
             "duration_ms": int(clip["durationMs"]),
@@ -594,6 +599,11 @@ def normalize_work_document(
         resource_id = asset.get("resource_id")
         if not isinstance(resource_id, str) or not WORK_ID_PATTERN.fullmatch(resource_id):
             raise WorkDocumentError(f"作品第 {index + 1} 个片段资源标识无效。")
+        clip_id = track.get("clip_id")
+        if clip_id is not None and (
+            not isinstance(clip_id, str) or CREATOR_CLIP_ID_PATTERN.fullmatch(clip_id) is None
+        ):
+            raise WorkDocumentError(f"作品第 {index + 1} 个片段 clip_id 无效。")
         if schema_version == WORK_SCHEMA_VERSION:
             expected_kind = {"animation": "anim", "action": "action", "sound": "sfx"}[track_type]
             if asset.get("source") not in {"official", "work"} or asset.get("kind") != expected_kind:
@@ -601,12 +611,15 @@ def normalize_work_document(
         counts[track_type] += 1
         if track_type == "animation" and preview_expression_id is None:
             preview_expression_id = resource_id
-        normalized_tracks.append({
+        normalized_track = {
             "type": track_type,
             "start_ms": start_ms,
             "duration_ms": duration_ms,
             "asset": dict(asset),
-        })
+        }
+        if clip_id is not None:
+            normalized_track["clip_id"] = clip_id
+        normalized_tracks.append(normalized_track)
 
     creator: dict[str, Any] | None = None
     if schema_version == WORK_SCHEMA_VERSION:

@@ -668,6 +668,9 @@ def test_portable_work_converts_custom_media_without_changing_the_timeline(tmp_p
     assert [(track["type"], track["start_ms"], track["duration_ms"]) for track in package.work["tracks"]] == [
         ("sound", 420, 380), ("animation", 100, 900), ("action", 250, 500),
     ]
+    assert [track["clip_id"] for track in package.work["tracks"]] == [
+        "clip-sound", "clip-gif", "clip-action",
+    ]
     animation_path = next(path for path in package.files if path.startswith("anim/"))
     sound_path = next(path for path in package.files if path.startswith("sfx/"))
     assert struct.unpack_from("<4sHHHH", package.files[animation_path])[:5] == (b"ANPK", 2, 206, 206, 2)

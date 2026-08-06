@@ -419,6 +419,7 @@ def test_work_package_uses_stable_work_id_and_embeds_editable_source() -> None:
         "resource_id": "happy",
         "kind": "anim",
     }
+    assert work["tracks"][0]["clip_id"] == "clip-1"
     assert manifest["dependencies"] == [{"resource_id": "happy", "kinds": ["animation"]}]
 
 

@@ -32,6 +32,8 @@ class FakeTransport:
             "light",
             "microphone",
             "camera.capture",
+            "resource.expression.official",
+            "resource.work.expression.play",
         )
         self.device_info = {"device_id": "watcher-test", "firmware_version": "test"}
         self.next_operation_id = 1
@@ -88,7 +90,9 @@ def test_public_namespaces_build_protocol_commands():
     robot.motion.set_target(pan_deg=105)
     animation = robot.animation.play("smile")
     audio = robot.audio.play("confirm")
+    robot.expressions.play_official("happy")
     robot.works.play("morning_show")
+    robot.works.play_expression("morning_show", clip_id="face-first")
     robot.works.delete("old_show")
     robot.lights.set_color("#4DA3FF", brightness=0.7)
     light_effect = robot.lights.play_effect(
@@ -109,7 +113,12 @@ def test_public_namespaces_build_protocol_commands():
         ("ctrl.motion.set_target", {"pan_deg": 105}),
         ("ctrl.animation.play", {"animation_id": "smile"}),
         ("ctrl.audio.play", {"sound_id": "confirm"}),
+        ("resource.expression.play", {"source": "official", "resource_id": "happy"}),
         ("resource.work.play", {"work_id": "morning_show"}),
+        (
+            "resource.expression.play",
+            {"source": "work", "work_id": "morning_show", "clip_id": "face-first"},
+        ),
         ("resource.work.delete", {"work_id": "old_show"}),
         ("ctrl.light.set", {"color": "#4DA3FF", "brightness": 0.7, "zone": "all"}),
         (
@@ -132,6 +141,29 @@ def test_work_domain_rejects_ids_that_cannot_exist_on_sd(work_id):
 
     with pytest.raises(ValueError, match="work_id"):
         robot.works.play(work_id)
+
+
+@pytest.mark.parametrize("clip_id", ["", "contains space", "/absolute", "x" * 97])
+def test_work_expression_domain_rejects_unsafe_clip_ids(clip_id):
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(ValueError, match="clip_id"):
+        robot.works.play_expression("morning_show", clip_id=clip_id)
+
+
+def test_new_resource_commands_require_firmware_capabilities():
+    transport = FakeTransport()
+    transport.capabilities = tuple(
+        capability
+        for capability in transport.capabilities
+        if capability not in {"resource.expression.official", "resource.work.expression.play"}
+    )
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(WatcheRobotError, match="resource.expression.official"):
+        robot.expressions.play_official("happy")
+    with pytest.raises(WatcheRobotError, match="resource.work.expression.play"):
+        robot.works.play_expression("morning_show", clip_id="face-first")
 
 
 def test_robot_supports_negotiated_capabilities():
