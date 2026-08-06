@@ -113,6 +113,18 @@ class MaintenanceJob:
 Progress = Callable[[str, int, str], None]
 
 
+def _is_watcher_esp32_port(item: Any) -> bool:
+    """Return whether a serial descriptor is WatcheRobot's CH342 channel B."""
+
+    description = str(getattr(item, "description", "") or "").upper()
+    return (
+        getattr(item, "vid", None) == 0x1A86
+        and getattr(item, "pid", None) == 0x55D2
+        and "USB-ENHANCED-SERIAL-B" in description
+        and "CH342" in description
+    )
+
+
 class MaintenanceService:
     """Run one serial maintenance operation at a time without blocking REST."""
 
@@ -126,6 +138,8 @@ class MaintenanceService:
     def ports(self) -> list[dict[str, Any]]:
         result = []
         for item in list_ports.comports():
+            if not _is_watcher_esp32_port(item):
+                continue
             result.append({
                 "device": item.device,
                 "description": item.description or "",
@@ -134,6 +148,25 @@ class MaintenanceService:
                 "pid": item.pid,
             })
         return sorted(result, key=lambda item: _port_sort_key(str(item["device"])))
+
+    def validate_package(self, kind: str, package_path: str) -> dict[str, Any]:
+        """Validate a local package before the desktop accepts or queues it."""
+
+        package = Path(package_path).expanduser().resolve()
+        if not package.is_file():
+            raise MaintenanceError(f"选择的安装包不存在：{package}")
+        if kind == "firmware":
+            if package.suffix.lower() != ".zip":
+                raise MaintenanceError("ESP32 固件必须上传 ZIP，且包内需要包含 flash_args.txt 和完整烧录分段。")
+            _, segments = _parse_flash_zip(package)
+            return {"kind": kind, "segment_count": len(segments)}
+        if kind == "sd_resources":
+            lowered_name = package.name.lower()
+            if not (lowered_name.endswith(".tar.gz") or lowered_name.endswith(".tgz")):
+                raise MaintenanceError("SD 官方资源必须上传 tar.gz，且包内需要包含有效的 resource_manifest.json。")
+            inspected = _inspect_sd_package(package)
+            return {"kind": kind, "version": inspected.version, "file_count": inspected.file_count}
+        raise MaintenanceError(f"不支持校验此安装包类型：{kind}")
 
     def releases(self, kind: str) -> list[dict[str, Any]]:
         return list_releases(kind)
@@ -240,6 +273,7 @@ class MaintenanceService:
             package = Path(package_path).expanduser().resolve()
             if not package.is_file():
                 raise MaintenanceError(f"Selected package does not exist: {package}")
+            self.validate_package(kind, str(package))
         normalized_port = port.strip()
         if transport == "serial" and not normalized_port:
             raise MaintenanceError("Select a serial port first.")
@@ -584,36 +618,67 @@ def _flash_firmware(path: Path, port: str, progress: Progress) -> None:
             target = root / f"{offset:08x}-{name}"
             target.write_bytes(data)
             segment_paths.append((offset, target))
-        for attempt, baud in enumerate(FLASH_BAUD_CANDIDATES):
-            command = _build_esptool_flash_command(entry, port, flags, baud=baud)
+        software_boot = _request_automatic_download_mode(port, progress)
+        before = "no-reset" if software_boot else "default-reset"
+        attempts: list[tuple[int, str]] = [(FLASH_BAUD_CANDIDATES[0], before)]
+        attempt = 0
+        while attempt < len(attempts):
+            baud, before = attempts[attempt]
+            command = _build_esptool_flash_command(entry, port, flags, baud=baud, before=before)
             for offset, target in segment_paths:
                 command.extend([hex(offset), str(target)])
-            progress("connecting", 8, f"正在以 {baud} baud 连接 {port}，设备会自动进入烧录模式。")
+            if software_boot:
+                progress("connecting", 8, f"设备已自动进入下载模式，正在以 {baud} baud 连接 {port}。")
+            elif before == "default-reset":
+                progress("connecting", 8, f"正在以 {baud} baud 连接 {port}，设备会自动进入烧录模式。")
+            else:
+                progress("connecting", 8, f"正在以 {baud} baud 重新连接 {port} 的下载模式。")
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        text=True, encoding="utf-8", errors="replace", bufsize=1)
             assert process.stdout is not None
+            output: list[str] = []
             writer = _EsptoolProgress(
                 progress,
                 [(offset, len(data)) for offset, _, data in segments],
             )
             for line in process.stdout:
+                output.append(line)
                 writer.emit(line)
             if process.wait() == 0:
                 break
-            if attempt + 1 < len(FLASH_BAUD_CANDIDATES):
+
+            progress(
+                "connecting",
+                8,
+                "烧录进程已结束，后台没有继续烧录；本次连接尚未写入 Flash。",
+            )
+
+            failure = _classify_esptool_failure("".join(output))
+            if failure == "port_busy":
+                raise MaintenanceError(
+                    f"无法独占打开 {port}。请关闭串口监视器或其他正在使用该端口的程序后重试。"
+                )
+            elif failure == "download_mode":
+                if software_boot:
+                    raise MaintenanceError("设备已确认自动重启，但 ESP32-S3 下载模式没有在端口上就绪，请重新连接 USB 后重试。")
+                raise MaintenanceError("当前设备固件不支持自动进入烧录模式，且 USB 串口未提供硬件自动复位能力。")
+            elif baud != FLASH_BAUD_CANDIDATES[-1]:
                 progress(
                     "connecting",
                     8,
-                    f"{baud} baud 高速烧录未完成，正在自动回退到 {FLASH_BAUD_CANDIDATES[attempt + 1]} baud 完整重试。",
+                    f"{baud} baud 烧录未完成，正在回退到 {FLASH_BAUD_CANDIDATES[-1]} baud 完整重试。",
                 )
-                continue
-            raise MaintenanceError("固件烧录工具执行失败，请检查端口是否被占用并重新连接设备。")
+                attempts.append((FLASH_BAUD_CANDIDATES[-1], before))
+            else:
+                raise MaintenanceError("固件烧录工具执行失败，请查看上方日志并重新连接设备后重试。")
+            attempt += 1
     progress("restarting", 96, "固件已写入并完成哈希校验，正在重启设备。")
     _wait_for_firmware_ready(port, progress)
 
 
 def _build_esptool_flash_command(
-    entry: list[str], port: str, flags: dict[str, str], *, baud: int = FLASH_BAUD
+    entry: list[str], port: str, flags: dict[str, str], *, baud: int = FLASH_BAUD,
+    before: str = "default-reset",
 ) -> list[str]:
     """Build an esptool 5-compatible command without deprecated spellings."""
 
@@ -622,13 +687,70 @@ def _build_esptool_flash_command(
         "--chip", "esp32s3",
         "-p", port,
         "-b", str(baud),
-        "--before", "default-reset",
+        "--before", before,
         "--after", "hard-reset",
         "write-flash",
         "--flash-mode", flags["flash_mode"],
         "--flash-freq", flags["flash_freq"],
         "--flash-size", flags["flash_size"],
     ]
+
+
+def _classify_esptool_failure(output: str) -> str:
+    """Classify failures that require different user recovery actions."""
+
+    lowered = output.lower()
+    if "no serial data received" in lowered or "wrong boot mode detected" in lowered:
+        return "download_mode"
+    if any(marker in lowered for marker in (
+        "permissionerror",
+        "access is denied",
+        "拒绝访问",
+        "could not open port",
+        "resource busy",
+    )):
+        return "port_busy"
+    return "other"
+
+
+def _request_automatic_download_mode(port: str, progress: Progress) -> bool:
+    """Ask compatible firmware to reboot directly into the ESP32-S3 ROM downloader."""
+
+    protocol: _SerialProtocol | None = None
+    try:
+        protocol = _SerialProtocol(port)
+        protocol.send("HELLO")
+        ready = protocol.receive(1.5, ("READY",))
+        capabilities = set(_parse_ready_device_info(ready).get("capabilities", []))
+        if "flash_boot_v1" not in capabilities:
+            return False
+        progress("connecting", 7, f"正在通过 {port} 请求设备自动进入 ESP32-S3 下载模式。")
+        protocol.send("FLASH_BOOT")
+        response = protocol.receive(2, ("OK",))
+        if len(response) < 3 or response[2] != "FLASH_BOOT":
+            raise MaintenanceError("设备返回了无效的自动烧录响应。")
+        protocol.close()
+        protocol = None
+        time.sleep(0.8)
+        return True
+    except serial.SerialException:
+        return False
+    except MaintenanceError as exc:
+        if protocol is not None:
+            try:
+                protocol.close()
+            except serial.SerialException:
+                pass
+            protocol = None
+        if "设备拒绝操作" in str(exc) or "自动烧录响应" in str(exc):
+            raise
+        return False
+    finally:
+        if protocol is not None:
+            try:
+                protocol.close()
+            except serial.SerialException:
+                pass
 
 
 class _FirmwareBootProbe:
@@ -655,6 +777,11 @@ class _FirmwareBootProbe:
         self._diagnostics[:] = self._diagnostics[-80:]
 
         lowered = text.lower()
+        if "anim manifest missing" in lowered:
+            raise MaintenanceError(
+                "固件已写入，但历史固件与当前 SD 资源布局不兼容：缺少 "
+                "/sdcard/anim/anim_manifest.bin。请改为烧录当前兼容固件包。"
+            )
         for marker in self._CRASH_MARKERS:
             if marker in lowered:
                 raise MaintenanceError(f"固件已写入，但设备启动崩溃：{text}")

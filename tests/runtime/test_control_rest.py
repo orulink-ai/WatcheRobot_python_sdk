@@ -14,6 +14,7 @@ from watcherobot.runtime.daemon.application.session import (
     SessionOccupiedError,
 )
 from watcherobot.runtime.daemon.control.rest import DaemonControlAPI, DaemonControlServer
+from watcherobot.runtime.daemon.maintenance import MaintenanceError
 from watcherobot.runtime.daemon.pairing.session import PairingSessionError
 
 
@@ -153,6 +154,11 @@ class _ControllerStub:
 
     def maintenance_volumes(self) -> list[dict]:
         return [{"id": "E:\\|1234", "root": "E:\\", "current_version": "v0.0.7"}]
+
+    def validate_maintenance_package(self, kind: str, package_path: str) -> dict:
+        if package_path == "invalid.zip":
+            raise MaintenanceError("固件 ZIP 缺少 flash_args.txt。")
+        return {"kind": kind, "package_path": package_path}
 
     def maintenance_device_info(self, port: str) -> dict:
         return {"port": port, "firmware_version": "V2.4.1", "sd_version": "v0.0.8"}
@@ -381,6 +387,24 @@ def test_control_rest_adds_release_reader_and_device_info_without_breaking_local
     })
     assert reader.status_code == 202
     assert controller.maintenance_requests[-1]["volume_id"] == "E:\\|1234"
+
+
+def test_control_rest_validates_local_package_before_install() -> None:
+    client = TestClient(DaemonControlAPI(controller=_ControllerStub()).create_app())
+
+    valid = client.post("/daemon/maintenance/packages/validate", json={
+        "kind": "firmware",
+        "package_path": "firmware.zip",
+    })
+    invalid = client.post("/daemon/maintenance/packages/validate", json={
+        "kind": "firmware",
+        "package_path": "invalid.zip",
+    })
+
+    assert valid.status_code == 200
+    assert valid.json()["package"]["kind"] == "firmware"
+    assert invalid.status_code == 400
+    assert "flash_args.txt" in invalid.json()["message"]
 
 
 def test_control_rest_allows_only_local_desktop_origins() -> None:

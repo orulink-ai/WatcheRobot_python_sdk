@@ -4,10 +4,12 @@ import json
 import tarfile
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from zipfile import ZipFile
 
 import pytest
 
+from watcherobot.runtime.daemon.maintenance import service as maintenance_service
 from watcherobot.runtime.daemon.maintenance.service import (
     CHUNK_BYTES,
     FLASH_BAUD_CANDIDATES,
@@ -17,6 +19,9 @@ from watcherobot.runtime.daemon.maintenance.service import (
     MaintenanceError,
     MaintenanceService,
     _build_esptool_flash_command,
+    _classify_esptool_failure,
+    _flash_firmware,
+    _request_automatic_download_mode,
     _build_work_package,
     _inspect_sd_package,
     _negotiate_chunk_size,
@@ -51,6 +56,145 @@ def test_firmware_flash_prefers_fast_baud_and_keeps_safe_fallback() -> None:
         baud=FLASH_BAUD_CANDIDATES[0],
     )
     assert command[command.index("-b") + 1] == "921600"
+
+
+def test_esptool_command_can_preserve_manual_download_mode() -> None:
+    command = _build_esptool_flash_command(
+        ["runtime.exe", "--maintenance-esptool"],
+        "COM29",
+        {"flash_mode": "dio", "flash_freq": "80m", "flash_size": "16MB"},
+        baud=460800,
+        before="no-reset",
+    )
+
+    assert command[command.index("--before") + 1] == "no-reset"
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("Failed to connect to ESP32-S3: No serial data received.", "download_mode"),
+        ("Wrong boot mode detected (0x13)!", "download_mode"),
+        ("could not open port 'COM29': PermissionError(13, '拒绝访问。')", "port_busy"),
+        ("A fatal error occurred: Packet content transfer stopped", "other"),
+    ],
+)
+def test_esptool_failure_is_classified_for_actionable_recovery(output: str, expected: str) -> None:
+    assert _classify_esptool_failure(output) == expected
+
+
+def test_firmware_requests_device_bootloader_before_esptool(tmp_path: Path, monkeypatch) -> None:
+    package = tmp_path / "firmware.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "flash_args.txt",
+            "--flash_mode dio --flash_freq 80m --flash_size 16MB\n"
+            "0x0 bootloader.bin\n0x8000 partition-table.bin\n0x20000 WatcheRobot-S3.bin\n",
+        )
+        archive.writestr("bootloader.bin", b"boot")
+        archive.writestr("partition-table.bin", b"part")
+        archive.writestr("WatcheRobot-S3.bin", b"app")
+
+    commands: list[list[str]] = []
+    class FakeProcess:
+        def __init__(self, command: list[str], **_kwargs) -> None:
+            commands.append(command)
+            self.stdout = iter(["Hash of data verified.\n"])
+
+        def wait(self) -> int:
+            return 0
+
+    monkeypatch.setattr(maintenance_service.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(maintenance_service.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(maintenance_service, "_wait_for_firmware_ready", lambda *_args: None)
+    monkeypatch.setattr(maintenance_service, "_request_automatic_download_mode", lambda *_args: True)
+    updates: list[str] = []
+
+    _flash_firmware(package, "COM29", lambda _phase, _value, line: updates.append(line))
+
+    assert commands[0][commands[0].index("--before") + 1] == "no-reset"
+    assert commands[0][commands[0].index("-b") + 1] == "921600"
+    assert any("自动进入下载模式" in line for line in updates)
+
+
+def test_firmware_flash_reports_download_mode_instead_of_port_occupancy(tmp_path: Path, monkeypatch) -> None:
+    package = tmp_path / "firmware.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "flash_args.txt",
+            "--flash_mode dio --flash_freq 80m --flash_size 16MB\n"
+            "0x0 bootloader.bin\n0x8000 partition-table.bin\n0x20000 WatcheRobot-S3.bin\n",
+        )
+        archive.writestr("bootloader.bin", b"boot")
+        archive.writestr("partition-table.bin", b"part")
+        archive.writestr("WatcheRobot-S3.bin", b"app")
+
+    class FakeProcess:
+        def __init__(self, _command: list[str], **_kwargs) -> None:
+            self.stdout = iter(["Failed to connect to ESP32-S3: No serial data received.\n"])
+
+        def wait(self) -> int:
+            return 2
+
+    monkeypatch.setattr(maintenance_service.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(maintenance_service.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(maintenance_service, "_request_automatic_download_mode", lambda *_args: False)
+
+    updates: list[str] = []
+    with pytest.raises(MaintenanceError, match="自动进入烧录模式"):
+        _flash_firmware(package, "COM29", lambda _phase, _value, line: updates.append(line))
+
+    assert any("后台没有继续烧录" in line for line in updates)
+    assert any("尚未写入 Flash" in line for line in updates)
+
+
+def test_automatic_download_mode_uses_selected_dynamic_port(monkeypatch) -> None:
+    instances = []
+
+    class FakeProtocol:
+        def __init__(self, port: str) -> None:
+            self.port = port
+            self.commands: list[str] = []
+            instances.append(self)
+
+        def send(self, command: str) -> None:
+            self.commands.append(command)
+
+        def receive(self, _timeout: float, accepted: tuple[str, ...]) -> list[str]:
+            if accepted == ("READY",):
+                return [
+                    "WRSD/2", "READY", "v0.0.8", "mounted", "1024", "2048", "ESP_OK",
+                    "fw=V3.1", "caps=deferred_replace,flash_boot_v1",
+                ]
+            return ["WRSD/2", "OK", "FLASH_BOOT"]
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(maintenance_service, "_SerialProtocol", FakeProtocol)
+
+    assert _request_automatic_download_mode("COM47", lambda *_args: None) is True
+    assert instances[0].port == "COM47"
+    assert instances[0].commands == ["HELLO", "FLASH_BOOT"]
+
+
+def test_automatic_download_mode_falls_back_for_legacy_firmware(monkeypatch) -> None:
+    class FakeProtocol:
+        def __init__(self, _port: str) -> None:
+            self.commands: list[str] = []
+
+        def send(self, command: str) -> None:
+            self.commands.append(command)
+
+        def receive(self, _timeout: float, _accepted: tuple[str, ...]) -> list[str]:
+            return ["WRSD/2", "READY", "v0.0.8", "mounted", "1024", "2048", "ESP_OK", "fw=v0.3.2"]
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(maintenance_service, "_SerialProtocol", FakeProtocol)
+
+    assert _request_automatic_download_mode("COM8", lambda *_args: None) is False
 
 
 def test_sd_transfer_negotiates_larger_chunks_without_exceeding_host_limit() -> None:
@@ -144,6 +288,32 @@ def test_service_rejects_missing_local_package() -> None:
         service.start("firmware", "missing.zip", "COM29")
 
 
+def test_maintenance_ports_only_expose_watcher_ch342_channel_b(monkeypatch) -> None:
+    monkeypatch.setattr(maintenance_service.list_ports, "comports", lambda: [
+        SimpleNamespace(device="COM1", description="Communication Port", hwid="ACPI", vid=None, pid=None),
+        SimpleNamespace(device="COM28", description="USB-Enhanced-SERIAL-A CH342", hwid="USB", vid=0x1A86, pid=0x55D2),
+        SimpleNamespace(device="COM29", description="USB-Enhanced-SERIAL-B CH342", hwid="USB", vid=0x1A86, pid=0x55D2),
+        SimpleNamespace(device="COM31", description="USB Serial Device", hwid="USB", vid=0x1234, pid=0x5678),
+    ])
+
+    assert [item["device"] for item in MaintenanceService().ports()] == ["COM29"]
+
+
+def test_local_package_is_validated_before_job_is_queued(tmp_path: Path) -> None:
+    invalid_firmware = tmp_path / "not-firmware.zip"
+    invalid_firmware.write_bytes(b"not a zip")
+    invalid_resources = tmp_path / "not-resources.tar.gz"
+    invalid_resources.write_bytes(b"not a tar gzip")
+    service = MaintenanceService()
+
+    with pytest.raises(MaintenanceError, match="无效的固件 ZIP"):
+        service.start("firmware", str(invalid_firmware), "COM29")
+    with pytest.raises(MaintenanceError, match="无效的 SD tar.gz"):
+        service.start("sd_resources", str(invalid_resources), "COM29")
+
+    assert service.active() is None
+
+
 def test_esptool_progress_is_weighted_across_all_segments() -> None:
     updates: list[tuple[str, int, str]] = []
     parser = _EsptoolProgress(
@@ -217,6 +387,13 @@ def test_firmware_boot_probe_rejects_restart_loop() -> None:
     assert probe.feed("ESP-ROM:esp32s3-20210327") is None
     with pytest.raises(MaintenanceError, match="重复重启"):
         probe.feed("ESP-ROM:esp32s3-20210327")
+
+
+def test_firmware_boot_probe_reports_legacy_animation_layout_failure() -> None:
+    probe = _FirmwareBootProbe()
+
+    with pytest.raises(MaintenanceError, match="固件已写入.*历史固件.*SD 资源布局不兼容"):
+        probe.feed("E (2227) MAIN: Fatal boot error: Anim manifest missing")
 
 
 def test_work_package_uses_stable_work_id_and_embeds_editable_source() -> None:

@@ -65,6 +65,11 @@ class MaintenanceDeviceInfoRequest(BaseModel):
     port: str
 
 
+class MaintenancePackageValidationRequest(BaseModel):
+    kind: str
+    package_path: str
+
+
 class MaintenanceWorkRequest(BaseModel):
     composition: dict[str, Any] | None = None
     package_path: str = ""
@@ -164,6 +169,9 @@ class ApplicationController(Protocol):
 
     def maintenance_volumes(self) -> list[dict[str, Any]]:
         """List writable Windows SD-card reader volumes."""
+
+    def validate_maintenance_package(self, kind: str, package_path: str) -> dict[str, Any]:
+        """Validate a local firmware or SD resource package."""
 
     def maintenance_device_info(self, port: str) -> dict[str, Any]:
         """Read firmware and SD resource versions from one serial device."""
@@ -444,6 +452,18 @@ class DaemonControlAPI:
         async def maintenance_volumes() -> dict[str, Any]:
             volumes = await asyncio.to_thread(self._controller.maintenance_volumes)
             return {"volumes": volumes}
+
+        @app.post("/daemon/maintenance/packages/validate")
+        async def validate_maintenance_package(request: MaintenancePackageValidationRequest) -> Any:
+            try:
+                package = await asyncio.to_thread(
+                    self._controller.validate_maintenance_package,
+                    request.kind,
+                    request.package_path,
+                )
+                return {"package": package}
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=400, content={"error": "invalid_package", "message": str(exc)})
 
         @app.post("/daemon/maintenance/device-info")
         async def maintenance_device_info(request: MaintenanceDeviceInfoRequest) -> Any:
