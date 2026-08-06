@@ -18,11 +18,15 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 
-from .download import DownloadError, download_application_snapshot
+from .download import (
+    DownloadError,
+    DownloadResult,
+    download_application_snapshot,
+)
 from .events import ErrorCode, EventSink, ProgressEvent
 from .ports import MarketplaceHubClient
 
@@ -683,7 +687,7 @@ def _create_environment(
 def _write_install_record(
     *,
     candidate: Path,
-    snapshot: object,
+    snapshot: DownloadResult,
     runtime: _RuntimeResources,
     resolved_dependencies: tuple[dict[str, str], ...],
 ) -> None:
@@ -693,7 +697,9 @@ def _write_install_record(
         "id": application.app_id,
         "name": application.name,
         "version": application.version,
-        "installed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "installed_at": (
+            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        ),
         "source": {
             "space_id": snapshot.space_id,
             "commit": snapshot.commit,

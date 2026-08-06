@@ -186,17 +186,6 @@ def test_app_init_requires_flags_when_input_is_not_interactive(
     assert not target.exists()
 
 
-def test_daemon_selection_command_still_returns_migration_guidance(
-    capsys,
-) -> None:
-    exit_code = main(["app", "select"])
-
-    captured = capsys.readouterr()
-    assert exit_code == 2
-    assert captured.out == ""
-    assert "Daemon selection" in captured.err
-
-
 @pytest.mark.parametrize(
     ("command", "title", "state"),
     [

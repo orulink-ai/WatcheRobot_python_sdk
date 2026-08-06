@@ -37,7 +37,7 @@ class ApplicationLaunchSpec:
     application_dir: Path
     kind: ApplicationLauncherKind
     executable: Path
-    is_windows: bool
+    command_executable: Path
 
     @property
     def entrypoint(self) -> Path:
@@ -46,14 +46,8 @@ class ApplicationLaunchSpec:
     @property
     def command(self) -> tuple[Path, ...]:
         if self.kind is ApplicationLauncherKind.BUNDLED:
-            return (self.executable,)
-        return (
-            _python_executable_for_application(
-                self.executable,
-                is_windows=self.is_windows,
-            ),
-            self.entrypoint,
-        )
+            return (self.command_executable,)
+        return (self.command_executable, self.entrypoint)
 
 
 class ApplicationLauncher:
@@ -100,6 +94,15 @@ class ApplicationLauncher:
             kind=launcher_kind,
             is_windows=self._is_windows,
         )
+        command_executable = (
+            _python_executable_for_application(
+                resolved_executable,
+                controlled_root=controlled_root,
+                is_windows=self._is_windows,
+            )
+            if launcher_kind is ApplicationLauncherKind.PYTHON
+            else resolved_executable
+        )
         if (
             launcher_kind is ApplicationLauncherKind.BUNDLED
             and not selected_dir.is_relative_to(controlled_root)
@@ -112,7 +115,7 @@ class ApplicationLauncher:
             application_dir=selected_dir,
             kind=launcher_kind,
             executable=resolved_executable,
-            is_windows=self._is_windows,
+            command_executable=command_executable,
         )
 
 
@@ -225,6 +228,7 @@ def _require_platform_executable_name(
 def _python_executable_for_application(
     executable: Path,
     *,
+    controlled_root: Path,
     is_windows: bool,
 ) -> Path:
     """Use the windowless interpreter for managed Python Applications on Windows.
@@ -240,6 +244,24 @@ def _python_executable_for_application(
     if not is_windows:
         return executable
     pythonw = executable.with_name("pythonw.exe")
-    if pythonw.is_file():
-        return pythonw.resolve()
-    return executable
+    if not pythonw.is_file():
+        return executable
+    try:
+        resolved = pythonw.resolve(strict=True)
+    except OSError as exc:
+        raise ApplicationLaunchError(
+            "Application launcher executable does not exist"
+        ) from exc
+    if not resolved.is_file():
+        raise ApplicationLaunchError(
+            "Application launcher executable is not executable"
+        )
+    if not resolved.is_relative_to(controlled_root):
+        raise ApplicationLaunchError(
+            "Application launcher executable must stay inside its controlled root"
+        )
+    if resolved.name.lower() != "pythonw.exe":
+        raise ApplicationLaunchError(
+            "Application launcher executable name is not allowed"
+        )
+    return resolved

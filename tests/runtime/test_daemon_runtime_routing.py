@@ -140,6 +140,14 @@ def _create_test_python_environment(root: Path) -> Path:
     return executable.resolve()
 
 
+def _expected_application_python(executable: Path) -> Path:
+    if sys.platform == "win32":
+        pythonw = executable.with_name("pythonw.exe")
+        if pythonw.is_file():
+            return pythonw.resolve()
+    return executable
+
+
 def test_same_daemon_switches_between_two_real_python_environments(
     tmp_path: Path,
     monkeypatch,
@@ -209,7 +217,9 @@ def test_same_daemon_switches_between_two_real_python_environments(
                     str(python_b),
                 )
 
-            assert Path(identity_a.read_text(encoding="utf-8")).resolve() == python_a
+            assert Path(identity_a.read_text(encoding="utf-8")).resolve() == (
+                _expected_application_python(python_a)
+            )
             await runtime.stop_application()
 
             runtime.select_application(
@@ -221,7 +231,9 @@ def test_same_daemon_switches_between_two_real_python_environments(
             await runtime.start_application()
             app_b_pid = runtime.application.process_id
 
-            assert Path(identity_b.read_text(encoding="utf-8")).resolve() == python_b
+            assert Path(identity_b.read_text(encoding="utf-8")).resolve() == (
+                _expected_application_python(python_b)
+            )
             assert app_a_pid is not None
             assert app_b_pid is not None
             assert app_a_pid != app_b_pid

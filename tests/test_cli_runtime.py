@@ -88,6 +88,7 @@ def test_cli_starts_reuses_and_stops_the_unique_runtime(
     monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
     monkeypatch.setenv("WATCHER_RUNTIME_EXTERNAL_PORT", "0")
     monkeypatch.setenv("WATCHER_RUNTIME_PAIRING_PORT", "0")
+    monkeypatch.setenv("WATCHER_RUNTIME_PREVIEW_UDP_PORT", "0")
 
     try:
         assert main(["daemon", "start"]) == 0
@@ -127,6 +128,7 @@ def test_cli_runs_managed_application_and_leaves_runtime_alive(
     monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
     monkeypatch.setenv("WATCHER_RUNTIME_EXTERNAL_PORT", "0")
     monkeypatch.setenv("WATCHER_RUNTIME_PAIRING_PORT", "0")
+    monkeypatch.setenv("WATCHER_RUNTIME_PREVIEW_UDP_PORT", "0")
 
     try:
         assert main(["app", "run", str(application_dir)]) == 0

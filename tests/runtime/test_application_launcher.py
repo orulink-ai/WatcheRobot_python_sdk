@@ -108,6 +108,43 @@ def test_windows_python_launcher_uses_pythonw_for_the_fixed_entrypoint(
     assert spec.command == (pythonw, application_dir / "app.py")
 
 
+def test_windows_pythonw_must_remain_inside_the_controlled_root(
+    tmp_path: Path,
+) -> None:
+    managed_root = tmp_path / "application-store"
+    application_dir = _write_application(
+        tmp_path / "developer-source",
+        app_id="com.example.demo",
+    )
+    executable_dir = (
+        managed_root
+        / "apps"
+        / "com.example.demo"
+        / ".venv"
+        / "Scripts"
+    )
+    executable = _write_executable(executable_dir, "python.exe")
+    outside_pythonw = _write_executable(tmp_path / "outside", "pythonw.exe")
+    pythonw = executable.with_name("pythonw.exe")
+    try:
+        pythonw.symlink_to(outside_pythonw)
+    except OSError as exc:
+        pytest.skip(f"symlink is unavailable: {exc}")
+
+    launcher = ApplicationLauncher(
+        managed_app_root=managed_root,
+        bundled_resource_root=tmp_path / "resources",
+        is_windows=True,
+    )
+
+    with pytest.raises(ApplicationLaunchError, match="controlled root"):
+        launcher.build_spec(
+            application_dir=application_dir,
+            kind="python",
+            executable=executable,
+        )
+
+
 def test_bundled_launcher_is_reserved_for_the_default_application(
     tmp_path: Path,
 ) -> None:
