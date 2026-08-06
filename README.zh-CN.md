@@ -74,14 +74,24 @@ watcherobot app submit .\my_app
 watcherobot app marketplace
 watcherobot app marketplace --details
 watcherobot app download --space-id <user>/WatcherRobot-<app_id> --commit <40-char-sha> --target .\staging\app
+watcherobot app install --space-id <user>/WatcherRobot-<app_id> --commit <40-char-sha> --store-root <app-store-dir> --runtime-root <locked-app-runtime-dir>
+watcherobot app list --store-root <app-store-dir>
+watcherobot app run-installed --store-root <app-store-dir> --app-id <app_id>
+watcherobot app uninstall --store-root <app-store-dir> --app-id <app_id>
 watcherobot app logout
 watcherobot app start
 watcherobot app stop
 ```
 
-`.wapp` 命令只生成归档。当前 `app run` 只接受源码目录；安装、已安装列表、选择和
-卸载属于 Watcher Desktop Application Store，SDK CLI 会明确拒绝这些已经迁移的本地
-商店操作。
+`.wapp` 命令只生成归档，`app run` 只接受源码目录。SDK 负责下载、安装、已安装列表和
+卸载：它在一个 SDK App Store 根目录下安装审核过的固定快照，为每个 App 创建独立 `.venv`，
+并记录安装的 commit。`--runtime-root` 必须指向 Desktop 随包的锁定 Application Runtime。
+当前 Application 的选择、启动和停止仍属于 Daemon 管理操作。
+
+`watcherobot app run-installed --store-root ... --app-id ...` 是自定义 App Store 的 SDK
+开发和验收运行路径。它读取 SDK 安装记录，使用应用自己的 `.venv`，并启动或复用绑定
+该商店、使用随机端口的独立 Daemon；它不会复用或修改 Desktop Daemon。Desktop 正式版仍
+只使用自己的受管商店，并在 UI 中负责选择、启动和停止。
 
 `watcherobot app init <new-directory>` 会创建一个完整、可直接进入发布流程的项目，
 不会启动 Daemon，也不会覆盖已有路径。终端中会依次询问 Application ID、显示名称、
@@ -104,10 +114,11 @@ Hugging Face，验证身份后只把 Token 保存到 Watcher 专用的操作系�
 只作为源码仓库，不生成网页；成功结果只包含 Space 和固定源码 commit，不读取或
 修改官方 Catalog。该命令不启动 Daemon，并支持 `--jsonl`。
 
-`watcherobot app submit <directory>` 要求 `description`、`author`、`icon` 三项应用
-广场信息均为非空，校验已经发布的固定快照，然后在不上传源码的前提下创建或复用
-官方名单 PR。可用 `--commit <40-char-sha>` 指定已发布版本；省略时提交 Space 当前
-HEAD。PR 会直接展示审核用 Manifest、固定源码链接和固定版本图标。
+`watcherobot app submit <directory>` 要求 `description`、`author` 两项应用广场信息
+为非空，校验已经发布的固定快照，然后在不上传源码的前提下创建或复用官方名单 PR。
+`icon` 可选：填写时校验固定版本中的图标文件，未填写时由展示端使用默认 WatcherRobot
+Application 图标。可用 `--commit <40-char-sha>` 指定已发布版本；省略时提交 Space 当前
+HEAD。PR 会展示审核用 Manifest、固定源码链接，以及用户提供时的固定版本图标。
 
 `watcherobot app marketplace` 会公开读取并严格校验官方 Application 名单，
 以及每个审核固定 commit 上的 `app.json`。结果包含本次观察到的 Dataset commit、
@@ -120,8 +131,15 @@ Face，不启动 Daemon，也不修改本地状态；Desktop 使用 `--jsonl`，
 `watcherobot app download --space-id ... --commit ... --target ...` 无需登录
 Hugging Face，会把 Space 的一个不可变固定版本下载到调用者预先创建的现有
 空 staging 目录。交付前会核对实际 commit、源码限制、唯一 Manifest、固定
-`app.py`、SDK 兼容性以及 Space 与 App 身份。该命令不启动 Daemon，不决定
-Desktop 正式安装目录，也不写入 `install.json`；Desktop 可使用 `--jsonl`。
+`app.py`、SDK 兼容性以及 Space 与 App 身份。该命令不启动 Daemon，不决定最终
+App Store 目录，也不写入 `install.json`；需要原子安装时使用 `app install`，两者均支持
+Desktop 使用 `--jsonl`。
+
+`watcherobot app install --space-id ... --commit ... --store-root ... --runtime-root ...`
+会下载审核固定快照，校验并在必要时复制锁定 Runtime，创建该 App 的独立 Python 环境，
+校验依赖和入口后原子写入安装记录。`app list --store-root ...` 读取已安装记录；
+`app uninstall --store-root ... --app-id ...` 将一个 App 移到可恢复的本地回收目录。这些命令
+不会启动或连接 Daemon。
 
 大型 Application 可以增加 `.wappignore`，使用 `tests/`、`.venv*/`、
 `*.tmp` 等 glob 规则排除非运行文件；`.wappignore` 本身不会进入安装包。

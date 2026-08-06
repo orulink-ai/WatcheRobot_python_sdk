@@ -11,6 +11,7 @@ from watcherobot.runtime.daemon.application.launcher import (
     ApplicationLauncher,
     ApplicationLauncherKind,
 )
+from watcherobot.runtime.daemon.application import launcher as application_launcher
 
 
 def _write_application(root: Path, *, app_id: str) -> Path:
@@ -78,6 +79,35 @@ def test_python_launcher_builds_only_the_fixed_app_entrypoint(
     assert spec.application_dir == application_dir
     assert spec.executable == executable
     assert spec.command == (executable, application_dir / "app.py")
+
+
+def test_windows_python_launcher_uses_pythonw_for_the_fixed_entrypoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Avoid the Windows venv redirector creating a second console window."""
+
+    managed_root = tmp_path / "application-store"
+    application_dir = _write_application(
+        tmp_path / "developer-source",
+        app_id="com.example.demo",
+    )
+    executable_dir = managed_root / "apps" / "com.example.demo" / ".venv" / "Scripts"
+    executable = _write_executable(executable_dir, "python.exe")
+    pythonw = _write_executable(executable_dir, "pythonw.exe")
+    launcher = ApplicationLauncher(
+        managed_app_root=managed_root,
+        bundled_resource_root=tmp_path / "resources",
+    )
+    monkeypatch.setattr(application_launcher.os, "name", "nt")
+
+    spec = launcher.build_spec(
+        application_dir=application_dir,
+        kind="python",
+        executable=executable,
+    )
+
+    assert spec.command == (pythonw, application_dir / "app.py")
 
 
 def test_bundled_launcher_is_reserved_for_the_default_application(

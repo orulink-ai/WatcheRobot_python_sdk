@@ -13,6 +13,7 @@ from watcherobot.runtime.daemon.application.runtime import (
     ApplicationRuntimeManager,
     ApplicationStartError,
 )
+from watcherobot.runtime.daemon.application import runtime as application_runtime
 from watcherobot.runtime.daemon.application.launcher import (
     ApplicationLauncher,
     ApplicationLauncherKind,
@@ -173,6 +174,32 @@ def _build_selected_manager(
         launcher_executable=python_executable,
     )
     return manager
+
+
+def test_windows_application_launch_hides_the_console_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(application_runtime.os, "name", "nt")
+    monkeypatch.setattr(
+        application_runtime.subprocess,
+        "CREATE_NEW_PROCESS_GROUP",
+        0x200,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        application_runtime.subprocess,
+        "DETACHED_PROCESS",
+        0x8,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        application_runtime.subprocess,
+        "CREATE_NO_WINDOW",
+        0x8000000,
+        raising=False,
+    )
+
+    assert application_runtime._application_creation_flags() == 0x8000208
 
 
 def test_runtime_starts_only_current_app_and_stops_cleanly(tmp_path: Path) -> None:

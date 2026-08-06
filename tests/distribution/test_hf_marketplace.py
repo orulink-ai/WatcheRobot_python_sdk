@@ -216,6 +216,61 @@ def test_fixed_snapshot_downloads_to_isolation_and_removes_hub_metadata(
     )
 
 
+def test_hub_local_metadata_removal_retries_transient_windows_directory_race(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "snapshot"
+    metadata = destination / ".cache" / "huggingface"
+    metadata.mkdir(parents=True)
+    metadata.joinpath("transport.json").write_text("{}", encoding="utf-8")
+    original_rmtree = hf_marketplace.shutil.rmtree
+    attempts = 0
+    delays: list[float] = []
+
+    def transient_rmtree(path: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError(145, "directory is not empty")
+        original_rmtree(path)
+
+    monkeypatch.setattr(hf_marketplace.shutil, "rmtree", transient_rmtree)
+    monkeypatch.setattr(hf_marketplace.time, "sleep", delays.append)
+
+    hf_marketplace._remove_hub_local_metadata(destination)
+
+    assert attempts == 2
+    assert delays == [0.1]
+    assert not metadata.exists()
+
+
+def test_hub_local_metadata_removal_does_not_block_snapshot_after_retries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "snapshot"
+    metadata = destination / ".cache" / "huggingface"
+    metadata.mkdir(parents=True)
+    metadata.joinpath("transport.json").write_text("{}", encoding="utf-8")
+    attempts = 0
+    delays: list[float] = []
+
+    def blocked_rmtree(_path: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise OSError(145, "directory is not empty")
+
+    monkeypatch.setattr(hf_marketplace.shutil, "rmtree", blocked_rmtree)
+    monkeypatch.setattr(hf_marketplace.time, "sleep", delays.append)
+
+    hf_marketplace._remove_hub_local_metadata(destination)
+
+    assert attempts == 5
+    assert delays == pytest.approx([0.1, 0.2, 0.3, 0.4])
+    assert metadata.is_dir()
+
+
 def test_snapshot_download_rejects_non_empty_adapter_target(
     tmp_path: Path,
 ) -> None:

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
+import pytest
+
+from watcherobot import cli as watcherobot_cli
 from watcherobot.cli import main
+from watcherobot.distribution.install import InstalledApplication
 
 
 COMPLETING_APPLICATION = """
@@ -56,6 +61,21 @@ def test_cli_status_reports_not_running_for_empty_user_state(
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 1
     assert payload == {"running": False}
+
+
+def test_windows_background_daemon_uses_pythonw_redirector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scripts_dir = tmp_path / ".venv" / "Scripts"
+    scripts_dir.mkdir(parents=True)
+    python = scripts_dir / "python.exe"
+    pythonw = scripts_dir / "pythonw.exe"
+    python.write_bytes(b"python redirector")
+    pythonw.write_bytes(b"pythonw redirector")
+    monkeypatch.setattr(watcherobot_cli.os, "name", "nt")
+
+    assert watcherobot_cli._background_python_executable(python) == pythonw.resolve()
 
 
 def test_cli_starts_reuses_and_stops_the_unique_runtime(
@@ -121,6 +141,141 @@ def test_cli_runs_managed_application_and_leaves_runtime_alive(
     finally:
         main(["daemon", "stop"])
         capsys.readouterr()
+
+
+def test_cli_runs_installed_application_in_an_isolated_store_runtime(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    store_root = tmp_path / "application-store"
+    app_root = store_root / "apps" / "com.example.demo"
+    application = InstalledApplication(
+        application_id="com.example.demo",
+        name="Installed Demo",
+        version="1.0.0",
+        status="installed",
+        application_root=app_root,
+    )
+    runtime_calls: list[dict[str, object]] = []
+    requests: list[tuple[str, str, str, dict[str, object] | None]] = []
+
+    def fake_ensure_runtime(**kwargs):
+        runtime_calls.append(kwargs)
+        return (
+            type(
+                "State",
+                (),
+                {
+                    "control_url": "http://isolated-runtime",
+                    "external_url": "ws://0.0.0.0:12345",
+                },
+            )(),
+            False,
+        )
+
+    def fake_request_json(base_url, path, *, method="GET", payload=None, **_kwargs):
+        requests.append((base_url, path, method, payload))
+        if path == "/daemon/status":
+            return {
+                "application": {
+                    "current_app": application.application_id,
+                    "state": "ended",
+                    "process_id": None,
+                }
+            }
+        return {
+            "application": {
+                "current_app": application.application_id,
+                "state": "running",
+                "process_id": 123,
+            }
+        }
+
+    monkeypatch.setattr(
+        "watcherobot.cli.list_installed_applications",
+        lambda root: (application,),
+        raising=False,
+    )
+    monkeypatch.setattr("watcherobot.cli.ensure_runtime", fake_ensure_runtime)
+    monkeypatch.setattr("watcherobot.cli._request_json", fake_request_json)
+
+    assert (
+        main(
+            [
+                "app",
+                "run-installed",
+                "--store-root",
+                str(store_root),
+                "--app-id",
+                application.application_id,
+            ]
+        )
+        == 0
+    )
+
+    assert runtime_calls == [
+        {
+            "state_root": store_root / ".daemon-session",
+            "managed_app_root": store_root,
+            "ephemeral_ports": True,
+        }
+    ]
+    assert requests[0] == (
+        "http://isolated-runtime",
+        "/daemon/application/select",
+        "POST",
+        {
+            "application_dir": str(app_root / "source"),
+            "launcher": {
+                "kind": "python",
+                "executable": str(
+                    app_root
+                    / ".venv"
+                    / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+                ),
+            },
+        },
+    )
+    output = capsys.readouterr().out
+    assert "Running installed Application: Installed Demo" in output
+    assert f"Application store: {store_root}" in output
+    assert "Daemon external URL: ws://0.0.0.0:12345" in output
+    assert "Application finished: ended" in output
+
+
+def test_cli_rejects_missing_or_broken_installed_application(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    store_root = tmp_path / "application-store"
+    monkeypatch.setattr(
+        "watcherobot.cli.list_installed_applications",
+        lambda root: (),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "watcherobot.cli.ensure_runtime",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("missing Application started a Daemon")
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "app",
+                "run-installed",
+                "--store-root",
+                str(store_root),
+                "--app-id",
+                "com.example.missing",
+            ]
+        )
+        == 2
+    )
+    assert "Installed Application was not found" in capsys.readouterr().err
 
 
 def test_cli_packages_wapp_but_does_not_install_it_through_daemon_catalog(

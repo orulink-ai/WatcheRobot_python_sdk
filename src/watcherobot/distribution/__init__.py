@@ -12,6 +12,19 @@ from .download import (
     DownloadResult,
     download_application_snapshot,
 )
+from .install import (
+    ApplicationEnvironmentCommand,
+    ApplicationEnvironmentOutput,
+    ApplicationEnvironmentRunner,
+    ApplicationInstallError,
+    ApplicationInstallResult,
+    ApplicationUninstallResult,
+    InstalledApplication,
+    SystemApplicationEnvironmentRunner,
+    install_application,
+    list_installed_applications,
+    uninstall_application,
+)
 from .events import (
     DistributionEvent,
     ErrorCode,
@@ -72,7 +85,13 @@ from .source_files import (
 
 __all__ = [
     "ApplicationCheckResult",
+    "ApplicationEnvironmentCommand",
+    "ApplicationEnvironmentOutput",
+    "ApplicationEnvironmentRunner",
+    "ApplicationInstallError",
+    "ApplicationInstallResult",
     "ApplicationSourceError",
+    "ApplicationUninstallResult",
     "DistributionEvent",
     "AccessToken",
     "CredentialStore",
@@ -97,6 +116,7 @@ __all__ = [
     "HubRepositoryNotFound",
     "HubRevisionNotFound",
     "HuggingFaceMarketplaceHubClient",
+    "InstalledApplication",
     "JsonLineEventWriter",
     "MarketplaceApplication",
     "MarketplaceError",
@@ -116,6 +136,7 @@ __all__ = [
     "ProgressEvent",
     "ResultEvent",
     "SystemCredentialStore",
+    "SystemApplicationEnvironmentRunner",
     "LoginError",
     "LoginResult",
     "LoginStatus",
@@ -126,5 +147,8 @@ __all__ = [
     "login",
     "login_status",
     "load_official_marketplace",
+    "install_application",
+    "list_installed_applications",
     "logout",
+    "uninstall_application",
 ]

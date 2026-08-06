@@ -29,6 +29,15 @@ from .events import (
 from .hf_marketplace import HuggingFaceMarketplaceHubClient
 from .hf_publish import HuggingFacePublishHubClient
 from .hub_http import HuggingFaceHubClient
+from .install import (
+    ApplicationInstallError,
+    ApplicationInstallResult,
+    ApplicationUninstallResult,
+    InstalledApplication,
+    install_application,
+    list_installed_applications,
+    uninstall_application,
+)
 from .login import LoginError, LoginResult, LoginStatus, login, login_status, logout
 from .marketplace import (
     MarketplaceError,
@@ -57,6 +66,9 @@ DISTRIBUTION_COMMANDS = frozenset(
         "submit",
         "marketplace",
         "download",
+        "install",
+        "list",
+        "uninstall",
     }
 )
 _JSONL_HELP = (
@@ -182,6 +194,60 @@ def add_distribution_commands(
         help="Existing empty staging directory",
     )
     _add_jsonl_argument(download)
+    install = app_commands.add_parser(
+        "install",
+        help="Install one immutable Application into the SDK App Store",
+        description=(
+            "Download, validate, and install one fixed Application revision "
+            "with its own Python environment. This command never starts the Daemon."
+        ),
+    )
+    install.add_argument(
+        "--space-id",
+        required=True,
+        help="Hugging Face Space, for example user/WatcherRobot-com.example.app",
+    )
+    install.add_argument(
+        "--commit",
+        required=True,
+        help="Exact 40-character source commit from the marketplace",
+    )
+    install.add_argument(
+        "--store-root",
+        type=Path,
+        required=True,
+        help="SDK-managed local Application Store root",
+    )
+    install.add_argument(
+        "--runtime-root",
+        type=Path,
+        required=True,
+        help="Verified bundled Application Runtime directory",
+    )
+    _add_jsonl_argument(install)
+    list_command = app_commands.add_parser(
+        "list",
+        help="List Applications installed by the SDK",
+    )
+    list_command.add_argument(
+        "--store-root",
+        type=Path,
+        required=True,
+        help="SDK-managed local Application Store root",
+    )
+    _add_jsonl_argument(list_command)
+    uninstall = app_commands.add_parser(
+        "uninstall",
+        help="Remove one SDK-managed Application into recoverable trash",
+    )
+    uninstall.add_argument(
+        "--store-root",
+        type=Path,
+        required=True,
+        help="SDK-managed local Application Store root",
+    )
+    uninstall.add_argument("--app-id", required=True, help="Installed Application ID")
+    _add_jsonl_argument(uninstall)
 
 
 def _add_jsonl_argument(parser: argparse.ArgumentParser) -> None:
@@ -248,6 +314,12 @@ def run_command(args: argparse.Namespace) -> int:
         return _run_application_marketplace(args)
     if args.app_command == "download":
         return _run_application_download(args)
+    if args.app_command == "install":
+        return _run_application_install(args)
+    if args.app_command == "list":
+        return _run_application_list(args)
+    if args.app_command == "uninstall":
+        return _run_application_uninstall(args)
     raise AssertionError("unreachable distribution command")
 
 
@@ -793,6 +865,142 @@ def _print_download_error(
         )
     else:
         print(f"Application download failed: {message}", file=sys.stderr)
+    return exit_code_for(code)
+
+
+@dataclass(frozen=True)
+class _InstallDependencies:
+    hub: MarketplaceHubClient
+
+
+class _HumanInstallEventSink:
+    """Render non-sensitive SDK App Store progress for terminal users."""
+
+    def emit(self, event: DistributionEvent) -> None:
+        if isinstance(event, ProgressEvent):
+            print(event.message, file=sys.stderr)
+
+
+def _build_install_dependencies() -> _InstallDependencies:
+    return _InstallDependencies(hub=HuggingFaceMarketplaceHubClient())
+
+
+def _run_application_install(args: argparse.Namespace) -> int:
+    dependencies = _build_install_dependencies()
+    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    events: EventSink = event_writer or _HumanInstallEventSink()
+    try:
+        result = install_application(
+            space_id=args.space_id,
+            commit=args.commit,
+            store_root=args.store_root,
+            runtime_root=args.runtime_root,
+            hub=dependencies.hub,
+            events=events,
+        )
+    except KeyboardInterrupt:
+        return _print_install_error(
+            ErrorCode.OPERATION_CANCELLED,
+            "Application installation cancelled",
+            event_writer=event_writer,
+        )
+    except ApplicationInstallError as exc:
+        return _print_install_error(exc.code, str(exc), event_writer=event_writer)
+
+    if event_writer is not None:
+        event_writer.emit(ResultEvent(data=result.to_dict()))
+    else:
+        _print_install_result(result)
+    return ExitCode.SUCCESS
+
+
+def _run_application_list(args: argparse.Namespace) -> int:
+    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    try:
+        applications = list_installed_applications(args.store_root)
+    except ApplicationInstallError as exc:
+        return _print_install_error(exc.code, str(exc), event_writer=event_writer)
+    if event_writer is not None:
+        event_writer.emit(
+            ResultEvent(data={"applications": [item.to_dict() for item in applications]})
+        )
+    else:
+        _print_install_inventory(applications)
+    return ExitCode.SUCCESS
+
+
+def _run_application_uninstall(args: argparse.Namespace) -> int:
+    event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    try:
+        result = uninstall_application(
+            store_root=args.store_root,
+            application_id=args.app_id,
+        )
+    except ApplicationInstallError as exc:
+        return _print_install_error(exc.code, str(exc), event_writer=event_writer)
+    if event_writer is not None:
+        event_writer.emit(ResultEvent(data=result.to_dict()))
+    else:
+        _print_uninstall_result(result)
+    return ExitCode.SUCCESS
+
+
+def _print_install_result(result: ApplicationInstallResult) -> None:
+    _print_labeled_block(
+        "Application installed",
+        (
+            ("Name", result.name),
+            ("ID", result.application_id),
+            ("Version", result.version),
+            ("Commit", result.commit),
+            ("Source", result.source_url),
+            ("Application root", str(result.application_root)),
+            ("Runtime", result.runtime_id),
+            ("Updated", "Yes" if result.replaced_existing else "No"),
+        ),
+    )
+
+
+def _print_install_inventory(
+    applications: tuple[InstalledApplication, ...],
+) -> None:
+    print("Installed Applications")
+    print(f"Applications: {len(applications)}")
+    if not applications:
+        return
+    print()
+    header = f"{'STATUS':<12}{'VERSION':<13}{'NAME':<25}APPLICATION ID"
+    print(header)
+    print("-" * len(header))
+    for application in applications:
+        print(
+            f"{application.status:<12}"
+            f"{_truncate(application.version or '-', 11):<13}"
+            f"{_truncate(application.name, 23):<25}"
+            f"{application.application_id}"
+        )
+
+
+def _print_uninstall_result(result: ApplicationUninstallResult) -> None:
+    _print_labeled_block(
+        "Application removed",
+        (
+            ("ID", result.application_id),
+            ("Recoverable trash", str(result.trash_root)),
+        ),
+    )
+
+
+def _print_install_error(
+    code: ErrorCode,
+    message: str,
+    *,
+    event_writer: JsonLineEventWriter | None,
+) -> int:
+    if event_writer is not None:
+        event_writer.emit(ErrorEvent(code=code, message=message))
+    else:
+        print(f"Application installation failed: {message}", file=sys.stderr)
     return exit_code_for(code)
 
 

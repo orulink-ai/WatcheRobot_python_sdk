@@ -43,6 +43,9 @@ def test_application_cli_reference_separates_human_and_machine_usage() -> None:
         "submit",
         "marketplace",
         "download",
+        "install",
+        "list",
+        "uninstall",
         "start",
         "stop",
     ):
@@ -62,15 +65,15 @@ def test_sdk_application_usage_guide_is_executable_and_matches_store_boundary() 
         "app submit",
         "app marketplace --jsonl",
         "app download",
+        "app install",
+        "app list",
+        "app uninstall",
         "app logout",
     ):
         assert f"watcherobot.exe {command}" in guide
     assert "ApplicationContext.from_environment()" in guide
     assert "Browser sign-in does not authenticate the SDK distribution tool" in guide
-    assert (
-        "Installation, installed inventory, selection, and removal belong to "
-        "Watcher Desktop"
-    ) in guide
+    assert "SDK owns download, installation, inventory, and removal" in guide
     assert "Do not run `app.py` directly" in guide
     assert "Open: https://hf.co/oauth/device" in guide
     assert "Use `--jsonl` only for Desktop or another machine caller" in guide
@@ -85,18 +88,22 @@ def test_chinese_usage_guide_directs_humans_to_interactive_english_login() -> No
     assert "Desktop 或其他机器调用方才使用 `--jsonl`" in guide
 
 
-def test_readmes_do_not_recommend_removed_sdk_store_or_wapp_run_paths() -> None:
-    documents = [
+def test_readmes_describe_sdk_store_commands_but_not_daemon_selection() -> None:
+    readmes = [
         (ROOT / "README.md").read_text(encoding="utf-8"),
         (ROOT / "README.zh-CN.md").read_text(encoding="utf-8"),
+    ]
+    for document in readmes:
+        assert "watcherobot app install" in document
+        assert "watcherobot app list" in document
+        assert "watcherobot app uninstall" in document
+        assert re.search(r"(?m)^watcherobot app select\b", document) is None
+
+    documents = [
+        *readmes,
         (ROOT / "examples" / "README.md").read_text(encoding="utf-8"),
     ]
-
     for document in documents:
-        assert re.search(
-            r"(?m)^watcherobot app (?:install|list|select|uninstall)\b",
-            document,
-        ) is None
         assert re.search(
             r"(?m)^watcherobot app run .*\.wapp\s*$",
             document,
@@ -120,6 +127,9 @@ def test_distribution_contract_covers_current_version_and_commands() -> None:
         "submit",
         "marketplace",
         "download",
+        "install",
+        "list",
+        "uninstall",
     ):
         assert f"`watcher-distribution app {command}" in contract
 

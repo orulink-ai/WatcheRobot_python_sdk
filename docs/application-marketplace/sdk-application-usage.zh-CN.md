@@ -13,18 +13,22 @@
   -> 发布源码到开发者公开 Space
   -> 选择固定 commit 提交官方名单审核
   -> 维护者合并
-  -> Desktop 从官方固定 commit 安装到独立环境
+  -> SDK 从官方固定 commit 安装到独立环境
 ```
 
 ## 1. 先理解三个边界
 
 1. `watcherobot app run` 会启动或复用 SDK Daemon，由 Daemon 注入 Desktop channel 和
    Device channel；不要直接运行 `app.py`，Application 也不要自行连接设备 WebSocket。
-2. `check/login/logout/publish/submit/marketplace/download` 是 SDK 分发能力，不启动 Daemon。
+2. `check/login/logout/publish/submit/marketplace/download/install/list/uninstall` 是 SDK 分发能力，不启动 Daemon。
    开发环境使用 `watcherobot app ...`；Desktop 发布包使用同一实现生成的受控
    `watcher-distribution` sidecar。
-3. 安装、已安装列表、选择和卸载属于 Watcher Desktop。SDK CLI 不负责本地商店，不能把
-   `.wapp` 或下载 staging 直接标记成已安装。
+3. `run-installed --store-root ... --app-id ...` 用于 SDK 开发和验收时运行自定义 App Store
+   中已安装的应用。它使用应用自己的 `.venv`，启动独立且使用随机端口的 Daemon，不接管
+   Desktop 的 Daemon 或 Application Store。
+3. SDK 负责下载、安装、已安装列表和卸载。`install` 使用 Desktop 提供的锁定 Runtime，
+   创建每 App 独立环境并原子写入本地安装记录；选择、启动和停止当前 Application 仍属于
+   Daemon 管理操作。
 
 ## 2. Windows 测试环境
 
@@ -94,8 +98,8 @@ SDK 自动计算。需要示例行为时仍可复制 `examples` 中的项目，�
 字段规则：
 
 - 必填：`schema_version`、`id`、`name`、`version`、`requires_watcherobot`、`dependencies`。
-- `description`、`author`、`icon` 在本地校验、运行和源码发布时仍可选，但执行
-  `app submit` 前三项必须全部为非空；不接受未知字段。
+- `description`、`author` 在本地校验、运行和源码发布时仍可选，但执行 `app submit`
+  前两项必须为非空；`icon` 在全部阶段均可选。不接受未知字段。
 - `id` 长度为 1～64，只能使用小写字母、数字、点、下划线和连字符。
 - `version` 使用三段语义版本；`requires_watcherobot` 必须覆盖当前 SDK 版本。
 - `dependencies` 使用标准 Python requirement 字符串，例如 `requests>=2.32,<3`。不要通过
@@ -281,15 +285,17 @@ Desktop 或其他机器调用方才使用 `--jsonl`：
 
 提交规则：
 
-- `description`、`author`、`icon` 必须全部为非空，且图标必须同时存在于本地项目和固定 commit。
+- `description`、`author` 必须为非空；`icon` 可选。填写时图标必须同时存在于本地项目和固定
+  commit；省略或留空时，由展示端使用默认 WatcherRobot Application 图标。
 - 固定 commit 上的 `app.json` 必须与本地项目一致；不一致时应重新发布当前项目，或者检出与
   该 commit 匹配的源码后再提交。
 - `submit` 只读取固定源码并修改官方 Catalog PR，绝不上传或改写 Application 源码。
 - 成功结果包含 `space_id`、`commit`、固定 `source_url`、`pr_status` 和可选 `pr_url`。
 - 同一固定 commit 的开放 PR 会复用。
 - 同一 App 已有不同 commit 的开放 PR 时返回 `catalog_pr_conflict`；先处理原 PR，再提交新版本。
-- 新建的名单 PR 会直接展示 App 名称、ID、版本、作者、简介、SDK 要求、依赖、图标路径、
-  固定版本图标和固定源码链接；Catalog 文件本身仍只保存 `space_id + commit`。
+- 新建的名单 PR 会直接展示 App 名称、ID、版本、作者、简介、SDK 要求、依赖和固定源码链接；
+  用户提供自选图标时额外展示图标路径和固定版本图标，否则标记使用默认图标。Catalog 文件
+  本身仍只保存 `space_id + commit`。
 - 普通开发者不能直接修改官方名单。只有维护者合并 PR 后，App 才会出现在正式应用广场。
 
 ## 7. 第四阶段：正式名单与固定快照测试
@@ -333,6 +339,40 @@ Get-ChildItem -LiteralPath $staging
 预期 `result.data.commit` 与请求值完全相同，目录中至少存在 `app.json` 和 `app.py`。目标必须是
 调用者预先创建的现有空目录；失败时不能把候选内容发布为正式安装。
 Desktop 在同一命令末尾添加 `--jsonl`，并只读取结构化事件字段。
+
+将审核过的同一个固定 commit 安装到 SDK App Store 时，传入本地商店目录和 Desktop 随包的
+锁定 Application Runtime。首次安装时 SDK 会校验并复制 Runtime，每个 App 都在商店中拥有
+独立 `.venv`：
+
+```powershell
+.\.venv\Scripts\watcherobot.exe app install `
+  --space-id <user>/WatcherRobot-<app_id> `
+  --commit <40-character-commit> `
+  --store-root $env:LOCALAPPDATA\WatcherRobot\applications `
+  --runtime-root <Desktop-app-runtime-directory>
+
+.\.venv\Scripts\watcherobot.exe app list `
+  --store-root $env:LOCALAPPDATA\WatcherRobot\applications
+
+.\.venv\Scripts\watcherobot.exe app uninstall `
+  --store-root $env:LOCALAPPDATA\WatcherRobot\applications `
+  --app-id <app_id>
+```
+
+这三个命令不会启动或连接 Daemon；后续 Desktop 只负责调用 SDK、展示进度，以及管理 Daemon
+对当前 Application 的选择、启动和停止。
+
+若使用的是自定义 App Store（开发或验收测试），可从同一个商店运行已安装应用：
+
+```powershell
+.\.venv\Scripts\watcherobot.exe app run-installed `
+  --store-root $env:LOCALAPPDATA\WatcherRobot\applications `
+  --app-id <app_id>
+```
+
+该命令读取 SDK 的安装记录，使用应用自己的 `.venv`，并启动或复用绑定该商店的独立
+Daemon。它使用随机端口，不连接、不修改 Desktop Daemon；Desktop 的产品商店仍由
+Desktop 自己进行选择和启动。
 
 确认不再需要后，可只删除本次创建的随机临时目录：
 

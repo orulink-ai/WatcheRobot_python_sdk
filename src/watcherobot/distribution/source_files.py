@@ -4,6 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from watcherobot.application.ignore import (
+    APPLICATION_IGNORE_FILE,
+    ApplicationIgnoreError,
+    is_application_path_ignored,
+    load_application_ignore_patterns,
+)
+
 
 _EXCLUDED_DIRECTORY_NAMES = frozenset(
     {
@@ -57,10 +64,18 @@ def collect_application_source_files(application_dir: Path) -> tuple[Path, ...]:
         raise ApplicationSourceError(
             f"Application directory does not exist: {root}"
         )
+    try:
+        ignore_patterns = load_application_ignore_patterns(root)
+    except ApplicationIgnoreError as exc:
+        raise ApplicationSourceError(str(exc)) from exc
 
     selected: list[Path] = []
     for candidate in root.rglob("*"):
         relative = candidate.relative_to(root)
+        if relative.as_posix() == APPLICATION_IGNORE_FILE:
+            continue
+        if is_application_path_ignored(relative, ignore_patterns):
+            continue
         if _is_excluded(relative, is_directory=candidate.is_dir()):
             continue
         if candidate.is_symlink():

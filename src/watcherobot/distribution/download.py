@@ -93,11 +93,12 @@ def download_application_snapshot(
             data=details,
         )
     )
-    with tempfile.TemporaryDirectory(
+    temporary_directory = Path(tempfile.mkdtemp(
         prefix=f".{destination.name}.download-",
         dir=destination.parent,
-    ) as temporary_directory:
-        isolated_target = Path(temporary_directory) / "snapshot"
+    ))
+    try:
+        isolated_target = temporary_directory / "snapshot"
         isolated_target.mkdir()
         try:
             revision = hub.download_space_snapshot(
@@ -151,6 +152,7 @@ def download_application_snapshot(
                 destination,
                 dirs_exist_ok=True,
                 copy_function=shutil.copy2,
+                ignore=_ignore_hub_local_metadata,
             )
         except OSError as exc:
             _clear_directory(destination)
@@ -159,6 +161,8 @@ def download_application_snapshot(
                 "Unable to write to the caller-provided Application staging",
                 details=details,
             ) from exc
+    finally:
+        shutil.rmtree(temporary_directory, ignore_errors=True)
 
     return DownloadResult(
         space_id=reference.space_id,
@@ -194,6 +198,8 @@ def _validate_snapshot_tree(root: Path) -> None:
     files = 0
     total_bytes = 0
     for candidate in root.rglob("*"):
+        if _is_hub_local_metadata(candidate, root):
+            continue
         if candidate.is_symlink():
             raise ApplicationSourceError(
                 "Downloaded Application must not contain symbolic links"
@@ -215,6 +221,17 @@ def _validate_snapshot_tree(root: Path) -> None:
             raise ApplicationSourceError(
                 "Downloaded Application is too large"
             )
+
+
+def _ignore_hub_local_metadata(directory: str, names: list[str]) -> set[str]:
+    if Path(directory).resolve().name == ".cache" and "huggingface" in names:
+        return {"huggingface"}
+    return set()
+
+
+def _is_hub_local_metadata(candidate: Path, root: Path) -> bool:
+    relative = candidate.relative_to(root)
+    return relative.parts[:2] == (".cache", "huggingface")
 
 
 def _clear_directory(directory: Path) -> None:

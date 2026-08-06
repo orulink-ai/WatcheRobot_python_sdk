@@ -34,7 +34,7 @@ from .ports import (
 from .publish import PublishError, _load_verified_identity
 
 
-_SUBMIT_REQUIRED_METADATA = ("description", "author", "icon")
+_SUBMIT_REQUIRED_METADATA = ("description", "author")
 
 
 class SubmitError(RuntimeError):
@@ -181,19 +181,20 @@ def submit_application(
             "current project or check out the matching source before submitting",
             details=source_details,
         )
-    try:
-        publish_hub.read_space_file(
-            token,
-            space_id=space_id,
-            commit=revision.commit,
-            path=remote_application.icon,
-        )
-    except HubError as exc:
-        raise _remote_error(
-            "Unable to read the Application icon from the published commit",
-            exc,
-            details=source_details,
-        )
+    if remote_application.icon:
+        try:
+            publish_hub.read_space_file(
+                token,
+                space_id=space_id,
+                commit=revision.commit,
+                path=remote_application.icon,
+            )
+        except HubError as exc:
+            raise _remote_error(
+                "Unable to read the Application icon from the published commit",
+                exc,
+                details=source_details,
+            )
 
     events.emit(
         ProgressEvent(
@@ -316,10 +317,15 @@ def _catalog_pull_request_description(
     commit: str,
     source_url: str,
 ) -> str:
-    icon_url = (
-        f"https://huggingface.co/spaces/{space_id}/resolve/{commit}/"
-        f"{quote(application.icon, safe='/')}"
-    )
+    icon_preview = ""
+    icon_value = "Default WatcherRobot icon"
+    if application.icon:
+        icon_url = (
+            f"https://huggingface.co/spaces/{space_id}/resolve/{commit}/"
+            f"{quote(application.icon, safe='/')}"
+        )
+        icon_preview = f"![Application icon]({icon_url})\n\n"
+        icon_value = f"`{_markdown_table_text(application.icon)}`"
     dependencies = (
         ", ".join(f"`{dependency}`" for dependency in application.dependencies)
         or "None"
@@ -332,7 +338,7 @@ def _catalog_pull_request_description(
         ("Description", _markdown_table_text(application.description)),
         ("SDK requirement", f"`{application.requires_watcherobot}`"),
         ("Dependencies", dependencies),
-        ("Icon", f"`{_markdown_table_text(application.icon)}`"),
+        ("Icon", icon_value),
     )
     table = "\n".join(
         ["| Field | Value |", "| --- | --- |"]
@@ -340,7 +346,7 @@ def _catalog_pull_request_description(
     )
     return (
         "# Application review\n\n"
-        f"![Application icon]({icon_url})\n\n"
+        f"{icon_preview}"
         f"{table}\n\n"
         f"[View fixed source]({source_url})\n\n"
         f"Space: `{space_id}`  \n"

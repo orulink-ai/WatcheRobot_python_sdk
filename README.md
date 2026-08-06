@@ -80,15 +80,28 @@ watcherobot app submit .\my_app
 watcherobot app marketplace
 watcherobot app marketplace --details
 watcherobot app download --space-id <user>/WatcherRobot-<app_id> --commit <40-char-sha> --target .\staging\app
+watcherobot app install --space-id <user>/WatcherRobot-<app_id> --commit <40-char-sha> --store-root <app-store-dir> --runtime-root <locked-app-runtime-dir>
+watcherobot app list --store-root <app-store-dir>
+watcherobot app run-installed --store-root <app-store-dir> --app-id <app_id>
+watcherobot app uninstall --store-root <app-store-dir> --app-id <app_id>
 watcherobot app logout
 watcherobot app start
 watcherobot app stop
 ```
 
-The `.wapp` command only creates an archive. The current `app run` command
-accepts a source directory, while installation, installed inventory, selection,
-and removal belong to the Watcher Desktop Application Store. The SDK CLI
-intentionally rejects those migrated local-store operations.
+The `.wapp` command only creates an archive and `app run` accepts a source
+directory. The SDK owns download, installation, inventory, and removal. It
+installs every reviewed immutable snapshot below one SDK App Store root, creates
+one isolated `.venv` per App, and records the installed commit. `--runtime-root`
+must point to the locked Application Runtime bundled with Desktop. Selecting,
+starting, and stopping the current Application remain Daemon management actions.
+
+`watcherobot app run-installed --store-root ... --app-id ...` is the SDK
+developer-test path for an App installed into a custom store. It reads the SDK
+installation record, starts or reuses an isolated Daemon rooted at that store,
+and launches the App with its own `.venv`. It uses ephemeral ports and never
+reuses or modifies the Desktop Daemon. Desktop production installs into its own
+managed store and remains responsible for selection and start/stop in its UI.
 
 `watcherobot app init <new-directory>` creates a complete publish-ready project
 without starting the Daemon or overwriting an existing path. In a terminal it
@@ -119,12 +132,14 @@ a web page. A successful result contains the Space and fixed source commit; it
 does not read or modify the official Catalog. The command does not start the
 Daemon and supports `--jsonl` for Desktop callers.
 
-`watcherobot app submit <directory>` requires non-empty `description`,
-`author`, and `icon`, verifies the already-published fixed snapshot, and opens
-or reuses the official Catalog pull request without uploading source. Add
+`watcherobot app submit <directory>` requires non-empty `description` and
+`author`, verifies the already-published fixed snapshot, and opens or reuses
+the official Catalog pull request without uploading source. `icon` is optional:
+when present it is verified at the fixed revision; when absent, presentation
+clients use the default WatcherRobot Application icon. Add
 `--commit <40-char-sha>` to submit an exact published revision; otherwise the
-current Space HEAD is used. The PR renders the reviewed manifest, fixed source
-link, and fixed-revision icon directly in its description.
+current Space HEAD is used. The PR renders the reviewed manifest and fixed
+source link, plus the fixed-revision icon when one was provided.
 
 `watcherobot app marketplace` publicly loads and validates the official
 Application list and each reviewed `app.json` at its fixed commit. The result
@@ -141,8 +156,17 @@ downloads one immutable Space revision into a caller-created, existing empty
 staging directory. It verifies the resolved commit, source limits, canonical
 Manifest, fixed `app.py`, SDK compatibility, and the Space/App identity before
 delivery. It needs no Hugging Face login, does not start the Daemon, does not
-choose the Desktop install directory or write `install.json`, and supports
-`--jsonl` for Desktop callers.
+choose the final App Store directory or write `install.json`; use `app install`
+for that atomic local-store operation. Both commands support `--jsonl` for
+Desktop callers.
+
+`watcherobot app install --space-id ... --commit ... --store-root ...
+--runtime-root ...` downloads the reviewed immutable snapshot, verifies and
+copies the locked Runtime when needed, creates that App's isolated Python
+environment, validates dependencies and the entry point, then atomically writes
+the installation record. `app list --store-root ...` reads installed records and
+`app uninstall --store-root ... --app-id ...` moves one App to recoverable local
+trash. These commands never start or contact the Daemon.
 
 For larger Applications, add a `.wappignore` file using glob patterns such as
 `tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not packaged.

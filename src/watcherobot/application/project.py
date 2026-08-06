@@ -30,6 +30,7 @@ from watcherobot.application import ApplicationContext
 async def main() -> None:
     async with ApplicationContext.from_environment() as app:
         app.logger.info("Application started: %s", app.app_id)
+        await asyncio.Event().wait()
 
 
 asyncio.run(main())

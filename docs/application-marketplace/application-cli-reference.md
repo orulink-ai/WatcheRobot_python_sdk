@@ -45,12 +45,18 @@ watcherobot app marketplace --details
 | `submit` | Validate a published commit and open or reuse its official catalog PR; `--commit` selects an exact published revision | No | Commit, source, PR URL, and review status |
 | `marketplace` | Load the reviewed official catalog | No | Compact compatibility table |
 | `download` | Download and validate one catalog Space at an exact commit into empty staging | No | Application and staging summary |
+| `install` | Download a reviewed fixed commit, create its isolated environment, and atomically install it into the SDK App Store | No | Application, Runtime, commit, and install root |
+| `list` | Read the local SDK App Store inventory | No | Compact installed-Application table |
+| `run-installed` | Run one installed App from a custom SDK App Store through an isolated Daemon | Starts or reuses isolated Daemon | App status and test Daemon endpoint |
+| `uninstall` | Move one installed Application to recoverable local trash | No | Removed ID and trash root |
 | `start` | Start the Application currently selected by the Daemon | Yes or reuses it | ID, state, and PID |
 | `stop` | Stop the currently running Application | Yes or reuses it | ID and final state |
 
-Installation, installed inventory, selection, and removal belong to Watcher
-Desktop. The SDK help therefore does not list `install`, `list`, `select`, or
-`uninstall`; old calls return a migration message instead of starting the Daemon.
+SDK owns download, installation, inventory, and removal. `install` receives a
+Desktop-supplied locked Application Runtime, copies it after verification when
+needed, and creates one isolated `.venv` per Application. `list` and `uninstall`
+operate on that same SDK App Store root. Application selection remains a Daemon
+management action; the SDK does not expose `select`.
 
 ## Creating a project
 
@@ -122,15 +128,18 @@ watcherobot app submit .\my_app
 commit. It does not read or modify the official catalog, so developers can
 publish test snapshots repeatedly without opening catalog PRs.
 
-`submit` requires non-empty `description`, `author`, and `icon` fields. It reads
-the published `app.json` and icon at the selected commit, verifies that the
-local manifest matches that fixed snapshot, and then creates or reuses the
-catalog PR. Use `--commit <40-character-commit>` to review a specific published
-revision; omitting it submits the current Space HEAD.
+`submit` requires non-empty `description` and `author` fields. `icon` is
+optional: when present, the command reads and verifies it at the selected
+commit; when absent, presentation clients use the default WatcherRobot
+Application icon. The local manifest must match that fixed snapshot before the
+command creates or reuses the catalog PR. Use `--commit <40-character-commit>`
+to review a specific published revision; omitting it submits the current Space
+HEAD.
 
-A new catalog PR renders the reviewed Manifest, fixed-revision icon, and
-immutable source link; `app-list.json` remains a minimal `space_id + commit`
-index. `submit` reports one of these catalog states:
+A new catalog PR renders the reviewed Manifest and immutable source link. It
+renders the fixed-revision icon when supplied, otherwise it marks the default
+icon fallback; `app-list.json` remains a minimal `space_id + commit` index.
+`submit` reports one of these catalog states:
 
 - `Pending review`: the official Dataset PR exists and still needs maintainer review.
 - `Already listed`: the same immutable commit is already in the official catalog.
@@ -150,20 +159,57 @@ watcherobot app download `
 ```
 
 The SDK verifies the commit, source limits, manifest, fixed `app.py`, SDK
-compatibility, and Space/Application identity before delivering files. It does not
-install the candidate or choose the final Desktop directory.
+compatibility, and Space/Application identity before delivering files. `download`
+does not choose the final App Store directory; use `install` for the complete
+atomic local install.
+
+## Installing, listing, and removing
+
+`install` consumes only a reviewed fixed commit. It needs the local SDK App Store
+root and the locked Runtime directory that Desktop packages with the SDK:
+
+```powershell
+watcherobot app install `
+  --space-id <user>/WatcherRobot-<app_id> `
+  --commit <40-character-commit> `
+  --store-root <app-store-directory> `
+  --runtime-root <locked-app-runtime-directory>
+
+watcherobot app list --store-root <app-store-directory>
+watcherobot app uninstall --store-root <app-store-directory> --app-id <app_id>
+```
+
+The installed layout is one App directory containing `source/`, `.venv/`, and
+`install.json`. The JSONL result of `list` also exposes the controlled
+`application_directory` and Python `launcher`; Desktop uses those fields when it
+asks Daemon to select an App and does not parse `install.json`. Failed installs
+remain outside the active App directory; replaced or removed Apps go to
+recoverable local trash. None of these commands starts or contacts the Daemon.
+
+For SDK development or isolated acceptance testing, run an App from the same
+custom store with its installed virtual environment. This creates or reuses a
+separate Daemon rooted at that store, using ephemeral ports; it does not attach
+to or modify Desktop's Daemon:
+
+```powershell
+watcherobot app run-installed `
+  --store-root <app-store-directory> `
+  --app-id <application-id>
+```
 
 ## Desktop sidecar
 
 Packaged Desktop builds call the restricted `watcher-distribution app ...`
-entrypoint. It exposes only `check`, `login`, `logout`, `publish`, `submit`,
-`marketplace`, and `download`, and it never imports or starts the Daemon.
+entrypoint. It exposes `check`, `login`, `logout`, `publish`, `submit`,
+`marketplace`, `download`, `install`, `list`, and `uninstall`; it never imports
+or starts the Daemon.
 
 Examples:
 
 ```powershell
 watcher-distribution app check .\my_app --jsonl
 watcher-distribution app marketplace --jsonl
+watcher-distribution app list --store-root <app-store-directory> --jsonl
 ```
 
 See [Application Distribution Contract](distribution-contract.md) for stable

@@ -155,11 +155,7 @@ class ApplicationRuntimeManager:
                         if self._log_service is not None
                         else asyncio.subprocess.DEVNULL
                     ),
-                    creationflags=(
-                        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP")
-                        if os.name == "nt"
-                        else 0
-                    ),
+                    creationflags=_application_creation_flags(),
                 )
             except Exception:
                 await self.bridge.stop()
@@ -398,6 +394,18 @@ class ApplicationRuntimeManager:
         self._log_tasks = []
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _application_creation_flags() -> int:
+    """Keep Windows Application subprocesses detached from any terminal host."""
+
+    if os.name != "nt":
+        return 0
+    return (
+        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        | getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    )
 
 
 def _terminate_process_tree(pid: int, timeout: float) -> None:

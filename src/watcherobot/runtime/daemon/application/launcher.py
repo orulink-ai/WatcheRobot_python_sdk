@@ -46,7 +46,7 @@ class ApplicationLaunchSpec:
     def command(self) -> tuple[Path, ...]:
         if self.kind is ApplicationLauncherKind.BUNDLED:
             return (self.executable,)
-        return (self.executable, self.entrypoint)
+        return (_python_executable_for_application(self.executable), self.entrypoint)
 
 
 class ApplicationLauncher:
@@ -203,3 +203,22 @@ def _require_platform_executable_name(
         raise ApplicationLaunchError(
             "Application launcher executable name is not allowed"
         )
+
+
+def _python_executable_for_application(executable: Path) -> Path:
+    """Use the windowless interpreter for managed Python Applications on Windows.
+
+    A Windows virtual environment's ``python.exe`` is a redirector.  It starts
+    the base interpreter in a second process, which can allocate a new console
+    even when the Daemon hid the first process.  ``pythonw.exe`` is the matching
+    redirector without that console allocation.  The executable remains fixed
+    to the Application's controlled environment and stdout/stderr are still
+    captured by the Daemon when available.
+    """
+
+    if os.name != "nt":
+        return executable
+    pythonw = executable.with_name("pythonw.exe")
+    if pythonw.is_file():
+        return pythonw.resolve()
+    return executable

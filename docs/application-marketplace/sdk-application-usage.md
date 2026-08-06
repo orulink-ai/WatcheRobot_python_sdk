@@ -15,7 +15,7 @@ local app.json + app.py
   -> publish source to the developer's public Space
   -> submit one immutable commit for official catalog review
   -> maintainer review and merge
-  -> Desktop installs the reviewed immutable commit into an isolated environment
+  -> SDK installs the reviewed immutable commit into an isolated environment
 ```
 
 ## 1. Ownership boundaries
@@ -23,12 +23,19 @@ local app.json + app.py
 1. `watcherobot app run` starts or reuses the SDK Daemon. The Daemon injects the
    Desktop and Device channels. Do not run `app.py` directly and do not open a
    separate device WebSocket from an Application.
-2. `check`, `login`, `logout`, `publish`, `submit`, `marketplace`, and `download`
+2. `check`, `login`, `logout`, `publish`, `submit`, `marketplace`, `download`,
+   `install`, `list`, and `uninstall`
    are SDK distribution operations. They do not start the Daemon. Desktop uses
    the same implementation through the controlled `watcher-distribution` entry
    point.
-3. Installation, installed inventory, selection, and removal belong to Watcher Desktop.
-   The SDK validates and delivers a candidate snapshot but never marks it as installed.
+3. SDK owns download, installation, inventory, and removal. `install` validates
+   the reviewed snapshot, uses a Desktop-supplied locked Runtime, creates an
+   isolated `.venv`, and atomically writes the local install record. Daemon
+   selection, start, and stop remain management actions.
+4. `run-installed --store-root ... --app-id ...` is for SDK development and
+   acceptance testing of a custom App Store. It launches the App with its
+   installed `.venv` through a separate, ephemeral-port Daemon. It never takes
+   over Desktop's managed Daemon or its App Store.
 
 ## 2. Prepare a Windows test environment
 
@@ -102,10 +109,9 @@ Rules:
 
 - Required fields are `schema_version`, `id`, `name`, `version`,
   `requires_watcherobot`, and `dependencies`.
-- `description`, `author`, and `icon` remain optional for local check, run, and
-  source publication, but all three must be non-empty before `app submit`
-  accepts the Application.
-  Unknown fields are rejected.
+- `description` and `author` remain optional for local check, run, and source
+  publication, but both must be non-empty before `app submit` accepts the
+  Application. `icon` remains optional throughout. Unknown fields are rejected.
 - `id` is 1 to 64 characters and uses only lowercase letters, digits, dots,
   underscores, and hyphens.
 - `version` is a three-part semantic version. `requires_watcherobot` must include
@@ -272,8 +278,10 @@ returned by `publish`, use:
 
 Submission rules:
 
-- `description`, `author`, and `icon` must all be non-empty. The icon must exist
-  in both the local project and the selected published commit.
+- `description` and `author` must be non-empty. `icon` is optional. When
+  provided, it must exist in both the local project and the selected published
+  commit; when omitted or empty, presentation clients use the default
+  WatcherRobot Application icon.
 - The published `app.json` must match the local project. If it differs, publish
   the current project or check out the source matching the selected commit.
 - `submit` reads the fixed source and changes only the official Catalog PR; it
@@ -284,13 +292,14 @@ Submission rules:
 - An open pull request for another commit of the same App produces
   `catalog_pr_conflict`; resolve it before submitting another version.
 - A newly created catalog pull request displays the App name, ID, version,
-  author, description, SDK requirement, dependencies, icon path, fixed-revision
-  icon, and fixed source link. The catalog file itself still stores only
+  author, description, SDK requirement, dependencies, and fixed source link. It
+  displays the icon path and fixed-revision icon when supplied, otherwise it
+  marks the default icon fallback. The catalog file itself still stores only
   `space_id + commit`.
 - The App appears in the official marketplace only after a maintainer merges the
   catalog pull request.
 
-## 7. Read and download an approved snapshot
+## 7. Read, download, and install an approved snapshot
 
 Reading the official marketplace requires no login:
 
@@ -323,11 +332,34 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 ```
 
 The result commit must exactly match the requested commit. The delivered directory
-contains at least `app.json` and `app.py`. A failed candidate must not be promoted
-to the Desktop installation directory.
+contains at least `app.json` and `app.py`. A failed candidate is never promoted
+to the SDK App Store.
 
 Desktop adds `--jsonl` to the same command and reads only the structured event
 fields.
+
+To install the same reviewed commit, pass the App Store root and the locked
+Application Runtime bundled with Desktop. The Runtime is copied and verified on
+the first install; every App receives its own environment below the App Store:
+
+```powershell
+.\.venv\Scripts\watcherobot.exe app install `
+  --space-id <user>/WatcherRobot-<app_id> `
+  --commit <40-character-commit> `
+  --store-root $env:LOCALAPPDATA\WatcherRobot\applications `
+  --runtime-root <Desktop-app-runtime-directory>
+
+.\.venv\Scripts\watcherobot.exe app list `
+  --store-root $env:LOCALAPPDATA\WatcherRobot\applications
+
+.\.venv\Scripts\watcherobot.exe app uninstall `
+  --store-root $env:LOCALAPPDATA\WatcherRobot\applications `
+  --app-id <app_id>
+```
+
+`install`, `list`, and `uninstall` never start or contact the Daemon. Desktop
+will later call these SDK commands and keep responsibility only for presenting
+progress and for Daemon selection/start/stop.
 
 ## 8. Exit and error handling
 

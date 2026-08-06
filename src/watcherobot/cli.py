@@ -26,6 +26,10 @@ from watcherobot.distribution.cli import (
     is_distribution_command,
     run_command as run_distribution_command,
 )
+from watcherobot.distribution.install import (
+    ApplicationInstallError,
+    list_installed_applications,
+)
 from watcherobot.provisioning import (
     BluetoothDevice,
     BluetoothProvisioner,
@@ -45,13 +49,10 @@ class CliError(RuntimeError):
     pass
 
 
-DESKTOP_APPLICATION_STORE_REQUIRED = (
-    "Application installation and local catalog management belong to the "
-    "Watcher Desktop Application Store"
+DAEMON_SELECTION_REQUIRED = (
+    "Daemon selection is controlled by the Desktop or a Daemon management client"
 )
-_DESKTOP_ONLY_APP_COMMANDS = frozenset(
-    {"install", "list", "select", "uninstall"}
-)
+_DESKTOP_ONLY_APP_COMMANDS = frozenset({"select"})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -90,7 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  watcherobot app submit .\\my_app\n"
             "  watcherobot app marketplace\n\n"
             "For manual use, omit --jsonl. Desktop automation uses --jsonl.\n"
-            "Installation, selection, and removal belong to Watcher Desktop."
+            "Installation, inventory, and removal are SDK distribution commands. "
+            "Daemon selection remains a management action."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -122,6 +124,26 @@ def build_parser() -> argparse.ArgumentParser:
         "application",
         type=Path,
         help="Application source directory; .wapp archives belong to Desktop",
+    )
+    run_installed = app_commands.add_parser(
+        "run-installed",
+        help="Run one installed Application from an isolated SDK App Store",
+        description=(
+            "Run one SDK-installed Application with a temporary Daemon bound "
+            "to the specified App Store. This command does not use or modify "
+            "the Desktop Daemon."
+        ),
+    )
+    run_installed.add_argument(
+        "--store-root",
+        type=Path,
+        required=True,
+        help="SDK App Store root that contains the installed Application",
+    )
+    run_installed.add_argument(
+        "--app-id",
+        required=True,
+        help="Installed Application ID to run",
     )
     package = app_commands.add_parser(
         "package",
@@ -168,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
     if _is_desktop_only_app_command(arguments):
         print(
             json.dumps(
-                {"error": DESKTOP_APPLICATION_STORE_REQUIRED},
+                {"error": DAEMON_SELECTION_REQUIRED},
                 ensure_ascii=False,
             ),
             file=sys.stderr,
@@ -198,6 +220,11 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
         if args.command == "app" and args.app_command == "run":
             return run_application(args.application)
+        if args.command == "app" and args.app_command == "run-installed":
+            return run_installed_application(
+                store_root=args.store_root,
+                application_id=args.app_id,
+            )
         if args.command == "app" and args.app_command == "init":
             return _run_application_init(args)
         if is_distribution_command(args):
@@ -406,23 +433,45 @@ def runtime_status() -> dict[str, Any]:
     }
 
 
-def ensure_runtime() -> tuple[RuntimeProcessState, bool]:
-    existing = _live_runtime_state()
+def ensure_runtime(
+    *,
+    state_root: Path | None = None,
+    managed_app_root: Path | None = None,
+    ephemeral_ports: bool = False,
+) -> tuple[RuntimeProcessState, bool]:
+    resolved_state_root = (state_root or default_runtime_state_root()).resolve()
+    existing = _live_runtime_state(resolved_state_root)
     if existing is not None:
         return existing, True
 
-    state_root = default_runtime_state_root()
-    state_root.mkdir(parents=True, exist_ok=True)
-    log_path = state_root / "runtime.log"
+    resolved_state_root.mkdir(parents=True, exist_ok=True)
+    log_path = resolved_state_root / "runtime.log"
     command = [
-        sys.executable,
+        os.fspath(_background_python_executable(Path(sys.executable))),
         "-m",
         "watcherobot.runtime.daemon",
         "--state-root",
-        str(state_root),
-        "--managed-app-root",
-        str(Path(sys.executable).resolve().parent),
+        str(resolved_state_root),
     ]
+    if managed_app_root is not None:
+        command.extend(("--managed-app-root", str(managed_app_root.resolve())))
+    else:
+        command.extend(
+            ("--managed-app-root", str(Path(sys.executable).resolve().parent))
+        )
+    if ephemeral_ports:
+        command.extend(
+            (
+                "--control-port",
+                "0",
+                "--external-port",
+                "0",
+                "--pairing-port",
+                "0",
+                "--preview-udp-port",
+                "0",
+            )
+        )
     creation_flags = 0
     process_options: dict[str, Any] = {}
     if os.name == "nt":
@@ -447,7 +496,7 @@ def ensure_runtime() -> tuple[RuntimeProcessState, bool]:
 
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
-        state = _live_runtime_state()
+        state = _live_runtime_state(resolved_state_root)
         if state is not None:
             return state, False
         time.sleep(0.05)
@@ -457,6 +506,18 @@ def ensure_runtime() -> tuple[RuntimeProcessState, bool]:
     except OSError:
         pass
     raise CliError(f"Runtime failed to start. {details}".strip())
+
+
+def _background_python_executable(executable: Path) -> Path:
+    """Select a Python interpreter that cannot allocate a Windows terminal."""
+
+    resolved = Path(executable).resolve()
+    if os.name != "nt" or resolved.name.lower() != "python.exe":
+        return resolved
+    pythonw = resolved.with_name("pythonw.exe")
+    if pythonw.is_file():
+        return pythonw.resolve()
+    return resolved
 
 
 def stop_runtime() -> None:
@@ -476,7 +537,7 @@ def stop_runtime() -> None:
 def run_application(application: Path) -> int:
     application_path = Path(application).resolve()
     if application_path.suffix.lower() == ".wapp":
-        raise CliError(DESKTOP_APPLICATION_STORE_REQUIRED)
+        raise CliError(DAEMON_SELECTION_REQUIRED)
     if not application_path.is_dir():
         raise CliError(
             f"Application directory does not exist: {application_path}"
@@ -520,8 +581,85 @@ def run_application(application: Path) -> int:
         return 130
 
 
-def _live_runtime_state() -> RuntimeProcessState | None:
-    store = RuntimeStateStore(default_runtime_state_root())
+def run_installed_application(*, store_root: Path, application_id: str) -> int:
+    resolved_store_root = Path(store_root).resolve()
+    try:
+        applications = list_installed_applications(resolved_store_root)
+    except ApplicationInstallError as exc:
+        raise CliError(str(exc)) from exc
+    application = next(
+        (
+            item
+            for item in applications
+            if item.application_id == application_id and item.status == "installed"
+        ),
+        None,
+    )
+    if application is None:
+        raise CliError(
+            "Installed Application was not found or is not ready to run: "
+            f"{application_id}"
+        )
+
+    print(f"Running installed Application: {application.name}")
+    print(f"Application store: {resolved_store_root}")
+    state, _reused = ensure_runtime(
+        state_root=resolved_store_root / ".daemon-session",
+        managed_app_root=resolved_store_root,
+        ephemeral_ports=True,
+    )
+    print(f"Daemon external URL: {state.external_url}")
+    print("Press Ctrl+C to stop.")
+    _request_json(
+        state.control_url,
+        "/daemon/application/select",
+        method="POST",
+        payload={
+            "application_dir": str(application.application_root / "source"),
+            "launcher": {
+                "kind": "python",
+                "executable": str(
+                    application.application_root / ".venv" / _python_executable_name()
+                ),
+            },
+        },
+    )
+    _request_json(
+        state.control_url,
+        "/daemon/application/start",
+        method="POST",
+    )
+    return _wait_for_application_completion(state.control_url)
+
+
+def _python_executable_name() -> str:
+    return "Scripts/python.exe" if os.name == "nt" else "bin/python"
+
+
+def _wait_for_application_completion(control_url: str) -> int:
+    try:
+        while True:
+            status = _request_json(control_url, "/daemon/status")
+            application_status = status["application"]
+            if application_status["state"] in {"ended", "error"}:
+                final_state = str(application_status["state"])
+                print(f"Application finished: {final_state}")
+                return 0 if final_state == "ended" else 1
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        _request_json(
+            control_url,
+            "/daemon/application/stop",
+            method="POST",
+        )
+        print("Application stopped by user.")
+        return 130
+
+
+def _live_runtime_state(
+    state_root: Path | None = None,
+) -> RuntimeProcessState | None:
+    store = RuntimeStateStore(state_root or default_runtime_state_root())
     state = store.read()
     if state is None:
         return None

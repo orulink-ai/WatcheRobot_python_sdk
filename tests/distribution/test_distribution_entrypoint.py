@@ -14,7 +14,7 @@ from watcherobot.distribution.cli import build_parser
         ["daemon", "start"],
         ["bluetooth", "scan"],
         ["app", "run", "."],
-        ["app", "install", "demo.wapp"],
+        ["app", "select", "demo"],
     ],
 )
 def test_distribution_parser_rejects_runtime_commands(argv: list[str]) -> None:

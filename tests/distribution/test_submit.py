@@ -104,6 +104,11 @@ def test_submit_uses_published_snapshot_and_never_uploads_source(
     assert isinstance(description, str)
     assert "| Name | Demo |" in description
     assert "| Author | Developer |" in description
+    assert "| Icon | `icon.png` |" in description
+    assert (
+        "![Application icon](https://huggingface.co/spaces/"
+        f"{SPACE_ID}/resolve/{SPACE_COMMIT}/icon.png)"
+    ) in description
     assert f"[View fixed source]({result.source_url})" in description
 
 
@@ -122,7 +127,7 @@ def test_submit_can_target_an_explicit_published_commit(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("missing_field", ["description", "author", "icon"])
+@pytest.mark.parametrize("missing_field", ["description", "author"])
 def test_submit_requires_complete_storefront_metadata_before_remote_calls(
     tmp_path: Path,
     missing_field: str,
@@ -147,6 +152,30 @@ def test_submit_requires_complete_storefront_metadata_before_remote_calls(
     assert credentials.load_count == 0
     assert identity_hub.calls == []
     assert hub.calls == []
+
+
+def test_submit_allows_missing_icon_and_uses_default_display(
+    tmp_path: Path,
+) -> None:
+    write_application(tmp_path, icon="")
+    hub = FakePublishHub(remote_manifest=manifest_document(icon=""))
+
+    result = _submit(tmp_path, hub)
+
+    assert result.pr_status == "pending"
+    assert [name for name, _ in hub.calls] == [
+        "head",
+        "read_space_file",
+        "read_catalog",
+        "list_prs",
+        "create_pr",
+    ]
+    create_pr_call = hub.calls[-1][1]
+    assert isinstance(create_pr_call, tuple)
+    description = create_pr_call[5]
+    assert isinstance(description, str)
+    assert "| Icon | Default WatcherRobot icon |" in description
+    assert "![Application icon]" not in description
 
 
 def test_submit_rejects_local_manifest_that_differs_from_fixed_source(

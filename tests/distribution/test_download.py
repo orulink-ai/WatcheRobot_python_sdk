@@ -187,6 +187,35 @@ def test_download_validates_in_isolation_then_delivers_exact_source(
     assert not isolated_target.exists()
 
 
+def test_download_excludes_hugging_face_local_metadata_from_delivered_source(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "caller-staging"
+    target.mkdir()
+
+    class MetadataHub(FakeSnapshotHub):
+        def download_space_snapshot(self, **kwargs):
+            revision = super().download_space_snapshot(**kwargs)
+            metadata = kwargs["target"] / ".cache" / "huggingface"
+            metadata.mkdir(parents=True)
+            metadata.joinpath("app.py.metadata").write_text(
+                "transport metadata",
+                encoding="utf-8",
+            )
+            return revision
+
+    download_application_snapshot(
+        space_id=SPACE_ID,
+        commit=COMMIT,
+        target=target,
+        hub=MetadataHub(),
+        watcherobot_version="1.5.0",
+    )
+
+    assert target.joinpath("app.py").is_file()
+    assert not target.joinpath(".cache", "huggingface").exists()
+
+
 def test_wrong_resolved_commit_leaves_target_empty(tmp_path: Path) -> None:
     target = tmp_path / "caller-staging"
     target.mkdir()

@@ -9,8 +9,14 @@ import tempfile
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
+
+from watcherobot.application.ignore import (
+    APPLICATION_IGNORE_FILE,
+    ApplicationIgnoreError,
+    is_application_path_ignored,
+    load_application_ignore_patterns,
+)
 
 from watcherobot.runtime.daemon.application.manifest import (
     ApplicationManifest,
@@ -19,7 +25,6 @@ from watcherobot.runtime.daemon.application.manifest import (
 
 MAX_PACKAGE_FILES = 1000
 MAX_PACKAGE_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
-_PACKAGE_IGNORE_FILE = ".wappignore"
 PROTECTED_APPLICATION_IDS = frozenset({"watcher_default"})
 
 
@@ -226,20 +231,23 @@ def package_application(
     except ApplicationManifestError as exc:
         raise CatalogPackageError(str(exc)) from exc
 
-    ignore_patterns = _load_package_ignore_patterns(source)
+    try:
+        ignore_patterns = load_application_ignore_patterns(source)
+    except ApplicationIgnoreError as exc:
+        raise CatalogPackageError(str(exc)) from exc
     files = []
     for path in sorted(source.rglob("*")):
         if not path.is_file() or path.resolve() == output:
             continue
         relative = path.relative_to(source)
-        if relative.as_posix() == _PACKAGE_IGNORE_FILE:
+        if relative.as_posix() == APPLICATION_IGNORE_FILE:
             continue
         if any(
             part in {".git", "__pycache__", ".pytest_cache"}
             for part in relative.parts
         ):
             continue
-        if _is_package_path_ignored(relative, ignore_patterns):
+        if is_application_path_ignored(relative, ignore_patterns):
             continue
         files.append(path)
     if len(files) > MAX_PACKAGE_FILES:
@@ -268,44 +276,6 @@ def package_application(
         except FileNotFoundError:
             pass
     return output
-
-
-def _load_package_ignore_patterns(source: Path) -> tuple[str, ...]:
-    ignore_path = source / _PACKAGE_IGNORE_FILE
-    if not ignore_path.is_file():
-        return ()
-    try:
-        lines = ignore_path.read_text(encoding="utf-8").splitlines()
-    except OSError as exc:
-        raise CatalogPackageError(
-            f"Cannot read {_PACKAGE_IGNORE_FILE}: {exc}"
-        ) from exc
-    return tuple(
-        line.strip().replace("\\", "/")
-        for line in lines
-        if line.strip() and not line.lstrip().startswith("#")
-    )
-
-
-def _is_package_path_ignored(
-    relative_path: Path,
-    patterns: tuple[str, ...],
-) -> bool:
-    relative = PurePosixPath(relative_path.as_posix())
-    text = relative.as_posix()
-    for pattern in patterns:
-        if pattern.endswith("/"):
-            prefix = pattern.rstrip("/")
-            ancestors = (
-                "/".join(relative.parts[:depth])
-                for depth in range(1, len(relative.parts))
-            )
-            if any(fnmatchcase(ancestor, prefix) for ancestor in ancestors):
-                return True
-            continue
-        if relative.match(pattern):
-            return True
-    return False
 
 
 def _extract_package(archive: Path, destination: Path) -> None:

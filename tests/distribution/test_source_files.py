@@ -42,6 +42,29 @@ def test_source_file_set_excludes_local_and_generated_content(
     ]
 
 
+def test_source_file_set_honors_wappignore_and_never_uploads_the_ignore_file(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "app.json", "{}")
+    _write(tmp_path / "app.py", "print('demo')")
+    _write(
+        tmp_path / ".wappignore",
+        "artifacts/\n*.log\nface_recognition_demo/data/\n",
+    )
+    _write(tmp_path / "artifacts" / "camera.jpg", "private")
+    _write(tmp_path / "debug.log", "local")
+    _write(tmp_path / "face_recognition_demo" / "data" / "people.json", "{}")
+    _write(tmp_path / "face_recognition_demo" / "models" / "model.bin", "model")
+
+    files = collect_application_source_files(tmp_path)
+
+    assert [path.as_posix() for path in files] == [
+        "app.json",
+        "app.py",
+        "face_recognition_demo/models/model.bin",
+    ]
+
+
 def test_source_file_set_rejects_symlink_that_could_escape_snapshot(
     tmp_path: Path,
 ) -> None:

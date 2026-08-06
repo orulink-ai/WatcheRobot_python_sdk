@@ -24,6 +24,7 @@ def test_app_help_describes_the_supported_developer_workflow(capsys) -> None:
     for command in (
         "init",
         "run",
+        "run-installed",
         "package",
         "check",
         "login",
@@ -32,15 +33,14 @@ def test_app_help_describes_the_supported_developer_workflow(capsys) -> None:
         "submit",
         "marketplace",
         "download",
+        "install",
+        "list",
+        "uninstall",
         "start",
         "stop",
     ):
         assert re.search(rf"(?m)^\s+{command}\s+", output)
-    for desktop_only_command in ("install", "list", "select", "uninstall"):
-        assert not re.search(
-            rf"(?m)^\s+{desktop_only_command}(?:\s+|$)",
-            output,
-        )
+    assert not re.search(r"(?m)^\s+select(?:\s+|$)", output)
     assert "Typical workflow" in output
     assert "For manual use, omit --jsonl" in output
 
@@ -67,9 +67,19 @@ def test_distribution_sidecar_help_contains_only_distribution_commands(
         "submit",
         "marketplace",
         "download",
+        "install",
+        "list",
+        "uninstall",
     ):
         assert re.search(rf"(?m)^\s+{command}\s+", output)
-    for runtime_command in ("init", "run", "package", "start", "stop"):
+    for runtime_command in (
+        "init",
+        "run",
+        "run-installed",
+        "package",
+        "start",
+        "stop",
+    ):
         assert not re.search(rf"(?m)^\s+{runtime_command}(?:\s+|$)", output)
 
 
@@ -119,6 +129,9 @@ def test_app_init_creates_project_without_starting_daemon(
     assert "Next:" in captured.out
     assert f"watcherobot app check \"{target.resolve()}\"" in captured.out
     assert target.joinpath("app.json").is_file()
+    assert "await asyncio.Event().wait()" in target.joinpath("app.py").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_app_init_prompts_for_metadata_in_an_interactive_terminal(
@@ -174,15 +187,15 @@ def test_app_init_requires_flags_when_input_is_not_interactive(
     assert not target.exists()
 
 
-def test_desktop_only_legacy_command_still_returns_migration_guidance(
+def test_daemon_selection_command_still_returns_migration_guidance(
     capsys,
 ) -> None:
-    exit_code = main(["app", "list"])
+    exit_code = main(["app", "select"])
 
     captured = capsys.readouterr()
     assert exit_code == 2
     assert captured.out == ""
-    assert "Watcher Desktop Application Store" in captured.err
+    assert "Daemon selection" in captured.err
 
 
 @pytest.mark.parametrize(

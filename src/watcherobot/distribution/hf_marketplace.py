@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import time
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
@@ -26,6 +27,8 @@ from .ports import (
 
 
 _FULL_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+_METADATA_REMOVE_ATTEMPTS = 5
+_METADATA_REMOVE_DELAY_SECONDS = 0.1
 PublicApiFactory = Callable[[], Any]
 
 
@@ -229,12 +232,16 @@ def _remove_hub_local_metadata(destination: Path) -> None:
         raise HubInvalidResponse(
             "Hugging Face local download metadata path is unsafe"
         )
-    try:
-        shutil.rmtree(metadata)
-    except OSError as exc:
-        raise HubInvalidResponse(
-            "Hugging Face local download metadata cannot be removed"
-        ) from exc
+    for attempt in range(_METADATA_REMOVE_ATTEMPTS):
+        try:
+            shutil.rmtree(metadata)
+            break
+        except OSError:
+            if not metadata.exists():
+                break
+            if attempt == _METADATA_REMOVE_ATTEMPTS - 1:
+                break
+            time.sleep(_METADATA_REMOVE_DELAY_SECONDS * (attempt + 1))
     try:
         metadata.parent.rmdir()
     except OSError:
