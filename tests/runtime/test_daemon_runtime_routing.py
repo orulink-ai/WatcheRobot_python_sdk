@@ -312,6 +312,33 @@ def test_preview_frames_prefer_the_active_application_device_channel(
     asyncio.run(scenario())
 
 
+def test_daemon_starts_without_a_selected_application(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        runtime = DaemonRuntime(
+            application_dir=tmp_path / "unselected",
+            current_app=None,
+            external_host="127.0.0.1",
+            external_port=0,
+            control_port=0,
+            pairing_udp_port=0,
+            preview_udp_port=0,
+        )
+
+        await runtime.start()
+        try:
+            assert runtime.application_status() == {
+                "selected": False,
+                "current_app": None,
+                "state": "not_selected",
+                "process_id": None,
+                "last_exit_code": None,
+            }
+        finally:
+            await runtime.stop()
+
+    asyncio.run(scenario())
+
+
 async def _connect_as(runtime: DaemonRuntime, role: str):
     if role == "hardware":
         return await connect_runtime_hardware(runtime)

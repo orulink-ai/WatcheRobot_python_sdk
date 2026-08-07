@@ -17,7 +17,10 @@ dependencies = [
   "huggingface-hub>=1.26,<2",
   "keyring>=25.7,<26",
   "packaging>=24,<27",
+  "Pillow>=11,<13",
   "psutil>=5.9,<8",
+  "pyserial>=3.5,<4",
+  "esptool>=4.8,<6",
   "starlette>=0.51,<1",
   "uvicorn>=0.30,<1",
   "websockets>=14,<16",
@@ -48,6 +51,7 @@ test = [
   "mypy>=1.10,<2",
   "pytest>=8",
   "types-psutil>=5.9",
+  "types-pyserial>=3.5",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -67,6 +67,18 @@ class AnimationDomain(_Domain):
         self._robot._command("ctrl.animation.stop", {})
 
 
+class ExpressionDomain(_Domain):
+    """Play named expression resources installed in the official SD catalog."""
+
+    def play_official(self, resource_id: str) -> None:
+        WorkDomain._validate_id(resource_id, field_name="resource_id")
+        self._robot._require_capability("resource.expression.official")
+        self._robot._command(
+            "resource.expression.play",
+            {"source": "official", "resource_id": resource_id},
+        )
+
+
 class MotionDomain(_Domain):
     def move_to(
         self,
@@ -142,6 +154,44 @@ class AudioDomain(_Domain):
 
     def stop(self) -> None:
         self._robot._stop_audio_playback()
+
+
+class WorkDomain(_Domain):
+    """Control Creator Mode works already installed on the robot SD card."""
+
+    @staticmethod
+    def _validate_id(value: str, *, field_name: str = "work_id") -> None:
+        if not isinstance(value, str) or re.fullmatch(r"[a-z][a-z0-9_]{0,22}", value) is None:
+            raise ValueError(
+                f"{field_name} must start with a lowercase letter and contain at most "
+                "23 lowercase letters, digits, or underscores"
+            )
+
+    @staticmethod
+    def _validate_clip_id(clip_id: str) -> None:
+        if not isinstance(clip_id, str) or re.fullmatch(r"[A-Za-z0-9_.:-]{1,96}", clip_id) is None:
+            raise ValueError(
+                "clip_id must contain 1 to 96 letters, digits, dots, underscores, colons, or dashes"
+            )
+
+    def play(self, work_id: str) -> None:
+        self._validate_id(work_id)
+        self._robot._command("resource.work.play", {"work_id": work_id})
+
+    def play_expression(self, work_id: str, *, clip_id: str) -> None:
+        """Play one authored expression clip from an installed SD work."""
+
+        self._validate_id(work_id)
+        self._validate_clip_id(clip_id)
+        self._robot._require_capability("resource.work.expression.play")
+        self._robot._command(
+            "resource.expression.play",
+            {"source": "work", "work_id": work_id, "clip_id": clip_id},
+        )
+
+    def delete(self, work_id: str) -> None:
+        self._validate_id(work_id)
+        self._robot._command("resource.work.delete", {"work_id": work_id})
 
 
 class LightsDomain(_Domain):
@@ -313,6 +363,8 @@ class WatcheRobot:
         self.animation = AnimationDomain(self)
         self.motion = MotionDomain(self)
         self.audio = AudioDomain(self)
+        self.expressions = ExpressionDomain(self)
+        self.works = WorkDomain(self)
         self.lights = LightsDomain(self)
         self.microphone = MicrophoneDomain(self)
         self.camera = CameraDomain(self)
@@ -341,6 +393,12 @@ class WatcheRobot:
         if not isinstance(capability, str) or not capability:
             raise ValueError("capability must be a non-empty string")
         return capability in self.capabilities
+
+    def _require_capability(self, capability: str) -> None:
+        if capability not in self.capabilities:
+            raise WatcheRobotError(
+                f"robot firmware does not advertise {capability}; update the firmware before using this API"
+            )
 
     def close(self) -> None:
         with self._media_lock:
