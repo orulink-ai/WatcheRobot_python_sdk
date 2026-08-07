@@ -57,7 +57,8 @@ CHUNK_BYTES = 4096
 SPACE_RESERVE_BYTES = 4 * 1024 * 1024
 REPLACEMENT_TIMEOUT_SECONDS = 300
 FIRMWARE_READY_TIMEOUT_SECONDS = 45
-SD_ACTIVATION_TIMEOUT_SECONDS = 900
+SD_ACTIVATION_TIMEOUT_SECONDS = 1800
+SD_ACTIVATION_STALL_TIMEOUT_SECONDS = 120
 WORK_DISCOVERY_HANDSHAKE_ATTEMPTS = 4
 WORK_DISCOVERY_RESPONSE_TIMEOUT_SECONDS = 0.75
 WORK_ASSET_CHECK_TIMEOUT_SECONDS = 2.0
@@ -1307,15 +1308,34 @@ def _wait_for_sd_activation(
     progress: Progress,
     *,
     timeout_seconds: float = SD_ACTIVATION_TIMEOUT_SECONDS,
+    stall_timeout_seconds: float = SD_ACTIVATION_STALL_TIMEOUT_SECONDS,
 ) -> list[str]:
-    """Wait for device progress and DONE without changing the active transfer baudrate."""
+    """Wait for DONE while distinguishing a slow install from a stalled device.
 
-    deadline = time.monotonic() + timeout_seconds
+    Every valid STATUS frame refreshes the stall deadline.  The independent
+    total deadline still bounds a device that keeps emitting heartbeats but
+    never completes.  Older firmware remains compatible because its existing
+    phase STATUS frames are valid heartbeats as well.
+    """
+
+    started_at = time.monotonic()
+    deadline = started_at + timeout_seconds
+    stall_deadline = started_at + min(timeout_seconds, stall_timeout_seconds)
+    last_phase = "installing"
+    last_progress = 82
+    last_detail = "设备尚未返回安装进度。"
     protocol.set_read_timeout(0.25)
-    while time.monotonic() < deadline:
+    while (now := time.monotonic()) < deadline:
+        if now >= stall_deadline:
+            raise MaintenanceError(
+                f"设备在 {stall_timeout_seconds:g} 秒内没有返回新的安装心跳；"
+                f"最后阶段 {last_phase}（{last_progress}%）：{last_detail}"
+            )
         line = protocol.read_line()
         status = _parse_sd_install_status(line)
         if status is not None:
+            last_phase, last_progress, last_detail = status
+            stall_deadline = min(deadline, time.monotonic() + stall_timeout_seconds)
             progress(*status)
             continue
         completed = _parse_sd_activation_response(line, expected_version)
@@ -1324,7 +1344,8 @@ def _wait_for_sd_activation(
             return completed
 
     raise MaintenanceError(
-        f"资源已上传，但设备未在 {timeout_seconds:g} 秒内确认启用 {expected_version}。"
+        f"资源已上传，但设备未在 {timeout_seconds:g} 秒内确认启用 {expected_version}；"
+        f"最后阶段 {last_phase}（{last_progress}%）：{last_detail}"
     )
 
 

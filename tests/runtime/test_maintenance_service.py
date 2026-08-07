@@ -304,6 +304,27 @@ def test_sd_install_status_requires_bounded_numeric_progress() -> None:
     assert _parse_sd_install_status("WRSD/2 STATUS extracting invalid") is None
 
 
+def test_sd_activation_reports_last_heartbeat_when_device_stalls(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeProtocol:
+        def set_read_timeout(self, timeout: float) -> None:
+            assert timeout == 0.25
+
+        def read_line(self) -> str:
+            return "WRSD/2 STATUS extract_write 87 file=demo.animpack;files=2/92;bytes=1048576;total=72312857;bps=65536"
+
+    moments = iter((0.0, 0.0, 1.0, 3.0))
+    monkeypatch.setattr(maintenance_service.time, "monotonic", lambda: next(moments))
+
+    with pytest.raises(MaintenanceError, match=r"extract_write.*87%.*demo\.animpack"):
+        _wait_for_sd_activation(
+            FakeProtocol(),  # type: ignore[arg-type]
+            "v0.0.8",
+            lambda *_args: None,
+            timeout_seconds=10,
+            stall_timeout_seconds=2,
+        )
+
+
 def test_flash_zip_requires_complete_layout(tmp_path: Path) -> None:
     package = tmp_path / "firmware.zip"
     with ZipFile(package, "w") as archive:

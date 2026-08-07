@@ -104,6 +104,16 @@ The maintenance REST surface is deliberately transport-neutral:
 Reader writes are atomic at `/watche/works/<work_id>` and preserve
 `/watche/official`, `/watche/assets`, and every other work. Serial writes use the
 firmware `WRSD/2` work transaction and require the advertised work capabilities.
+
+### Serial official-resource activation timeouts
+
+Official SD resources remain reinstallable when the selected version equals the
+device version. After upload, the Daemon accepts backward-compatible `WRSD/2
+STATUS` frames as heartbeats. A valid status refreshes the 120-second stall
+deadline, while an independent 30-minute total deadline bounds a device that is
+alive but never completes. Timeout errors include the last device phase,
+percentage, file and byte/speed detail when the firmware provides them; the
+Daemon never treats an equal version as a reason to skip installation.
 Neither path opens a second device business channel: application playback still
 uses `robot.works.play()` through the Daemon-managed Device channel.
 
