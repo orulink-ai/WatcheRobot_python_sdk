@@ -6,6 +6,14 @@ they can run without the desktop through the CLI and Runtime control API. The
 desktop uses this same Runtime/Daemon implementation to launch the bundled
 default Application and SDK-built Applications.
 
+The Application Marketplace SDK contracts, versions, error codes, and
+implementation evidence are indexed in
+[`docs/application-marketplace/README.md`](docs/application-marketplace/README.md).
+To test the current SDK Application and publishing flow step by step, use the
+[English SDK Application guide](docs/application-marketplace/sdk-application-usage.md).
+A [Chinese version](docs/application-marketplace/sdk-application-usage.zh-CN.md)
+is also available.
+
 ## Install and run
 
 Use an isolated virtual environment and install this checkout in editable mode:
@@ -62,17 +70,106 @@ watcherobot daemon start
 watcherobot daemon status
 watcherobot daemon stop
 
-watcherobot app package .\examples\hello_robot .\dist\hello_robot.wapp
-watcherobot app install .\dist\hello_robot.wapp
-watcherobot app list
-watcherobot app select example.hello_robot --version 1.0.0
+watcherobot app init .\my_app
+watcherobot app check .\my_app
+watcherobot app login
+watcherobot app login --status
+watcherobot app publish .\my_app
+watcherobot app submit .\my_app
+watcherobot app marketplace
+watcherobot app marketplace --details
+watcherobot app download --space-id <user>/WatcherRobot-<app_id> --commit <40-char-sha> --target .\staging\app
+watcherobot app install --space-id <user>/WatcherRobot-<app_id> --commit <40-char-sha> --store-root <app-store-dir> --runtime-root <locked-app-runtime-dir>
+watcherobot app list --store-root <app-store-dir>
+watcherobot app run-installed --store-root <app-store-dir> --app-id <app_id>
+watcherobot app uninstall --store-root <app-store-dir> --app-id <app_id>
+watcherobot app logout
 watcherobot app start
 watcherobot app stop
-watcherobot app uninstall example.hello_robot --version 1.0.0
 ```
 
-For larger Applications, add a `.wappignore` file using glob patterns such as
-`tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not packaged.
+`app run` accepts a source directory for local development. The SDK owns
+download, installation, inventory, and removal. It installs every reviewed
+immutable snapshot below one SDK App Store root, creates one isolated `.venv`
+per App, and records the installed commit. `--runtime-root` must point to the
+locked Application Runtime bundled with Desktop. Selecting, starting, and
+stopping the current Application remain Daemon management actions.
+
+`watcherobot app run-installed --store-root ... --app-id ...` is the SDK
+developer-test path for an App installed into a custom store. It reads the SDK
+installation record, starts or reuses an isolated Daemon rooted at that store,
+and launches the App with its own `.venv`. It uses ephemeral ports and never
+reuses or modifies the Desktop Daemon. Desktop production installs into its own
+managed store and remains responsible for selection and start/stop in its UI.
+
+`watcherobot app init <new-directory>` creates a complete publish-ready project
+without starting the Daemon or overwriting an existing path. In a terminal it
+prompts for the Application ID, display name, author, and description; scripts
+can provide `--id`, `--name`, `--author`, and `--description`. The generated
+`app.json` uses version `0.1.0`, derives a bounded compatibility range from the
+installed SDK, and includes a default `icon.svg`.
+
+`watcherobot app check <directory>` validates the canonical `app.json`, fixed
+`app.py`, SDK compatibility, standard Python dependency requirements, icon
+path, and the source set that can later be published. It does not start the
+Daemon. Desktop callers use `--jsonl`; stdout then contains only one
+`progress`, `result`, or `error` JSON object per line.
+
+`watcherobot app login` uses the Watcher Desktop public OAuth Device Flow. It
+prints the Hugging Face authorization URL and user code, then saves the token
+only in Watcher's operating-system credential entry after the identity has
+been verified. `--force` starts a new authorization even when the saved token
+is valid. `app login --status` verifies the saved identity, and `app logout`
+deletes only Watcher's credential. These commands do not start the Daemon and
+also support `--jsonl` for Desktop callers.
+
+`watcherobot app publish <directory>` first performs the same local checks,
+then creates or updates the public
+`<hf_username>/WatcherRobot-<app_id>` Hugging Face Space with the exact source
+snapshot. The Space is a source repository only: publishing does not generate
+a web page. A successful result contains the Space and fixed source commit; it
+does not read or modify the official Catalog. The command does not start the
+Daemon and supports `--jsonl` for Desktop callers.
+
+`watcherobot app submit <directory>` requires non-empty `description` and
+`author`, verifies the already-published fixed snapshot, and opens or reuses
+the official Catalog pull request without uploading source. `icon` is optional:
+when present it is verified at the fixed revision; when absent, presentation
+clients use the default WatcherRobot Application icon. Add
+`--commit <40-char-sha>` to submit an exact published revision; otherwise the
+current Space HEAD is used. The PR renders the reviewed manifest and fixed
+source link, plus the fixed-revision icon when one was provided.
+
+`watcherobot app marketplace` publicly loads and validates the official
+Application list and each reviewed `app.json` at its fixed commit. The result
+contains the observed Dataset commit and structured Applications, including
+SDK compatibility and fixed source links. It needs no Hugging Face login,
+does not start the Daemon or mutate local state, and supports `--jsonl` for
+Desktop callers. Desktop owns any last-successful-result cache.
+The default terminal output is a compact compatibility table; add `--details`
+to inspect the full manifest, immutable source URL, commit, and dependencies.
+Use `--jsonl` only for Desktop or another machine caller.
+
+`watcherobot app download --space-id ... --commit ... --target ...` publicly
+downloads one immutable Space revision into a caller-created, existing empty
+staging directory. It verifies the resolved commit, source limits, canonical
+Manifest, fixed `app.py`, SDK compatibility, and the Space/App identity before
+delivery. It needs no Hugging Face login, does not start the Daemon, does not
+choose the final App Store directory or write `install.json`; use `app install`
+for that atomic local-store operation. Both commands support `--jsonl` for
+Desktop callers.
+
+`watcherobot app install --space-id ... --commit ... --store-root ...
+--runtime-root ...` downloads the reviewed immutable snapshot, verifies and
+copies the locked Runtime when needed, creates that App's isolated Python
+environment, validates dependencies and the entry point, then atomically writes
+the installation record. `app list --store-root ...` reads installed records and
+`app uninstall --store-root ... --app-id ...` moves one App to recoverable local
+trash. These commands never start or contact the Daemon.
+
+For larger Applications, add a `.watcherignore` file using glob patterns such as
+`tests/`, `.venv*/`, and `*.tmp`; the ignore file itself is not included in the
+published snapshot.
 
 ## Bluetooth Wi-Fi provisioning
 

@@ -16,7 +16,7 @@ def test_readmes_document_managed_application_and_runtime_cli() -> None:
         assert "app.logger" in readme
         assert "watcherobot app run" in readme
         assert "watcherobot daemon start" in readme
-        assert ".wapp" in readme
+        assert "watcherobot app package" not in readme
         assert "WatcheRobot.connect" not in readme
         assert "BackgroundTransport" not in readme
         assert "SDK_DISCOVER" not in readme

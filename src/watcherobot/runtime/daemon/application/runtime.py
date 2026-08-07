@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import psutil
@@ -14,6 +13,11 @@ from watcherobot.runtime.daemon.application.bridge import (
     LocalWebSocketApplicationBridge,
 )
 from watcherobot.runtime.daemon.application.logging import ApplicationLogService
+from watcherobot.runtime.daemon.application.launcher import (
+    ApplicationLauncher,
+    ApplicationLauncherKind,
+    ApplicationLaunchSpec,
+)
 from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 from watcherobot.runtime.daemon.application.session import (
     ApplicationChannel,
@@ -35,20 +39,6 @@ class ApplicationStartError(ApplicationRuntimeError):
 DEFAULT_APPLICATION_STARTUP_TIMEOUT = 30.0
 
 
-def resolve_application_command(
-    *,
-    application_dir: Path,
-    python_executable: str = sys.executable,
-    frozen: bool | None = None,
-) -> tuple[str, ...]:
-    """Resolve the child command for source and frozen shared runtimes."""
-
-    is_frozen = bool(getattr(sys, "frozen", False)) if frozen is None else frozen
-    if is_frozen:
-        return (python_executable, "--application")
-    return (python_executable, str(Path(application_dir).resolve() / "app.py"))
-
-
 class ApplicationRuntimeManager:
     """Start, observe, and stop the selected Application process tree."""
 
@@ -57,17 +47,14 @@ class ApplicationRuntimeManager:
         *,
         application_dir: Path,
         current_app: str,
-        python_executable: str = sys.executable,
+        application_launcher: ApplicationLauncher,
         startup_timeout: float = DEFAULT_APPLICATION_STARTUP_TIMEOUT,
         stop_timeout: float = 5.0,
         log_service: ApplicationLogService | None = None,
     ) -> None:
         self._application_dir = Path(application_dir).resolve()
-        self._python_executable = python_executable
-        self._application_command = resolve_application_command(
-            application_dir=self._application_dir,
-            python_executable=python_executable,
-        )
+        self._application_launcher = application_launcher
+        self._launch_spec: ApplicationLaunchSpec | None = None
         self._startup_timeout = startup_timeout
         self._stop_timeout = stop_timeout
         self._log_service = log_service
@@ -91,9 +78,16 @@ class ApplicationRuntimeManager:
             return None
         return process.pid
 
+    @property
+    def launch_spec(self) -> ApplicationLaunchSpec | None:
+        return self._launch_spec
+
     def select_application(
         self,
         application_dir: Path,
+        *,
+        launcher_kind: str | ApplicationLauncherKind,
+        launcher_executable: Path,
     ) -> ApplicationManifest:
         """Select a validated Application while preserving the Runtime."""
 
@@ -101,14 +95,16 @@ class ApplicationRuntimeManager:
             raise SessionOccupiedError(
                 "Application cannot change while a process exists"
             )
-        selected_dir = Path(application_dir).resolve()
+        launch_spec = self._application_launcher.build_spec(
+            application_dir=Path(application_dir),
+            kind=launcher_kind,
+            executable=launcher_executable,
+        )
+        selected_dir = launch_spec.application_dir
         manifest = ApplicationManifest.load(selected_dir)
         self.registry.set_current_app(manifest.app_id)
         self._application_dir = selected_dir
-        self._application_command = resolve_application_command(
-            application_dir=selected_dir,
-            python_executable=self._python_executable,
-        )
+        self._launch_spec = launch_spec
         self.last_state = ApplicationState.NOT_RUNNING
         self.last_exit_code = None
         return manifest
@@ -118,11 +114,27 @@ class ApplicationRuntimeManager:
             if self._process is not None or self.registry.active_run is not None:
                 raise SessionOccupiedError("an Application process already exists")
 
+            if self._launch_spec is None:
+                raise ApplicationStartError(
+                    "No controlled Application launch specification is selected"
+                )
+
             manifest = ApplicationManifest.load(self._application_dir)
             if manifest.app_id != self.registry.current_app:
                 raise ApplicationStartError(
                     "Application manifest id does not match current app"
                 )
+            refreshed_spec = self._application_launcher.build_spec(
+                application_dir=self._launch_spec.application_dir,
+                kind=self._launch_spec.kind,
+                executable=self._launch_spec.executable,
+            )
+            if refreshed_spec.app_id != self.registry.current_app:
+                raise ApplicationStartError(
+                    "Application launch spec does not match current app"
+                )
+            self._launch_spec = refreshed_spec
+            command = tuple(os.fspath(item) for item in refreshed_spec.command)
 
             run = self.registry.begin_start()
             self.last_state = ApplicationState.STARTING
@@ -130,7 +142,7 @@ class ApplicationRuntimeManager:
             await self.bridge.start()
             try:
                 self._process = await asyncio.create_subprocess_exec(
-                    *self._application_command,
+                    *command,
                     cwd=str(self._application_dir),
                     env=self._build_environment(run),
                     stdout=(
@@ -143,11 +155,7 @@ class ApplicationRuntimeManager:
                         if self._log_service is not None
                         else asyncio.subprocess.DEVNULL
                     ),
-                    creationflags=(
-                        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP")
-                        if os.name == "nt"
-                        else 0
-                    ),
+                    creationflags=_application_creation_flags(),
                 )
             except Exception:
                 await self.bridge.stop()
@@ -207,8 +215,12 @@ class ApplicationRuntimeManager:
 
     def _build_environment(self, run: ApplicationRun) -> dict[str, str]:
         environment = dict(os.environ)
+        for name in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"):
+            environment.pop(name, None)
         environment.update(
             {
+                "PYTHONNOUSERSITE": "1",
+                "PYTHONUNBUFFERED": "1",
                 "WATCHER_APP_ID": run.app_id,
                 "WATCHER_APP_RUN_CREDENTIAL": run.credential,
                 "WATCHER_APP_DESKTOP_WS_URL": self.bridge.channel_url(
@@ -382,6 +394,18 @@ class ApplicationRuntimeManager:
         self._log_tasks = []
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _application_creation_flags() -> int:
+    """Keep Windows Application subprocesses detached from any terminal host."""
+
+    if os.name != "nt":
+        return 0
+    return (
+        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        | getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    )
 
 
 def _terminate_process_tree(pid: int, timeout: float) -> None:

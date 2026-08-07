@@ -6,6 +6,12 @@ from .manifest import (
     ApplicationManifestError,
 )
 from .client import ApplicationCommunicators
+from .launcher import (
+    ApplicationLaunchError,
+    ApplicationLauncher,
+    ApplicationLauncherKind,
+    ApplicationLaunchSpec,
+)
 from .runtime import ApplicationRuntimeManager, ApplicationStartError
 from .session import (
     ApplicationChannel,
@@ -21,6 +27,10 @@ __all__ = [
     "ApplicationChannel",
     "ApplicationCommunicators",
     "ApplicationCompatibilityError",
+    "ApplicationLaunchError",
+    "ApplicationLauncher",
+    "ApplicationLauncherKind",
+    "ApplicationLaunchSpec",
     "ApplicationManifest",
     "ApplicationManifestError",
     "ApplicationRun",

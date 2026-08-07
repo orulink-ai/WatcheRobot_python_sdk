@@ -5,6 +5,7 @@ import asyncio
 import httpx
 from fastapi.testclient import TestClient
 
+from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchError
 from watcherobot.runtime.daemon.application.runtime import ApplicationStartError
 from watcherobot.runtime.daemon.application.session import (
     ApplicationRun,
@@ -33,6 +34,8 @@ class _ControllerStub:
         self.cancel_requests = 0
         self.disconnect_requests = 0
         self.selected_application_dir: str | None = None
+        self.selected_launcher: tuple[str, str] | None = None
+        self.select_error: Exception | None = None
         self.shutdown_requested = False
         self.logs = [
             {
@@ -111,8 +114,16 @@ class _ControllerStub:
         )
         return True
 
-    def select_application(self, application_dir: str) -> dict:
+    def select_application(
+        self,
+        application_dir: str,
+        launcher_kind: str,
+        launcher_executable: str,
+    ) -> dict:
+        if self.select_error is not None:
+            raise self.select_error
         self.selected_application_dir = application_dir
+        self.selected_launcher = (launcher_kind, launcher_executable)
         self.current_app = "selected_app"
         self.state = ApplicationState.NOT_RUNNING
         return self.application_status()
@@ -306,12 +317,100 @@ def test_control_rest_selects_application_and_requests_runtime_shutdown() -> Non
 
     selected = client.post(
         "/daemon/application/select",
-        json={"application_dir": "C:/apps/demo"},
+        json={
+            "application_dir": "C:/apps/demo/source",
+            "launcher": {
+                "kind": "python",
+                "executable": "C:/apps/demo/.venv/Scripts/python.exe",
+            },
+        },
     )
     stopped = client.post("/daemon/stop")
 
     assert selected.status_code == 200
     assert selected.json()["application"]["current_app"] == "selected_app"
-    assert controller.selected_application_dir == "C:/apps/demo"
+    assert controller.selected_application_dir == "C:/apps/demo/source"
+    assert controller.selected_launcher == (
+        "python",
+        "C:/apps/demo/.venv/Scripts/python.exe",
+    )
     assert stopped.status_code == 202
     assert controller.shutdown_requested is True
+
+
+def test_control_rest_rejects_legacy_or_arbitrary_launcher_requests() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    legacy = client.post(
+        "/daemon/application/select",
+        json={"application_dir": "C:/apps/demo/source"},
+    )
+    arbitrary_arguments = client.post(
+        "/daemon/application/select",
+        json={
+            "application_dir": "C:/apps/demo/source",
+            "launcher": {
+                "kind": "python",
+                "executable": "C:/apps/demo/.venv/Scripts/python.exe",
+                "args": ["-c", "arbitrary code"],
+            },
+        },
+    )
+
+    assert legacy.status_code == 422
+    assert arbitrary_arguments.status_code == 422
+    assert controller.selected_application_dir is None
+
+
+def test_control_rest_maps_invalid_launcher_to_stable_error() -> None:
+    controller = _ControllerStub()
+    controller.select_error = ApplicationLaunchError(
+        "launcher escaped its controlled root"
+    )
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    response = client.post(
+        "/daemon/application/select",
+        json={
+            "application_dir": "C:/apps/demo/source",
+            "launcher": {
+                "kind": "python",
+                "executable": "C:/outside/python.exe",
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": "invalid_application_launcher",
+        "message": "launcher escaped its controlled root",
+    }
+
+
+def test_control_rest_does_not_own_application_catalog_mutation() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    assert client.get("/daemon/applications").status_code == 404
+    assert (
+        client.post(
+            "/daemon/applications/install",
+            json={"application_id": "demo"},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/daemon/applications/select",
+            json={"app_id": "demo", "version": "1.0.0"},
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/daemon/applications/uninstall",
+            json={"app_id": "demo", "version": "1.0.0"},
+        ).status_code
+        == 404
+    )

@@ -1,6 +1,6 @@
 # Factory resource IDs
 
-Resource IDs are installed by firmware; `.wapp` packages do not upload them.
+Resource IDs are installed by firmware; Application source snapshots do not upload them.
 Known examples include:
 
 | Domain | Example IDs |
