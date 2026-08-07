@@ -117,6 +117,61 @@ def test_firmware_requests_device_bootloader_before_esptool(tmp_path: Path, monk
     assert any("自动进入下载模式" in line for line in updates)
 
 
+def test_firmware_retry_reenters_bootloader_before_safe_baud(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package = tmp_path / "firmware.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "flash_args.txt",
+            "--flash_mode dio --flash_freq 80m --flash_size 16MB\n"
+            "0x0 bootloader.bin\n0x8000 partition-table.bin\n0x20000 WatcheRobot-S3.bin\n",
+        )
+        archive.writestr("bootloader.bin", b"boot")
+        archive.writestr("partition-table.bin", b"part")
+        archive.writestr("WatcheRobot-S3.bin", b"app")
+
+    commands: list[list[str]] = []
+    return_codes = iter((2, 0))
+
+    class FakeProcess:
+        def __init__(self, command: list[str], **_kwargs) -> None:
+            commands.append(command)
+            self.return_code = next(return_codes)
+            self.stdout = iter(
+                [
+                    "esptool failed: Unable to verify flash chip connection "
+                    "(No more data to read from the serial port.)\n"
+                ]
+                if self.return_code
+                else ["Hash of data verified.\n"]
+            )
+
+        def wait(self) -> int:
+            return self.return_code
+
+    boot_requests: list[str] = []
+
+    def request_bootloader(port: str, _progress) -> bool:
+        boot_requests.append(port)
+        return True
+
+    monkeypatch.setattr(maintenance_service.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(maintenance_service.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(maintenance_service, "_wait_for_firmware_ready", lambda *_args: None)
+    monkeypatch.setattr(maintenance_service, "_request_automatic_download_mode", request_bootloader)
+
+    _flash_firmware(package, "COM29", lambda *_args: None)
+
+    assert boot_requests == ["COM29", "COM29"]
+    assert [command[command.index("-b") + 1] for command in commands] == [
+        "921600",
+        "460800",
+    ]
+    assert all(command[command.index("--before") + 1] == "no-reset" for command in commands)
+
+
 def test_firmware_flash_reports_download_mode_instead_of_port_occupancy(tmp_path: Path, monkeypatch) -> None:
     package = tmp_path / "firmware.zip"
     with ZipFile(package, "w") as archive:
