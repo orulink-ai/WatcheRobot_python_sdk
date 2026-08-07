@@ -1,7 +1,9 @@
 # Application CLI Quick Reference
 
-This page is the single command reference for SDK Application development,
-publishing, and marketplace inspection.
+This page is the focused reference for SDK Application distribution,
+publishing, and marketplace inspection. For every `watcherobot` command,
+including Runtime and Bluetooth provisioning, see the
+[complete CLI reference](../cli-reference.md).
 
 ## Output rule
 

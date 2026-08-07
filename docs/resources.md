@@ -10,6 +10,10 @@ Known examples include:
 | Installed sound | `happy` |
 | Light effect | `blink`, `breathing`, `rainbow`, `status_pulse` |
 
+Behavior IDs are device-version-specific. For the verified ESP32-S3 v0.3.4
+state catalog and its SDK entry point, see
+[ESP32-S3 v0.3.4 device behavior-state catalog](device-states/README.md).
+
 Use them from `ApplicationContext.robot`, for example:
 
 ```python
