@@ -11,7 +11,7 @@ def test_package_version_has_one_release_source() -> None:
     assert 'dynamic = ["version"]' in pyproject
     assert '[tool.hatch.version]\npath = "src/watcherobot/__init__.py"' in pyproject
     assert 'version = "0.1.0"' not in pyproject
-    assert '__version__ = "0.1.1a1"' in package_init
+    assert '__version__ = "0.1.1a2"' in package_init
     assert '"bleak>=3,<4"' in pyproject
     assert '"av>=16,<17"' in pyproject
 

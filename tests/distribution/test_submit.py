@@ -49,7 +49,7 @@ def _submit(
         identity_hub=identity_hub or FakeIdentityHub(),
         publish_hub=publish_hub,
         events=events or RecordingEvents(),
-        watcherobot_version="0.1.1a1",
+        watcherobot_version="0.1.1a2",
     )
 
 

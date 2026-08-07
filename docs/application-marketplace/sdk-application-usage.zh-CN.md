@@ -1,7 +1,7 @@
 # WatcheRobot SDK Application 开发与发布测试指南
 
 本文面向使用当前 SDK 开发、运行和发布 Python Application 的开发者，也可作为
-`codex/application-marketplace` 当前版本的手工验收步骤。当前 SDK 包版本为 `0.1.1a1`。
+`codex/application-marketplace` 当前版本的手工验收步骤。当前 SDK 包版本为 `0.1.1a2`。
 
 最短链路是：
 
@@ -43,7 +43,7 @@ python -m venv .venv
 .\.venv\Scripts\watcherobot.exe app --help
 ```
 
-预期版本输出为 `0.1.1a1`。如果切换了 SDK 分支或修改了 `pyproject.toml`，请重新执行 editable
+预期版本输出为 `0.1.1a2`。如果切换了 SDK 分支或修改了 `pyproject.toml`，请重新执行 editable
 安装，保证控制台入口与当前源码一致。
 
 ## 3. 初始化 Application

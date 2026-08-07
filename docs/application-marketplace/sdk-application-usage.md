@@ -3,7 +3,7 @@
 This guide is for developers who build, run, test, and publish Python Applications
 with the current WatcheRobot SDK. It also provides the manual acceptance flow for
 the `codex/application-marketplace` branch. The current package version is
-`0.1.1a1`.
+`0.1.1a2`.
 
 The shortest complete flow is:
 
@@ -50,7 +50,7 @@ python -m venv .venv
 .\.venv\Scripts\watcherobot.exe app --help
 ```
 
-The expected version is `0.1.1a1`. Reinstall after changing the SDK branch or
+The expected version is `0.1.1a2`. Reinstall after changing the SDK branch or
 `pyproject.toml` so the console entry points match the current checkout.
 
 ## 3. Create an Application

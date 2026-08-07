@@ -36,7 +36,7 @@ def test_check_application_reuses_manifest_and_returns_structured_data(
 
     result = check_application(
         tmp_path,
-        watcherobot_version="0.1.1a1",
+        watcherobot_version="0.1.1a2",
     )
 
     assert result.to_dict() == {
@@ -120,7 +120,7 @@ def test_app_check_allows_local_venv_but_never_treats_it_as_source(
     local_python.parent.mkdir(parents=True)
     local_python.write_text("local", encoding="utf-8")
 
-    result = check_application(tmp_path, watcherobot_version="0.1.1a1")
+    result = check_application(tmp_path, watcherobot_version="0.1.1a2")
 
     assert result.app_id == "com.orulink.demo"
 

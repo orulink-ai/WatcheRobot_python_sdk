@@ -65,14 +65,14 @@ class FakeEnvironmentRunner:
             return ApplicationEnvironmentOutput(
                 stdout=json.dumps(
                     [
-                        {"name": "watcherobot", "version": "0.1.1a1"},
+                        {"name": "watcherobot", "version": "0.1.1a2"},
                         {"name": "requests", "version": "2.32.0"},
                     ]
                 ).encode()
             )
         if command.stage == "freezing_dependencies":
             return ApplicationEnvironmentOutput(
-                stdout=b"watcherobot==0.1.1a1\nrequests==2.32.0\n"
+                stdout=b"watcherobot==0.1.1a2\nrequests==2.32.0\n"
             )
         return ApplicationEnvironmentOutput()
 
@@ -193,7 +193,7 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
     record = json.loads(installed.application_root.joinpath("install.json").read_text())
     assert record["source"]["space_id"] == SPACE_ID
     assert record["source"]["commit"] == COMMIT
-    assert record["runtime"]["watcherobot_version"] == "0.1.1a1"
+    assert record["runtime"]["watcherobot_version"] == "0.1.1a2"
     assert [command.stage for command in runner.commands] == [
         "creating_environment",
         "installing_dependencies",
@@ -253,7 +253,7 @@ def _write_source(root: Path) -> None:
 def _write_runtime(root: Path) -> None:
     python = root / ("python/python.exe" if platform.system() == "Windows" else "python/bin/python")
     uv = root / ("uv.exe" if platform.system() == "Windows" else "uv")
-    wheel = root / "wheels/watcherobot-0.1.1a1-py3-none-any.whl"
+    wheel = root / "wheels/watcherobot-0.1.1a2-py3-none-any.whl"
     python.parent.mkdir(parents=True)
     wheel.parent.mkdir(parents=True)
     python.write_bytes(b"python")
@@ -261,7 +261,7 @@ def _write_runtime(root: Path) -> None:
     wheel.write_bytes(b"wheel")
     runtime = {
         "schema_version": 1,
-        "runtime_id": f"{_platform_name()}-python-3.12.13-watcherobot-0.1.1a1",
+        "runtime_id": f"{_platform_name()}-python-3.12.13-watcherobot-0.1.1a2",
         "platform": _platform_name(),
         "python": {
             "implementation": "cpython",
@@ -280,7 +280,7 @@ def _write_runtime(root: Path) -> None:
             "sha256": _sha256(uv),
         },
         "watcherobot": {
-            "version": "0.1.1a1",
+            "version": "0.1.1a2",
             "sdk_commit": "2" * 40,
             "wheel": wheel.relative_to(root).as_posix(),
             "sha256": _sha256(wheel),
