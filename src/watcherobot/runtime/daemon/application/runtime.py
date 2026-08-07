@@ -37,7 +37,7 @@ class ApplicationStartError(ApplicationRuntimeError):
     """Raised when the current Application doesn't become ready."""
 
 
-DEFAULT_APPLICATION_STARTUP_TIMEOUT = 30.0
+DEFAULT_APPLICATION_STARTUP_TIMEOUT = 90.0
 
 
 class ApplicationRuntimeManager:

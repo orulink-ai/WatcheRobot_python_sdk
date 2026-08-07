@@ -618,12 +618,16 @@ def _flash_firmware(path: Path, port: str, progress: Progress) -> None:
             target = root / f"{offset:08x}-{name}"
             target.write_bytes(data)
             segment_paths.append((offset, target))
-        software_boot = _request_automatic_download_mode(port, progress)
-        before = "no-reset" if software_boot else "default-reset"
-        attempts: list[tuple[int, str]] = [(FLASH_BAUD_CANDIDATES[0], before)]
-        attempt = 0
-        while attempt < len(attempts):
-            baud, before = attempts[attempt]
+        ever_used_software_boot = False
+        for attempt, baud in enumerate(FLASH_BAUD_CANDIDATES):
+            if attempt > 0:
+                # esptool may hard-reset the board while unwinding a failed
+                # high-speed attempt. Give the application firmware time to
+                # boot before asking it to enter the ROM downloader again.
+                time.sleep(1.5)
+            software_boot = _request_automatic_download_mode(port, progress)
+            ever_used_software_boot = ever_used_software_boot or software_boot
+            before = "no-reset" if software_boot else "default-reset"
             command = _build_esptool_flash_command(entry, port, flags, baud=baud, before=before)
             for offset, target in segment_paths:
                 command.extend([hex(offset), str(target)])
@@ -658,20 +662,18 @@ def _flash_firmware(path: Path, port: str, progress: Progress) -> None:
                 raise MaintenanceError(
                     f"无法独占打开 {port}。请关闭串口监视器或其他正在使用该端口的程序后重试。"
                 )
-            elif failure == "download_mode":
-                if software_boot:
-                    raise MaintenanceError("设备已确认自动重启，但 ESP32-S3 下载模式没有在端口上就绪，请重新连接 USB 后重试。")
-                raise MaintenanceError("当前设备固件不支持自动进入烧录模式，且 USB 串口未提供硬件自动复位能力。")
-            elif baud != FLASH_BAUD_CANDIDATES[-1]:
+            if baud != FLASH_BAUD_CANDIDATES[-1]:
                 progress(
                     "connecting",
                     8,
                     f"{baud} baud 烧录未完成，正在回退到 {FLASH_BAUD_CANDIDATES[-1]} baud 完整重试。",
                 )
-                attempts.append((FLASH_BAUD_CANDIDATES[-1], before))
-            else:
-                raise MaintenanceError("固件烧录工具执行失败，请查看上方日志并重新连接设备后重试。")
-            attempt += 1
+                continue
+            if failure == "download_mode":
+                if ever_used_software_boot:
+                    raise MaintenanceError("设备已确认自动重启，但 ESP32-S3 下载模式没有在端口上就绪，请重新连接 USB 后重试。")
+                raise MaintenanceError("当前设备固件不支持自动进入烧录模式，且 USB 串口未提供硬件自动复位能力。")
+            raise MaintenanceError("固件烧录工具执行失败，请查看上方日志并重新连接设备后重试。")
     progress("restarting", 96, "固件已写入并完成哈希校验，正在重启设备。")
     _wait_for_firmware_ready(port, progress)
 

@@ -300,7 +300,7 @@ def test_runtime_stop_cleans_application_process_tree(
 
 
 def test_default_runtime_allows_cold_application_startup() -> None:
-    assert DEFAULT_APPLICATION_STARTUP_TIMEOUT == 30.0
+    assert DEFAULT_APPLICATION_STARTUP_TIMEOUT >= 90.0
 
 
 def test_runtime_requires_a_controlled_launch_spec_before_starting(
