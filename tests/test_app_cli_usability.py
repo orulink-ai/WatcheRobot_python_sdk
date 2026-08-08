@@ -200,20 +200,23 @@ def test_app_runtime_actions_render_a_readable_summary(
     monkeypatch,
     capsys,
 ) -> None:
+    requests: list[dict[str, object]] = []
+
     monkeypatch.setattr(
         "watcherobot.cli.ensure_runtime",
         lambda: (SimpleNamespace(control_url="http://runtime"), True),
     )
-    monkeypatch.setattr(
-        "watcherobot.cli._request_json",
-        lambda *args, **kwargs: {
+    def fake_request_json(*args, **kwargs):
+        requests.append(kwargs)
+        return {
             "application": {
                 "current_app": "com.example.demo",
                 "state": state,
                 "process_id": 123 if state == "running" else None,
             }
-        },
-    )
+        }
+
+    monkeypatch.setattr("watcherobot.cli._request_json", fake_request_json)
 
     exit_code = main(["app", command])
 
@@ -223,3 +226,7 @@ def test_app_runtime_actions_render_a_readable_summary(
     assert captured.out.startswith(f"{title}\n\n")
     assert "ID:     com.example.demo" in captured.out
     assert f"State:  {state}" in captured.out
+    if command == "start":
+        assert requests == [{"method": "POST", "timeout": 90.0}]
+    else:
+        assert requests == [{"method": "POST"}]

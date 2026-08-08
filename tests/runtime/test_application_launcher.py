@@ -80,6 +80,36 @@ def test_python_launcher_builds_only_the_fixed_app_entrypoint(
     assert spec.command == (executable, application_dir / "app.py")
 
 
+def test_python_launcher_can_start_the_default_application_from_source(
+    tmp_path: Path,
+) -> None:
+    """The official source tree must remain runnable without Desktop."""
+
+    managed_root = tmp_path / "application-store"
+    application_dir = _write_application(
+        tmp_path / "watcher-default-source",
+        app_id="watcher_default",
+    )
+    executable = _write_executable(
+        managed_root / "development" / "python",
+        _python_name(),
+    )
+    launcher = ApplicationLauncher(
+        managed_app_root=managed_root,
+        bundled_resource_root=tmp_path / "resources",
+    )
+
+    spec = launcher.build_spec(
+        application_dir=application_dir,
+        kind="python",
+        executable=executable,
+    )
+
+    assert spec.app_id == "watcher_default"
+    assert spec.kind is ApplicationLauncherKind.PYTHON
+    assert spec.command == (executable, application_dir / "app.py")
+
+
 def test_windows_python_launcher_uses_pythonw_for_the_fixed_entrypoint(
     tmp_path: Path,
 ) -> None:
@@ -174,7 +204,6 @@ def test_bundled_launcher_is_reserved_for_the_default_application(
     ("kind", "app_id"),
     [
         ("bundled", "com.example.third_party"),
-        ("python", "watcher_default"),
     ],
 )
 def test_launcher_kind_cannot_cross_the_default_application_boundary(

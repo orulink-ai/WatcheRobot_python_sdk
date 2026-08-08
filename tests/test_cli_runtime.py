@@ -161,7 +161,9 @@ def test_cli_runs_installed_application_in_an_isolated_store_runtime(
         application_root=app_root,
     )
     runtime_calls: list[dict[str, object]] = []
-    requests: list[tuple[str, str, str, dict[str, object] | None]] = []
+    requests: list[
+        tuple[str, str, str, dict[str, object] | None, dict[str, object]]
+    ] = []
 
     def fake_ensure_runtime(**kwargs):
         runtime_calls.append(kwargs)
@@ -177,8 +179,8 @@ def test_cli_runs_installed_application_in_an_isolated_store_runtime(
             False,
         )
 
-    def fake_request_json(base_url, path, *, method="GET", payload=None, **_kwargs):
-        requests.append((base_url, path, method, payload))
+    def fake_request_json(base_url, path, *, method="GET", payload=None, **kwargs):
+        requests.append((base_url, path, method, payload, kwargs))
         if path == "/daemon/status":
             return {
                 "application": {
@@ -239,6 +241,14 @@ def test_cli_runs_installed_application_in_an_isolated_store_runtime(
                 ),
             },
         },
+        {},
+    )
+    assert requests[1] == (
+        "http://isolated-runtime",
+        "/daemon/application/start",
+        "POST",
+        None,
+        {"timeout": 90.0},
     )
     output = capsys.readouterr().out
     assert "Running installed Application: Installed Demo" in output

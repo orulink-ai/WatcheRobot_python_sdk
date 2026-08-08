@@ -44,6 +44,9 @@ from watcherobot.runtime.daemon.instance import (
 )
 
 
+APPLICATION_START_TIMEOUT_SECONDS = 90.0
+
+
 class CliError(RuntimeError):
     pass
 
@@ -210,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
                     state.control_url,
                     "/daemon/application/start",
                     method="POST",
+                    timeout=APPLICATION_START_TIMEOUT_SECONDS,
                 )
                 _print_application_runtime_result(
                     "Application started",
@@ -531,6 +535,7 @@ def run_application(application: Path) -> int:
         state.control_url,
         "/daemon/application/start",
         method="POST",
+        timeout=APPLICATION_START_TIMEOUT_SECONDS,
     )
     try:
         while True:
@@ -598,6 +603,7 @@ def run_installed_application(*, store_root: Path, application_id: str) -> int:
         state.control_url,
         "/daemon/application/start",
         method="POST",
+        timeout=APPLICATION_START_TIMEOUT_SECONDS,
     )
     return _wait_for_application_completion(state.control_url)
 

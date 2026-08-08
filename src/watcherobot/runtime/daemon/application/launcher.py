@@ -157,10 +157,6 @@ def _require_kind_matches_application(
         raise ApplicationLaunchError(
             "Bundled launcher is reserved for the default Application"
         )
-    if kind is ApplicationLauncherKind.PYTHON and app_id == default_app_id:
-        raise ApplicationLaunchError(
-            "Default Application must use the bundled launcher"
-        )
 
 
 def _require_controlled_executable(
