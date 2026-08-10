@@ -9,6 +9,69 @@ from watcherobot.protocol import FRAME_VIDEO
 from watcherobot.runtime.daemon.application.session import ApplicationChannel
 
 
+def test_connected_application_requests_current_device_capabilities() -> None:
+    async def scenario() -> None:
+        transport = DaemonApplicationTransport(command_timeout=1.0)
+        sent: list[tuple[ApplicationChannel, str | bytes]] = []
+        command_sent = asyncio.Event()
+
+        async def capture(
+            channel: ApplicationChannel,
+            frame: str | bytes,
+        ) -> None:
+            sent.append((channel, frame))
+            command_sent.set()
+
+        transport._send = capture  # type: ignore[method-assign]
+
+        connected = asyncio.create_task(transport._on_channels_connected())
+        await asyncio.wait_for(command_sent.wait(), timeout=0.1)
+
+        assert not connected.done()
+        assert not transport._started_event.is_set()
+
+        assert len(sent) == 1
+        channel, frame = sent[0]
+        assert channel is ApplicationChannel.DEVICE
+        assert isinstance(frame, str)
+        payload = json.loads(frame)
+        assert payload["type"] == "sys.sdk.ready.get"
+        assert payload["code"] == 0
+        assert isinstance(payload["data"]["command_id"], str)
+        assert payload["data"]["command_id"]
+        command_id = payload["data"]["command_id"]
+        await transport._on_frame(
+            ApplicationChannel.DEVICE,
+            json.dumps(
+                {
+                    "type": "evt.sdk.ready",
+                    "code": 0,
+                    "data": {
+                        "capabilities": ["behavior", "motion"],
+                        "firmware_version": "V3.1",
+                    },
+                }
+            ),
+        )
+        await transport._on_frame(
+            ApplicationChannel.DEVICE,
+            json.dumps(
+                {
+                    "type": "sys.ack",
+                    "code": 0,
+                    "data": {"command_id": command_id},
+                }
+            ),
+        )
+        await asyncio.wait_for(connected, timeout=0.1)
+
+        assert transport.capabilities == ("behavior", "motion")
+        assert transport.device_info["firmware_version"] == "V3.1"
+        assert transport._started_event.is_set()
+
+    asyncio.run(scenario())
+
+
 def test_audio_stream_waits_for_device_buffer_credit() -> None:
     async def scenario() -> None:
         transport = DaemonApplicationTransport(command_timeout=1.0)

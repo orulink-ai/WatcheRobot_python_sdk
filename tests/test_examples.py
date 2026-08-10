@@ -35,6 +35,15 @@ def test_quickstart_demonstrates_domain_apis_through_context_robot() -> None:
     assert "app.robot.motion.move_to" in source
 
 
+def test_microphone_example_records_decoded_pcm() -> None:
+    source = (
+        ROOT / "examples" / "record_microphone" / "app.py"
+    ).read_text(encoding="utf-8")
+
+    assert "app.robot.microphone.record_pcm" in source
+    assert "app.robot.microphone.record," not in source
+
+
 def test_runtime_artifacts_are_ignored() -> None:
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
 

@@ -37,6 +37,7 @@ DisconnectCallback = Callable[[], None]
 DesktopCallback = Callable[[str | bytes], None]
 AUDIO_DEVICE_SLOT_BYTES = 4096
 AUDIO_MAX_CREDIT_PACKETS = 8
+DEVICE_READY_SYNC_TIMEOUT_SECONDS = 1.0
 
 
 class DaemonApplicationTransport:
@@ -186,7 +187,7 @@ class DaemonApplicationTransport:
         self._stop_event = asyncio.Event()
         communicators = ApplicationCommunicators.from_environment(
             on_frame=self._on_frame,
-            on_connected=self._started_event.set,
+            on_connected=self._on_channels_connected,
         )
         self._communicators = communicators
         communicator_task = asyncio.create_task(
@@ -213,6 +214,21 @@ class DaemonApplicationTransport:
             return_exceptions=True,
         )
         self._communicators = None
+
+    async def _on_channels_connected(self) -> None:
+        """Request a fresh device snapshot after both Application channels attach."""
+        try:
+            await self._send_command(
+                "sys.sdk.ready.get",
+                {},
+                min(self.command_timeout, DEVICE_READY_SYNC_TIMEOUT_SECONDS),
+            )
+        except (CommandError, TimeoutError):
+            # Older firmware does not implement the snapshot request. Keep
+            # Application startup backward-compatible while bounding the wait.
+            pass
+        finally:
+            self._started_event.set()
 
     async def _send(
         self,
