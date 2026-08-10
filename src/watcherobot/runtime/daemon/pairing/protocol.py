@@ -15,7 +15,7 @@ from typing import Any, Mapping
 
 LAN_PAIRING_PROTOCOL = "watcher-lan-pairing"
 LAN_PAIRING_VERSION = "1.0"
-LAN_PAIRING_TARGET_MODE = "desktop_link"
+LAN_PAIRING_TARGET_MODE = "python_sdk"
 MAX_UDP_PAYLOAD_BYTES = 2048
 MAX_HELLO_PAYLOAD_BYTES = 4096
 

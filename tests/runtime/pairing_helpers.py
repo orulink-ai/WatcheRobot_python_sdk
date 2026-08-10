@@ -29,7 +29,7 @@ def hardware_hello(runtime) -> str:
                 "pair_request_id": request.request_id,
                 "daemon_instance_id": runtime.device_pairing.daemon_instance_id,
                 "session_token": SESSION_TOKEN,
-                "mode": "desktop_link",
+                "mode": "python_sdk",
             },
         }
     )
@@ -42,13 +42,13 @@ async def prepare_runtime_pairing(runtime) -> None:
                 break
             await asyncio.sleep(0.01)
     if runtime.device_pairing.state is DevicePairingState.IDLE:
-        await runtime.pair_device("123456", "desktop_link")
+        await runtime.pair_device("123456", "python_sdk")
         request = runtime.device_pairing.current_request
         assert request is not None
         accepted = PairAccept(
             request_id=request.request_id,
             daemon_instance_id=runtime.device_pairing.daemon_instance_id,
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             session_token=SESSION_TOKEN,
         )
         assert await runtime.pairing_udp.handle_datagram(

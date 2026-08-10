@@ -82,7 +82,7 @@ def test_hardware_guide_contains_standalone_pairing_step() -> None:
 
     assert "control_url" in guide
     assert "/daemon/devices/pair" in guide
-    assert '"target_mode":"desktop_link"' in guide
+    assert '"target_mode":"python_sdk"' in guide
     assert "watcherobot app run" in guide
 
 

@@ -28,7 +28,7 @@ def _hello(role: str, **metadata) -> str:
                         "f84a1e16ce6f35f14d167f227a93ea93"
                         "d1a9c4d9eb5517112030f2839d57ae4b"
                     ),
-                    "mode": "desktop_link",
+                    "mode": "python_sdk",
                     **metadata,
                 },
             }

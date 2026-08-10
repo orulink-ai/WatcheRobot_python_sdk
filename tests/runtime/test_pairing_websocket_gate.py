@@ -31,7 +31,7 @@ def hardware_hello(*, session_token: str = SESSION_TOKEN) -> str:
                 "pair_request_id": REQUEST_ID,
                 "daemon_instance_id": DAEMON_ID,
                 "session_token": session_token,
-                "mode": "desktop_link",
+                "mode": "python_sdk",
             },
         }
     )
@@ -44,7 +44,7 @@ def prepared_session() -> DevicePairingSession:
     )
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=10.0,
     )
@@ -52,7 +52,7 @@ def prepared_session() -> DevicePairingSession:
         PairAccept(
             request_id=REQUEST_ID,
             daemon_instance_id=DAEMON_ID,
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             session_token=SESSION_TOKEN,
         ),
         peer_ip="127.0.0.1",

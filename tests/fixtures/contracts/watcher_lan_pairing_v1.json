@@ -15,7 +15,7 @@
       "request_id": "21a9dbf05ea3443480e62076f79a3b12",
       "daemon_instance_id": "f730f29e670c49f7a3320c4314eb9805",
       "pairing_code": "123456",
-      "target_mode": "desktop_link",
+      "target_mode": "python_sdk",
       "websocket_port": 8765
     },
     "pair_accept": {
@@ -24,7 +24,7 @@
       "version": "1.0",
       "request_id": "21a9dbf05ea3443480e62076f79a3b12",
       "daemon_instance_id": "f730f29e670c49f7a3320c4314eb9805",
-      "target_mode": "desktop_link",
+      "target_mode": "python_sdk",
       "session_token": "f84a1e16ce6f35f14d167f227a93ea93d1a9c4d9eb5517112030f2839d57ae4b"
     },
     "pair_busy": {
@@ -53,7 +53,7 @@
         "pair_request_id": "21a9dbf05ea3443480e62076f79a3b12",
         "daemon_instance_id": "f730f29e670c49f7a3320c4314eb9805",
         "session_token": "f84a1e16ce6f35f14d167f227a93ea93d1a9c4d9eb5517112030f2839d57ae4b",
-        "mode": "desktop_link"
+        "mode": "python_sdk"
       }
     },
     "hello_ack": {
@@ -97,7 +97,7 @@
       "data": {
         "state": "reconnecting",
         "online": false,
-        "mode": "desktop_link",
+        "mode": "python_sdk",
         "request_id": "21a9dbf05ea3443480e62076f79a3b12",
         "last_error": null
       }
@@ -113,7 +113,7 @@
       "f84a1e16ce6f35f14d167f227a93ea93d1a9c4d9eb5517112030f2839d57ae4"
     ],
     "protocol_versions": ["0.9", "1.1"],
-    "target_modes": ["sdk", "agent"],
+    "target_modes": ["desktop_link", "sdk", "agent"],
     "websocket_ports": [0, 65536],
     "unknown_field": "device_id"
   }
