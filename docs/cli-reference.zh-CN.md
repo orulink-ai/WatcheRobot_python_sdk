@@ -16,7 +16,8 @@ watcherobot
 ├─ app         init | check | run | run-installed | start | stop
 │              login | logout | publish | submit | marketplace
 │              download | install | list | uninstall
-└─ bluetooth   scan | provision | status | clear
+├─ bluetooth   scan | provision | status | clear
+└─ diagnostics rtc
 ```
 
 ## 输出与边界
@@ -50,6 +51,20 @@ watcherobot daemon status
 
 ```powershell
 watcherobot daemon stop
+```
+
+## RTC 诊断
+
+### `watcherobot diagnostics rtc [--no-open] [--port PORT]`
+
+启动或复用 SDK Runtime，并且只在 `127.0.0.1` 提供 wheel 内置的 RTC
+诊断网页。默认端口 `0` 会选择空闲端口并打开系统浏览器；自动化场景可使用
+`--no-open`，需要固定页面端口时使用 `--port`。Runtime 仅转发控制和信令，
+音频 RTP 与 MJPEG DataChannel 始终由浏览器和设备在局域网内点对点传输。
+
+```powershell
+watcherobot diagnostics rtc
+watcherobot diagnostics rtc --no-open --port 0
 ```
 
 ## Application 命令

@@ -17,7 +17,8 @@ watcherobot
 ├─ app         init | check | run | run-installed | start | stop
 │              login | logout | publish | submit | marketplace
 │              download | install | list | uninstall
-└─ bluetooth   scan | provision | status | clear
+├─ bluetooth   scan | provision | status | clear
+└─ diagnostics rtc
 ```
 
 ## Output and safety conventions
@@ -63,6 +64,21 @@ Desktop is still using it; stop the Application or exit Desktop instead.
 
 ```powershell
 watcherobot daemon stop
+```
+
+## RTC diagnostics
+
+### `watcherobot diagnostics rtc [--no-open] [--port PORT]`
+
+Starts or reuses the SDK Runtime and serves the bundled RTC diagnostics page on
+literal loopback (`127.0.0.1`). The default port `0` selects a free local port
+and opens the system browser. Use `--no-open` for automation or `--port` to pin
+the page port. The Runtime forwards control and signaling only; audio RTP and
+MJPEG DataChannel traffic remain peer-to-peer between the browser and device.
+
+```powershell
+watcherobot diagnostics rtc
+watcherobot diagnostics rtc --no-open --port 0
 ```
 
 ## Application commands
