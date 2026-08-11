@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   review:
-    runs-on: [self-hosted, linux, x64, pr-review]
+    runs-on: [self-hosted, Linux, X64, pr-review]
     if: github.event.pull_request.draft == false
     steps:
       - name: Checkout
