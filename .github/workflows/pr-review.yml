@@ -30,11 +30,10 @@ jobs:
           FILES="${{ github.event.pull_request.changed_files }}"
 
           python3 -c "
-import json, base64
-
+import base64
 pr_title = '''$PR_TITLE'''
 pr_body = '''$PR_BODY'''
-diff_text = open('/tmp/pr.diff').read()
+diff_text = open('/tmp/pr.diff').read()[:8000]
 
 prompt = f'''请审查以下 Pull Request。按照你的审查框架（架构、产品、规范、损伤 + 意图分析 + Merge 建议）给出完整审查报告。
 
@@ -47,17 +46,19 @@ prompt = f'''请审查以下 Pull Request。按照你的审查框架（架构、
 ## 代码 Diff
 
 ```diff
-{diff_text[:8000]}
+{diff_text}
 ```
 
 请直接输出审查报告，不要多余的前缀。'''
 
 encoded = base64.b64encode(prompt.encode()).decode()
-print(encoded)
+print(encoded, end='')
 " > /tmp/prompt_b64.txt
 
-          ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes hermesadmin@192.168.1.116             "cat /tmp/prompt_b64.txt | ssh hermesadmin@192.168.1.116 'base64 -d | hermes -p luxiao-engineer chat -q -'" > /tmp/review_result.txt 2>&1 || true
+          # Send prompt to Luxiao via SSH
+          cat /tmp/prompt_b64.txt | ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes hermesadmin@192.168.1.116 "base64 -d | hermes -p luxiao-engineer chat -q -" > /tmp/review_result.txt 2>&1 || true
 
+          echo "=== Review Result ==="
           cat /tmp/review_result.txt
 
       - name: Post Review Comment
@@ -68,8 +69,8 @@ print(encoded)
           PR_NUMBER="${{ github.event.pull_request.number }}"
           REPO="${{ github.repository }}"
 
-          python3 -c "
-import sys
+          if [ -f /tmp/review_result.txt ]; then
+            python3 -c "
 text = open('/tmp/review_result.txt').read()
 if '🤖 PR 审查报告' in text:
     idx = text.index('🤖 PR 审查报告')
@@ -82,7 +83,13 @@ else:
 with open('/tmp/review_clean.md', 'w') as f:
     f.write(review)
 "
+          else
+            echo "## 🤖 PR 审查报告
 
+⚠️ Luxiao Agent 调用失败，请检查日志。" > /tmp/review_clean.md
+          fi
+
+          # Delete old bot comments
           gh api "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[].id' | while read cid; do
             BODY=$(gh api "repos/$REPO/issues/comments/$cid" --jq '.body')
             if echo "$BODY" | grep -q "PR 审查报告"; then
