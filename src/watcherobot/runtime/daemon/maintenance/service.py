@@ -1,4 +1,4 @@
-"""ESP32 firmware and SD resource maintenance over a local serial port."""
+"""Daemon-owned read-only maintenance discovery and Creator work management."""
 
 from __future__ import annotations
 
@@ -248,59 +248,6 @@ class MaintenanceService:
                 except serial.SerialException:
                     pass
 
-    def start(
-        self,
-        kind: str,
-        package_path: str,
-        port: str,
-        *,
-        transport: str = "serial",
-        volume_id: str = "",
-        release_version: str = "",
-        release_asset: str = "",
-    ) -> dict[str, Any]:
-        if kind not in {"firmware", "sd_resources"}:
-            raise MaintenanceError(f"Unsupported maintenance job: {kind}")
-        if transport not in {"serial", "card_reader"}:
-            raise MaintenanceError(f"Unsupported maintenance transport: {transport}")
-        if transport == "card_reader" and kind != "sd_resources":
-            raise MaintenanceError("Only SD resources can be installed through a card reader.")
-        source_type = "release" if release_version or release_asset else "local"
-        if source_type == "release":
-            if not release_version or not release_asset:
-                raise MaintenanceError("Select both an official Release version and its install package.")
-            package = None
-        else:
-            package = Path(package_path).expanduser().resolve()
-            if not package.is_file():
-                raise MaintenanceError(f"Selected package does not exist: {package}")
-            self.validate_package(kind, str(package))
-        normalized_port = port.strip()
-        if transport == "serial" and not normalized_port:
-            raise MaintenanceError("Select a serial port first.")
-        if transport == "card_reader" and not volume_id:
-            raise MaintenanceError("Select an SD-card reader first.")
-        with self._lock:
-            if self._active_job_id is not None:
-                active = self._jobs[self._active_job_id]
-                if active.status in {"queued", "running"}:
-                    raise MaintenanceError("Another firmware or resource operation is still running.")
-            job = MaintenanceJob(
-                id=uuid.uuid4().hex,
-                kind=kind,
-                port=normalized_port,
-                package_path=str(package) if package is not None else "",
-                transport=transport,
-                volume_id=volume_id,
-                source_type=source_type,
-                release_version=release_version,
-                release_asset=release_asset,
-            )
-            self._jobs[job.id] = job
-            self._active_job_id = job.id
-        threading.Thread(target=self._run, args=(job.id,), daemon=True).start()
-        return job.payload()
-
     def start_work(
         self,
         composition: dict[str, Any] | None,
@@ -340,7 +287,7 @@ class MaintenanceService:
             self._jobs[job.id] = job
             self._work_requests[job.id] = (composition, package)
             self._active_job_id = job.id
-        threading.Thread(target=self._run, args=(job.id,), daemon=True).start()
+        threading.Thread(target=self._run_work, args=(job.id,), daemon=True).start()
         return job.payload()
 
     def export_work_package(self, composition: dict[str, Any]) -> dict[str, Any]:
@@ -406,6 +353,10 @@ class MaintenanceService:
             if job is None or job.status not in {"queued", "running"}:
                 return None
             return job.payload()
+
+    def _run_work(self, job_id: str) -> None:
+        """Run the only mutating maintenance job still owned by Daemon."""
+        self._run(job_id)
 
     def _run(self, job_id: str) -> None:
         with self._lock:

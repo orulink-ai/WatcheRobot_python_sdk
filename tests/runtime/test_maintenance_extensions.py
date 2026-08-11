@@ -203,28 +203,8 @@ def test_firmware_release_list_falls_back_to_public_atom_when_github_api_is_rate
     assert releases[0]["assets"] == [{"name": "WatcheRobot-S3-v0.3.2-esp32s3.zip", "size": 3_480_000}]
 
 
-def test_release_job_is_additive_and_does_not_require_a_local_path(monkeypatch) -> None:
-    class DeferredThread:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-        def start(self) -> None:
-            pass
-
-    monkeypatch.setattr("watcherobot.runtime.daemon.maintenance.service.threading.Thread", DeferredThread)
-    service = MaintenanceService()
-
-    job = service.start(
-        "firmware",
-        "",
-        "COM29",
-        release_version="v0.3.2",
-        release_asset="WatcheRobot-S3-v0.3.2-esp32s3.zip",
-    )
-
-    assert job["source_type"] == "release"
-    assert job["package_path"] == ""
-    assert job["transport"] == "serial"
+def test_daemon_maintenance_service_does_not_start_firmware_or_sd_jobs() -> None:
+    assert not hasattr(MaintenanceService(), "start")
 
 
 def test_card_reader_install_replaces_official_resources_and_preserves_works(tmp_path: Path) -> None:

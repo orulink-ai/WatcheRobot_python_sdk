@@ -84,8 +84,11 @@ requests never fall back to the other source when an ID is missing.
 
 ### Portable work packages and SD lifecycle
 
-The Daemon owns the maintenance implementation used by Watcher Desktop. A
-portable work uses the `.watcher-work.zip` suffix and contains a versioned
+Watcher Desktop owns firmware flashing, official SD-resource installation,
+FAT32 formatting, and their progress lifecycle. Those destructive operations
+are not exposed by the Daemon control REST API. The Daemon continues to own
+read-only maintenance discovery and validation, together with Creator-work
+management. A portable work uses the `.watcher-work.zip` suffix and contains a versioned
 `work.json`, `work_manifest.json`, and any work-local assets. The stable
 `work_id` identifies the work across computers and SD cards; editing and
 installing it again increments `revision` and replaces only that work.
@@ -109,17 +112,13 @@ Reader writes are atomic at `/watche/works/<work_id>` and preserve
 `/watche/official`, `/watche/assets`, and every other work. Serial writes use the
 firmware `WRSD/2` work transaction and require the advertised work capabilities.
 
-### Serial official-resource activation timeouts
+### Playback and maintenance boundaries
 
-Official SD resources remain reinstallable when the selected version equals the
-device version. After upload, the Daemon accepts backward-compatible `WRSD/2
-STATUS` frames as heartbeats. A valid status refreshes the 120-second stall
-deadline, while an independent 30-minute total deadline bounds a device that is
-alive but never completes. Timeout errors include the last device phase,
-percentage, file and byte/speed detail when the firmware provides them; the
-Daemon never treats an equal version as a reason to skip installation.
-Neither path opens a second device business channel: application playback still
-uses `robot.works.play()` through the Daemon-managed Device channel.
+The Desktop maintenance executor may write official resources or works through
+an explicitly selected maintenance transport. Application playback never opens
+a second device business channel: `robot.expressions.play_official()` and
+`robot.works.play()` remain business commands sent through the Daemon-managed
+Application Device channel.
 
 Official assets are referenced by resource ID. Work-local servo actions are
 bundled into the portable package and registered in the work-local resource

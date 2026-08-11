@@ -360,8 +360,8 @@ def test_sd_package_is_inspected_without_extracting_to_disk(tmp_path: Path) -> N
 
 def test_service_rejects_missing_local_package() -> None:
     service = MaintenanceService()
-    with pytest.raises(MaintenanceError, match="does not exist"):
-        service.start("firmware", "missing.zip", "COM29")
+    with pytest.raises(MaintenanceError):
+        service.validate_package("firmware", "missing.zip")
 
 
 def test_maintenance_ports_only_expose_watcher_ch342_channel_b(monkeypatch) -> None:
@@ -383,9 +383,9 @@ def test_local_package_is_validated_before_job_is_queued(tmp_path: Path) -> None
     service = MaintenanceService()
 
     with pytest.raises(MaintenanceError, match="无效的固件 ZIP"):
-        service.start("firmware", str(invalid_firmware), "COM29")
+        service.validate_package("firmware", str(invalid_firmware))
     with pytest.raises(MaintenanceError, match="无效的 SD tar.gz"):
-        service.start("sd_resources", str(invalid_resources), "COM29")
+        service.validate_package("sd_resources", str(invalid_resources))
 
     assert service.active() is None
 

@@ -54,8 +54,7 @@ class _ControllerStub:
         ]
         self.work_requests: list[tuple[dict, str, str]] = []
         self.work_read_requests: list[dict] = []
-        self.maintenance_requests: list[dict] = []
-        self.active_maintenance = {"id": "firmware-job", "kind": "firmware", "status": "running"}
+        self.active_maintenance = {"id": "work-job", "kind": "work", "status": "running"}
 
     def application_status(self) -> dict:
         return {
@@ -198,16 +197,6 @@ class _ControllerStub:
             "name": "SD 作品",
             "composition": {"kind": "watcher.creator-composition", "clips": []},
         }
-
-    def start_maintenance_job(
-        self,
-        kind: str,
-        package_path: str,
-        port: str,
-        **options,
-    ) -> dict:
-        self.maintenance_requests.append({"kind": kind, "package_path": package_path, "port": port, **options})
-        return {"id": "maintenance-job", "kind": kind, "status": "queued"}
 
     def maintenance_job(self, job_id: str) -> dict:
         return {"id": job_id, "kind": "firmware", "status": "running"}
@@ -390,7 +379,7 @@ def test_control_rest_returns_active_maintenance_job() -> None:
     assert client.get("/daemon/maintenance/jobs/active").json() == {"job": None}
 
 
-def test_control_rest_adds_release_reader_and_device_info_without_breaking_local_install() -> None:
+def test_control_rest_keeps_read_only_maintenance_but_rejects_desktop_mutations() -> None:
     controller = _ControllerStub()
     client = TestClient(DaemonControlAPI(controller=controller).create_app())
 
@@ -398,17 +387,14 @@ def test_control_rest_adds_release_reader_and_device_info_without_breaking_local
     assert client.get("/daemon/maintenance/volumes").json()["volumes"][0]["current_version"] == "v0.0.7"
     assert client.post("/daemon/maintenance/device-info", json={"port": "COM29"}).json()["device"]["firmware_version"] == "V2.4.1"
 
-    legacy = client.post("/daemon/maintenance/firmware", json={"package_path": "firmware.zip", "port": "COM29"})
-    assert legacy.status_code == 202
-    assert controller.maintenance_requests[-1]["transport"] == "serial"
-
+    firmware = client.post("/daemon/maintenance/firmware", json={"package_path": "firmware.zip", "port": "COM29"})
     reader = client.post("/daemon/maintenance/sd-resources", json={
         "package_path": "resources.tar.gz",
         "transport": "card_reader",
         "volume_id": "E:\\|1234",
     })
-    assert reader.status_code == 202
-    assert controller.maintenance_requests[-1]["volume_id"] == "E:\\|1234"
+    assert firmware.status_code == 404
+    assert reader.status_code == 404
 
 
 def test_control_rest_validates_local_package_before_install() -> None:

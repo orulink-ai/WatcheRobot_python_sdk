@@ -56,7 +56,7 @@ Runtime transparently forwards frames between Desktop and device.
 | Runtime and Daemon | `watcherobot daemon ...` | Pairing, device and Desktop connections, generic frame routing, Application lifecycle, logs, and local control REST API. |
 | Application distribution | `watcherobot app ...` | Create, check, publish, submit, browse, download, install, and run reviewed Application snapshots. |
 | Bluetooth provisioning | `watcherobot bluetooth ...` / `BluetoothProvisioner` | Scan, provision Wi-Fi credentials, inspect status, and clear Wi-Fi credentials over the existing BLE GATT service. |
-| Device maintenance | Daemon maintenance REST API | Desktop-facing firmware, SD-resource, and portable-work maintenance; see [resources](docs/resources.md). |
+| Device maintenance | Desktop local executor + Daemon work API | Watcher Desktop owns firmware, official SD-resource, formatting, and progress execution. Daemon keeps read-only discovery/validation plus Creator-work management; see [resources](docs/resources.md). |
 
 ## Quick start
 
