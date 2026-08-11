@@ -166,6 +166,10 @@ class _ControllerStub:
     def maintenance_volumes(self) -> list[dict]:
         return [{"id": "E:\\|1234", "root": "E:\\", "current_version": "v0.0.7"}]
 
+    def format_maintenance_volume_as_fat32(self, volume_id: str) -> dict:
+        self.formatted_volume_id = volume_id
+        return {"id": "E:\\|5678", "root": "E:\\", "filesystem": "FAT32"}
+
     def validate_maintenance_package(self, kind: str, package_path: str) -> dict:
         if package_path == "invalid.zip":
             raise MaintenanceError("固件 ZIP 缺少 flash_args.txt。")
@@ -398,6 +402,17 @@ def test_control_rest_adds_release_reader_and_device_info_without_breaking_local
     })
     assert reader.status_code == 202
     assert controller.maintenance_requests[-1]["volume_id"] == "E:\\|1234"
+
+
+def test_control_rest_formats_only_the_explicitly_selected_volume() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    response = client.post("/daemon/maintenance/volumes/format-fat32", json={"volume_id": "E:\\|1234"})
+
+    assert response.status_code == 200
+    assert controller.formatted_volume_id == "E:\\|1234"
+    assert response.json()["volume"]["filesystem"] == "FAT32"
 
 
 def test_control_rest_validates_local_package_before_install() -> None:

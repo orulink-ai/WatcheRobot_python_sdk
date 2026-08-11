@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 from dataclasses import dataclass
@@ -354,6 +355,50 @@ def _validate_volume(volume: VolumeInfo) -> None:
     except OSError as exc:
         probe.unlink(missing_ok=True)
         raise CardReaderError(f"所选 SD 卡不可写：{exc}") from exc
+
+
+def format_volume_as_fat32(volume_id: str) -> dict[str, Any]:
+    """Format the explicitly selected removable card, then return its new identity.
+
+    The caller is responsible for obtaining an explicit, user-visible confirmation.
+    A Windows format changes the volume serial number, so clients must replace their
+    previous ``volume_id`` with the returned one before starting an install.
+    """
+
+    if sys.platform != "win32":
+        raise CardReaderError("仅 Windows 支持将 SD 卡格式化为 FAT32。")
+    volume = _resolve_volume(volume_id)
+    if not volume.root.is_dir():
+        raise CardReaderError("所选 SD 卡当前不可用。")
+    system_drive = os.environ.get("SystemDrive", "C:").upper()
+    if str(volume.root)[:2].upper() == system_drive:
+        raise CardReaderError("拒绝将 Windows 系统盘格式化为 SD 卡。")
+    drive_letter = str(volume.root)[:1]
+    if not re.fullmatch(r"[A-Za-z]", drive_letter):
+        raise CardReaderError("无法确定所选 SD 卡的盘符。")
+    if volume.filesystem.upper() == "FAT32":
+        return volume.payload()
+    command = (
+        "$ErrorActionPreference = 'Stop'; "
+        f"Format-Volume -DriveLetter '{drive_letter.upper()}' -FileSystem FAT32 "
+        "-Force -Confirm:$false | Out-Null"
+    )
+    try:
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        detail = getattr(exc, "stderr", "") or str(exc)
+        raise CardReaderError(f"无法将 SD 卡格式化为 FAT32：{detail.strip()}") from exc
+    refreshed = _inspect_volume(volume.root)
+    if refreshed.filesystem.upper() != "FAT32":
+        actual = refreshed.filesystem or "未知"
+        raise CardReaderError(f"格式化完成后 SD 卡文件系统仍为 {actual}，未继续写入资源。")
+    return refreshed.payload()
 
 
 def _safe_member_path(name: str) -> PurePosixPath:

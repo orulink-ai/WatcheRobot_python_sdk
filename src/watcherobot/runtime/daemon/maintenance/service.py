@@ -28,6 +28,7 @@ from .card_reader import (
     delete_work as delete_card_work,
     install_package as install_card_package,
     install_work_package as install_card_work_package,
+    format_volume_as_fat32,
     list_volumes,
     list_works as list_card_works,
     read_work as read_card_work,
@@ -174,6 +175,17 @@ class MaintenanceService:
 
     def volumes(self) -> list[dict[str, Any]]:
         return list_volumes()
+
+    def format_volume_as_fat32(self, volume_id: str) -> dict[str, Any]:
+        with self._lock:
+            if self._active_job_id is not None:
+                active = self._jobs.get(self._active_job_id)
+                if active is not None and active.status in {"queued", "running"}:
+                    raise MaintenanceError("设备维护操作进行中，暂时无法格式化 SD 卡。")
+        try:
+            return format_volume_as_fat32(volume_id)
+        except Exception as exc:
+            raise MaintenanceError(str(exc)) from exc
 
     def works(self, *, transport: str, port: str = "", volume_id: str = "") -> list[dict[str, Any]]:
         if transport not in {"serial", "card_reader"}:
