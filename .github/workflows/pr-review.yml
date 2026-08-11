@@ -13,26 +13,17 @@ jobs:
     runs-on: [self-hosted, Linux, X64, pr-review]
     if: github.event.pull_request.draft == false
     steps:
-      - name: Checkout with full history
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Extract PR Diff
+      - name: Get PR Diff via API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff 2>/dev/null || echo "empty" > /tmp/pr.diff
+          gh pr diff ${{ github.event.pull_request.number }} -R ${{ github.repository }} > /tmp/pr.diff 2>/dev/null
+          if [ ! -s /tmp/pr.diff ]; then echo "empty" > /tmp/pr.diff; fi
           echo "Diff lines: $(wc -l < /tmp/pr.diff)"
 
       - name: Run Luxiao Review
         run: |
-          python3 /home/opsadmin/scripts/luxiao-review.py \
-            "${{ github.event.pull_request.title }}" \
-            "${{ github.event.pull_request.body }}" \
-            "${{ github.event.pull_request.additions }}" \
-            "${{ github.event.pull_request.deletions }}" \
-            "${{ github.event.pull_request.changed_files }}" \
-            /tmp/pr.diff \
-            /tmp/review_result.md
+          python3 /home/opsadmin/scripts/luxiao-review.py             "${{ github.event.pull_request.title }}"             "${{ github.event.pull_request.body }}"             "${{ github.event.pull_request.additions }}"             "${{ github.event.pull_request.deletions }}"             "${{ github.event.pull_request.changed_files }}"             /tmp/pr.diff             /tmp/review_result.md
 
       - name: Post Review Comment
         if: always()
