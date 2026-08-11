@@ -447,6 +447,19 @@ def test_format_card_reader_volume_does_not_reformat_existing_fat32(monkeypatch,
     assert card_reader.format_volume_as_fat32(volume.id) == volume.payload()
 
 
+def test_format_card_reader_volume_rejects_non_fat_filesystems(monkeypatch, tmp_path: Path) -> None:
+    card = tmp_path / "card"
+    card.mkdir()
+    volume = card_reader.VolumeInfo("E:\\|00000001", card, "", "exFAT", 1, 2, 1, None)
+    monkeypatch.setattr(card_reader.sys, "platform", "win32")
+    monkeypatch.setenv("SystemDrive", "Z:")
+    monkeypatch.setattr(card_reader, "_resolve_volume", lambda _: volume)
+    monkeypatch.setattr(card_reader.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("must not format"))
+
+    with pytest.raises(CardReaderError, match="仅支持"):
+        card_reader.format_volume_as_fat32(volume.id)
+
+
 def test_invalid_sd_directories_do_not_hide_valid_works_after_the_list_limit(
     monkeypatch,
     tmp_path: Path,

@@ -35,6 +35,7 @@ ALLOWED_ROOTS = {"assets"}
 ALLOWED_ROOT_FILES = {"official_catalog.json", "fixed_states.json", "resource_manifest.json"}
 LEGACY_ROOT_ENTRIES = {"anim", "actions", "sfx", "behavior", "resource_catalog.json", "resource_manifest.json"}
 SUPPORTED_FILESYSTEMS = {"FAT32"}
+FORMATTABLE_FILESYSTEMS = {"FAT", "FAT12", "FAT16"}
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 96 * 1024 * 1024
 MAX_SINGLE_FILE_BYTES = 16 * 1024 * 1024
@@ -376,8 +377,14 @@ def format_volume_as_fat32(volume_id: str) -> dict[str, Any]:
     drive_letter = str(volume.root)[:1]
     if not re.fullmatch(r"[A-Za-z]", drive_letter):
         raise CardReaderError("无法确定所选 SD 卡的盘符。")
-    if volume.filesystem.upper() == "FAT32":
+    filesystem = volume.filesystem.upper()
+    if filesystem == "FAT32":
         return volume.payload()
+    if filesystem not in FORMATTABLE_FILESYSTEMS:
+        actual = volume.filesystem or "未知"
+        raise CardReaderError(
+            f"SD 卡文件系统为 {actual}，仅支持将 FAT/FAT12/FAT16 格式化为 FAT32。"
+        )
     command = (
         "$ErrorActionPreference = 'Stop'; "
         f"Format-Volume -DriveLetter '{drive_letter.upper()}' -FileSystem FAT32 "
