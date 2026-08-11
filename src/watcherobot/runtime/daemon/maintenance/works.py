@@ -35,7 +35,7 @@ WORK_SCHEMA_VERSION = 2
 WORK_PACKAGE_FORMAT = "watche-user-work-package"
 WORK_PACKAGE_SCHEMA_VERSION = 2
 CREATOR_COMPOSITION_KIND = "watcher.creator-composition"
-CREATOR_COMPOSITION_VERSION = 2
+CREATOR_COMPOSITION_VERSION = 3
 WORK_PACKAGE_FILES = {"work.json", "work_manifest.json"}
 CREATOR_RESOURCE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 CREATOR_CLIP_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,96}$")
@@ -229,6 +229,23 @@ def _build_action_asset(clip: dict[str, Any]) -> tuple[str, str, bytes, dict[str
     return resource_id, path, payload, asset
 
 
+def _validate_creator_lane_overlaps(clips: list[dict[str, Any]]) -> None:
+    for kind in ("expression", "action", "sound"):
+        lane = sorted(
+            (clip for clip in clips if clip["kind"] == kind),
+            key=lambda clip: (int(clip["startMs"]), str(clip["id"])),
+        )
+        previous: dict[str, Any] | None = None
+        for clip in lane:
+            if previous is not None:
+                previous_end = int(previous["startMs"]) + int(previous["durationMs"])
+                if int(clip["startMs"]) < previous_end:
+                    raise WorkDocumentError(
+                        f"作品同一轨道 {kind} 存在重叠片段：{previous['id']} 与 {clip['id']}。"
+                    )
+            previous = clip
+
+
 def build_portable_work_package(composition: dict[str, Any]) -> PortableWorkPackage:
     if not isinstance(composition, dict):
         raise WorkDocumentError("作品内容必须是 JSON 对象。")
@@ -244,6 +261,7 @@ def build_portable_work_package(composition: dict[str, Any]) -> PortableWorkPack
     clips = [clip for index, value in enumerate(raw_clips) if (clip := _normalize_creator_clip(value, index))]
     if not clips:
         raise WorkDocumentError("作品没有可写入的表情、动作或音效片段。")
+    _validate_creator_lane_overlaps(clips)
 
     raw_assets = composition.get("assets", [])
     if not isinstance(raw_assets, list):
@@ -326,7 +344,16 @@ def build_portable_work_package(composition: dict[str, Any]) -> PortableWorkPack
             "duration_ms": int(clip["durationMs"]),
             "asset": {"source": source, "resource_id": resource_id, "kind": asset_kind},
         })
-    duration_ms = max(track["start_ms"] + track["duration_ms"] for track in tracks)
+    content_duration_ms = max(track["start_ms"] + track["duration_ms"] for track in tracks)
+    requested_duration_ms = composition.get("durationMs", content_duration_ms)
+    if (
+        not isinstance(requested_duration_ms, int)
+        or isinstance(requested_duration_ms, bool)
+        or requested_duration_ms < content_duration_ms
+        or requested_duration_ms > MAX_WORK_DURATION_MS
+    ):
+        raise WorkDocumentError("作品 durationMs 必须覆盖全部片段且不超过最大作品时长。")
+    duration_ms = requested_duration_ms
     creator = {
         "kind": CREATOR_COMPOSITION_KIND,
         "version": CREATOR_COMPOSITION_VERSION,
@@ -334,6 +361,7 @@ def build_portable_work_package(composition: dict[str, Any]) -> PortableWorkPack
         "revision": revision_value,
         "name": name,
         "exportedAt": str(composition.get("exportedAt") or ""),
+        "durationMs": duration_ms,
         "clips": clips,
     }
     if used_creator_assets:

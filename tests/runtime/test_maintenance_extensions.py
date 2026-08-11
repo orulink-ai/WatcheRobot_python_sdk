@@ -35,6 +35,7 @@ from watcherobot.runtime.daemon.maintenance.service import (
 from watcherobot.runtime.daemon.maintenance.works import (
     WorkDocumentError,
     build_portable_work_package,
+    normalize_work_document,
     read_portable_work_package,
 )
 
@@ -363,7 +364,7 @@ def _work_document_v2(work_id: str = "demo_work") -> dict[str, object]:
         }],
         "creator": {
             "kind": "watcher.creator-composition",
-            "version": 2,
+            "version": 3,
             "workId": work_id,
             "revision": 4,
             "name": "演示作品",
@@ -557,6 +558,14 @@ def test_card_reader_v2_work_round_trips_exact_creator_source(monkeypatch, tmp_p
     assert work["creator"]["workId"] == "demo_work"
 
 
+def test_work_document_rejects_obsolete_creator_composition() -> None:
+    document = _work_document_v2()
+    document["creator"]["version"] = 2
+
+    with pytest.raises(WorkDocumentError):
+        normalize_work_document(document, expected_id="demo_work", source="test")
+
+
 def test_reader_installs_and_updates_only_one_work_without_touching_official_or_other_works(tmp_path: Path) -> None:
     card = tmp_path / "card"
     official = card / "watche" / "official" / "current" / "official_catalog.json"
@@ -646,6 +655,41 @@ def _wav_payload() -> bytes:
         audio.setframerate(24000)
         audio.writeframes(struct.pack("<" + "h" * 240, *([600] * 240)))
     return output.getvalue()
+
+
+def test_portable_work_preserves_explicit_duration_and_creator_v3() -> None:
+    package = build_portable_work_package({
+        "kind": "watcher.creator-composition",
+        "version": 3,
+        "workId": "timed_work",
+        "revision": 1,
+        "name": "Timed work",
+        "durationMs": 2400,
+        "clips": [{
+            "id": "sound-1",
+            "kind": "sound",
+            "resourceId": "happy",
+            "label": "Happy",
+            "startMs": 200,
+            "durationMs": 600,
+        }],
+    })
+
+    assert package.work["duration_ms"] == 2400
+    assert package.work["creator"]["version"] == 3
+    assert package.work["creator"]["durationMs"] == 2400
+
+
+def test_portable_work_rejects_same_lane_overlap() -> None:
+    with pytest.raises(WorkDocumentError, match="同一轨道.*重叠"):
+        build_portable_work_package({
+            "workId": "overlap_work",
+            "name": "Overlap",
+            "clips": [
+                {"id": "sound-1", "kind": "sound", "resourceId": "happy", "label": "One", "startMs": 0, "durationMs": 500},
+                {"id": "sound-2", "kind": "sound", "resourceId": "error", "label": "Two", "startMs": 400, "durationMs": 500},
+            ],
+        })
 
 
 def test_portable_work_converts_custom_media_without_changing_the_timeline(tmp_path: Path) -> None:
