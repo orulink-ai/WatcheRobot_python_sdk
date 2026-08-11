@@ -46,6 +46,43 @@
         </div>
       </section>
 
+      <section class="pairing-panel" id="pairingPanel" aria-labelledby="pairingTitle">
+        <div>
+          <p class="section-index">00.5 / 设备接入</p>
+          <h2 id="pairingTitle">连接机器人</h2>
+          <p>输入设备屏幕上的六位配对码。配对请求由本机 SDK Daemon 管理，配对码不会保存在实验室日志中。</p>
+        </div>
+        <form class="pairing-form" id="pairingForm">
+          <label for="pairingCode">六位配对码</label>
+          <div class="pairing-controls">
+            <input
+              id="pairingCode"
+              name="pairing_code"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]{6}"
+              minlength="6"
+              maxlength="6"
+              autocomplete="one-time-code"
+              placeholder="000000"
+              aria-describedby="pairingResult"
+              required
+            />
+            <input
+              id="deviceIp"
+              name="device_ip"
+              type="text"
+              inputmode="decimal"
+              autocomplete="off"
+              placeholder="设备 IP（可选）"
+              aria-label="设备 IP（可选，广播受限时填写）"
+            />
+            <button class="pairing-action" id="pairingButton" type="submit">开始配对</button>
+          </div>
+          <output class="pairing-result" id="pairingResult" aria-live="polite">等待输入设备屏幕上的配对码</output>
+        </form>
+      </section>
+
       <section class="telemetry-strip" aria-label="设备遥测信息">
         <div><span>设备</span><strong id="deviceId">—</strong></div>
         <div><span>固件</span><strong id="firmwareVersion">—</strong></div>

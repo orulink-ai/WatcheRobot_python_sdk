@@ -10,7 +10,7 @@
 | 内部名称 | `watcher_lan_pairing_v1` |
 | UDP 协议名 | `watcher-lan-pairing` |
 | UDP/hello 版本 | `1.0` |
-| 目标模式 | `desktop_link` |
+| 目标模式 | `desktop_link`、`python_sdk`（由发起配对的应用显式选择） |
 | 配对 UDP 端口 | `37021` |
 | 设备 WebSocket 端口 | `8765` |
 | Runtime 控制 REST | `127.0.0.1:8767` |

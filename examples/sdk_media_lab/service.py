@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import math
 import threading
 import time
+import urllib.error
 import urllib.request
 import wave
 from collections import deque
@@ -29,8 +31,17 @@ class MediaLabDeviceOfflineError(RuntimeError):
     """Raised when a hardware action is attempted without an online Watcher."""
 
 
+class MediaLabPairingError(RuntimeError):
+    """Expose a safe, stable Daemon pairing failure to the local dashboard."""
+
+    def __init__(self, code: str, message: str, *, status_code: int = 502) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+
+
 class DaemonDeviceStatusProvider:
-    """Read the Daemon's loopback-only device status endpoint and fail closed."""
+    """Read and manage the Daemon's loopback-only device slot."""
 
     def __init__(self, url: str, *, timeout: float = 0.5) -> None:
         self._url = url
@@ -52,9 +63,62 @@ class DaemonDeviceStatusProvider:
                 "last_error": "status_unavailable",
             }
 
+    def pair(
+        self,
+        pairing_code: str,
+        device_ip: str | None = None,
+    ) -> Mapping[str, object]:
+        request_payload: dict[str, object] = {
+            "pairing_code": pairing_code,
+            "target_mode": "python_sdk",
+        }
+        if device_ip is not None:
+            request_payload["device_ip"] = device_ip
+        payload = json.dumps(request_payload).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self._url.rstrip('/')}/pair",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            try:
+                error_payload = json.loads(error.read().decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                error_payload = {}
+            code = str(error_payload.get("error") or "pairing_rejected")
+            message = str(error_payload.get("message") or code)
+            status_code = 409 if error.code == 409 else 422 if error.code < 500 else 502
+            raise MediaLabPairingError(
+                code,
+                message,
+                status_code=status_code,
+            ) from error
+        except Exception as error:
+            raise MediaLabPairingError(
+                "pairing_unavailable",
+                "Daemon pairing request is unavailable",
+            ) from error
+
+        device = result.get("device") if isinstance(result, dict) else None
+        if not isinstance(device, dict):
+            raise MediaLabPairingError(
+                "pairing_response_invalid",
+                "Daemon pairing response is malformed",
+            )
+        return result
+
 
 class RecordMicrophoneRequest(BaseModel):
     duration: float = Field(default=5.0, gt=0.0, le=30.0, allow_inf_nan=False)
+
+
+class PairDeviceRequest(BaseModel):
+    pairing_code: str = Field(pattern=r"^[0-9]{6}$")
+    device_ip: str | None = None
 
 
 class MediaLabService:
@@ -72,11 +136,13 @@ class MediaLabService:
         artifacts_dir: Path,
         sample_audio: Path,
         device_status_provider: Callable[[], Mapping[str, object]],
+        device_pairer: Callable[[str, str | None], Mapping[str, object]],
     ) -> None:
         self._robot = robot
         self._artifacts_dir = Path(artifacts_dir)
         self._sample_audio = Path(sample_audio)
         self._device_status_provider = device_status_provider
+        self._device_pairer = device_pairer
         self._operation_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._active_action: str | None = None
@@ -120,6 +186,48 @@ class MediaLabService:
                 if isinstance((event_id := event.get("id")), int)
                 and event_id > after
             ]
+
+    def pair_device(
+        self,
+        pairing_code: str,
+        device_ip: str | None = None,
+    ) -> dict[str, object]:
+        if (
+            not isinstance(pairing_code, str)
+            or len(pairing_code) != 6
+            or any(character < "0" or character > "9" for character in pairing_code)
+        ):
+            raise ValueError("pairing code must be exactly 6 digits")
+        if device_ip is not None:
+            try:
+                parsed_device_ip = ipaddress.IPv4Address(device_ip)
+            except ipaddress.AddressValueError as error:
+                raise ValueError("device IP must be a valid IPv4 address") from error
+            device_ip = str(parsed_device_ip)
+        self._append_event(
+            "device_pairing",
+            "Device pairing started",
+            "running",
+        )
+        try:
+            result = dict(self._device_pairer(pairing_code, device_ip))
+            connection = result.get("device")
+            if not isinstance(connection, dict):
+                raise MediaLabPairingError(
+                    "pairing_response_invalid",
+                    "Daemon pairing response is malformed",
+                )
+        except Exception as error:
+            self._append_event(
+                "device_pairing",
+                f"Device pairing failed: {error}",
+                "error",
+            )
+            raise
+        return {
+            "accepted": True,
+            "connection": dict(connection),
+        }
 
     def play_audio(self) -> dict[str, object]:
         with self._operation("play_audio"):
@@ -314,6 +422,16 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
             content={"error": "device_offline", "message": str(error)},
         )
 
+    @app.exception_handler(MediaLabPairingError)
+    async def pairing_handler(
+        _request: Request,
+        error: MediaLabPairingError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": error.code, "message": str(error)},
+        )
+
     @app.exception_handler(RequestValidationError)
     async def validation_handler(
         _request: Request,
@@ -346,6 +464,14 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     @app.get("/api/events")
     async def events(after: int = 0) -> dict[str, object]:
         return {"events": service.events(after=max(0, after))}
+
+    @app.post("/api/device/pair", status_code=202)
+    async def pair_device(request: PairDeviceRequest) -> dict[str, object]:
+        return await _run_action(
+            service.pair_device,
+            pairing_code=request.pairing_code,
+            device_ip=request.device_ip,
+        )
 
     @app.post("/api/actions/play-audio")
     async def play_audio() -> dict[str, object]:
@@ -383,7 +509,12 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
 async def _run_action(callback: Any, **kwargs: object) -> dict[str, object]:
     try:
         return await asyncio.to_thread(callback, **kwargs)
-    except (MediaLabBusyError, MediaLabDeviceOfflineError, HTTPException):
+    except (
+        MediaLabBusyError,
+        MediaLabDeviceOfflineError,
+        MediaLabPairingError,
+        HTTPException,
+    ):
         raise
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -403,6 +534,7 @@ __all__ = [
     "DaemonDeviceStatusProvider",
     "MediaLabBusyError",
     "MediaLabDeviceOfflineError",
+    "MediaLabPairingError",
     "MediaLabService",
     "create_web_app",
 ]

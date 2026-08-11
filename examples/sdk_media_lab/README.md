@@ -4,7 +4,7 @@ SDK Media Lab is a standalone managed Application for real-device media
 acceptance. It serves a loopback-only browser dashboard and never opens a
 device connection of its own.
 
-Start the Runtime, pair the Watcher, then run:
+Start the Runtime, then run:
 
 ```powershell
 watcherobot app run .\examples\sdk_media_lab
@@ -12,6 +12,14 @@ watcherobot app run .\examples\sdk_media_lab
 
 The Application opens its `http://127.0.0.1:<port>` dashboard automatically.
 Set `WATCHER_MEDIA_LAB_NO_BROWSER=1` to suppress automatic browser launch.
+
+When no device is connected, enter the six-digit code shown on the Watcher in
+the dashboard's **Connect robot** panel. The local Application sends that code
+only to the SDK Daemon management endpoint; it does not store the code or route
+it through an Application business channel. A device paired before launch is
+reused automatically. If the LAN suppresses broadcast discovery, the optional
+device IPv4 field sends the same pairing request directly to that same-subnet
+address while the normal broadcast discovery remains enabled.
 
 The first version tests host-to-device PCM playback, one-shot JPEG capture,
 decoded microphone recording, capability discovery, artifacts, and diagnostic

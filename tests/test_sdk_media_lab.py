@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import threading
 import wave
 from pathlib import Path
@@ -96,6 +97,7 @@ def _service(
     robot: object | None = None,
     *,
     online: bool = True,
+    device_pairer=None,
 ):
     sample_audio = tmp_path / "sample.wav"
     sample_audio.write_bytes(b"RIFF-test-audio")
@@ -108,6 +110,16 @@ def _service(
             "state": "connected" if online else "idle",
             "last_error": None,
         },
+        device_pairer=device_pairer or (
+            lambda pairing_code, device_ip=None: {
+                "device": {
+                    "online": False,
+                    "state": "discovering",
+                    "request_id": "pairing-request",
+                    "last_error": None,
+                }
+            }
+        ),
     )
 
 
@@ -145,6 +157,41 @@ def test_offline_device_is_reported_and_hardware_actions_fail_closed(tmp_path: P
     with pytest.raises(module.MediaLabDeviceOfflineError, match="offline"):
         service.play_audio()
     assert robot.audio.paths == []
+
+
+def test_daemon_pairing_request_targets_python_sdk(monkeypatch) -> None:
+    module = _load_service_module()
+    captured_payloads: list[dict[str, object]] = []
+
+    class PairingResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"device":{"state":"discovering","online":false}}'
+
+    def fake_urlopen(request, *, timeout):
+        assert timeout == 0.5
+        captured_payloads.append(json.loads(request.data.decode("utf-8")))
+        return PairingResponse()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    provider = module.DaemonDeviceStatusProvider(
+        "http://127.0.0.1:8767/daemon/devices"
+    )
+
+    provider.pair("123456", "192.168.1.157")
+
+    assert captured_payloads == [
+        {
+            "pairing_code": "123456",
+            "target_mode": "python_sdk",
+            "device_ip": "192.168.1.157",
+        }
+    ]
 
 
 def test_online_transition_refreshes_the_sdk_device_snapshot(tmp_path: Path) -> None:
@@ -194,6 +241,79 @@ def test_http_app_returns_stable_device_offline_error(tmp_path: Path) -> None:
         "error": "device_offline",
         "message": "Watcher device is offline",
     }
+
+
+def test_http_app_accepts_six_digit_pairing_code_without_logging_it(
+    tmp_path: Path,
+) -> None:
+    module = _load_service_module()
+    pair_requests: list[tuple[str, str | None]] = []
+
+    def pair_device(
+        pairing_code: str,
+        device_ip: str | None = None,
+    ) -> dict[str, object]:
+        pair_requests.append((pairing_code, device_ip))
+        return {
+            "device": {
+                "online": False,
+                "state": "discovering",
+                "request_id": "pairing-request",
+                "last_error": None,
+            }
+        }
+
+    service = _service(
+        module,
+        tmp_path,
+        online=False,
+        device_pairer=pair_device,
+    )
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    response = client.post(
+        "/api/device/pair",
+        json={"pairing_code": "123456", "device_ip": "192.168.1.157"},
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "accepted": True,
+        "connection": {
+            "online": False,
+            "state": "discovering",
+            "request_id": "pairing-request",
+            "last_error": None,
+        },
+    }
+    assert pair_requests == [("123456", "192.168.1.157")]
+    assert "123456" not in str(service.events())
+
+
+@pytest.mark.parametrize("pairing_code", ["", "12345", "1234567", "12A456"])
+def test_http_app_rejects_invalid_pairing_codes(
+    tmp_path: Path,
+    pairing_code: str,
+) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path, online=False)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    response = client.post(
+        "/api/device/pair",
+        json={"pairing_code": pairing_code},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "invalid_request"
 
 
 def test_capture_photo_persists_only_the_managed_jpeg_artifact(tmp_path: Path) -> None:
@@ -337,6 +457,8 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
     assert '<html lang="zh-CN">' in html
     for copy in (
         "SDK 媒体实验室",
+        "连接机器人",
+        "输入设备屏幕上的六位配对码",
         "运行媒体全检",
         "扬声器流式播放",
         "相机拍照",
@@ -349,6 +471,8 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
 
     for copy in (
         "设备在线",
+        "配对码必须是 6 位数字",
+        "正在发现设备",
         "系统空闲",
         "正在传输 PCM 示例音频",
         "媒体全检通过",
@@ -367,3 +491,7 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
 
     assert "const unavailable = busy || !status.connected" in javascript
     assert "设备已断开，请重新连接后再测试" in javascript
+    assert 'api("/api/device/pair"' in javascript
+    assert 'autocomplete="one-time-code"' in html
+    assert 'name="device_ip"' in html
+    assert "device_ip: deviceIp || null" in javascript

@@ -535,7 +535,7 @@ def test_daemon_pairing_control_does_not_stop_the_current_application(
         try:
             await runtime.start_application()
             application_pid = runtime.application.process_id
-            started = await runtime.pair_device("123456", "desktop_link")
+            started = await runtime.pair_device("123456", "python_sdk")
             assert started["device"]["state"] == "discovering"
             assert runtime.application.process_id == application_pid
 

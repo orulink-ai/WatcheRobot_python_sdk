@@ -83,7 +83,7 @@ six-digit code, and then run the example:
 
 ```powershell
 $runtime = watcherobot daemon start | ConvertFrom-Json
-$pairBody = '{"pairing_code":"123456","target_mode":"desktop_link"}'
+$pairBody = '{"pairing_code":"123456","target_mode":"python_sdk"}'
 Invoke-RestMethod `
   -Method Post `
   -Uri "$($runtime.control_url)/daemon/devices/pair" `

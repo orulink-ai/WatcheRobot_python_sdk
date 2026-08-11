@@ -36,11 +36,13 @@ async def main() -> None:
                 raise RuntimeError(
                     "Daemon did not inject WATCHER_APP_DEVICE_STATUS_URL"
                 )
+            device_manager = DaemonDeviceStatusProvider(device_status_url)
             service = MediaLabService(
                 robot=app.robot,
                 artifacts_dir=ROOT / "artifacts",
                 sample_audio=ROOT.parent / "assets" / "sample_speech.wav",
-                device_status_provider=DaemonDeviceStatusProvider(device_status_url),
+                device_status_provider=device_manager,
+                device_pairer=device_manager.pair,
             )
             web_app = create_web_app(service, web_root=ROOT / "web")
             server = uvicorn.Server(
