@@ -1,6 +1,7 @@
 const state = {
   status: null,
   localBusy: false,
+  pairingBusy: false,
   hiddenEventIds: new Set(),
 };
 
@@ -12,6 +13,12 @@ const elements = {
   capabilityCount: document.querySelector("#capabilityCount"),
   lastSync: document.querySelector("#lastSync"),
   activeOperation: document.querySelector("#activeOperation"),
+  pairingPanel: document.querySelector("#pairingPanel"),
+  pairingForm: document.querySelector("#pairingForm"),
+  pairingCode: document.querySelector("#pairingCode"),
+  deviceIp: document.querySelector("#deviceIp"),
+  pairingButton: document.querySelector("#pairingButton"),
+  pairingResult: document.querySelector("#pairingResult"),
   capabilityGrid: document.querySelector("#capabilityGrid"),
   capabilitySummary: document.querySelector("#capabilitySummary"),
   eventLog: document.querySelector("#eventLog"),
@@ -40,7 +47,17 @@ const actionLabels = {
   stop_audio: "停止播放",
   capture_photo: "相机拍照",
   record_microphone: "麦克风录音",
+  device_pairing: "设备配对",
   system: "系统",
+};
+
+const pairingErrors = {
+  invalid_pairing_code: "配对码必须是 6 位数字",
+  device_slot_occupied: "当前已有设备连接或正在配对",
+  pairing_not_found: "未发现对应设备，请确认配对码和网络后重试",
+  device_connect_timeout: "设备连接超时，请重新获取配对码后重试",
+  reconnect_timeout: "设备重连超时，请重新配对",
+  pairing_unavailable: "无法连接 SDK Daemon 的配对服务",
 };
 
 async function api(path, options = {}) {
@@ -72,11 +89,13 @@ function localizeError(message, status) {
   if (busyMatch) return `媒体实验室正忙于${actionLabel(busyMatch[1])}`;
   const durationMatch = message.match(/^duration must be (.+)$/);
   if (durationMatch) return `录音时长必须为 ${durationMatch[1]}`;
+  if (pairingErrors[message]) return pairingErrors[message];
   return message;
 }
 
 function localizeEvent(event) {
   if (event.message === "Media Lab ready") return "媒体实验室已就绪";
+  if (event.message === "Device pairing started") return "设备配对已开始";
   if (event.message === "Audio stop requested") return "已请求停止播放";
   const label = actionLabel(event.action);
   if (event.message.endsWith(" started")) return `${label}已开始`;
@@ -99,6 +118,26 @@ function renderStatus(status) {
     : status.active_action
       ? `正在执行 / ${actionLabel(status.active_action)}`
       : state.localBusy ? "操作已下发" : "系统空闲";
+
+  const pairingState = status.connection?.state || "unavailable";
+  const pairingInProgress = ["discovering", "connecting", "reconnecting"].includes(pairingState);
+  elements.pairingPanel.hidden = status.connected;
+  elements.pairingButton.disabled = state.pairingBusy || pairingInProgress;
+  elements.pairingCode.disabled = state.pairingBusy || pairingInProgress;
+  elements.deviceIp.disabled = state.pairingBusy || pairingInProgress;
+  if (status.connected) {
+    setResult(elements.pairingResult, "设备配对成功", "ok");
+  } else if (state.pairingBusy || pairingState === "discovering") {
+    setResult(elements.pairingResult, "正在发现设备…", "running");
+  } else if (pairingState === "connecting" || pairingState === "reconnecting") {
+    setResult(elements.pairingResult, "已发现设备，正在建立连接…", "running");
+  } else if (status.connection?.last_error) {
+    setResult(
+      elements.pairingResult,
+      pairingErrors[status.connection.last_error] || status.connection.last_error,
+      "error",
+    );
+  }
 
   document.querySelectorAll(".station[data-capability]").forEach((station) => {
     const available = status.capabilities.includes(station.dataset.capability);
@@ -188,6 +227,36 @@ async function runAction({ path, result, pending, complete, body, station }) {
   } finally {
     state.localBusy = false;
     if (station) station.dataset.running = "false";
+    await refreshStatus();
+  }
+}
+
+async function pairDevice() {
+  const pairingCode = elements.pairingCode.value.trim();
+  const deviceIp = elements.deviceIp.value.trim();
+  if (!/^[0-9]{6}$/.test(pairingCode)) {
+    const message = "配对码必须是 6 位数字";
+    setResult(elements.pairingResult, message, "error");
+    notify(message, "error");
+    elements.pairingCode.focus();
+    return;
+  }
+  state.pairingBusy = true;
+  setResult(elements.pairingResult, "正在提交配对请求…", "running");
+  renderStatus(state.status);
+  try {
+    await api("/api/device/pair", {
+      method: "POST",
+      body: JSON.stringify({ pairing_code: pairingCode, device_ip: deviceIp || null }),
+    });
+    elements.pairingCode.value = "";
+    setResult(elements.pairingResult, "正在发现设备…", "running");
+    notify("配对请求已提交，请保持机器人开机", "ok");
+  } catch (error) {
+    setResult(elements.pairingResult, error.message, "error");
+    notify(error.message, "error");
+  } finally {
+    state.pairingBusy = false;
     await refreshStatus();
   }
 }
@@ -328,6 +397,13 @@ function formatBytes(value) {
 }
 
 elements.playAudioButton.addEventListener("click", () => { playAudio().catch(() => {}); });
+elements.pairingForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  pairDevice();
+});
+elements.pairingCode.addEventListener("input", () => {
+  elements.pairingCode.value = elements.pairingCode.value.replace(/[^0-9]/g, "").slice(0, 6);
+});
 elements.stopAudioButton.addEventListener("click", async () => {
   try { await api("/api/actions/stop-audio", { method: "POST" }); notify("已请求停止播放"); }
   catch (error) { notify(error.message, "error"); }

@@ -29,7 +29,7 @@ def make_accept(**overrides) -> PairAccept:
     values = {
         "request_id": REQUEST_ID,
         "daemon_instance_id": DAEMON_ID,
-        "target_mode": "desktop_link",
+        "target_mode": "python_sdk",
         "session_token": SESSION_TOKEN,
     }
     values.update(overrides)
@@ -41,7 +41,7 @@ def make_hello(**overrides) -> HardwareHello:
         "pair_request_id": REQUEST_ID,
         "daemon_instance_id": DAEMON_ID,
         "session_token": SESSION_TOKEN,
-        "mode": "desktop_link",
+        "mode": "python_sdk",
     }
     values.update(overrides)
     return HardwareHello(**values)
@@ -65,7 +65,7 @@ def test_start_pairing_occupies_the_only_device_slot() -> None:
 
     request = session.start_pairing(
         pairing_code="000000",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=10.0,
     )
@@ -77,17 +77,33 @@ def test_start_pairing_occupies_the_only_device_slot() -> None:
     with pytest.raises(PairingSessionError) as error:
         session.start_pairing(
             pairing_code="999999",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=11.0,
         )
     assert error.value.code == "device_slot_occupied"
 
 
+@pytest.mark.parametrize("target_mode", ["desktop_link", "python_sdk"])
+def test_start_pairing_accepts_each_supported_application_mode(
+    target_mode: str,
+) -> None:
+    session = make_session()
+
+    request = session.start_pairing(
+        pairing_code="123456",
+        target_mode=target_mode,
+        websocket_port=8765,
+        now=10.0,
+    )
+
+    assert request.target_mode == target_mode
+
+
 @pytest.mark.parametrize(
     ("pairing_code", "target_mode", "expected_code"),
     [
-        ("12345", "desktop_link", "invalid_pairing_code"),
+        ("12345", "python_sdk", "invalid_pairing_code"),
         ("123456", "sdk", "unsupported_target_mode"),
     ],
 )
@@ -114,7 +130,7 @@ def test_accept_moves_to_connecting_and_never_exposes_secrets() -> None:
     session = make_session()
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=10.0,
     )
@@ -132,7 +148,7 @@ def test_hardware_hello_is_the_only_transition_to_online() -> None:
     session = make_session()
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=10.0,
     )
@@ -157,7 +173,7 @@ def test_hardware_hello_rejects_wrong_session_credentials(hello, peer_ip) -> Non
     session = make_session()
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=10.0,
     )
@@ -175,7 +191,7 @@ def test_abnormal_disconnect_reserves_slot_for_same_session_reconnect() -> None:
     session = make_session()
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=10.0,
     )
@@ -189,7 +205,7 @@ def test_abnormal_disconnect_reserves_slot_for_same_session_reconnect() -> None:
     with pytest.raises(PairingSessionError) as error:
         session.start_pairing(
             pairing_code="999999",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=21.0,
         )
@@ -213,7 +229,7 @@ def test_timeouts_release_the_device_slot(advance, expected_error) -> None:
     session = make_session()
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=10.0,
     )
@@ -232,7 +248,7 @@ def test_busy_cancel_and_explicit_release_return_to_idle() -> None:
     session = make_session()
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=10.0,
     )
@@ -248,7 +264,7 @@ def test_busy_cancel_and_explicit_release_return_to_idle() -> None:
 
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=20.0,
     )
@@ -258,7 +274,7 @@ def test_busy_cancel_and_explicit_release_return_to_idle() -> None:
 
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=30.0,
     )
@@ -278,7 +294,7 @@ def test_device_session_end_releases_only_the_current_connected_session() -> Non
     session = make_session()
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=10.0,
     )

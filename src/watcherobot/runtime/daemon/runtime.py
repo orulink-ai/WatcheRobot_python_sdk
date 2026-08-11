@@ -360,6 +360,7 @@ class DaemonRuntime:
         self,
         pairing_code: str,
         target_mode: str,
+        device_ip: str | None = None,
     ) -> dict[str, object]:
         """Reserve the single slot and start Daemon-owned UDP discovery."""
 
@@ -370,7 +371,7 @@ class DaemonRuntime:
             now=self._clock(),
         )
         try:
-            self.pairing_udp.activate()
+            self.pairing_udp.activate(peer_ip=device_ip)
         except Exception:
             self.device_pairing.release()
             raise
@@ -475,7 +476,7 @@ class DaemonRuntime:
             return
         self.device_pairing.device_disconnected(now=self._clock())
         self.logs.record(f"Device connection lost (peer_ip={_peer_ip})")
-        self.pairing_udp.activate()
+        self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
         await self._publish_device_state(self.device_pairing.snapshot())
 
     async def _device_session_ended(

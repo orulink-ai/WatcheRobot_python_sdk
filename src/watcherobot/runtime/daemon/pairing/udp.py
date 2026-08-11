@@ -300,6 +300,7 @@ class PairingUdpService:
         self._channel_errors: dict[PairingUdpInterface, str] = {}
         self._broadcast_task: asyncio.Task[None] | None = None
         self._selected_interface: PairingUdpInterface | None = None
+        self._target_peer_ip: str | None = None
         self._last_receive_context: dict[str, str] | None = None
         self._refresh_lock = asyncio.Lock()
         self._running = False
@@ -348,6 +349,7 @@ class PairingUdpService:
         self._close_all_channels()
         self._channel_errors.clear()
         self._selected_interface = None
+        self._target_peer_ip = None
         self._running = False
 
     async def refresh_channels(
@@ -421,7 +423,7 @@ class PairingUdpService:
 
             return self.active_interfaces
 
-    def activate(self) -> None:
+    def activate(self, *, peer_ip: str | None = None) -> None:
         if not self._running:
             raise RuntimeError("pairing UDP service is not running")
         if self._session.state not in {
@@ -430,6 +432,21 @@ class PairingUdpService:
             DevicePairingState.RECONNECTING,
         }:
             raise PairingSessionError("invalid_state_transition")
+        if peer_ip is not None:
+            try:
+                parsed_peer = ipaddress.IPv4Address(peer_ip)
+            except ipaddress.AddressValueError as exc:
+                raise PairingSessionError("invalid_device_ip") from exc
+            if (
+                parsed_peer.is_loopback
+                or parsed_peer.is_multicast
+                or parsed_peer.is_unspecified
+                or self._channel_for_peer(str(parsed_peer)) is None
+            ):
+                raise PairingSessionError("invalid_device_ip")
+            self._target_peer_ip = str(parsed_peer)
+        else:
+            self._target_peer_ip = None
         if self._broadcast_task is None or self._broadcast_task.done():
             self._broadcast_task = asyncio.create_task(
                 self._broadcast_loop(),
@@ -467,6 +484,23 @@ class PairingUdpService:
                 )
                 continue
             sent = True
+        target_peer_ip = self._target_peer_ip
+        if target_peer_ip is not None:
+            channel = self._channel_for_peer(target_peer_ip)
+            if channel is not None:
+                try:
+                    channel.send_unicast(
+                        datagram,
+                        (target_peer_ip, PAIRING_UDP_PORT),
+                    )
+                except (OSError, RuntimeError) as exc:
+                    self._emit_event(
+                        "Pairing UDP unicast failed "
+                        f"(peer={target_peer_ip}, error={exc})",
+                        warning=True,
+                    )
+                else:
+                    sent = True
         return sent
 
     async def handle_datagram(
@@ -518,6 +552,7 @@ class PairingUdpService:
                         warning=True,
                     )
         self._selected_interface = None
+        self._target_peer_ip = None
         await self._notify_state()
         return True
 
@@ -525,6 +560,7 @@ class PairingUdpService:
         expired = self._session.expire(now=self._clock())
         if expired:
             self._selected_interface = None
+            self._target_peer_ip = None
             await self._notify_state()
         return expired
 

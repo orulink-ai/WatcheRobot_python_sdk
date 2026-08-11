@@ -33,7 +33,7 @@ class _ControllerStub:
             "request_id": None,
             "last_error": None,
         }
-        self.pair_requests: list[tuple[str, str]] = []
+        self.pair_requests: list[tuple[str, str, str | None]] = []
         self.cancel_requests = 0
         self.disconnect_requests = 0
         self.selected_application_dir: str | None = None
@@ -83,12 +83,17 @@ class _ControllerStub:
     def device_status(self) -> dict:
         return {"device": dict(self.device)}
 
-    async def pair_device(self, pairing_code: str, target_mode: str) -> dict:
+    async def pair_device(
+        self,
+        pairing_code: str,
+        target_mode: str,
+        device_ip: str | None = None,
+    ) -> dict:
         if self.device["state"] != "idle":
             raise PairingSessionError("device_slot_occupied")
         if len(pairing_code) != 6 or not pairing_code.isdigit():
             raise PairingSessionError("invalid_pairing_code")
-        self.pair_requests.append((pairing_code, target_mode))
+        self.pair_requests.append((pairing_code, target_mode, device_ip))
         self.device.update(
             state="discovering",
             mode=target_mode,
@@ -251,15 +256,21 @@ def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None
     }
     paired = client.post(
         "/daemon/devices/pair",
-        json={"pairing_code": "123456", "target_mode": "desktop_link"},
+        json={
+            "pairing_code": "123456",
+            "target_mode": "python_sdk",
+            "device_ip": "192.168.1.157",
+        },
     )
     assert paired.status_code == 202
     assert paired.json()["device"]["state"] == "discovering"
-    assert controller.pair_requests == [("123456", "desktop_link")]
+    assert controller.pair_requests == [
+        ("123456", "python_sdk", "192.168.1.157")
+    ]
 
     occupied = client.post(
         "/daemon/devices/pair",
-        json={"pairing_code": "999999", "target_mode": "desktop_link"},
+        json={"pairing_code": "999999", "target_mode": "python_sdk"},
     )
     assert occupied.status_code == 409
     assert occupied.json()["error"] == "device_slot_occupied"
@@ -276,7 +287,7 @@ def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None
     controller.device.update(
         state="connected",
         online=True,
-        mode="desktop_link",
+        mode="python_sdk",
         request_id="21a9dbf05ea3443480e62076f79a3b12",
     )
     disconnected = client.post("/daemon/devices/disconnect")

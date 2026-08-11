@@ -42,6 +42,10 @@ def vectors() -> dict[str, object]:
 def test_protocol_vectors_fix_name_version_and_message_shapes(vectors) -> None:
     assert vectors["protocol"] == LAN_PAIRING_PROTOCOL
     assert vectors["version"] == LAN_PAIRING_VERSION
+    assert set(vectors["supported_target_modes"]) == {
+        "desktop_link",
+        "python_sdk",
+    }
     valid = vectors["valid"]
 
     assert isinstance(parse_udp_message(valid["pair_request"]), PairRequest)
@@ -64,6 +68,26 @@ def test_pair_request_accepts_six_digit_boundaries(vectors, pairing_code) -> Non
     payload = dict(vectors["valid"]["pair_request"])
     payload["pairing_code"] = pairing_code
     assert parse_udp_message(payload).pairing_code == pairing_code
+
+
+@pytest.mark.parametrize("target_mode", ["desktop_link", "python_sdk"])
+def test_pair_request_accepts_each_supported_application_mode(
+    vectors,
+    target_mode: str,
+) -> None:
+    payload = dict(vectors["valid"]["pair_request"])
+    payload["target_mode"] = target_mode
+
+    assert parse_udp_message(payload).target_mode == target_mode
+
+    accept_payload = dict(vectors["valid"]["pair_accept"])
+    accept_payload["target_mode"] = target_mode
+    assert parse_udp_message(accept_payload).target_mode == target_mode
+
+    hello_payload = dict(vectors["valid"]["hardware_hello"])
+    hello_payload["data"] = dict(hello_payload["data"])
+    hello_payload["data"]["mode"] = target_mode
+    assert parse_hardware_hello(hello_payload).mode == target_mode
 
 
 def test_invalid_contract_values_are_rejected(vectors) -> None:

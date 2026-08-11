@@ -10,7 +10,7 @@ from collections.abc import Callable
 from enum import Enum
 
 from watcherobot.runtime.daemon.pairing.protocol import (
-    LAN_PAIRING_TARGET_MODE,
+    LAN_PAIRING_TARGET_MODES,
     HardwareHello,
     PairAccept,
     PairBusy,
@@ -130,7 +130,7 @@ class DevicePairingSession:
             raise PairingSessionError("device_slot_occupied")
         if _PAIRING_CODE.fullmatch(pairing_code or "") is None:
             raise PairingSessionError("invalid_pairing_code")
-        if target_mode != LAN_PAIRING_TARGET_MODE:
+        if target_mode not in LAN_PAIRING_TARGET_MODES:
             raise PairingSessionError("unsupported_target_mode")
         if type(websocket_port) is not int or not 1 <= websocket_port <= 65535:
             raise PairingSessionError("invalid_websocket_port")

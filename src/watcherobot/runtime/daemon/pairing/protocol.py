@@ -15,7 +15,14 @@ from typing import Any, Mapping
 
 LAN_PAIRING_PROTOCOL = "watcher-lan-pairing"
 LAN_PAIRING_VERSION = "1.0"
-LAN_PAIRING_TARGET_MODE = "desktop_link"
+LAN_PAIRING_TARGET_MODE_DESKTOP_LINK = "desktop_link"
+LAN_PAIRING_TARGET_MODE_PYTHON_SDK = "python_sdk"
+LAN_PAIRING_TARGET_MODES = frozenset(
+    {
+        LAN_PAIRING_TARGET_MODE_DESKTOP_LINK,
+        LAN_PAIRING_TARGET_MODE_PYTHON_SDK,
+    }
+)
 MAX_UDP_PAYLOAD_BYTES = 2048
 MAX_HELLO_PAYLOAD_BYTES = 4096
 
@@ -159,6 +166,13 @@ def _require_literal(
     return value
 
 
+def _require_target_mode(payload: Mapping[str, object], field: str) -> str:
+    value = _require_string(payload, field)
+    if value not in LAN_PAIRING_TARGET_MODES:
+        raise PairingProtocolError(f"{field} is unsupported: {value}")
+    return value
+
+
 def _require_lower_hex(
     payload: Mapping[str, object],
     field: str,
@@ -197,11 +211,7 @@ def parse_udp_message(payload: RawPayload) -> UdpMessage:
         pairing_code = _require_string(message, "pairing_code")
         if _PAIRING_CODE.fullmatch(pairing_code) is None:
             raise PairingProtocolError("pairing_code must contain six digits")
-        target_mode = _require_literal(
-            message,
-            "target_mode",
-            LAN_PAIRING_TARGET_MODE,
-        )
+        target_mode = _require_target_mode(message, "target_mode")
         websocket_port = message.get("websocket_port")
         if type(websocket_port) is not int or not 1 <= websocket_port <= 65535:
             raise PairingProtocolError("websocket_port must be within 1..65535")
@@ -217,11 +227,7 @@ def parse_udp_message(payload: RawPayload) -> UdpMessage:
         return PairAccept(
             request_id=request_id,
             daemon_instance_id=daemon_instance_id,
-            target_mode=_require_literal(
-                message,
-                "target_mode",
-                LAN_PAIRING_TARGET_MODE,
-            ),
+            target_mode=_require_target_mode(message, "target_mode"),
             session_token=_require_lower_hex(
                 message,
                 "session_token",
@@ -285,7 +291,7 @@ def parse_hardware_hello(payload: RawPayload) -> HardwareHello:
             "session_token",
             _LOWER_HEX_64,
         ),
-        mode=_require_literal(data, "mode", LAN_PAIRING_TARGET_MODE),
+        mode=_require_target_mode(data, "mode"),
     )
 
 

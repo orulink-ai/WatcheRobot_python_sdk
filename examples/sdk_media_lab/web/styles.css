@@ -153,6 +153,49 @@ main { width: min(1540px, 100%); margin: 0 auto; padding: 0 clamp(18px, 4vw, 64p
 .primary-action:disabled, .station-action:disabled, .quiet-action:disabled { cursor: not-allowed; opacity: 0.38; }
 .active-operation { margin-top: 20px; color: var(--muted); font: 0.7rem var(--mono); text-align: right; letter-spacing: 0.12em; }
 
+.pairing-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.72fr);
+  gap: 36px;
+  align-items: end;
+  padding: 24px 28px;
+  border: 1px solid var(--cyan);
+  border-bottom: 0;
+  background: linear-gradient(100deg, rgba(98, 231, 215, 0.08), rgba(17, 22, 20, 0.94));
+}
+.pairing-panel h2 { margin-top: 8px; font: 600 2rem var(--display); }
+.pairing-panel p:not(.section-index) { max-width: 720px; margin-top: 10px; color: var(--muted); font-size: 0.82rem; line-height: 1.55; }
+.pairing-form label { display: block; margin-bottom: 9px; color: var(--cyan); font: 0.64rem var(--mono); letter-spacing: 0.12em; }
+.pairing-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+.pairing-controls input {
+  min-width: 0;
+  height: 52px;
+  padding: 0 18px;
+  border: 1px solid var(--line-bright);
+  border-right: 0;
+  outline: 0;
+  color: var(--paper);
+  background: #090c0b;
+  font: 1.25rem var(--mono);
+  letter-spacing: 0.28em;
+}
+.pairing-controls input:focus { border-color: var(--cyan); box-shadow: inset 0 0 0 1px var(--cyan); }
+.pairing-controls input + input { border-left: 0; font-size: 0.82rem; letter-spacing: 0.04em; }
+.pairing-controls input:disabled { opacity: 0.55; }
+.pairing-action {
+  min-width: 116px;
+  border: 0;
+  color: var(--ink);
+  background: var(--cyan);
+  cursor: pointer;
+  font: 700 0.72rem var(--mono);
+}
+.pairing-action:disabled { cursor: wait; opacity: 0.45; }
+.pairing-result { display: block; min-height: 20px; margin-top: 10px; color: var(--muted); font: 0.65rem/1.5 var(--mono); }
+.pairing-result[data-tone="running"] { color: var(--amber); }
+.pairing-result[data-tone="ok"] { color: var(--signal); }
+.pairing-result[data-tone="error"] { color: var(--danger); }
+
 .telemetry-strip {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -254,6 +297,7 @@ footer { position: relative; z-index: 11; display: flex; justify-content: space-
   .connection { min-width: auto; padding: 10px; }
   .connection div { display: none; }
   .mission-panel { grid-template-columns: 1fr; }
+  .pairing-panel { grid-template-columns: 1fr; padding: 22px; }
   .run-block { width: 100%; }
   .telemetry-strip { grid-template-columns: 1fr 1fr; }
   .telemetry-strip div:nth-child(2) { border-right: 0; }

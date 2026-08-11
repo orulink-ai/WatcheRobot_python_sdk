@@ -6,7 +6,7 @@ the device, and pair it through the Runtime control API:
 
 ```powershell
 $runtime = watcherobot daemon start | ConvertFrom-Json
-$pairBody = '{"pairing_code":"123456","target_mode":"desktop_link"}'
+$pairBody = '{"pairing_code":"123456","target_mode":"python_sdk"}'
 Invoke-RestMethod `
   -Method Post `
   -Uri "$($runtime.control_url)/daemon/devices/pair" `
@@ -23,6 +23,11 @@ do {
   }
 } while ($device.state -ne "connected")
 ```
+
+`target_mode` identifies the embedded application that is currently waiting
+for pairing. Use `python_sdk` for `sdk.control.app` and `desktop_link` for
+`client.app`. The Daemon validates both connection modes but does not route
+business frames by message content.
 
 After the device state reaches `connected`, run managed Applications that
 exercise the required capabilities:

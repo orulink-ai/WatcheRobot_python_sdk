@@ -44,7 +44,7 @@ def connected_session() -> DevicePairingSession:
     )
     session.start_pairing(
         pairing_code="123456",
-        target_mode="desktop_link",
+        target_mode="python_sdk",
         websocket_port=8765,
         now=1.0,
     )
@@ -52,7 +52,7 @@ def connected_session() -> DevicePairingSession:
         PairAccept(
             request_id=REQUEST_ID,
             daemon_instance_id=DAEMON_ID,
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             session_token=TOKEN,
         ),
         peer_ip=PEER_IP,
@@ -63,7 +63,7 @@ def connected_session() -> DevicePairingSession:
             pair_request_id=REQUEST_ID,
             daemon_instance_id=DAEMON_ID,
             session_token=TOKEN,
-            mode="desktop_link",
+            mode="python_sdk",
         ),
         peer_ip=PEER_IP,
         now=3.0,

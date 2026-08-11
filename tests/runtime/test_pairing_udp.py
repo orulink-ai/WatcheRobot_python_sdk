@@ -83,7 +83,7 @@ def test_udp_service_broadcasts_daemon_owned_pair_request_on_each_interface() ->
         session = make_session()
         request = session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=10.0,
         )
@@ -113,10 +113,41 @@ def test_udp_service_broadcasts_daemon_owned_pair_request_on_each_interface() ->
             "request_id": request.request_id,
             "daemon_instance_id": DAEMON_ID,
             "pairing_code": "123456",
-            "target_mode": "desktop_link",
+            "target_mode": "python_sdk",
             "websocket_port": 8765,
         }
         assert states == []
+        await service.stop()
+
+    asyncio.run(scenario())
+
+
+def test_udp_service_sends_optional_unicast_probe_on_matching_interface() -> None:
+    async def scenario() -> None:
+        session = make_session()
+        session.start_pairing(
+            pairing_code="123456",
+            target_mode="python_sdk",
+            websocket_port=8765,
+            now=10.0,
+        )
+        factory = FakeChannelFactory()
+        service = PairingUdpService(
+            session=session,
+            clock=lambda: 10.0,
+            interface_provider=lambda: (ETHERNET, WIFI),
+            channel_factory=factory,
+        )
+        await service.start()
+
+        service.activate(peer_ip="192.168.1.157")
+        assert await service.broadcast_once() is True
+
+        assert factory.channels[ETHERNET].unicasts == []
+        assert len(factory.channels[WIFI].unicasts) == 1
+        datagram, address = factory.channels[WIFI].unicasts[0]
+        assert address == ("192.168.1.157", 37021)
+        assert json.loads(datagram)["pairing_code"] == "123456"
         await service.stop()
 
     asyncio.run(scenario())
@@ -127,7 +158,7 @@ def test_udp_service_accepts_first_matching_device_and_stops_broadcasting() -> N
         session = make_session()
         session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=10.0,
         )
@@ -146,7 +177,7 @@ def test_udp_service_accepts_first_matching_device_and_stops_broadcasting() -> N
         response = PairAccept(
             request_id=REQUEST_ID,
             daemon_instance_id=DAEMON_ID,
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             session_token=SESSION_TOKEN,
         )
 
@@ -176,7 +207,7 @@ def test_udp_service_handles_busy_invalid_and_cancel_without_leaking_slot() -> N
         session = make_session()
         session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=10.0,
         )
@@ -213,14 +244,14 @@ def test_udp_service_handles_busy_invalid_and_cancel_without_leaking_slot() -> N
 
         session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=20.0,
         )
         accept = PairAccept(
             request_id=REQUEST_ID,
             daemon_instance_id=DAEMON_ID,
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             session_token=SESSION_TOKEN,
         )
         await service.handle_datagram(
@@ -244,7 +275,7 @@ def test_udp_service_expires_discovery_and_notifies_state() -> None:
         session = make_session()
         session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=10.0,
         )

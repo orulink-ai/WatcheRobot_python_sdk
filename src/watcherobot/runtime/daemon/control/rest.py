@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from ipaddress import IPv4Address
 from typing import Any, Protocol
 
 import uvicorn
@@ -28,6 +29,7 @@ from watcherobot.runtime.daemon.maintenance import MaintenanceError
 class PairDeviceRequest(BaseModel):
     pairing_code: str
     target_mode: str
+    device_ip: IPv4Address | None = None
 
 
 class ApplicationLauncherRequest(BaseModel):
@@ -112,6 +114,7 @@ class ApplicationController(Protocol):
         self,
         pairing_code: str,
         target_mode: str,
+        device_ip: str | None = None,
     ) -> dict[str, Any]:
         """Start pairing the only device slot."""
 
@@ -330,6 +333,7 @@ class DaemonControlAPI:
                 return await self._controller.pair_device(
                     request.pairing_code,
                     request.target_mode,
+                    str(request.device_ip) if request.device_ip is not None else None,
                 )
             except PairingSessionError as exc:
                 status_code = (

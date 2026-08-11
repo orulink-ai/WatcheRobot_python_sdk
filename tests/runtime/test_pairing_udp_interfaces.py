@@ -179,7 +179,7 @@ def test_udp_service_reconciles_added_removed_and_changed_interfaces() -> None:
 
         session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=10.0,
         )
@@ -250,7 +250,7 @@ def test_udp_service_closes_stale_same_ip_channel_before_rebinding() -> None:
         old_channel = factory.created[0]
         session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=10.0,
         )
@@ -282,7 +282,7 @@ def test_udp_service_discovers_interface_added_after_daemon_start() -> None:
 
         session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=10.0,
         )
@@ -318,7 +318,7 @@ def test_udp_service_keeps_healthy_interface_when_another_bind_fails() -> None:
 
         session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=10.0,
         )
@@ -393,7 +393,7 @@ def test_udp_service_reopens_channel_after_broadcast_failure() -> None:
         await service.start()
         session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=10.0,
         )
@@ -427,14 +427,14 @@ def test_pair_accept_and_cancel_stay_on_the_receiving_interface() -> None:
         await service.start()
         session.start_pairing(
             pairing_code="123456",
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             websocket_port=8765,
             now=10.0,
         )
         response = PairAccept(
             request_id=REQUEST_ID,
             daemon_instance_id=DAEMON_ID,
-            target_mode="desktop_link",
+            target_mode="python_sdk",
             session_token=SESSION_TOKEN,
         )
 
