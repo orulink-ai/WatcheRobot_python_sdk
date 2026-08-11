@@ -414,16 +414,15 @@ def test_card_reader_lists_only_sd_work_documents(monkeypatch, tmp_path: Path) -
 
 def test_format_card_reader_volume_as_fat32_returns_the_new_volume_identity(
     monkeypatch,
-    tmp_path: Path,
 ) -> None:
-    card = tmp_path / "card"
-    card.mkdir()
+    card = Path("E:\\")
     original = card_reader.VolumeInfo("E:\\|00000001", card, "OLD", "FAT", 1, 2, 1, None)
     formatted = card_reader.VolumeInfo("E:\\|00000002", card, "", "FAT32", 3, 4, 2, None)
     calls: list[list[str]] = []
 
     monkeypatch.setattr(card_reader.sys, "platform", "win32")
     monkeypatch.setenv("SystemDrive", "Z:")
+    monkeypatch.setattr(Path, "is_dir", lambda _: True)
     monkeypatch.setattr(card_reader, "_resolve_volume", lambda _: original)
     monkeypatch.setattr(card_reader, "_inspect_volume", lambda _: formatted)
     monkeypatch.setattr(card_reader.subprocess, "run", lambda command, **_: calls.append(command))
@@ -435,24 +434,24 @@ def test_format_card_reader_volume_as_fat32_returns_the_new_volume_identity(
     assert "-FileSystem FAT32" in calls[0][-1]
 
 
-def test_format_card_reader_volume_does_not_reformat_existing_fat32(monkeypatch, tmp_path: Path) -> None:
-    card = tmp_path / "card"
-    card.mkdir()
+def test_format_card_reader_volume_does_not_reformat_existing_fat32(monkeypatch) -> None:
+    card = Path("E:\\")
     volume = card_reader.VolumeInfo("E:\\|00000001", card, "", "FAT32", 1, 2, 1, None)
     monkeypatch.setattr(card_reader.sys, "platform", "win32")
     monkeypatch.setenv("SystemDrive", "Z:")
+    monkeypatch.setattr(Path, "is_dir", lambda _: True)
     monkeypatch.setattr(card_reader, "_resolve_volume", lambda _: volume)
     monkeypatch.setattr(card_reader.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("must not format"))
 
     assert card_reader.format_volume_as_fat32(volume.id) == volume.payload()
 
 
-def test_format_card_reader_volume_rejects_non_fat_filesystems(monkeypatch, tmp_path: Path) -> None:
-    card = tmp_path / "card"
-    card.mkdir()
+def test_format_card_reader_volume_rejects_non_fat_filesystems(monkeypatch) -> None:
+    card = Path("E:\\")
     volume = card_reader.VolumeInfo("E:\\|00000001", card, "", "exFAT", 1, 2, 1, None)
     monkeypatch.setattr(card_reader.sys, "platform", "win32")
     monkeypatch.setenv("SystemDrive", "Z:")
+    monkeypatch.setattr(Path, "is_dir", lambda _: True)
     monkeypatch.setattr(card_reader, "_resolve_volume", lambda _: volume)
     monkeypatch.setattr(card_reader.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("must not format"))
 
