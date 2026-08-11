@@ -38,6 +38,7 @@ class ApplicationStartError(ApplicationRuntimeError):
 
 
 DEFAULT_APPLICATION_STARTUP_TIMEOUT = 90.0
+DEFAULT_APPLICATION_CHANNEL_LOSS_GRACE_TIMEOUT = 2.0
 
 
 class ApplicationRuntimeManager:
@@ -50,6 +51,9 @@ class ApplicationRuntimeManager:
         current_app: str | None,
         application_launcher: ApplicationLauncher,
         startup_timeout: float = DEFAULT_APPLICATION_STARTUP_TIMEOUT,
+        channel_loss_grace_timeout: float = (
+            DEFAULT_APPLICATION_CHANNEL_LOSS_GRACE_TIMEOUT
+        ),
         stop_timeout: float = 5.0,
         log_service: ApplicationLogService | None = None,
     ) -> None:
@@ -61,6 +65,7 @@ class ApplicationRuntimeManager:
         self._application_launcher = application_launcher
         self._launch_spec: ApplicationLaunchSpec | None = None
         self._startup_timeout = startup_timeout
+        self._channel_loss_grace_timeout = channel_loss_grace_timeout
         self._stop_timeout = stop_timeout
         self._log_service = log_service
         self.registry = ApplicationSessionRegistry(current_app=current_app)
@@ -79,6 +84,7 @@ class ApplicationRuntimeManager:
         self._operation_lock = asyncio.Lock()
         self._closing = False
         self._log_tasks: list[asyncio.Task[None]] = []
+        self._device_status_url: str | None = None
 
     @property
     def process_id(self) -> int | None:
@@ -90,6 +96,18 @@ class ApplicationRuntimeManager:
     @property
     def launch_spec(self) -> ApplicationLaunchSpec | None:
         return self._launch_spec
+
+    def set_device_status_url(self, url: str) -> None:
+        """Inject the Daemon's read-only device status endpoint into Applications."""
+
+        value = url.strip()
+        if not value:
+            raise ValueError("device status URL cannot be empty")
+        if self._process is not None or self.registry.active_run is not None:
+            raise SessionOccupiedError(
+                "Device status URL cannot change while an Application run exists"
+            )
+        self._device_status_url = value
 
     def select_application(
         self,
@@ -226,7 +244,12 @@ class ApplicationRuntimeManager:
 
     def _build_environment(self, run: ApplicationRun) -> dict[str, str]:
         environment = dict(os.environ)
-        for name in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"):
+        for name in (
+            "PYTHONPATH",
+            "PYTHONHOME",
+            "VIRTUAL_ENV",
+            "WATCHER_APP_DEVICE_STATUS_URL",
+        ):
             environment.pop(name, None)
         environment.update(
             {
@@ -244,6 +267,8 @@ class ApplicationRuntimeManager:
                 ),
             }
         )
+        if self._device_status_url is not None:
+            environment["WATCHER_APP_DEVICE_STATUS_URL"] = self._device_status_url
         return environment
 
     async def _wait_until_ready(self, run: ApplicationRun) -> None:
@@ -291,7 +316,7 @@ class ApplicationRuntimeManager:
         try:
             return_code = await asyncio.wait_for(
                 asyncio.shield(process.wait()),
-                timeout=0.5,
+                timeout=self._channel_loss_grace_timeout,
             )
         except asyncio.TimeoutError:
             await self._abort_for_error()

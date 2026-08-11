@@ -19,6 +19,8 @@ Application does not stop the Runtime or rebuild the device connection.
 
 Available examples include:
 
+- `sdk_media_lab`: launch a standalone loopback browser dashboard for speaker
+  streaming, JPEG capture, microphone recording, artifacts, and diagnostics.
 - `capture_photo`: capture one JPEG from the camera.
 - `record_microphone`: record a short WAV file.
 - `face_tracking_preview`: consume typed, sequence-matched live preview frames

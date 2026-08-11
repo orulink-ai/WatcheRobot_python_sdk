@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>WatcheRobot SDK 媒体实验室</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+    <header class="masthead">
+      <div class="identity">
+        <span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <div>
+          <p class="eyebrow">WATCHE / 媒体诊断台 01</p>
+          <h1>SDK 媒体实验室</h1>
+        </div>
+      </div>
+      <div class="connection" id="connectionBadge" data-state="waiting">
+        <span class="status-lamp" aria-hidden="true"></span>
+        <div>
+          <small>设备连接</small>
+          <strong id="connectionText">正在校准</strong>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="mission-panel" aria-labelledby="missionTitle">
+        <div>
+          <p class="section-index">00 / 系统说明</p>
+          <h2 id="missionTitle">一张工作台，验证三条媒体链路。</h2>
+          <p class="mission-copy">
+            本地测试台通过 SDK Runtime 驱动当前托管应用。扬声器、相机和麦克风测试
+            始终通过已授权的设备通道执行，不会建立额外连接。
+          </p>
+        </div>
+        <div class="run-block">
+          <button class="primary-action" id="runAllButton" type="button">
+            <span>运行媒体全检</span>
+            <small>扬声器 → 相机 → 麦克风</small>
+          </button>
+          <p id="activeOperation" class="active-operation" aria-live="polite">系统空闲</p>
+        </div>
+      </section>
+
+      <section class="telemetry-strip" aria-label="设备遥测信息">
+        <div><span>设备</span><strong id="deviceId">—</strong></div>
+        <div><span>固件</span><strong id="firmwareVersion">—</strong></div>
+        <div><span>能力数量</span><strong id="capabilityCount">00</strong></div>
+        <div><span>最近同步</span><strong id="lastSync">—</strong></div>
+      </section>
+
+      <section class="stations" aria-label="媒体测试台">
+        <article class="station station-audio" data-capability="audio.stream">
+          <div class="station-head">
+            <p class="section-index">01 / 音频下行</p>
+            <span class="capability-state">检测中</span>
+          </div>
+          <h2>扬声器流式播放</h2>
+          <p>通过应用通道传输内置的 24 kHz 单声道 PCM 示例音频。</p>
+          <div class="scope speaker-scope" aria-hidden="true">
+            <span style="--h: 22%"></span><span style="--h: 44%"></span><span style="--h: 72%"></span>
+            <span style="--h: 38%"></span><span style="--h: 88%"></span><span style="--h: 54%"></span>
+            <span style="--h: 28%"></span><span style="--h: 64%"></span><span style="--h: 42%"></span>
+            <span style="--h: 76%"></span><span style="--h: 34%"></span><span style="--h: 58%"></span>
+          </div>
+          <div class="button-row">
+            <button class="station-action" id="playAudioButton" type="button">播放示例</button>
+            <button class="quiet-action" id="stopAudioButton" type="button">停止</button>
+          </div>
+          <output class="station-result" id="audioResult">等待测试</output>
+        </article>
+
+        <article class="station station-camera" data-capability="camera.capture">
+          <div class="station-head">
+            <p class="section-index">02 / 图像采集</p>
+            <span class="capability-state">检测中</span>
+          </div>
+          <h2>相机拍照</h2>
+          <p>请求拍摄一张 JPEG 照片，并将其作为托管应用产物返回。</p>
+          <div class="camera-stage" id="cameraStage">
+            <img id="cameraPreview" alt="最近拍摄的照片" hidden />
+            <div class="camera-empty" id="cameraEmpty">
+              <span class="reticle" aria-hidden="true"></span>
+              <strong>暂无画面</strong>
+              <small>拍照通道已就绪</small>
+            </div>
+            <span class="frame-corner top-left"></span><span class="frame-corner top-right"></span>
+            <span class="frame-corner bottom-left"></span><span class="frame-corner bottom-right"></span>
+          </div>
+          <div class="button-row">
+            <button class="station-action" id="capturePhotoButton" type="button">拍摄 JPEG</button>
+            <a class="quiet-action link-action" id="downloadPhoto" href="#" download="camera.jpg" hidden>下载照片</a>
+          </div>
+          <output class="station-result" id="cameraResult">等待测试</output>
+        </article>
+
+        <article class="station station-microphone" data-capability="microphone">
+          <div class="station-head">
+            <p class="section-index">03 / 音频上行</p>
+            <span class="capability-state">检测中</span>
+          </div>
+          <h2>麦克风录音</h2>
+          <p>接收 Watcher 的 Opus 音频，由 SDK 解码为 PCM，并保存为经过校验的 WAV。</p>
+          <div class="duration-control">
+            <label for="recordDuration">录音时长</label>
+            <input id="recordDuration" type="range" min="1" max="15" value="5" step="1" />
+            <strong><span id="durationValue">5</span> 秒</strong>
+          </div>
+          <canvas class="waveform" id="waveform" width="640" height="150" aria-label="麦克风录音波形"></canvas>
+          <div class="button-row">
+            <button class="station-action" id="recordMicrophoneButton" type="button">录制 PCM</button>
+            <a class="quiet-action link-action" id="downloadRecording" href="#" download="microphone.wav" hidden>下载录音</a>
+          </div>
+          <audio id="recordingPlayer" controls hidden></audio>
+          <output class="station-result" id="microphoneResult">等待测试</output>
+        </article>
+      </section>
+
+      <section class="lower-grid">
+        <article class="capability-panel">
+          <div class="panel-heading">
+            <div><p class="section-index">04 / 能力合同</p><h2>设备能力矩阵</h2></div>
+            <span id="capabilitySummary">同步中</span>
+          </div>
+          <div class="capability-grid" id="capabilityGrid" aria-live="polite"></div>
+        </article>
+
+        <article class="event-panel">
+          <div class="panel-heading">
+            <div><p class="section-index">05 / 运行追踪</p><h2>运行日志</h2></div>
+            <button class="text-button" id="clearVisualLog" type="button">清空显示</button>
+          </div>
+          <ol class="event-log" id="eventLog" aria-live="polite"></ol>
+        </article>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <footer>
+      <span>本机页面 · 127.0.0.1</span>
+      <span>应用 → 守护进程 → WATCHER</span>
+      <span id="footerClock">--:--:--</span>
+    </footer>
+  </body>
+</html>

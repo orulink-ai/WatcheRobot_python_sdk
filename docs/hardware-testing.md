@@ -33,6 +33,18 @@ watcherobot app run .\examples\capture_photo
 watcherobot app run .\examples\record_microphone
 ```
 
+For an operator-facing media bench, run the standalone SDK Media Lab:
+
+```powershell
+watcherobot app run .\examples\sdk_media_lab
+```
+
+It binds a temporary dashboard to `127.0.0.1`, opens the default browser, and
+keeps every hardware operation inside the managed Application Device channel.
+The dashboard tests the bundled speaker stream, one-shot JPEG capture, decoded
+microphone recording, capability discovery, artifacts, and diagnostic events.
+It is independent of Watcher Desktop and stops with the Application process.
+
 Record the SDK version, Runtime log, firmware commit/version, pairing result,
 Application result, and any camera or microphone artifacts. Runtime and
 Application automated tests are useful for regression, but they do not replace

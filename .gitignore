@@ -8,6 +8,7 @@ build/
 dist/
 *.egg-info/
 /artifacts/
+/examples/*/artifacts/
 /.vscode/
 /watcherobot-*-output/
 /examples/watcherobot-*-output/

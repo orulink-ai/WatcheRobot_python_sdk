@@ -15,6 +15,7 @@ from watcherobot.runtime.daemon.runtime import DaemonRuntime
 from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchError
 from watcherobot.runtime.daemon.application.session import (
     ApplicationChannel,
+    ApplicationState,
     SessionOccupiedError,
 )
 from tests.runtime.pairing_helpers import connect_runtime_hardware
@@ -337,6 +338,32 @@ def test_daemon_starts_without_a_selected_application(tmp_path: Path) -> None:
             await runtime.stop()
 
     asyncio.run(scenario())
+
+
+def test_application_status_waits_for_supervisor_after_channel_loss(
+    tmp_path: Path,
+) -> None:
+    runtime = DaemonRuntime(
+        application_dir=tmp_path / "application",
+        current_app="test_app",
+        external_host="127.0.0.1",
+        external_port=0,
+        control_port=0,
+        pairing_udp_port=0,
+        preview_udp_port=0,
+    )
+    run = runtime.application.registry.begin_start()
+    for channel in ApplicationChannel:
+        runtime.application.registry.attach_channel(
+            channel,
+            credential=run.credential,
+        )
+    runtime.application.last_state = ApplicationState.RUNNING
+
+    runtime.application.registry.detach_channel(ApplicationChannel.DEVICE)
+
+    assert run.state is ApplicationState.ERROR
+    assert runtime.application_status()["state"] == "running"
 
 
 async def _connect_as(runtime: DaemonRuntime, role: str):

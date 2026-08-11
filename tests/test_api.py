@@ -81,6 +81,19 @@ class FakeOpusDecoder:
         return b""
 
 
+def test_robot_can_refresh_the_device_snapshot_after_reconnection():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    snapshot = robot.refresh_device_info(timeout=1.25)
+
+    assert snapshot == {
+        "device_id": "watcher-test",
+        "firmware_version": "test",
+    }
+    assert transport.commands == [("sys.sdk.ready.get", {})]
+
+
 def test_public_namespaces_build_protocol_commands():
     transport = FakeTransport()
     robot = WatcheRobot._from_transport(transport)

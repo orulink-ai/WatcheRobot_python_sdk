@@ -70,15 +70,34 @@ class ApplicationCommunicators:
                 ApplicationChannel.DESKTOP: desktop,
                 ApplicationChannel.DEVICE: device,
             }
-            connected_result = self._on_connected()
-            if isinstance(connected_result, Awaitable):
-                await connected_result
-            try:
-                await asyncio.gather(
+            receive_tasks = (
+                asyncio.create_task(
                     self._receive(ApplicationChannel.DESKTOP, desktop),
+                    name="application-desktop-receiver",
+                ),
+                asyncio.create_task(
                     self._receive(ApplicationChannel.DEVICE, device),
-                )
+                    name="application-device-receiver",
+                ),
+            )
+            try:
+                connected_result = self._on_connected()
+                if isinstance(connected_result, Awaitable):
+                    connected_task = asyncio.ensure_future(connected_result)
+                    try:
+                        await asyncio.shield(connected_task)
+                    except asyncio.CancelledError:
+                        connected_task.cancel()
+                        await asyncio.gather(
+                            connected_task,
+                            return_exceptions=True,
+                        )
+                        raise
+                await asyncio.gather(*receive_tasks)
             finally:
+                for task in receive_tasks:
+                    task.cancel()
+                await asyncio.gather(*receive_tasks, return_exceptions=True)
                 self._connections.clear()
 
     async def send(
