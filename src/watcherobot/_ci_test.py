@@ -1,3 +1,5 @@
-# Test: deliberate type issue for CI validation
-def _ci_test_bad_return() -> str:
-    return 42  # mypy should flag this
+# Test: a real comment for Luxiao to review
+def _luxiao_test_function(x: int) -> int:
+    """A simple function that Luxiao should review."""
+    result = x * 2  # This is fine
+    return result
