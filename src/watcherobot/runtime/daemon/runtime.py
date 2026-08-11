@@ -173,6 +173,9 @@ class DaemonRuntime:
             await self.pairing_udp.stop()
             await self.external_server.stop()
             raise
+        self.application.set_device_status_url(
+            f"{self.control_server.base_url}/daemon/devices"
+        )
         self.logs.record(
             "Daemon Runtime ready "
             f"(external={self.external_server.url}, "

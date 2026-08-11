@@ -177,6 +177,34 @@ def _build_selected_manager(
     return manager
 
 
+def test_runtime_injects_only_the_configured_read_only_device_status_url(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        _write_application(app_dir, CONNECTED_APP)
+        manager = _build_selected_manager(app_dir, app_id="test_app")
+        monkeypatch.setenv("WATCHER_APP_DEVICE_STATUS_URL", "http://spoofed.invalid")
+        run = manager.registry.begin_start()
+        await manager.bridge.start()
+        try:
+            without_status_url = manager._build_environment(run)
+            manager.registry.end_run(ApplicationState.ENDED)
+            manager.set_device_status_url("http://127.0.0.1:8767/daemon/devices")
+            run = manager.registry.begin_start()
+            with_status_url = manager._build_environment(run)
+        finally:
+            await manager.bridge.stop()
+
+        assert "WATCHER_APP_DEVICE_STATUS_URL" not in without_status_url
+        assert with_status_url["WATCHER_APP_DEVICE_STATUS_URL"] == (
+            "http://127.0.0.1:8767/daemon/devices"
+        )
+
+    asyncio.run(scenario())
+
+
 def test_windows_application_launch_hides_the_console_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -389,6 +389,18 @@ class WatcheRobot:
     def device_info(self) -> dict[str, Any]:
         return dict(self._transport.device_info)
 
+    def refresh_device_info(self, *, timeout: float = 1.0) -> dict[str, Any]:
+        """Request a fresh capability and device-information snapshot.
+
+        Managed Applications can call this after the Daemon reports that a
+        device has reconnected without restarting the Application process.
+        """
+
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than zero")
+        self._command("sys.sdk.ready.get", {}, timeout=timeout)
+        return self.device_info
+
     def supports(self, capability: str) -> bool:
         if not isinstance(capability, str) or not capability:
             raise ValueError("capability must be a non-empty string")
