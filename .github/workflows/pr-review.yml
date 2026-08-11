@@ -1,0 +1,123 @@
+name: PR Auto Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  review:
+    runs-on: [self-hosted, linux, x64, pr-review]
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[test]"
+
+      - name: Run mypy (type check)
+        id: mypy
+        continue-on-error: true
+        run: |
+          mypy src/watcherobot --no-error-summary 2>&1 | tee /tmp/mypy.out || true
+          echo "count=$(wc -l < /tmp/mypy.out)" >> $GITHUB_OUTPUT
+
+      - name: Run pytest
+        id: pytest
+        continue-on-error: true
+        run: |
+          pytest --tb=short 2>&1 | tee /tmp/pytest.out || true
+          echo "exit=$?" >> $GITHUB_OUTPUT
+
+      - name: Post Review Summary
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+
+          echo "## 🤖 PR 自动审查报告" > /tmp/review.md
+          echo "" >> /tmp/review.md
+          echo "**PR**: #$PR_NUMBER" >> /tmp/review.md
+          echo "**提交**: ${{ github.event.pull_request.head.sha }}" >> /tmp/review.md
+          echo "**分支**: ${{ github.head_ref }} → ${{ github.base_ref }}" >> /tmp/review.md
+          echo "" >> /tmp/review.md
+
+          # 变更统计
+          ADDITIONS="${{ github.event.pull_request.additions }}"
+          DELETIONS="${{ github.event.pull_request.deletions }}"
+          FILES="${{ github.event.pull_request.changed_files }}"
+          echo "### 📊 变更统计" >> /tmp/review.md
+          echo "| 文件数 | 新增行 | 删除行 |" >> /tmp/review.md
+          echo "|--------|--------|--------|" >> /tmp/review.md
+          echo "| $FILES | +$ADDITIONS | -$DELETIONS |" >> /tmp/review.md
+          echo "" >> /tmp/review.md
+
+          # mypy 结果
+          echo "### 🔍 类型检查 (mypy)" >> /tmp/review.md
+          echo '```' >> /tmp/review.md
+          if [ -s /tmp/mypy.out ]; then
+            cat /tmp/mypy.out | head -40 >> /tmp/review.md
+            LINES=$(wc -l < /tmp/mypy.out)
+            if [ "$LINES" -gt 40 ]; then
+              echo "... (共 $LINES 行，仅显示前 40 行)" >> /tmp/review.md
+            fi
+            echo "" >> /tmp/review.md
+            echo "⚠️ 发现 $LINES 个类型问题" >> /tmp/review.md
+          else
+            echo "✅ 无类型错误" >> /tmp/review.md
+          fi
+          echo '```' >> /tmp/review.md
+          echo "" >> /tmp/review.md
+
+          # 测试结果
+          echo "### 🧪 测试结果 (pytest)" >> /tmp/review.md
+          echo '```' >> /tmp/review.md
+          if [ -f /tmp/pytest.out ]; then
+            tail -20 /tmp/pytest.out >> /tmp/review.md
+          else
+            echo "⚠️ 未生成测试输出" >> /tmp/review.md
+          fi
+          echo '```' >> /tmp/review.md
+          echo "" >> /tmp/review.md
+
+          # 建议
+          echo "### 💡 审查建议" >> /tmp/review.md
+          if [ -s /tmp/mypy.out ]; then
+            echo "- 🔴 **类型检查发现问题**，请检查上面 mypy 输出中的类型错误" >> /tmp/review.md
+          fi
+          if [ -f /tmp/pytest.out ]; then
+            if grep -q "FAILED" /tmp/pytest.out; then
+              echo "- 🔴 **测试失败**，请修复失败的测试用例" >> /tmp/review.md
+            elif grep -q "passed" /tmp/pytest.out; then
+              echo "- 🟢 所有测试通过" >> /tmp/review.md
+            fi
+          fi
+          echo "- 📝 请确认新增代码有对应的测试覆盖" >> /tmp/review.md
+          echo "- 📝 请检查是否有遗留的调试代码（print、console.log 等）" >> /tmp/review.md
+          echo "" >> /tmp/review.md
+          echo "---" >> /tmp/review.md
+          echo "*由 CICD Runner (VM 202) 自动生成*" >> /tmp/review.md
+
+          # 删除旧评论，发布新评论
+          gh api "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[].id' | while read id; do
+            BODY=$(gh api "repos/$REPO/issues/comments/$id" --jq '.body')
+            if echo "$BODY" | grep -q "PR 自动审查报告"; then
+              gh api "repos/$REPO/issues/comments/$id" -X DELETE
+            fi
+          done
+
+          gh pr comment $PR_NUMBER --body "$(cat /tmp/review.md)"
