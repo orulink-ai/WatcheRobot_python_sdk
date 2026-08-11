@@ -1,0 +1,8 @@
+{
+  "name": "watcherobot-python-sdk-tools",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "sdk:lab": "node ./tools/run-sdk-media-lab.mjs"
+  }
+}

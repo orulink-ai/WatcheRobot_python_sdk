@@ -131,6 +131,42 @@ main { width: min(1540px, 100%); margin: 0 auto; padding: 0 clamp(18px, 4vw, 64p
 .mission-copy { max-width: 690px; margin-top: 22px; color: var(--muted); line-height: 1.6; }
 .run-block { min-width: min(100%, 330px); }
 
+.pairing-panel {
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: rgba(9, 12, 11, 0.9);
+}
+.pairing-panel label { display: block; }
+.pairing-panel label strong { display: block; color: var(--paper); font: 700 0.82rem var(--mono); }
+.pairing-panel label span { display: block; margin-top: 5px; color: var(--muted); font: 0.66rem var(--mono); }
+.pairing-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 13px; }
+.pairing-row input {
+  min-width: 0;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  outline: 0;
+  color: var(--signal);
+  background: #090c0b;
+  font: 700 1rem var(--mono);
+  letter-spacing: 0.24em;
+}
+.pairing-row input:focus { border-color: var(--signal); box-shadow: 0 0 0 1px var(--signal); }
+.pairing-row button {
+  padding: 0 15px;
+  border: 0;
+  color: var(--ink);
+  background: var(--signal);
+  cursor: pointer;
+  font: 700 0.7rem var(--mono);
+}
+.pairing-row button:disabled { cursor: not-allowed; opacity: 0.38; }
+.pairing-feedback { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.pairing-feedback output { color: var(--muted); font: 0.62rem var(--mono); }
+.pairing-feedback output[data-tone="error"] { color: var(--danger); }
+.pairing-feedback output[data-tone="running"] { color: var(--amber); }
+.pairing-feedback button { padding: 0; border: 0; color: var(--amber); background: none; cursor: pointer; font: 0.62rem var(--mono); }
+
 .primary-action, .station-action, .quiet-action {
   border: 0;
   cursor: pointer;
