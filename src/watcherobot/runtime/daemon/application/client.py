@@ -83,7 +83,16 @@ class ApplicationCommunicators:
             try:
                 connected_result = self._on_connected()
                 if isinstance(connected_result, Awaitable):
-                    await connected_result
+                    connected_task = asyncio.ensure_future(connected_result)
+                    try:
+                        await asyncio.shield(connected_task)
+                    except asyncio.CancelledError:
+                        connected_task.cancel()
+                        await asyncio.gather(
+                            connected_task,
+                            return_exceptions=True,
+                        )
+                        raise
                 await asyncio.gather(*receive_tasks)
             finally:
                 for task in receive_tasks:

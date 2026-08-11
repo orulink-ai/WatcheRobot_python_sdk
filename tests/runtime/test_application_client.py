@@ -101,6 +101,9 @@ def test_communicators_receive_while_connected_callback_waits(
         task = asyncio.create_task(communicators.run())
         await asyncio.wait_for(ready.wait(), timeout=0.2)
         task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        done, pending = await asyncio.wait({task}, timeout=0.5)
+        assert pending == set()
+        assert done == {task}
+        await asyncio.gather(*done, return_exceptions=True)
 
     asyncio.run(scenario())
