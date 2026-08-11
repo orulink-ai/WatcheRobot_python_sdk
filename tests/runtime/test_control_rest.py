@@ -360,7 +360,7 @@ def test_control_rest_reads_an_editable_work_from_sd() -> None:
         "work_id": "demo_work",
     })
 
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert response.json()["work"]["id"] == "demo_work"
     assert controller.work_read_requests == [{
         "transport": "card_reader",
@@ -376,7 +376,7 @@ def test_control_rest_returns_active_maintenance_job() -> None:
 
     response = client.get("/daemon/maintenance/jobs/active")
 
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert response.json() == {"job": controller.active_maintenance}
 
     controller.active_maintenance = None
