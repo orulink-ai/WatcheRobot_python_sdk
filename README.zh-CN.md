@@ -30,7 +30,7 @@ python -m pip install -e ".[test]"
 
 ```powershell
 $runtime = watcherobot daemon start | ConvertFrom-Json
-$pairBody = '{"pairing_code":"123456","target_mode":"desktop_link"}'
+$pairBody = '{"pairing_code":"123456","target_mode":"python_sdk"}'
 Invoke-RestMethod `
   -Method Post `
   -Uri "$($runtime.control_url)/daemon/devices/pair" `
@@ -48,6 +48,10 @@ do {
 } while ($device.state -ne "connected")
 watcherobot app run .\examples\hello_robot
 ```
+
+也可以在浏览器打开 `$runtime.control_url/control/` 使用本地
+[链路测试控制台](docs/control-console.md)。控制台支持输入新配对码、替换旧设备
+会话，以及查看 Daemon、设备、Application 和本机 Qwen Gateway 的状态。
 
 如果当前 Runtime 已持有在线设备会话，可以跳过配对请求，直接运行
 Application。

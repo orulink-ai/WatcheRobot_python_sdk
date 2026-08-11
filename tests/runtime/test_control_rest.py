@@ -300,6 +300,51 @@ def test_control_server_binds_and_serves_status() -> None:
     asyncio.run(scenario())
 
 
+def test_control_rest_serves_local_test_console() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    redirect = client.get("/control", follow_redirects=False)
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == "/control/"
+
+    page = client.get("/control/")
+    assert page.status_code == 200
+    assert page.headers["content-type"].startswith("text/html")
+    assert "default-src 'self'" in page.headers["content-security-policy"]
+    assert 'id="pairing-form"' in page.text
+    assert 'inputmode="numeric"' in page.text
+    assert 'data-service="daemon"' in page.text
+    assert 'data-service="device"' in page.text
+    assert 'data-service="application"' in page.text
+    assert 'data-service="gateway"' in page.text
+    assert '/control/assets/control.css' in page.text
+    assert '/control/assets/control.js' in page.text
+
+
+def test_control_rest_serves_console_assets_with_python_sdk_pairing_contract() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    stylesheet = client.get("/control/assets/control.css")
+    script = client.get("/control/assets/control.js")
+
+    assert stylesheet.status_code == 200
+    assert stylesheet.headers["content-type"].startswith("text/css")
+    assert "prefers-reduced-motion" in stylesheet.text
+    assert ":focus-visible" in stylesheet.text
+
+    assert script.status_code == 200
+    assert "application/javascript" in script.headers["content-type"]
+    assert 'target_mode: "python_sdk"' in script.text
+    assert '"/daemon/devices/pair"' in script.text
+    assert '"/daemon/devices/pair/cancel"' in script.text
+    assert '"/daemon/devices/disconnect"' in script.text
+    assert '"/daemon/status"' in script.text
+    assert '"/daemon/devices"' in script.text
+    assert "setInterval" in script.text
+
+
 def test_control_rest_selects_application_and_requests_runtime_shutdown() -> None:
     controller = _ControllerStub()
     client = TestClient(DaemonControlAPI(controller=controller).create_app())
