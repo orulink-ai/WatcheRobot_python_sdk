@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 import threading
 import time
+import urllib.error
 import urllib.request
 import wave
 from collections import deque
@@ -27,6 +29,15 @@ class MediaLabBusyError(RuntimeError):
 
 class MediaLabDeviceOfflineError(RuntimeError):
     """Raised when a hardware action is attempted without an online Watcher."""
+
+
+class DaemonManagementError(RuntimeError):
+    """Expose one sanitized Daemon management failure to the local dashboard."""
+
+    def __init__(self, message: str, *, status_code: int, error_code: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
 
 
 class DaemonDeviceStatusProvider:
@@ -52,9 +63,67 @@ class DaemonDeviceStatusProvider:
                 "last_error": "status_unavailable",
             }
 
+    def pair(self, pairing_code: str) -> Mapping[str, object]:
+        """Ask the Daemon to discover the device; never expose the code in errors."""
+
+        return self._post_json(
+            f"{self._url.rstrip('/')}/pair",
+            {"pairing_code": pairing_code, "target_mode": "desktop_link"},
+        )
+
+    def cancel_pairing(self) -> Mapping[str, object]:
+        """Cancel only the Daemon-owned pairing attempt."""
+
+        return self._post_json(f"{self._url.rstrip('/')}/pair/cancel", None)
+
+    def _post_json(
+        self,
+        url: str,
+        payload: Mapping[str, object] | None,
+    ) -> Mapping[str, object]:
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            try:
+                failure = json.loads(error.read().decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                failure = {}
+            message = failure.get("message") if isinstance(failure, dict) else None
+            error_code = failure.get("error") if isinstance(failure, dict) else None
+            raise DaemonManagementError(
+                str(message or "Daemon rejected the pairing request"),
+                status_code=error.code,
+                error_code=str(error_code or "daemon_rejected"),
+            ) from error
+        except Exception as error:
+            raise DaemonManagementError(
+                "SDK Daemon management interface is unavailable",
+                status_code=503,
+                error_code="daemon_unavailable",
+            ) from error
+        if not isinstance(result, dict):
+            raise DaemonManagementError(
+                "Daemon pairing response is malformed",
+                status_code=502,
+                error_code="daemon_response_invalid",
+            )
+        return result
+
 
 class RecordMicrophoneRequest(BaseModel):
     duration: float = Field(default=5.0, gt=0.0, le=30.0, allow_inf_nan=False)
+
+
+class PairDeviceRequest(BaseModel):
+    pairing_code: str = Field(pattern=r"^[0-9]{6}$")
 
 
 class MediaLabService:
@@ -120,6 +189,32 @@ class MediaLabService:
                 if isinstance((event_id := event.get("id")), int)
                 and event_id > after
             ]
+
+    def pair_device(self, pairing_code: str) -> dict[str, object]:
+        if re.fullmatch(r"[0-9]{6}", pairing_code or "") is None:
+            raise ValueError("pairing code must contain six digits")
+        pair = getattr(self._device_status_provider, "pair", None)
+        if not callable(pair):
+            raise DaemonManagementError(
+                "This Media Lab cannot access Daemon pairing management",
+                status_code=503,
+                error_code="pairing_unavailable",
+            )
+        result = dict(pair(pairing_code))
+        self._append_event("device_pairing", "Device pairing started", "running")
+        return result
+
+    def cancel_device_pairing(self) -> dict[str, object]:
+        cancel = getattr(self._device_status_provider, "cancel_pairing", None)
+        if not callable(cancel):
+            raise DaemonManagementError(
+                "This Media Lab cannot access Daemon pairing management",
+                status_code=503,
+                error_code="pairing_unavailable",
+            )
+        result = dict(cancel())
+        self._append_event("device_pairing", "Device pairing cancelled", "ok")
+        return result
 
     def play_audio(self) -> dict[str, object]:
         with self._operation("play_audio"):
@@ -314,6 +409,16 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
             content={"error": "device_offline", "message": str(error)},
         )
 
+    @app.exception_handler(DaemonManagementError)
+    async def daemon_management_handler(
+        _request: Request,
+        error: DaemonManagementError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": error.error_code, "message": str(error)},
+        )
+
     @app.exception_handler(RequestValidationError)
     async def validation_handler(
         _request: Request,
@@ -346,6 +451,14 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     @app.get("/api/events")
     async def events(after: int = 0) -> dict[str, object]:
         return {"events": service.events(after=max(0, after))}
+
+    @app.post("/api/device/pair", status_code=202)
+    async def pair_device(request: PairDeviceRequest) -> dict[str, object]:
+        return await asyncio.to_thread(service.pair_device, request.pairing_code)
+
+    @app.post("/api/device/pair/cancel")
+    async def cancel_device_pairing() -> dict[str, object]:
+        return await asyncio.to_thread(service.cancel_device_pairing)
 
     @app.post("/api/actions/play-audio")
     async def play_audio() -> dict[str, object]:
@@ -400,6 +513,7 @@ def _action_label(action: str) -> str:
 
 
 __all__ = [
+    "DaemonManagementError",
     "DaemonDeviceStatusProvider",
     "MediaLabBusyError",
     "MediaLabDeviceOfflineError",

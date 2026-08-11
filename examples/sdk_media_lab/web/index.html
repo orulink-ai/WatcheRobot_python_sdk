@@ -38,6 +38,31 @@
           </p>
         </div>
         <div class="run-block">
+          <form class="pairing-panel" id="pairingForm" novalidate>
+            <label for="pairingCode">
+              <strong>连接 Watcher</strong>
+              <span>输入设备上的六位配对码</span>
+            </label>
+            <div class="pairing-row">
+              <input
+                id="pairingCode"
+                name="pairingCode"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+                pattern="[0-9]{6}"
+                maxlength="6"
+                placeholder="000000"
+                aria-describedby="pairingStatus"
+                required
+              />
+              <button id="pairDeviceButton" type="submit" disabled>连接设备</button>
+            </div>
+            <div class="pairing-feedback">
+              <output id="pairingStatus" aria-live="polite">等待输入配对码</output>
+              <button id="cancelPairingButton" type="button" hidden>取消</button>
+            </div>
+          </form>
           <button class="primary-action" id="runAllButton" type="button">
             <span>运行媒体全检</span>
             <small>扬声器 → 相机 → 麦克风</small>

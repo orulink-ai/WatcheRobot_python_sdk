@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import threading
 import wave
 from pathlib import Path
@@ -12,6 +13,21 @@ from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).parents[1]
 LAB_ROOT = ROOT / "examples" / "sdk_media_lab"
+
+
+def test_yarn_script_launches_the_managed_media_lab() -> None:
+    package = json.loads(ROOT.joinpath("package.json").read_text(encoding="utf-8"))
+    launcher = ROOT.joinpath("tools", "run-sdk-media-lab.mjs").read_text(
+        encoding="utf-8"
+    )
+
+    assert package["private"] is True
+    assert package["scripts"]["sdk:lab"] == "node ./tools/run-sdk-media-lab.mjs"
+    assert '"-m", "watcherobot.cli", "app", "run"' in launcher
+    assert '"examples", "sdk_media_lab"' in launcher
+    for path_component in ('".venv"', '"Scripts"', '"python.exe"', '"bin"'):
+        assert path_component in launcher
+    assert "WATCHEROBOT_PYTHON" in launcher
 
 
 def _load_service_module() -> ModuleType:
@@ -96,6 +112,7 @@ def _service(
     robot: object | None = None,
     *,
     online: bool = True,
+    device_status_provider: object | None = None,
 ):
     sample_audio = tmp_path / "sample.wav"
     sample_audio.write_bytes(b"RIFF-test-audio")
@@ -103,12 +120,40 @@ def _service(
         robot=robot or _robot(),
         artifacts_dir=tmp_path / "artifacts",
         sample_audio=sample_audio,
-        device_status_provider=lambda: {
-            "online": online,
-            "state": "connected" if online else "idle",
-            "last_error": None,
-        },
+        device_status_provider=device_status_provider
+        or (
+            lambda: {
+                "online": online,
+                "state": "connected" if online else "idle",
+                "last_error": None,
+            }
+        ),
     )
+
+
+class FakeDeviceControl:
+    def __init__(self) -> None:
+        self.pairing_codes: list[str] = []
+        self.cancel_calls = 0
+
+    def __call__(self) -> dict[str, object]:
+        return {"online": False, "state": "idle", "last_error": None}
+
+    def pair(self, pairing_code: str) -> dict[str, object]:
+        self.pairing_codes.append(pairing_code)
+        return {
+            "device": {
+                "online": False,
+                "state": "discovering",
+                "last_error": None,
+            }
+        }
+
+    def cancel_pairing(self) -> dict[str, object]:
+        self.cancel_calls += 1
+        return {
+            "device": {"online": False, "state": "idle", "last_error": None}
+        }
 
 
 def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -> None:
@@ -194,6 +239,39 @@ def test_http_app_returns_stable_device_offline_error(tmp_path: Path) -> None:
         "error": "device_offline",
         "message": "Watcher device is offline",
     }
+
+
+def test_http_app_pairs_and_cancels_through_daemon_management(tmp_path: Path) -> None:
+    module = _load_service_module()
+    device_control = FakeDeviceControl()
+    service = _service(
+        module,
+        tmp_path,
+        online=False,
+        device_status_provider=device_control,
+    )
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    invalid = client.post("/api/device/pair", json={"pairing_code": "12345"})
+    assert invalid.status_code == 422
+    assert device_control.pairing_codes == []
+
+    started = client.post(
+        "/api/device/pair",
+        json={"pairing_code": "941993"},
+    )
+    assert started.status_code == 202
+    assert started.json()["device"]["state"] == "discovering"
+    assert device_control.pairing_codes == ["941993"]
+
+    cancelled = client.post("/api/device/pair/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["device"]["state"] == "idle"
+    assert device_control.cancel_calls == 1
 
 
 def test_capture_photo_persists_only_the_managed_jpeg_artifact(tmp_path: Path) -> None:
@@ -367,3 +445,8 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
 
     assert "const unavailable = busy || !status.connected" in javascript
     assert "设备已断开，请重新连接后再测试" in javascript
+    assert 'id="pairingForm"' in html
+    assert 'inputmode="numeric"' in html
+    assert "输入设备上的六位配对码" in html
+    assert 'api("/api/device/pair"' in javascript
+    assert 'api("/api/device/pair/cancel"' in javascript

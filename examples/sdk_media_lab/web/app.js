@@ -1,12 +1,18 @@
 const state = {
   status: null,
   localBusy: false,
+  pairingBusy: false,
   hiddenEventIds: new Set(),
 };
 
 const elements = {
   connectionBadge: document.querySelector("#connectionBadge"),
   connectionText: document.querySelector("#connectionText"),
+  pairingForm: document.querySelector("#pairingForm"),
+  pairingCode: document.querySelector("#pairingCode"),
+  pairingStatus: document.querySelector("#pairingStatus"),
+  pairDeviceButton: document.querySelector("#pairDeviceButton"),
+  cancelPairingButton: document.querySelector("#cancelPairingButton"),
   deviceId: document.querySelector("#deviceId"),
   firmwareVersion: document.querySelector("#firmwareVersion"),
   capabilityCount: document.querySelector("#capabilityCount"),
@@ -40,6 +46,7 @@ const actionLabels = {
   stop_audio: "停止播放",
   capture_photo: "相机拍照",
   record_microphone: "麦克风录音",
+  device_pairing: "设备配对",
   system: "系统",
 };
 
@@ -72,12 +79,21 @@ function localizeError(message, status) {
   if (busyMatch) return `媒体实验室正忙于${actionLabel(busyMatch[1])}`;
   const durationMatch = message.match(/^duration must be (.+)$/);
   if (durationMatch) return `录音时长必须为 ${durationMatch[1]}`;
+  const pairingErrors = {
+    pairing_not_found: "未发现匹配的设备，请确认设备停留在配对码页面",
+    pairing_credential_invalid: "配对码不正确或已经失效",
+    device_slot_occupied: "已有设备连接或配对正在进行",
+    daemon_unavailable: "SDK Daemon 管理接口不可用",
+  };
+  if (pairingErrors[message]) return pairingErrors[message];
   return message;
 }
 
 function localizeEvent(event) {
   if (event.message === "Media Lab ready") return "媒体实验室已就绪";
   if (event.message === "Audio stop requested") return "已请求停止播放";
+  if (event.message === "Device pairing started") return "设备配对已开始";
+  if (event.message === "Device pairing cancelled") return "设备配对已取消";
   const label = actionLabel(event.action);
   if (event.message.endsWith(" started")) return `${label}已开始`;
   if (event.message.endsWith(" completed")) return `${label}已完成`;
@@ -88,8 +104,27 @@ function localizeEvent(event) {
 
 function renderStatus(status) {
   state.status = status;
+  const pairingState = status.connection?.state || "idle";
+  const pairingInProgress = ["discovering", "connecting", "reconnecting"].includes(pairingState);
   elements.connectionBadge.dataset.state = status.connected ? "online" : "offline";
   elements.connectionText.textContent = status.connected ? "设备在线" : "设备已断开";
+  elements.pairingForm.hidden = status.connected;
+  elements.pairingCode.disabled = state.pairingBusy || pairingInProgress;
+  elements.cancelPairingButton.hidden = !pairingInProgress;
+  if (status.connected) {
+    elements.pairingCode.value = "";
+    setPairingStatus("设备连接成功", "ok");
+  } else if (pairingInProgress) {
+    setPairingStatus(
+      pairingState === "connecting" ? "已发现设备，正在建立安全连接…" : "正在局域网中查找设备…",
+      "running",
+    );
+  } else if (status.connection?.last_error) {
+    setPairingStatus(localizeError(status.connection.last_error, 409), "error");
+  } else if (!state.pairingBusy) {
+    setPairingStatus("等待输入配对码", "idle");
+  }
+  updatePairButton();
   elements.deviceId.textContent = status.device?.device_id || "未识别";
   elements.firmwareVersion.textContent = status.device?.firmware_version || "未知";
   elements.capabilityCount.textContent = String(status.capabilities.length).padStart(2, "0");
@@ -128,6 +163,56 @@ function renderStatus(status) {
     : `设备离线 · ${status.capabilities.length} 项上次协商`;
   renderEvents(status.events || []);
   restoreArtifacts(status.artifacts || {});
+}
+
+function setPairingStatus(message, tone) {
+  elements.pairingStatus.textContent = message;
+  elements.pairingStatus.dataset.tone = tone;
+}
+
+function updatePairButton() {
+  const validCode = /^[0-9]{6}$/.test(elements.pairingCode.value);
+  const pairingState = state.status?.connection?.state;
+  const pairingInProgress = ["discovering", "connecting", "reconnecting"].includes(pairingState);
+  elements.pairDeviceButton.disabled = !validCode || state.pairingBusy || pairingInProgress;
+}
+
+async function pairDevice(event) {
+  event.preventDefault();
+  const pairingCode = elements.pairingCode.value;
+  if (!/^[0-9]{6}$/.test(pairingCode) || state.pairingBusy) return;
+  state.pairingBusy = true;
+  updatePairButton();
+  setPairingStatus("正在发起安全配对…", "running");
+  try {
+    await api("/api/device/pair", {
+      method: "POST",
+      body: JSON.stringify({ pairing_code: pairingCode }),
+    });
+    setPairingStatus("配对请求已发送，正在查找设备…", "running");
+    notify("配对请求已发送");
+  } catch (error) {
+    setPairingStatus(error.message, "error");
+    notify(error.message, "error");
+  } finally {
+    state.pairingBusy = false;
+    await refreshStatus();
+  }
+}
+
+async function cancelPairing() {
+  if (state.pairingBusy) return;
+  state.pairingBusy = true;
+  try {
+    await api("/api/device/pair/cancel", { method: "POST" });
+    setPairingStatus("配对已取消，可重新输入配对码", "idle");
+  } catch (error) {
+    setPairingStatus(error.message, "error");
+    notify(error.message, "error");
+  } finally {
+    state.pairingBusy = false;
+    await refreshStatus();
+  }
 }
 
 function renderEvents(events) {
@@ -328,6 +413,13 @@ function formatBytes(value) {
 }
 
 elements.playAudioButton.addEventListener("click", () => { playAudio().catch(() => {}); });
+elements.pairingForm.addEventListener("submit", pairDevice);
+elements.pairingCode.addEventListener("input", () => {
+  elements.pairingCode.value = elements.pairingCode.value.replace(/\D/g, "").slice(0, 6);
+  if (!state.pairingBusy) setPairingStatus("等待输入配对码", "idle");
+  updatePairButton();
+});
+elements.cancelPairingButton.addEventListener("click", cancelPairing);
 elements.stopAudioButton.addEventListener("click", async () => {
   try { await api("/api/actions/stop-audio", { method: "POST" }); notify("已请求停止播放"); }
   catch (error) { notify(error.message, "error"); }
