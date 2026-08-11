@@ -17,72 +17,72 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Extract PR Diff
-        id: diff
         run: |
           git fetch origin ${{ github.base_ref }} --depth=1 2>/dev/null || true
-          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff 2>/dev/null || git diff HEAD~1 > /tmp/pr.diff
-          echo "diff_lines=$(wc -l < /tmp/pr.diff)" >> $GITHUB_OUTPUT
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff 2>/dev/null || git diff HEAD~1 > /tmp/pr.diff 2>/dev/null || echo "empty diff" > /tmp/pr.diff
 
       - name: Call Luxiao Agent
-        id: review
         run: |
           PR_TITLE="${{ github.event.pull_request.title }}"
           PR_BODY="${{ github.event.pull_request.body }}"
-          DIFF=$(cat /tmp/pr.diff)
           ADDITIONS="${{ github.event.pull_request.additions }}"
           DELETIONS="${{ github.event.pull_request.deletions }}"
           FILES="${{ github.event.pull_request.changed_files }}"
 
-          # Build the review prompt
-          cat > /tmp/review_prompt.txt << 'PROMPT'
-请审查以下 Pull Request。按照你的审查框架（架构、产品、规范、损伤 + 意图分析 + Merge 建议）给出完整审查报告。
+          python3 -c "
+import json, base64
+
+pr_title = '''$PR_TITLE'''
+pr_body = '''$PR_BODY'''
+diff_text = open('/tmp/pr.diff').read()
+
+prompt = f'''请审查以下 Pull Request。按照你的审查框架（架构、产品、规范、损伤 + 意图分析 + Merge 建议）给出完整审查报告。
 
 ## PR 信息
 
-- 标题: $PR_TITLE
-- 描述: $PR_BODY
-- 变更: $FILES 个文件, +$ADDITIONS / -$DELETIONS
+- 标题: {pr_title}
+- 描述: {pr_body}
+- 变更: {FILES} 个文件, +{ADDITIONS} / -{DELETIONS}
 
 ## 代码 Diff
 
-PROMPT
-          echo "\`\`\`diff" >> /tmp/review_prompt.txt
-          cat /tmp/pr.diff >> /tmp/review_prompt.txt
-          echo "\`\`\`" >> /tmp/review_prompt.txt
+```diff
+{diff_text[:8000]}
+```
 
-          # Call Luxiao via SSH
-          REVIEW_PROMPT=$(cat /tmp/review_prompt.txt | base64 -w0)
-          ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes hermesadmin@192.168.1.116 \
-            "echo '$REVIEW_PROMPT' | base64 -d | hermes -p luxiao-engineer chat -q - 2>&1" > /tmp/review_result.txt 2>&1
+请直接输出审查报告，不要多余的前缀。'''
 
-          echo "review_ready=true" >> $GITHUB_OUTPUT
+encoded = base64.b64encode(prompt.encode()).decode()
+print(encoded)
+" > /tmp/prompt_b64.txt
+
+          ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes hermesadmin@192.168.1.116             "cat /tmp/prompt_b64.txt | ssh hermesadmin@192.168.1.116 'base64 -d | hermes -p luxiao-engineer chat -q -'" > /tmp/review_result.txt 2>&1 || true
+
+          cat /tmp/review_result.txt
 
       - name: Post Review Comment
-        if: steps.review.outputs.review_ready == 'true'
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           REPO="${{ github.repository }}"
 
-          # Extract the review from hermes output (skip the preamble)
           python3 -c "
 import sys
 text = open('/tmp/review_result.txt').read()
-# Find the review section
-if '## 🤖 PR 审查报告' in text:
-    idx = text.index('## 🤖 PR 审查报告')
-    review = text[idx:]
-elif '🤖 PR 审查报告' in text:
+if '🤖 PR 审查报告' in text:
     idx = text.index('🤖 PR 审查报告')
     review = text[idx:]
+elif 'PR 审查报告' in text:
+    idx = text.index('PR 审查报告')
+    review = text[idx:]
 else:
-    # Fallback: use the last 2000 chars
-    review = text[-2000:]
-print(review)
-" > /tmp/review_clean.md 2>/dev/null || cp /tmp/review_result.txt /tmp/review_clean.md
+    review = text[-3000:]
+with open('/tmp/review_clean.md', 'w') as f:
+    f.write(review)
+"
 
-          # Delete old bot comments
           gh api "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[].id' | while read cid; do
             BODY=$(gh api "repos/$REPO/issues/comments/$cid" --jq '.body')
             if echo "$BODY" | grep -q "PR 审查报告"; then
