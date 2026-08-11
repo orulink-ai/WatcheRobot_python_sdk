@@ -486,10 +486,10 @@ class PairingUdpService:
             sent = True
         target_peer_ip = self._target_peer_ip
         if target_peer_ip is not None:
-            channel = self._channel_for_peer(target_peer_ip)
-            if channel is not None:
+            target_channel = self._channel_for_peer(target_peer_ip)
+            if target_channel is not None:
                 try:
-                    channel.send_unicast(
+                    target_channel.send_unicast(
                         datagram,
                         (target_peer_ip, PAIRING_UDP_PORT),
                     )

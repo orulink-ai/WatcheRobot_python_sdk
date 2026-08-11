@@ -153,6 +153,37 @@ def test_udp_service_sends_optional_unicast_probe_on_matching_interface() -> Non
     asyncio.run(scenario())
 
 
+def test_udp_service_skips_unicast_when_target_interface_disappears() -> None:
+    async def scenario() -> None:
+        session = make_session()
+        session.start_pairing(
+            pairing_code="123456",
+            target_mode="python_sdk",
+            websocket_port=8765,
+            now=10.0,
+        )
+        interfaces = [WIFI]
+        factory = FakeChannelFactory()
+        service = PairingUdpService(
+            session=session,
+            clock=lambda: 10.0,
+            interface_provider=lambda: tuple(interfaces),
+            channel_factory=factory,
+        )
+        await service.start()
+        service.activate(peer_ip="192.168.1.157")
+        wifi_channel = factory.channels[WIFI]
+
+        interfaces.clear()
+
+        assert await service.broadcast_once() is False
+        assert wifi_channel.closed is True
+        assert wifi_channel.unicasts == []
+        await service.stop()
+
+    asyncio.run(scenario())
+
+
 def test_udp_service_accepts_first_matching_device_and_stops_broadcasting() -> None:
     async def scenario() -> None:
         session = make_session()
