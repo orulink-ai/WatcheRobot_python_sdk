@@ -430,8 +430,11 @@ class DaemonRuntime:
         return True
 
     def application_status(self) -> dict[str, object]:
-        run = self.application.registry.active_run
-        state = run.state if run is not None else self.application.last_state
+        # Channel admission marks a lost channel immediately, while the process
+        # supervisor still grants a bounded clean-exit window. Publish only the
+        # supervisor-owned state so a normal Application shutdown cannot flash
+        # a false terminal error to CLI and desktop clients.
+        state = self.application.last_state
         return {
             "selected": self.application.registry.current_app is not None,
             "current_app": self.application.registry.current_app,
