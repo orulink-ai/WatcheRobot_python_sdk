@@ -256,7 +256,7 @@ class DaemonRuntime:
         return self.maintenance.volumes()
 
     def format_maintenance_volume_as_fat32(self, volume_id: str) -> dict[str, object]:
-        return self.maintenance.format_volume_as_fat32(volume_id)
+        return self.maintenance.start_format_volume_as_fat32(volume_id)
 
     def validate_maintenance_package(self, kind: str, package_path: str) -> dict[str, object]:
         return self.maintenance.validate_package(kind, package_path)

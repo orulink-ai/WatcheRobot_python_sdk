@@ -187,6 +187,18 @@ class MaintenanceService:
         except Exception as exc:
             raise MaintenanceError(str(exc)) from exc
 
+    def start_format_volume_as_fat32(self, volume_id: str) -> dict[str, Any]:
+        if not volume_id:
+            raise MaintenanceError("请先选择 SD 读卡器。")
+        with self._lock:
+            if self._active_job_id is not None and self._jobs[self._active_job_id].status in {"queued", "running"}:
+                raise MaintenanceError("设备维护操作进行中，暂时无法格式化 SD 卡。")
+            job = MaintenanceJob(id=uuid.uuid4().hex, kind="sd_format", port="", package_path="", transport="card_reader", volume_id=volume_id)
+            self._jobs[job.id] = job
+            self._active_job_id = job.id
+        threading.Thread(target=self._run_format, args=(job.id,), daemon=True).start()
+        return job.payload()
+
     def works(self, *, transport: str, port: str = "", volume_id: str = "") -> list[dict[str, Any]]:
         if transport not in {"serial", "card_reader"}:
             raise MaintenanceError("请选择设备端口或 SD 读卡器。")
@@ -489,6 +501,20 @@ class MaintenanceService:
         finally:
             with self._lock:
                 self._work_requests.pop(job_id, None)
+                if self._active_job_id == job_id:
+                    self._active_job_id = None
+
+    def _run_format(self, job_id: str) -> None:
+        try:
+            self._update(job_id, status="running", phase="format_preparing", progress=5, message="正在验证所选 SD 卡。")
+            self._update(job_id, phase="formatting", progress=25, message="正在将 SD 卡格式化为 FAT32，请勿移除读卡器。")
+            formatted = format_volume_as_fat32(self._jobs[job_id].volume_id)
+            self._update(job_id, phase="format_verifying", progress=85, message="正在重新识别并验证 FAT32 文件系统。")
+            self._update(job_id, status="succeeded", phase="done", progress=100, message=f"SD 卡已格式化为 FAT32：{formatted['root']}")
+        except Exception as exc:
+            self._update(job_id, status="failed", phase="failed", error=str(exc), message=f"格式化失败：{exc}")
+        finally:
+            with self._lock:
                 if self._active_job_id == job_id:
                     self._active_job_id = None
 

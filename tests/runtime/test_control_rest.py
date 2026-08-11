@@ -360,7 +360,7 @@ def test_control_rest_reads_an_editable_work_from_sd() -> None:
         "work_id": "demo_work",
     })
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     assert response.json()["work"]["id"] == "demo_work"
     assert controller.work_read_requests == [{
         "transport": "card_reader",
@@ -376,7 +376,7 @@ def test_control_rest_returns_active_maintenance_job() -> None:
 
     response = client.get("/daemon/maintenance/jobs/active")
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     assert response.json() == {"job": controller.active_maintenance}
 
     controller.active_maintenance = None
@@ -410,9 +410,9 @@ def test_control_rest_formats_only_the_explicitly_selected_volume() -> None:
 
     response = client.post("/daemon/maintenance/volumes/format-fat32", json={"volume_id": "E:\\|1234"})
 
-    assert response.status_code == 200
+    assert response.status_code == 202
     assert controller.formatted_volume_id == "E:\\|1234"
-    assert response.json()["volume"]["filesystem"] == "FAT32"
+    assert response.json()["job"]["filesystem"] == "FAT32"
 
 
 def test_control_rest_validates_local_package_before_install() -> None:
