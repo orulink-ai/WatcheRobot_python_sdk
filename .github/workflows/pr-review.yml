@@ -1,4 +1,4 @@
-name: PR Auto Review
+name: PR Review by Luxiao
 
 on:
   pull_request:
@@ -7,7 +7,6 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  checks: write
 
 jobs:
   review:
@@ -17,107 +16,78 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
+      - name: Extract PR Diff
+        id: diff
         run: |
-          python -m pip install --upgrade pip
-          pip install ".[test]"
+          git fetch origin ${{ github.base_ref }} --depth=1 2>/dev/null || true
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff 2>/dev/null || git diff HEAD~1 > /tmp/pr.diff
+          echo "diff_lines=$(wc -l < /tmp/pr.diff)" >> $GITHUB_OUTPUT
 
-      - name: Run mypy (type check)
-        id: mypy
-        continue-on-error: true
+      - name: Call Luxiao Agent
+        id: review
         run: |
-          mypy src/watcherobot --no-error-summary 2>&1 | tee /tmp/mypy.out || true
-          echo "count=$(wc -l < /tmp/mypy.out)" >> $GITHUB_OUTPUT
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_BODY="${{ github.event.pull_request.body }}"
+          DIFF=$(cat /tmp/pr.diff)
+          ADDITIONS="${{ github.event.pull_request.additions }}"
+          DELETIONS="${{ github.event.pull_request.deletions }}"
+          FILES="${{ github.event.pull_request.changed_files }}"
 
-      - name: Run pytest
-        id: pytest
-        continue-on-error: true
-        run: |
-          pytest --tb=short 2>&1 | tee /tmp/pytest.out || true
-          echo "exit=$?" >> $GITHUB_OUTPUT
+          # Build the review prompt
+          cat > /tmp/review_prompt.txt << 'PROMPT'
+请审查以下 Pull Request。按照你的审查框架（架构、产品、规范、损伤 + 意图分析 + Merge 建议）给出完整审查报告。
 
-      - name: Post Review Summary
-        if: always()
+## PR 信息
+
+- 标题: $PR_TITLE
+- 描述: $PR_BODY
+- 变更: $FILES 个文件, +$ADDITIONS / -$DELETIONS
+
+## 代码 Diff
+
+PROMPT
+          echo "\`\`\`diff" >> /tmp/review_prompt.txt
+          cat /tmp/pr.diff >> /tmp/review_prompt.txt
+          echo "\`\`\`" >> /tmp/review_prompt.txt
+
+          # Call Luxiao via SSH
+          REVIEW_PROMPT=$(cat /tmp/review_prompt.txt | base64 -w0)
+          ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes hermesadmin@192.168.1.116 \
+            "echo '$REVIEW_PROMPT' | base64 -d | hermes -p luxiao-engineer chat -q - 2>&1" > /tmp/review_result.txt 2>&1
+
+          echo "review_ready=true" >> $GITHUB_OUTPUT
+
+      - name: Post Review Comment
+        if: steps.review.outputs.review_ready == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           REPO="${{ github.repository }}"
 
-          echo "## 🤖 PR 自动审查报告" > /tmp/review.md
-          echo "" >> /tmp/review.md
-          echo "**PR**: #$PR_NUMBER" >> /tmp/review.md
-          echo "**提交**: ${{ github.event.pull_request.head.sha }}" >> /tmp/review.md
-          echo "**分支**: ${{ github.head_ref }} → ${{ github.base_ref }}" >> /tmp/review.md
-          echo "" >> /tmp/review.md
+          # Extract the review from hermes output (skip the preamble)
+          python3 -c "
+import sys
+text = open('/tmp/review_result.txt').read()
+# Find the review section
+if '## 🤖 PR 审查报告' in text:
+    idx = text.index('## 🤖 PR 审查报告')
+    review = text[idx:]
+elif '🤖 PR 审查报告' in text:
+    idx = text.index('🤖 PR 审查报告')
+    review = text[idx:]
+else:
+    # Fallback: use the last 2000 chars
+    review = text[-2000:]
+print(review)
+" > /tmp/review_clean.md 2>/dev/null || cp /tmp/review_result.txt /tmp/review_clean.md
 
-          # 变更统计
-          ADDITIONS="${{ github.event.pull_request.additions }}"
-          DELETIONS="${{ github.event.pull_request.deletions }}"
-          FILES="${{ github.event.pull_request.changed_files }}"
-          echo "### 📊 变更统计" >> /tmp/review.md
-          echo "| 文件数 | 新增行 | 删除行 |" >> /tmp/review.md
-          echo "|--------|--------|--------|" >> /tmp/review.md
-          echo "| $FILES | +$ADDITIONS | -$DELETIONS |" >> /tmp/review.md
-          echo "" >> /tmp/review.md
-
-          # mypy 结果
-          echo "### 🔍 类型检查 (mypy)" >> /tmp/review.md
-          echo '```' >> /tmp/review.md
-          if [ -s /tmp/mypy.out ]; then
-            cat /tmp/mypy.out | head -40 >> /tmp/review.md
-            LINES=$(wc -l < /tmp/mypy.out)
-            if [ "$LINES" -gt 40 ]; then
-              echo "... (共 $LINES 行，仅显示前 40 行)" >> /tmp/review.md
-            fi
-            echo "" >> /tmp/review.md
-            echo "⚠️ 发现 $LINES 个类型问题" >> /tmp/review.md
-          else
-            echo "✅ 无类型错误" >> /tmp/review.md
-          fi
-          echo '```' >> /tmp/review.md
-          echo "" >> /tmp/review.md
-
-          # 测试结果
-          echo "### 🧪 测试结果 (pytest)" >> /tmp/review.md
-          echo '```' >> /tmp/review.md
-          if [ -f /tmp/pytest.out ]; then
-            tail -20 /tmp/pytest.out >> /tmp/review.md
-          else
-            echo "⚠️ 未生成测试输出" >> /tmp/review.md
-          fi
-          echo '```' >> /tmp/review.md
-          echo "" >> /tmp/review.md
-
-          # 建议
-          echo "### 💡 审查建议" >> /tmp/review.md
-          if [ -s /tmp/mypy.out ]; then
-            echo "- 🔴 **类型检查发现问题**，请检查上面 mypy 输出中的类型错误" >> /tmp/review.md
-          fi
-          if [ -f /tmp/pytest.out ]; then
-            if grep -q "FAILED" /tmp/pytest.out; then
-              echo "- 🔴 **测试失败**，请修复失败的测试用例" >> /tmp/review.md
-            elif grep -q "passed" /tmp/pytest.out; then
-              echo "- 🟢 所有测试通过" >> /tmp/review.md
-            fi
-          fi
-          echo "- 📝 请确认新增代码有对应的测试覆盖" >> /tmp/review.md
-          echo "- 📝 请检查是否有遗留的调试代码（print、console.log 等）" >> /tmp/review.md
-          echo "" >> /tmp/review.md
-          echo "---" >> /tmp/review.md
-          echo "*由 CICD Runner (VM 202) 自动生成*" >> /tmp/review.md
-
-          # 删除旧评论，发布新评论
-          gh api "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[].id' | while read id; do
-            BODY=$(gh api "repos/$REPO/issues/comments/$id" --jq '.body')
-            if echo "$BODY" | grep -q "PR 自动审查报告"; then
-              gh api "repos/$REPO/issues/comments/$id" -X DELETE
+          # Delete old bot comments
+          gh api "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[].id' | while read cid; do
+            BODY=$(gh api "repos/$REPO/issues/comments/$cid" --jq '.body')
+            if echo "$BODY" | grep -q "PR 审查报告"; then
+              gh api "repos/$REPO/issues/comments/$cid" -X DELETE
             fi
           done
 
-          gh pr comment $PR_NUMBER --body "$(cat /tmp/review.md)"
+          gh pr comment $PR_NUMBER --body "$(cat /tmp/review_clean.md)"
