@@ -79,6 +79,10 @@ watcherobot app run .\examples\hello_robot
 
 将 `123456` 替换为设备显示的配对码。若当前 Runtime 已经连上设备，可跳过配对请求。
 
+也可以在浏览器打开 `$runtime.control_url/control/` 使用本地
+[链路测试控制台](docs/control-console.md)。控制台支持输入新配对码、替换旧设备
+会话，以及查看 Daemon、设备、Application 和本机 Qwen Gateway 的状态。
+
 本地控制 API 还提供 `GET /daemon/logs` 用于读取 Runtime 日志；完整 REST 边界见 [Runtime 合同](docs/contracts/runtime-profile-index.md)。
 
 ### 3. 编写 Application
