@@ -13,30 +13,35 @@ jobs:
     runs-on: [self-hosted, Linux, X64, pr-review]
     if: github.event.pull_request.draft == false
     steps:
-      - name: Checkout
+      - name: Checkout with full history
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract PR Diff
         run: |
-          git fetch origin ${{ github.base_ref }} --depth=1 2>/dev/null || true
-          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff 2>/dev/null || git diff HEAD~1 > /tmp/pr.diff 2>/dev/null || echo "empty" > /tmp/pr.diff
+          git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff 2>/dev/null || echo "empty" > /tmp/pr.diff
+          echo "Diff lines: $(wc -l < /tmp/pr.diff)"
 
       - name: Run Luxiao Review
         run: |
-          python3 /home/opsadmin/scripts/luxiao-review.py             "${{ github.event.pull_request.title }}"             "${{ github.event.pull_request.body }}"             "${{ github.event.pull_request.additions }}"             "${{ github.event.pull_request.deletions }}"             "${{ github.event.pull_request.changed_files }}"             /tmp/pr.diff             /tmp/review_result.md
+          python3 /home/opsadmin/scripts/luxiao-review.py \
+            "${{ github.event.pull_request.title }}" \
+            "${{ github.event.pull_request.body }}" \
+            "${{ github.event.pull_request.additions }}" \
+            "${{ github.event.pull_request.deletions }}" \
+            "${{ github.event.pull_request.changed_files }}" \
+            /tmp/pr.diff \
+            /tmp/review_result.md
 
       - name: Post Review Comment
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PR_NUMBER="${{ github.event.pull_request.number }}"
-          REPO="${{ github.repository }}"
-
           if [ ! -s /tmp/review_result.md ]; then
-            echo "## Luxiao Review" > /tmp/review_result.md
+            echo "## 🤖 Luxiao PR 审查报告" > /tmp/review_result.md
             echo "" >> /tmp/review_result.md
-            echo "Review agent did not produce output." >> /tmp/review_result.md
+            echo "⚠️ Review agent did not produce output." >> /tmp/review_result.md
           fi
-
-          gh pr comment $PR_NUMBER --body "$(cat /tmp/review_result.md)"
+          gh pr comment ${{ github.event.pull_request.number }} --body "$(cat /tmp/review_result.md)"
