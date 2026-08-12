@@ -23,7 +23,8 @@ address while the normal broadcast discovery remains enabled.
 
 The dashboard tests host-to-device PCM playback, one-shot JPEG capture,
 decoded microphone recording, capability discovery, artifacts, diagnostic
-events, and a live camera preview. The live preview uses `watcher-rtc/1` only
+events, a live camera preview, and full-duplex RTC audio. The live preview uses
+`watcher-rtc/1` only
 for signaling through the current Application's Device channel; MJPEG frames
 travel directly from the Watcher to the browser over an unordered,
 partially-reliable WebRTC data channel named `mjpeg-data`.
@@ -31,5 +32,9 @@ partially-reliable WebRTC data channel named `mjpeg-data`.
 Live preview requires firmware that advertises `rtc.video.mjpeg.v1`. It keeps a
 heartbeat while the page is open, uses latest-frame-wins rendering, and releases
 camera resources when stopped, disconnected, or when the page closes. Camera
-and microphone actions capture the surrounding environment; obtain consent
+resources when stopped, disconnected, or when the page closes. Full-duplex
+audio requires `rtc.audio.full_duplex.v1`, requests the computer microphone only
+after the user starts the call, enables browser echo cancellation, and releases
+all local tracks on stop, failure, disconnect, or page close. Camera and
+microphone actions capture the surrounding environment; obtain consent
 before use and handle generated artifacts appropriately.

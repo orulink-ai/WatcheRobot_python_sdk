@@ -5,7 +5,16 @@ from concurrent.futures import Future
 
 import pytest
 
-from watcherobot.application.rtc import ApplicationRtc
+from watcherobot.application.rtc import (
+    ApplicationRtc,
+    RTC_AUDIO_CAPABILITY,
+    RTC_VIDEO_CAPABILITY,
+)
+
+
+def test_rtc_capability_names_are_public_and_feature_specific() -> None:
+    assert RTC_AUDIO_CAPABILITY == "rtc.audio.full_duplex.v1"
+    assert RTC_VIDEO_CAPABILITY == "rtc.video.mjpeg.v1"
 
 
 class FakeTransport:

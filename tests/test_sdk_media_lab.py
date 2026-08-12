@@ -150,6 +150,7 @@ def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
             "audio.stream",
             "microphone",
             "camera.capture",
+            "rtc.audio.full_duplex.v1",
             "rtc.video.mjpeg.v1",
         ),
         device_info={"firmware_version": "V3.1", "device_id": "watcher-test"},
@@ -206,6 +207,7 @@ def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -
         "audio.stream",
         "microphone",
         "camera.capture",
+        "rtc.audio.full_duplex.v1",
         "rtc.video.mjpeg.v1",
     ]
     assert status["device"]["firmware_version"] == "V3.1"
@@ -492,6 +494,26 @@ def test_http_app_serves_local_ui_actions_and_artifacts(tmp_path: Path) -> None:
     assert client.get("/artifacts/../app.py").status_code == 404
 
 
+def test_http_app_serves_rtc_audio_health_module(tmp_path: Path) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    web_root.joinpath("index.html").write_text("lab", encoding="utf-8")
+    web_root.joinpath("app.js").write_text("", encoding="utf-8")
+    web_root.joinpath("styles.css").write_text("", encoding="utf-8")
+    web_root.joinpath("rtc-audio-health.mjs").write_text(
+        "export const ready = true;",
+        encoding="utf-8",
+    )
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    response = client.get("/assets/rtc-audio-health.mjs")
+
+    assert response.status_code == 200
+    assert "export const ready" in response.text
+
+
 def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
     tmp_path: Path,
 ) -> None:
@@ -540,6 +562,58 @@ def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
         ("clock_ping", 123456),
         ("stop", None),
     ]
+
+
+def test_full_duplex_audio_http_contract_starts_audio_rtc_session(tmp_path: Path) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    service = _service(module, tmp_path, rtc=rtc)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    started = client.post("/api/rtc/session/start", json={"mode": "audio"})
+    stopped = client.post("/api/rtc/session/stop")
+
+    assert started.status_code == 200
+    assert started.json()["session"]["mode"] == "audio"
+    assert stopped.json() == {"stopped": True}
+    assert rtc.calls == [("start", "audio"), ("stop", None)]
+
+
+def test_media_lab_keeps_audio_capability_compatible_with_older_sdk_runtime() -> None:
+    module = _load_service_module()
+
+    assert module.RTC_AUDIO_CAPABILITY == "rtc.audio.full_duplex.v1"
+
+
+def test_full_duplex_audio_requires_explicit_firmware_capability(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities = ("rtc.video.mjpeg.v1",)
+    service = _service(module, tmp_path, robot)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    response = client.post("/api/rtc/session/start", json={"mode": "audio"})
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "rtc_unavailable"
+
+
+def test_combined_rtc_mode_requires_both_audio_and_video_capabilities(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities = ("rtc.video.mjpeg.v1",)
+    service = _service(module, tmp_path, robot)
+
+    with pytest.raises(module.MediaLabRtcError, match="rtc.audio.full_duplex.v1"):
+        service.start_live_video(mode="av")
 
 
 def test_live_video_requires_explicit_firmware_capability(tmp_path: Path) -> None:
@@ -729,6 +803,8 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "相机拍照",
         "相机实时画面",
         "开启实时画面",
+        "全双工音频通话",
+        "开启全双工通话",
         "麦克风录音",
         "设备能力矩阵",
         "运行日志",
@@ -745,6 +821,11 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "mjpeg-data",
         "parseWjpgPacket",
         'api("/api/video/session/start"',
+        "navigator.mediaDevices.getUserMedia",
+        "for (const track of localStream.getTracks()) track.stop();",
+        "state.rtc.generation !== generation",
+        'api("/api/rtc/session/start"',
+        'addEventListener("track"',
         "停止失败，请重试",
         "媒体全检通过",
     ):

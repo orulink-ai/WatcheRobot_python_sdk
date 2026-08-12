@@ -246,6 +246,41 @@ main { width: min(1540px, 100%); margin: 0 auto; padding: 0 clamp(18px, 4vw, 64p
 .live-video-stage[data-state="live"] .live-pill { color: var(--signal); border-color: var(--signal); }
 @keyframes live-pulse { 50% { transform: scale(0.82); opacity: 0.28; } }
 
+.rtc-audio-panel {
+  --accent: var(--amber);
+  display: grid;
+  grid-template-columns: minmax(340px, 0.72fr) minmax(420px, 1fr);
+  min-height: 350px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  background: linear-gradient(110deg, rgba(255, 182, 80, 0.06), rgba(17, 22, 20, 0.96));
+}
+.rtc-audio-panel[data-available="false"] { filter: saturate(0.32); }
+.rtc-audio-panel > div { padding: clamp(28px, 4vw, 48px); }
+.rtc-audio-panel > div:first-child { border-right: 1px solid var(--line); }
+.rtc-audio-panel h2 { margin-top: 22px; font: 600 clamp(2.1rem, 4vw, 4.2rem)/0.94 var(--display); letter-spacing: -0.025em; }
+.rtc-audio-panel p:not(.section-index) { max-width: 650px; margin-top: 18px; color: var(--muted); font-size: 0.9rem; line-height: 1.7; }
+.rtc-audio-controls { display: flex; gap: 10px; margin-top: 30px; }
+.rtc-audio-controls button { flex: 1; min-height: 48px; }
+.rtc-audio-console { display: grid; align-content: center; gap: 24px; background: radial-gradient(circle at 50% 40%, rgba(255,182,80,0.09), transparent 48%); }
+.rtc-audio-orbit { position: relative; width: 112px; height: 112px; margin: 0 auto; border: 1px solid var(--line-bright); border-radius: 50%; }
+.rtc-audio-orbit::before, .rtc-audio-orbit::after { content: ""; position: absolute; border: 1px solid var(--amber); border-radius: 50%; inset: 24px; opacity: 0.7; }
+.rtc-audio-orbit::after { inset: 43px; background: var(--amber); box-shadow: 0 0 28px rgba(255,182,80,0.34); }
+.rtc-audio-orbit i { position: absolute; inset: 50% auto auto 50%; width: 6px; height: 6px; border-radius: 50%; background: var(--signal); transform-origin: 0 0; opacity: 0; }
+.rtc-audio-console[data-state="connecting"] .rtc-audio-orbit { animation: live-pulse 1.4s ease-in-out infinite; }
+.rtc-audio-console[data-state="live"] .rtc-audio-orbit i { opacity: 1; animation: rtc-orbit 2.4s linear infinite; }
+.rtc-audio-console[data-state="live"] .rtc-audio-orbit i:nth-child(2) { animation-delay: -0.8s; }
+.rtc-audio-console[data-state="live"] .rtc-audio-orbit i:nth-child(3) { animation-delay: -1.6s; }
+@keyframes rtc-orbit { from { transform: rotate(0deg) translateX(55px); } to { transform: rotate(360deg) translateX(55px); } }
+.rtc-audio-metrics { display: grid; grid-template-columns: 1fr 1fr; margin: 0; border: 1px solid var(--line); }
+.rtc-audio-metrics div { padding: 13px 15px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.rtc-audio-metrics div:nth-child(2n) { border-right: 0; }
+.rtc-audio-metrics div:nth-last-child(-n+2) { border-bottom: 0; }
+.rtc-audio-metrics dt { color: var(--muted); font: 0.58rem var(--mono); letter-spacing: 0.12em; }
+.rtc-audio-metrics dd { margin: 8px 0 0; color: var(--amber); font: 0.78rem var(--mono); }
+.rtc-audio-console audio { margin: 0; }
+.rtc-audio-console > small { color: var(--muted); font: 0.62rem/1.5 var(--mono); }
+
 .stations { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); }
 .station { position: relative; min-width: 0; padding: 28px; background: rgba(17, 22, 20, 0.92); border-right: 1px solid var(--line); overflow: hidden; }
 .station:last-child { border-right: 0; }
@@ -325,6 +360,8 @@ footer { position: relative; z-index: 11; display: flex; justify-content: space-
   .live-video-panel { grid-template-columns: 1fr; }
   .live-video-copy { border-right: 0; border-bottom: 1px solid var(--line); }
   .live-video-stage { min-height: min(70vw, 520px); }
+  .rtc-audio-panel { grid-template-columns: 1fr; }
+  .rtc-audio-panel > div:first-child { border-right: 0; border-bottom: 1px solid var(--line); }
   .stations { grid-template-columns: 1fr 1fr; }
   .station { border-bottom: 1px solid var(--line); }
   .station:nth-child(2) { border-right: 0; }
@@ -348,6 +385,8 @@ footer { position: relative; z-index: 11; display: flex; justify-content: space-
   .live-video-copy h2 { font-size: 2.5rem; }
   .live-video-stage { min-height: 64vw; }
   .live-video-controls { flex-direction: column; }
+  .rtc-audio-panel > div { padding: 24px; }
+  .rtc-audio-controls { flex-direction: column; }
   .stations { grid-template-columns: 1fr; }
   .station, .station:nth-child(2) { grid-column: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .station:last-child { grid-column: auto; border-bottom: 0; }

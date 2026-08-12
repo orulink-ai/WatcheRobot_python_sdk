@@ -13,6 +13,7 @@ from watcherobot.application.transport import DaemonApplicationTransport
 
 
 RTC_PROTOCOL = "watcher-rtc/1"
+RTC_AUDIO_CAPABILITY = "rtc.audio.full_duplex.v1"
 RTC_VIDEO_CAPABILITY = "rtc.video.mjpeg.v1"
 _MODES = {"video", "audio", "av"}
 
@@ -277,4 +278,9 @@ class ApplicationRtc:
             raise RuntimeError("RTC controller is closed")
 
 
-__all__ = ["ApplicationRtc", "RTC_PROTOCOL", "RTC_VIDEO_CAPABILITY"]
+__all__ = [
+    "ApplicationRtc",
+    "RTC_AUDIO_CAPABILITY",
+    "RTC_PROTOCOL",
+    "RTC_VIDEO_CAPABILITY",
+]

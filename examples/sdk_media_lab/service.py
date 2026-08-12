@@ -25,7 +25,15 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
-from watcherobot.application.rtc import RTC_VIDEO_CAPABILITY
+from watcherobot.application import rtc as application_rtc
+
+
+RTC_AUDIO_CAPABILITY = getattr(
+    application_rtc,
+    "RTC_AUDIO_CAPABILITY",
+    "rtc.audio.full_duplex.v1",
+)
+RTC_VIDEO_CAPABILITY = application_rtc.RTC_VIDEO_CAPABILITY
 
 
 _MDNS_HOST_CANDIDATE = re.compile(
@@ -193,8 +201,8 @@ class MediaLabService:
         self._device_status_provider = device_status_provider
         self._device_pairer = device_pairer
         # The lifecycle lock makes RTC start/stop/reconciliation atomic. The
-        # operation lock excludes every other media action for the full live-video
-        # session; the boolean records whether that session currently owns it.
+        # operation lock excludes every other media action for the full RTC session;
+        # the boolean records whether that session currently owns it.
         self._live_video_lifecycle_lock = threading.Lock()
         self._operation_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -362,11 +370,19 @@ class MediaLabService:
             }
 
     def start_live_video(self, *, mode: str = "video") -> dict[str, object]:
-        if RTC_VIDEO_CAPABILITY not in self._robot.capabilities:
+        required_capabilities = {
+            "audio": {RTC_AUDIO_CAPABILITY},
+            "video": {RTC_VIDEO_CAPABILITY},
+            "av": {RTC_AUDIO_CAPABILITY, RTC_VIDEO_CAPABILITY},
+        }[mode]
+        missing_capabilities = required_capabilities.difference(self._robot.capabilities)
+        if missing_capabilities:
+            feature = ", ".join(sorted(missing_capabilities))
             raise MediaLabRtcError(
                 "rtc_unavailable",
-                "Robot firmware does not advertise RTC MJPEG video",
+                f"Robot firmware does not advertise required RTC capabilities: {feature}",
             )
+        action = "rtc_audio" if mode == "audio" else "live_video"
         with self._live_video_lifecycle_lock:
             if not self._operation_lock.acquire(blocking=False):
                 with self._state_lock:
@@ -376,7 +392,7 @@ class MediaLabService:
             # stop, terminal-event and device-offline paths all release it explicitly.
             with self._state_lock:
                 self._live_video_lock_held = True
-                self._active_action = "live_video"
+                self._active_action = action
             try:
                 self._ensure_device_online()
                 self._browser_host_ipv4 = self._resolve_browser_host_ipv4()
@@ -384,7 +400,7 @@ class MediaLabService:
             except Exception:
                 self._release_live_video_lock()
                 raise
-        self._append_event("live_video", "Live video session started", "running")
+        self._append_event(action, f"{_action_label(action)} session started", "running")
         return {"session": session}
 
     def send_rtc_signal(self, request: RtcSignalRequest) -> dict[str, object]:
@@ -415,9 +431,15 @@ class MediaLabService:
 
     def stop_live_video(self) -> dict[str, object]:
         with self._live_video_lifecycle_lock:
+            with self._state_lock:
+                action = (
+                    self._active_action
+                    if self._active_action in {"live_video", "rtc_audio"}
+                    else "live_video"
+                )
             stopped = bool(self._rtc.stop())
             self._release_live_video_lock()
-        self._append_event("live_video", "Live video session stopped", "ok")
+        self._append_event(action, f"{_action_label(action)} session stopped", "ok")
         return {"stopped": stopped}
 
     def rtc_events(self, *, after: int = 0) -> list[dict[str, object]]:
@@ -454,9 +476,12 @@ class MediaLabService:
     def _ensure_live_video_active(self) -> None:
         self._ensure_device_online()
         with self._state_lock:
-            active = self._live_video_lock_held and self._active_action == "live_video"
+            active = self._live_video_lock_held and self._active_action in {
+                "live_video",
+                "rtc_audio",
+            }
         if not active:
-            raise MediaLabRtcError("rtc_not_active", "Live video session is not active")
+            raise MediaLabRtcError("rtc_not_active", "RTC session is not active")
 
     def _normalize_browser_candidates(self, value: str) -> str:
         if _MDNS_HOST_CANDIDATE.search(value) is None:
@@ -496,7 +521,7 @@ class MediaLabService:
             if not self._live_video_lock_held:
                 return
             self._live_video_lock_held = False
-            if self._active_action == "live_video":
+            if self._active_action in {"live_video", "rtc_audio"}:
                 self._active_action = None
         self._operation_lock.release()
 
@@ -667,6 +692,13 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     async def javascript() -> FileResponse:
         return FileResponse(web_root / "app.js", media_type="text/javascript")
 
+    @app.get("/assets/rtc-audio-health.mjs")
+    async def rtc_audio_health_javascript() -> FileResponse:
+        return FileResponse(
+            web_root / "rtc-audio-health.mjs",
+            media_type="text/javascript",
+        )
+
     @app.get("/assets/styles.css")
     async def stylesheet() -> FileResponse:
         return FileResponse(web_root / "styles.css", media_type="text/css")
@@ -710,14 +742,17 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
         result["artifact_url"] = _artifact_url(str(result["artifact"]))
         return result
 
+    @app.post("/api/rtc/session/start")
     @app.post("/api/video/session/start")
     async def start_video(request: RtcSessionStartRequest) -> dict[str, object]:
         return await _run_action(service.start_live_video, mode=request.mode)
 
+    @app.post("/api/rtc/session/signal")
     @app.post("/api/video/session/signal")
     async def video_signal(request: RtcSignalRequest) -> dict[str, object]:
         return await _run_action(service.send_rtc_signal, request=request)
 
+    @app.post("/api/rtc/session/clock-ping")
     @app.post("/api/video/session/clock-ping")
     async def video_clock_ping(request: RtcClockPingRequest) -> dict[str, object]:
         return await _run_action(
@@ -725,14 +760,17 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
             browser_send_us=request.browser_send_us,
         )
 
+    @app.post("/api/rtc/session/feedback")
     @app.post("/api/video/session/feedback")
     async def video_feedback(request: RtcFeedbackRequest) -> dict[str, object]:
         return await _run_action(service.send_rtc_feedback, request=request)
 
+    @app.get("/api/rtc/session/events")
     @app.get("/api/video/session/events")
     async def video_events(after: int = 0) -> dict[str, object]:
         return {"events": service.rtc_events(after=max(0, after))}
 
+    @app.post("/api/rtc/session/stop")
     @app.post("/api/video/session/stop")
     async def stop_video() -> dict[str, object]:
         return await _run_action(service.stop_live_video)
