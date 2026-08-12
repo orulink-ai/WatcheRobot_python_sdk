@@ -6,10 +6,13 @@ import asyncio
 import ipaddress
 import json
 import math
+import re
+import socket
 import threading
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 import wave
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -21,6 +24,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
+from watcherobot.application.rtc import RTC_VIDEO_CAPABILITY
+
+
+_MDNS_HOST_CANDIDATE = re.compile(
+    r"(?im)(^(?:a=)?candidate:\S+\s+\d+\s+\S+\s+\d+\s+)(\S+\.local)(\s+\d+\s+typ\s+host\b)"
+)
 
 
 class MediaLabBusyError(RuntimeError):
@@ -38,6 +47,14 @@ class MediaLabPairingError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.status_code = status_code
+
+
+class MediaLabRtcError(RuntimeError):
+    """Expose a stable live-video failure to the local dashboard."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class DaemonDeviceStatusProvider:
@@ -121,6 +138,33 @@ class PairDeviceRequest(BaseModel):
     device_ip: str | None = None
 
 
+class RtcSessionStartRequest(BaseModel):
+    mode: str = Field(default="video", pattern=r"^(video|audio|av)$")
+
+
+class RtcSignalRequest(BaseModel):
+    kind: str = Field(pattern=r"^(offer|candidate)$")
+    sdp: str | None = Field(default=None, max_length=16384)
+    candidate: str | None = Field(default=None, max_length=2048)
+    sdp_mid: str | None = Field(default=None, max_length=64)
+    sdp_mline_index: int | None = Field(default=None, ge=0, le=65535)
+
+
+class RtcClockPingRequest(BaseModel):
+    browser_send_us: int = Field(gt=0, le=9_007_199_254_740_991)
+
+
+class RtcFeedbackRequest(BaseModel):
+    display_fps_x100: int = Field(ge=0)
+    frame_age_p95_us: int = Field(ge=0)
+    rtt_us: int = Field(ge=0)
+    audio_queue_ms: int = Field(ge=0)
+    audio_packet_loss_x100: int = Field(ge=0)
+    audio_jitter_us: int = Field(ge=0)
+    audio_concealed_frames: int = Field(ge=0)
+    congestion_level: int = Field(ge=0, le=3)
+
+
 class MediaLabService:
     """Serialize media actions and expose stable, JSON-ready diagnostics."""
 
@@ -133,12 +177,14 @@ class MediaLabService:
         self,
         *,
         robot: Any,
+        rtc: Any,
         artifacts_dir: Path,
         sample_audio: Path,
         device_status_provider: Callable[[], Mapping[str, object]],
         device_pairer: Callable[[str, str | None], Mapping[str, object]],
     ) -> None:
         self._robot = robot
+        self._rtc = rtc
         self._artifacts_dir = Path(artifacts_dir)
         self._sample_audio = Path(sample_audio)
         self._device_status_provider = device_status_provider
@@ -150,6 +196,8 @@ class MediaLabService:
         self._events: deque[dict[str, object]] = deque(maxlen=160)
         self._device_refresh_lock = threading.Lock()
         self._refreshed_connection_token: str | None = None
+        self._live_video_lock_held = False
+        self._browser_host_ipv4: str | None = None
         self._append_event("system", "Media Lab ready", "ok")
 
     def status(self) -> dict[str, object]:
@@ -167,6 +215,11 @@ class MediaLabService:
                 }
         connection = self._device_status()
         self._refresh_device_snapshot(connection)
+        rtc = self._rtc.snapshot()
+        if connection.get("online") is not True or rtc.get("state") in {"stopped", "failed"}:
+            self._release_live_video_lock()
+            with self._state_lock:
+                active_action = self._active_action
         return {
             "connected": connection.get("online") is True,
             "connection": connection,
@@ -174,6 +227,7 @@ class MediaLabService:
             "active_action": active_action,
             "capabilities": list(self._robot.capabilities),
             "device": dict(self._robot.device_info),
+            "rtc": rtc,
             "artifacts": artifacts,
             "events": self.events(),
         }
@@ -292,6 +346,65 @@ class MediaLabService:
                 "decode_failures": recording.decode_failures,
             }
 
+    def start_live_video(self, *, mode: str = "video") -> dict[str, object]:
+        if RTC_VIDEO_CAPABILITY not in self._robot.capabilities:
+            raise MediaLabRtcError(
+                "rtc_unavailable",
+                "Robot firmware does not advertise RTC MJPEG video",
+            )
+        if not self._operation_lock.acquire(blocking=False):
+            with self._state_lock:
+                active_action = self._active_action or "another action"
+            raise MediaLabBusyError(f"media lab is busy with {active_action}")
+        with self._state_lock:
+            self._live_video_lock_held = True
+        try:
+            self._ensure_device_online()
+            with self._state_lock:
+                self._active_action = "live_video"
+            self._browser_host_ipv4 = self._resolve_browser_host_ipv4()
+            session = dict(self._rtc.start(mode=mode))
+        except Exception:
+            self._release_live_video_lock()
+            raise
+        self._append_event("live_video", "Live video session started", "running")
+        return {"session": session}
+
+    def send_rtc_signal(self, request: RtcSignalRequest) -> dict[str, object]:
+        self._ensure_live_video_active()
+        if request.kind == "offer":
+            if not request.sdp:
+                raise ValueError("offer signal requires sdp")
+            self._rtc.send_offer(self._normalize_browser_candidates(request.sdp))
+        else:
+            if not request.candidate or request.sdp_mid is None or request.sdp_mline_index is None:
+                raise ValueError("candidate signal requires candidate, sdp_mid, and sdp_mline_index")
+            self._rtc.send_candidate(
+                self._normalize_browser_candidates(request.candidate),
+                sdp_mid=request.sdp_mid,
+                sdp_mline_index=request.sdp_mline_index,
+            )
+        return {"accepted": True}
+
+    def send_rtc_clock_ping(self, browser_send_us: int) -> dict[str, object]:
+        self._ensure_live_video_active()
+        self._rtc.clock_ping(browser_send_us)
+        return {"accepted": True}
+
+    def send_rtc_feedback(self, request: RtcFeedbackRequest) -> dict[str, object]:
+        self._ensure_live_video_active()
+        self._rtc.feedback(**request.model_dump())
+        return {"accepted": True}
+
+    def stop_live_video(self) -> dict[str, object]:
+        stopped = bool(self._rtc.stop())
+        self._release_live_video_lock()
+        self._append_event("live_video", "Live video session stopped", "ok")
+        return {"stopped": stopped}
+
+    def rtc_events(self, *, after: int = 0) -> list[dict[str, object]]:
+        return self._rtc.events(after=max(0, after))
+
     def artifact_path(self, filename: str) -> Path | None:
         if filename not in self._ARTIFACT_TYPES:
             return None
@@ -319,6 +432,55 @@ class MediaLabService:
     def _ensure_device_online(self) -> None:
         if self._device_status().get("online") is not True:
             raise MediaLabDeviceOfflineError("Watcher device is offline")
+
+    def _ensure_live_video_active(self) -> None:
+        self._ensure_device_online()
+        with self._state_lock:
+            active = self._live_video_lock_held and self._active_action == "live_video"
+        if not active:
+            raise MediaLabRtcError("rtc_not_active", "Live video session is not active")
+
+    def _normalize_browser_candidates(self, value: str) -> str:
+        if _MDNS_HOST_CANDIDATE.search(value) is None:
+            return value
+        replacement = self._browser_host_ipv4
+        if replacement is None:
+            raise MediaLabRtcError(
+                "rtc_local_address_unavailable",
+                "Unable to resolve the browser host LAN address for RTC",
+            )
+        return _rewrite_mdns_host_candidates(value, replacement)
+
+    def _resolve_browser_host_ipv4(self) -> str | None:
+        status = self._device_status()
+        preview_url = status.get("preview_websocket_url")
+        if not isinstance(preview_url, str) or not preview_url:
+            return None
+        peer_host = urllib.parse.urlparse(preview_url).hostname
+        if not peer_host:
+            return None
+        try:
+            peer_ip = ipaddress.IPv4Address(peer_host)
+        except ipaddress.AddressValueError:
+            return None
+        route = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            route.connect((str(peer_ip), 9))
+            local_ip = ipaddress.IPv4Address(route.getsockname()[0])
+        except (OSError, ipaddress.AddressValueError):
+            return None
+        finally:
+            route.close()
+        return None if local_ip.is_loopback or local_ip.is_unspecified else str(local_ip)
+
+    def _release_live_video_lock(self) -> None:
+        with self._state_lock:
+            if not self._live_video_lock_held:
+                return
+            self._live_video_lock_held = False
+            if self._active_action == "live_video":
+                self._active_action = None
+        self._operation_lock.release()
 
     def _refresh_device_snapshot(self, connection: Mapping[str, object]) -> None:
         if connection.get("online") is not True:
@@ -432,6 +594,13 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
             content={"error": error.code, "message": str(error)},
         )
 
+    @app.exception_handler(MediaLabRtcError)
+    async def rtc_handler(_request: Request, error: MediaLabRtcError) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={"error": error.code, "message": str(error)},
+        )
+
     @app.exception_handler(RequestValidationError)
     async def validation_handler(
         _request: Request,
@@ -496,6 +665,33 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
         result["artifact_url"] = _artifact_url(str(result["artifact"]))
         return result
 
+    @app.post("/api/video/session/start")
+    async def start_video(request: RtcSessionStartRequest) -> dict[str, object]:
+        return await _run_action(service.start_live_video, mode=request.mode)
+
+    @app.post("/api/video/session/signal")
+    async def video_signal(request: RtcSignalRequest) -> dict[str, object]:
+        return await _run_action(service.send_rtc_signal, request=request)
+
+    @app.post("/api/video/session/clock-ping")
+    async def video_clock_ping(request: RtcClockPingRequest) -> dict[str, object]:
+        return await _run_action(
+            service.send_rtc_clock_ping,
+            browser_send_us=request.browser_send_us,
+        )
+
+    @app.post("/api/video/session/feedback")
+    async def video_feedback(request: RtcFeedbackRequest) -> dict[str, object]:
+        return await _run_action(service.send_rtc_feedback, request=request)
+
+    @app.get("/api/video/session/events")
+    async def video_events(after: int = 0) -> dict[str, object]:
+        return {"events": service.rtc_events(after=max(0, after))}
+
+    @app.post("/api/video/session/stop")
+    async def stop_video() -> dict[str, object]:
+        return await _run_action(service.stop_live_video)
+
     @app.get("/artifacts/{filename}")
     async def artifact(filename: str) -> FileResponse:
         path = service.artifact_path(filename)
@@ -513,6 +709,7 @@ async def _run_action(callback: Any, **kwargs: object) -> dict[str, object]:
         MediaLabBusyError,
         MediaLabDeviceOfflineError,
         MediaLabPairingError,
+        MediaLabRtcError,
         HTTPException,
     ):
         raise
@@ -526,6 +723,14 @@ def _artifact_url(filename: str) -> str:
     return f"/artifacts/{filename}?v={time.time_ns()}"
 
 
+def _rewrite_mdns_host_candidates(value: str, replacement_ip: str) -> str:
+    ipaddress.IPv4Address(replacement_ip)
+    return _MDNS_HOST_CANDIDATE.sub(
+        lambda match: f"{match.group(1)}{replacement_ip}{match.group(3)}",
+        value,
+    )
+
+
 def _action_label(action: str) -> str:
     return action.replace("_", " ").title()
 
@@ -535,6 +740,7 @@ __all__ = [
     "MediaLabBusyError",
     "MediaLabDeviceOfflineError",
     "MediaLabPairingError",
+    "MediaLabRtcError",
     "MediaLabService",
     "create_web_app",
 ]

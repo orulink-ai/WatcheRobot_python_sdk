@@ -81,9 +81,71 @@ class FakeMicrophone:
         )
 
 
+class FakeRtc:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+        self._state = {
+            "active": False,
+            "client_id": None,
+            "session_id": None,
+            "state": "idle",
+            "mode": None,
+            "last_error": None,
+            "capabilities": {},
+            "stats": {},
+        }
+
+    def start(self, *, mode: str = "video") -> dict[str, object]:
+        self.calls.append(("start", mode))
+        self._state.update(
+            active=True,
+            client_id="client-0001",
+            session_id="session-0001",
+            state="starting",
+            mode=mode,
+        )
+        return self.snapshot()
+
+    def send_offer(self, sdp: str) -> None:
+        self.calls.append(("offer", sdp))
+
+    def send_candidate(self, candidate: str, *, sdp_mid: str, sdp_mline_index: int) -> None:
+        self.calls.append(("candidate", (candidate, sdp_mid, sdp_mline_index)))
+
+    def clock_ping(self, browser_send_us: int) -> None:
+        self.calls.append(("clock_ping", browser_send_us))
+
+    def feedback(self, **metrics: int) -> None:
+        self.calls.append(("feedback", metrics))
+
+    def stop(self) -> bool:
+        self.calls.append(("stop", None))
+        self._state.update(active=False, state="stopping")
+        return True
+
+    def snapshot(self) -> dict[str, object]:
+        return dict(self._state)
+
+    def events(self, *, after: int = 0) -> list[dict[str, object]]:
+        return [
+            {
+                "id": 2,
+                "message": {
+                    "type": "evt.rtc.signal",
+                    "data": {"kind": "answer", "sdp": "v=0\r\n"},
+                },
+            }
+        ] if after < 2 else []
+
+
 def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
     return SimpleNamespace(
-        capabilities=("audio.stream", "microphone", "camera.capture"),
+        capabilities=(
+            "audio.stream",
+            "microphone",
+            "camera.capture",
+            "rtc.video.mjpeg.v1",
+        ),
         device_info={"firmware_version": "V3.1", "device_id": "watcher-test"},
         audio=FakeAudio(playback or FakePlayback()),
         camera=FakeCamera(),
@@ -98,11 +160,13 @@ def _service(
     *,
     online: bool = True,
     device_pairer=None,
+    rtc: object | None = None,
 ):
     sample_audio = tmp_path / "sample.wav"
     sample_audio.write_bytes(b"RIFF-test-audio")
     return module.MediaLabService(
         robot=robot or _robot(),
+        rtc=rtc or FakeRtc(),
         artifacts_dir=tmp_path / "artifacts",
         sample_audio=sample_audio,
         device_status_provider=lambda: {
@@ -136,6 +200,7 @@ def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -
         "audio.stream",
         "microphone",
         "camera.capture",
+        "rtc.video.mjpeg.v1",
     ]
     assert status["device"]["firmware_version"] == "V3.1"
     assert status["artifacts"] == {}
@@ -420,6 +485,106 @@ def test_http_app_serves_local_ui_actions_and_artifacts(tmp_path: Path) -> None:
     assert client.get("/artifacts/../app.py").status_code == 404
 
 
+def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
+    tmp_path: Path,
+) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    service = _service(module, tmp_path, rtc=rtc)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    started = client.post("/api/video/session/start", json={"mode": "video"})
+    offered = client.post(
+        "/api/video/session/signal",
+        json={"kind": "offer", "sdp": "v=0\r\n"},
+    )
+    candidate = client.post(
+        "/api/video/session/signal",
+        json={
+            "kind": "candidate",
+            "candidate": "candidate:1 1 UDP 1 192.168.1.2 1234 typ host",
+            "sdp_mid": "0",
+            "sdp_mline_index": 0,
+        },
+    )
+    heartbeat = client.post(
+        "/api/video/session/clock-ping",
+        json={"browser_send_us": 123456},
+    )
+    events = client.get("/api/video/session/events?after=0")
+    stopped = client.post("/api/video/session/stop")
+
+    assert started.status_code == 200
+    assert started.json()["session"]["state"] == "starting"
+    assert offered.status_code == candidate.status_code == heartbeat.status_code == 200
+    assert events.json()["events"][0]["message"]["type"] == "evt.rtc.signal"
+    assert stopped.json() == {"stopped": True}
+    assert rtc.calls == [
+        ("start", "video"),
+        ("offer", "v=0\r\n"),
+        (
+            "candidate",
+            ("candidate:1 1 UDP 1 192.168.1.2 1234 typ host", "0", 0),
+        ),
+        ("clock_ping", 123456),
+        ("stop", None),
+    ]
+
+
+def test_live_video_requires_explicit_firmware_capability(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities = ("camera.capture",)
+    service = _service(module, tmp_path, robot)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    response = client.post("/api/video/session/start", json={"mode": "video"})
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "rtc_unavailable"
+
+
+def test_live_video_stop_failure_keeps_media_operation_exclusive(tmp_path: Path) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    service = _service(module, tmp_path, rtc=rtc)
+    service.start_live_video()
+
+    def fail_stop() -> bool:
+        raise ConnectionError("device channel unavailable")
+
+    rtc.stop = fail_stop  # type: ignore[method-assign]
+
+    with pytest.raises(ConnectionError, match="device channel unavailable"):
+        service.stop_live_video()
+
+    with pytest.raises(module.MediaLabBusyError, match="live_video"):
+        service.play_audio()
+
+
+def test_browser_mdns_host_candidates_are_rewritten_without_touching_other_candidates() -> None:
+    module = _load_service_module()
+    offer = (
+        "v=0\r\n"
+        "a=candidate:1 1 udp 2113937151 browser-host.local 62768 typ host generation 0\r\n"
+        "a=candidate:2 1 udp 1677734911 203.0.113.20 45678 typ srflx\r\n"
+    )
+
+    rewritten = module._rewrite_mdns_host_candidates(offer, "192.168.1.110")
+
+    assert "browser-host.local" not in rewritten
+    assert "192.168.1.110 62768 typ host" in rewritten
+    assert "203.0.113.20 45678 typ srflx" in rewritten
+
+
 def test_http_app_maps_validation_and_busy_failures_to_stable_errors(tmp_path: Path) -> None:
     module = _load_service_module()
     service = _service(module, tmp_path)
@@ -462,6 +627,8 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "运行媒体全检",
         "扬声器流式播放",
         "相机拍照",
+        "相机实时画面",
+        "开启实时画面",
         "麦克风录音",
         "设备能力矩阵",
         "运行日志",
@@ -475,6 +642,10 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "正在发现设备",
         "系统空闲",
         "正在传输 PCM 示例音频",
+        "mjpeg-data",
+        "parseWjpgPacket",
+        'api("/api/video/session/start"',
+        "停止失败，请重试",
         "媒体全检通过",
     ):
         assert copy in javascript

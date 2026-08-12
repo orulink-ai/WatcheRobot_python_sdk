@@ -39,6 +39,7 @@ async def main() -> None:
             device_manager = DaemonDeviceStatusProvider(device_status_url)
             service = MediaLabService(
                 robot=app.robot,
+                rtc=app.rtc,
                 artifacts_dir=ROOT / "artifacts",
                 sample_audio=ROOT.parent / "assets" / "sample_speech.wav",
                 device_status_provider=device_manager,

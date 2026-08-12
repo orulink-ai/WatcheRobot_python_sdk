@@ -173,3 +173,34 @@ def test_transport_dispatches_face_preview_telemetry_as_sdk_event() -> None:
         ]
 
     asyncio.run(scenario())
+
+
+def test_transport_exposes_raw_device_send_and_fans_out_protocol_messages() -> None:
+    async def scenario() -> None:
+        transport = DaemonApplicationTransport()
+        sent: list[tuple[ApplicationChannel, str | bytes]] = []
+        primary: list[dict[str, object]] = []
+        observed: list[dict[str, object]] = []
+
+        async def capture(channel: ApplicationChannel, frame: str | bytes) -> None:
+            sent.append((channel, frame))
+
+        transport._send = capture  # type: ignore[method-assign]
+        transport.set_callbacks(primary.append, lambda _frame: None, lambda: None)
+        transport.add_message_listener(observed.append)
+        message = {
+            "type": "evt.rtc.state",
+            "protocol": "watcher-rtc/1",
+            "client_id": "client-0001",
+            "session_id": "session-0001",
+            "data": {"state": "connected"},
+        }
+
+        await transport._send_device(json.dumps(message))
+        await transport._on_frame(ApplicationChannel.DEVICE, json.dumps(message))
+
+        assert sent == [(ApplicationChannel.DEVICE, json.dumps(message))]
+        assert primary == [message]
+        assert observed == [message]
+
+    asyncio.run(scenario())

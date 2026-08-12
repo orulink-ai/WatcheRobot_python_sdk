@@ -9,6 +9,7 @@ import sys
 from types import TracebackType
 
 from watcherobot.application.desktop import ApplicationDesktop
+from watcherobot.application.rtc import ApplicationRtc
 from watcherobot.application.transport import DaemonApplicationTransport
 from watcherobot.robot import WatcheRobot
 
@@ -30,6 +31,7 @@ class ApplicationContext:
         self._transport = transport
         self.robot = WatcheRobot._from_transport(transport)
         self.desktop = ApplicationDesktop(transport)
+        self.rtc = ApplicationRtc(transport)
         self.logger = _build_application_logger(app_id)
         self._entered = False
 
@@ -79,6 +81,7 @@ class ApplicationContext:
     def close(self) -> None:
         if not self._entered:
             return
+        self.rtc.close()
         self.robot.close()
         self._entered = False
 
