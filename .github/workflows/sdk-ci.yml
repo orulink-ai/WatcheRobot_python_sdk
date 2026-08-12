@@ -116,6 +116,8 @@ jobs:
     needs: [test, ble-provisioning]
     runs-on: [self-hosted, Linux, X64, sdk-ci]
     steps:
+      # The package uses Hatch's explicit src/watcherobot/__init__.py version
+      # source. Building is deliberately independent of Git history and tags.
       - name: Download immutable source snapshot
         env:
           GH_TOKEN: ${{ github.token }}
