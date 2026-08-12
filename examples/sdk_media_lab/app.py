@@ -1,4 +1,4 @@
-"""Run the standalone, loopback-only SDK Media Lab dashboard."""
+"""Run the standalone, loopback-only SDK Test Bench dashboard."""
 
 from __future__ import annotations
 
@@ -57,13 +57,13 @@ async def main() -> None:
             )
             server_task = asyncio.create_task(
                 server.serve(sockets=[listener]),
-                name="sdk-media-lab-http",
+                name="sdk-test-bench-http",
             )
             while not server.started:
                 if server_task.done():
                     await server_task
                 await asyncio.sleep(0.02)
-            app.logger.info("SDK Media Lab ready: %s", url)
+            app.logger.info("SDK Test Bench ready: %s", url)
             if os.environ.get("WATCHER_MEDIA_LAB_NO_BROWSER") != "1":
                 await asyncio.to_thread(webbrowser.open, url)
             await server_task

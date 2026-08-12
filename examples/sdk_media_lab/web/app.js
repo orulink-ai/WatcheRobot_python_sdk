@@ -1,11 +1,17 @@
+import { evaluateRtcAudioHealth } from "./rtc-audio-health.mjs";
+
 const state = {
   status: null,
   localBusy: false,
   pairingBusy: false,
   hiddenEventIds: new Set(),
   rtc: {
+    generation: 0,
+    mode: null,
     peer: null,
     channel: null,
+    localStream: null,
+    remoteStream: null,
     eventCursor: 0,
     pollTimer: null,
     heartbeatTimer: null,
@@ -20,6 +26,10 @@ const state = {
     frameTimes: [],
     lastFrameAt: 0,
     rttUs: 0,
+    browserAudioSent: 0,
+    browserAudioReceived: 0,
+    audioConnectedAt: 0,
+    audioHealthState: "idle",
   },
 };
 
@@ -41,6 +51,24 @@ const elements = {
   capabilitySummary: document.querySelector("#capabilitySummary"),
   eventLog: document.querySelector("#eventLog"),
   runAllButton: document.querySelector("#runAllButton"),
+  panControl: document.querySelector("#panControl"),
+  panValue: document.querySelector("#panValue"),
+  tiltControl: document.querySelector("#tiltControl"),
+  tiltValue: document.querySelector("#tiltValue"),
+  motionHead: document.querySelector("#motionHead"),
+  applyMotionButton: document.querySelector("#applyMotionButton"),
+  stopMotionButton: document.querySelector("#stopMotionButton"),
+  motionResult: document.querySelector("#motionResult"),
+  lightColor: document.querySelector("#lightColor"),
+  lightBrightness: document.querySelector("#lightBrightness"),
+  brightnessValue: document.querySelector("#brightnessValue"),
+  lightZone: document.querySelector("#lightZone"),
+  lightEffect: document.querySelector("#lightEffect"),
+  lightVisual: document.querySelector("#lightVisual"),
+  applyLightButton: document.querySelector("#applyLightButton"),
+  playLightEffectButton: document.querySelector("#playLightEffectButton"),
+  lightsOffButton: document.querySelector("#lightsOffButton"),
+  lightResult: document.querySelector("#lightResult"),
   playAudioButton: document.querySelector("#playAudioButton"),
   stopAudioButton: document.querySelector("#stopAudioButton"),
   capturePhotoButton: document.querySelector("#capturePhotoButton"),
@@ -57,6 +85,19 @@ const elements = {
   liveVideoDrops: document.querySelector("#liveVideoDrops"),
   liveVideoIndicator: document.querySelector("#liveVideoIndicator"),
   liveVideoFrameAge: document.querySelector("#liveVideoFrameAge"),
+  rtcAudioPanel: document.querySelector("#rtcAudioPanel"),
+  rtcAudioCapability: document.querySelector("#rtcAudioCapability"),
+  startRtcAudioButton: document.querySelector("#startRtcAudioButton"),
+  stopRtcAudioButton: document.querySelector("#stopRtcAudioButton"),
+  rtcAudioResult: document.querySelector("#rtcAudioResult"),
+  rtcAudioConsole: document.querySelector("#rtcAudioConsole"),
+  rtcAudioState: document.querySelector("#rtcAudioState"),
+  rtcAudioLocalState: document.querySelector("#rtcAudioLocalState"),
+  rtcAudioUpPackets: document.querySelector("#rtcAudioUpPackets"),
+  rtcAudioDownPackets: document.querySelector("#rtcAudioDownPackets"),
+  rtcAudioDeviceCapture: document.querySelector("#rtcAudioDeviceCapture"),
+  rtcAudioDeviceTx: document.querySelector("#rtcAudioDeviceTx"),
+  rtcRemoteAudio: document.querySelector("#rtcRemoteAudio"),
   recordMicrophoneButton: document.querySelector("#recordMicrophoneButton"),
   recordDuration: document.querySelector("#recordDuration"),
   durationValue: document.querySelector("#durationValue"),
@@ -80,6 +121,12 @@ const actionLabels = {
   record_microphone: "麦克风录音",
   device_pairing: "设备配对",
   live_video: "实时视频",
+  rtc_audio: "全双工音频",
+  motion_move: "运动控制",
+  motion_stop: "运动停止",
+  light_color: "灯光设置",
+  light_effect: "灯光效果",
+  light_off: "灯光关闭",
   system: "系统",
 };
 
@@ -90,8 +137,7 @@ const pairingErrors = {
   device_connect_timeout: "设备连接超时，请重新获取配对码后重试",
   reconnect_timeout: "设备重连超时，请重新配对",
   pairing_unavailable: "无法连接 SDK Daemon 的配对服务",
-  "Robot firmware does not advertise RTC MJPEG video": "当前固件未声明实时视频能力，请更新并重新连接设备",
-  "Live video session is not active": "实时视频会话尚未开启",
+  "RTC session is not active": "RTC 会话尚未开启",
 };
 
 const rtcErrors = {
@@ -100,6 +146,8 @@ const rtcErrors = {
   mjpeg_start_failed: "设备相机推流器启动失败",
   mjpeg_data_channel_closed: "实时视频数据通道已断开",
   heartbeat_timeout: "实时视频心跳超时",
+  audio_capture_failed: "设备音频采集启动失败",
+  audio_render_failed: "设备扬声器播放启动失败",
 };
 
 async function api(path, options = {}) {
@@ -128,16 +176,19 @@ function localizeError(message, status) {
   if (!message) return `请求失败（状态码 ${status}）`;
   if (typeof message !== "string") return `请求失败（状态码 ${status}）`;
   const busyMatch = message.match(/^media lab is busy with (.+)$/);
-  if (busyMatch) return `媒体实验室正忙于${actionLabel(busyMatch[1])}`;
+  if (busyMatch) return `SDK 测试台正忙于${actionLabel(busyMatch[1])}`;
   const durationMatch = message.match(/^duration must be (.+)$/);
   if (durationMatch) return `录音时长必须为 ${durationMatch[1]}`;
+  if (message.startsWith("Robot firmware does not advertise required RTC capabilities:")) {
+    return "当前固件未声明所需 RTC 能力，请更新并重新连接设备";
+  }
   if (pairingErrors[message]) return pairingErrors[message];
   if (rtcErrors[message]) return rtcErrors[message];
   return message;
 }
 
 function localizeEvent(event) {
-  if (event.message === "Media Lab ready") return "媒体实验室已就绪";
+  if (["Media Lab ready", "SDK Test Bench ready"].includes(event.message)) return "SDK 测试台已就绪";
   if (event.message === "Device pairing started") return "设备配对已开始";
   if (event.message === "Audio stop requested") return "已请求停止播放";
   const label = actionLabel(event.action);
@@ -183,7 +234,7 @@ function renderStatus(status) {
     );
   }
 
-  document.querySelectorAll(".station[data-capability]").forEach((station) => {
+  document.querySelectorAll("[data-capability]").forEach((station) => {
     const available = status.capabilities.includes(station.dataset.capability);
     station.dataset.available = String(status.connected && available);
     station.querySelector(".capability-state").textContent = !status.connected
@@ -194,23 +245,39 @@ function renderStatus(status) {
   const busy = status.busy || state.localBusy;
   const unavailable = busy || !status.connected;
   const liveAvailable = status.connected && hasCapability("rtc.video.mjpeg.v1");
-  const liveActive = Boolean(state.rtc.peer) || status.active_action === "live_video";
+  const liveActive = state.rtc.mode === "video" || status.active_action === "live_video";
+  const rtcAudioAvailable = status.connected && hasCapability("rtc.audio.full_duplex.v1");
+  const rtcAudioActive = state.rtc.mode === "audio" || status.active_action === "rtc_audio";
   elements.liveVideoPanel.dataset.available = String(liveAvailable);
   elements.liveVideoCapability.textContent = !status.connected
     ? "设备离线"
     : liveAvailable ? "已就绪" : "需要新固件";
-  elements.startLiveVideoButton.disabled = busy || !liveAvailable;
+  elements.startLiveVideoButton.disabled = busy || liveActive || !liveAvailable;
   elements.stopLiveVideoButton.disabled = !liveActive;
+  elements.rtcAudioPanel.dataset.available = String(rtcAudioAvailable);
+  elements.rtcAudioCapability.textContent = !status.connected
+    ? "设备离线"
+    : rtcAudioAvailable ? "已就绪" : "需要新固件";
+  elements.startRtcAudioButton.disabled = busy || rtcAudioActive || !rtcAudioAvailable;
+  elements.stopRtcAudioButton.disabled = !rtcAudioActive;
+  updateRtcAudioHealth();
   elements.playAudioButton.disabled = unavailable || !hasCapability("audio.stream");
-  elements.stopAudioButton.disabled = unavailable || !hasCapability("audio.stream");
+  elements.stopAudioButton.disabled = !status.connected || !hasCapability("audio.stream");
   elements.capturePhotoButton.disabled = unavailable || !hasCapability("camera.capture");
   elements.recordMicrophoneButton.disabled = unavailable || !hasCapability("microphone");
-  elements.runAllButton.disabled = unavailable || !["audio.stream", "camera.capture", "microphone"].every(hasCapability);
+  elements.applyMotionButton.disabled = unavailable || !hasCapability("motion");
+  elements.stopMotionButton.disabled = !status.connected || !hasCapability("motion");
+  elements.applyLightButton.disabled = unavailable || !hasCapability("light");
+  elements.playLightEffectButton.disabled = unavailable || !hasCapability("light");
+  elements.lightsOffButton.disabled = unavailable || !hasCapability("light");
+  elements.runAllButton.disabled = unavailable || ![
+    "motion", "light", "audio.stream", "camera.capture", "microphone",
+  ].every(hasCapability);
 
   elements.capabilityGrid.replaceChildren(...status.capabilities.map((capability) => {
     const chip = document.createElement("span");
     chip.className = "capability-chip";
-    chip.dataset.media = String(["audio.stream", "camera.capture", "microphone", "rtc.video.mjpeg.v1"].includes(capability));
+    chip.dataset.media = String(["audio.stream", "camera.capture", "microphone", "rtc.video.mjpeg.v1", "rtc.audio.full_duplex.v1"].includes(capability));
     chip.textContent = capability;
     return chip;
   }));
@@ -247,19 +314,20 @@ async function refreshStatus({ quiet = true } = {}) {
     renderStatus(await api("/api/status"));
   } catch (error) {
     elements.connectionBadge.dataset.state = "offline";
-    elements.connectionText.textContent = "实验室离线";
+    elements.connectionText.textContent = "测试台离线";
     if (!quiet) notify(error.message, "error");
   }
 }
 
-async function runAction({ path, result, pending, complete, body, station }) {
-  if (state.localBusy) return null;
+async function runAction({ path, result, pending, complete, body, station, interrupt = false }) {
+  if (state.localBusy && !interrupt) return null;
   if (!state.status?.connected) {
     const error = new Error("设备已断开，请重新连接后再测试");
     notify(error.message, "error");
     throw error;
   }
-  state.localBusy = true;
+  const ownsBusyState = !interrupt;
+  if (ownsBusyState) state.localBusy = true;
   if (station) station.dataset.running = "true";
   setResult(result, pending, "running");
   await refreshStatus();
@@ -277,7 +345,7 @@ async function runAction({ path, result, pending, complete, body, station }) {
     notify(error.message, "error");
     throw error;
   } finally {
-    state.localBusy = false;
+    if (ownsBusyState) state.localBusy = false;
     if (station) station.dataset.running = "false";
     await refreshStatus();
   }
@@ -413,6 +481,238 @@ function resetLiveVideoMetrics() {
   elements.liveVideoFrameAge.textContent = "NO FRAME";
 }
 
+function updateMotionPreview() {
+  const pan = Number(elements.panControl.value);
+  const tilt = Number(elements.tiltControl.value);
+  elements.panValue.textContent = `${pan}°`;
+  elements.tiltValue.textContent = `${tilt}°`;
+  elements.motionHead.style.transform = `rotate(${(pan - 90) * 0.42}deg) translateY(${(tilt - 90) * 0.18}px)`;
+}
+
+async function applyMotion() {
+  const pan = Number(elements.panControl.value);
+  const tilt = Number(elements.tiltControl.value);
+  return runAction({
+    path: "/api/controls/motion/move",
+    body: { pan_deg: pan, tilt_deg: tilt, duration_ms: 600 },
+    result: elements.motionResult,
+    pending: `正在移动到 PAN ${pan}° / TILT ${tilt}°…`,
+    complete: () => `移动完成：PAN ${pan}° / TILT ${tilt}°`,
+    station: elements.applyMotionButton.closest(".control-card"),
+  });
+}
+
+async function stopMotion() {
+  return runAction({
+    path: "/api/controls/motion/stop",
+    result: elements.motionResult,
+    pending: "正在停止运动…",
+    complete: () => "运动已停止",
+    interrupt: true,
+  });
+}
+
+function updateLightPreview() {
+  const color = elements.lightColor.value;
+  const brightness = Number(elements.lightBrightness.value);
+  elements.brightnessValue.textContent = `${brightness}%`;
+  elements.lightVisual.style.setProperty("--light-color", color);
+  elements.lightVisual.style.setProperty("--light-alpha", String(Math.max(0.08, brightness / 100)));
+}
+
+async function applyLight() {
+  const body = {
+    color: elements.lightColor.value,
+    brightness: Number(elements.lightBrightness.value) / 100,
+    zone: elements.lightZone.value,
+  };
+  return runAction({
+    path: "/api/controls/lights/color",
+    body,
+    result: elements.lightResult,
+    pending: "正在应用灯光…",
+    complete: () => `灯光已应用：${body.color.toUpperCase()} / ${Math.round(body.brightness * 100)}%`,
+    station: elements.applyLightButton.closest(".control-card"),
+  });
+}
+
+async function playLightEffect() {
+  const body = {
+    effect: elements.lightEffect.value,
+    color: elements.lightColor.value,
+    brightness: Number(elements.lightBrightness.value) / 100,
+    zone: elements.lightZone.value,
+    period_ms: 800,
+  };
+  return runAction({
+    path: "/api/controls/lights/effect",
+    body,
+    result: elements.lightResult,
+    pending: "正在启动灯效…",
+    complete: () => `灯效已启动：${elements.lightEffect.selectedOptions[0].textContent}`,
+    station: elements.applyLightButton.closest(".control-card"),
+  });
+}
+
+async function lightsOff() {
+  return runAction({
+    path: "/api/controls/lights/off",
+    result: elements.lightResult,
+    pending: "正在关闭灯光…",
+    complete: () => "灯光已关闭",
+  });
+}
+
+function rtcEndpoint(action) {
+  const namespace = state.rtc.mode === "audio" ? "rtc" : "video";
+  return `/api/${namespace}/session/${action}`;
+}
+
+function setRtcAudioState(value, message = null) {
+  const normalized = value === "connected" ? "live"
+    : ["starting", "signaling", "connecting"].includes(value) ? "connecting"
+      : "idle";
+  elements.rtcAudioConsole.dataset.state = normalized;
+  elements.rtcAudioState.textContent = String(value || "idle").toUpperCase();
+  if (message) setResult(elements.rtcAudioResult, message, normalized === "idle" ? "error" : "running");
+}
+
+function updateRtcAudioHealth() {
+  if (state.rtc.mode !== "audio" || !state.rtc.peer) return;
+  const deviceStats = state.status?.rtc?.stats || {};
+  const captureFrames = Number(deviceStats.audio_capture_frames || 0);
+  const txPackets = Number(deviceStats.audio_tx_packets || 0);
+  const txErrors = Number(deviceStats.audio_tx_errors || 0);
+  elements.rtcAudioDeviceCapture.textContent = String(captureFrames);
+  elements.rtcAudioDeviceTx.textContent = txErrors > 0 ? `${txPackets} / 错误 ${txErrors}` : String(txPackets);
+  const health = evaluateRtcAudioHealth({
+    peerConnected: state.rtc.peer.connectionState === "connected",
+    browserTxPackets: state.rtc.browserAudioSent,
+    browserRxPackets: state.rtc.browserAudioReceived,
+    deviceCaptureFrames: captureFrames,
+    deviceTxPackets: txPackets,
+    deviceTxErrors: txErrors,
+    elapsedMs: state.rtc.audioConnectedAt ? performance.now() - state.rtc.audioConnectedAt : 0,
+  });
+  if (health.state === state.rtc.audioHealthState && health.state !== "failed") return;
+  state.rtc.audioHealthState = health.state;
+  if (health.state === "healthy") {
+    setRtcAudioState("connected");
+    setResult(elements.rtcAudioResult, "真全双工已验证：电脑与 Watcher 双向音频都在传输", "ok");
+  } else if (health.state === "degraded") {
+    setRtcAudioState("connected");
+    setResult(elements.rtcAudioResult, `双向音频已建立，但机器人发送出现 ${txErrors} 次错误`, "error");
+  } else if (health.state === "failed") {
+    const missingDeviceCapture = health.missing.includes("device_capture");
+    const message = missingDeviceCapture
+      ? "机器人麦克风没有产生音频帧，请检查麦克风采集与音频资源占用"
+      : "机器人麦克风音频未到达电脑，请查看机器人发送计数与错误码";
+    setRtcAudioState("failed", message);
+  } else if (health.state === "verifying") {
+    setRtcAudioState("connecting", "媒体连接已建立，正在验证机器人麦克风上行…");
+  }
+}
+
+function setRtcSessionState(value, message = null) {
+  if (state.rtc.mode === "audio") setRtcAudioState(value, message);
+  else setLiveVideoState(value, message);
+}
+
+async function startRtcAudio() {
+  if (state.rtc.mode || state.rtc.peer || !hasCapability("rtc.audio.full_duplex.v1")) return;
+  const generation = state.rtc.generation + 1;
+  state.rtc.generation = generation;
+  state.rtc.mode = "audio";
+  resetLiveVideoMetrics();
+  elements.rtcAudioUpPackets.textContent = "0";
+  elements.rtcAudioDownPackets.textContent = "0";
+  elements.rtcAudioDeviceCapture.textContent = "0";
+  elements.rtcAudioDeviceTx.textContent = "0";
+  state.rtc.browserAudioSent = 0;
+  state.rtc.browserAudioReceived = 0;
+  state.rtc.audioConnectedAt = 0;
+  state.rtc.audioHealthState = "starting";
+  setRtcAudioState("starting", "正在请求电脑麦克风权限…");
+  elements.startRtcAudioButton.disabled = true;
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("当前浏览器不支持麦克风采集");
+    }
+    const localStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    });
+    if (state.rtc.generation !== generation || state.rtc.mode !== "audio") {
+      for (const track of localStream.getTracks()) track.stop();
+      return;
+    }
+    state.rtc.localStream = localStream;
+    elements.rtcAudioLocalState.textContent = "采集中";
+    await api("/api/rtc/session/start", {
+      method: "POST",
+      body: JSON.stringify({ mode: "audio" }),
+    });
+    if (state.rtc.generation !== generation || state.rtc.mode !== "audio") {
+      try { await api("/api/rtc/session/stop", { method: "POST" }); } catch (_) {}
+      return;
+    }
+    const peer = new RTCPeerConnection({ iceServers: [] });
+    state.rtc.peer = peer;
+    for (const track of localStream.getAudioTracks()) peer.addTrack(track, localStream);
+    peer.addEventListener("track", (event) => {
+      const remoteStream = event.streams[0] || new MediaStream([event.track]);
+      state.rtc.remoteStream = remoteStream;
+      elements.rtcRemoteAudio.srcObject = remoteStream;
+      elements.rtcRemoteAudio.play().catch(() => {
+        setResult(elements.rtcAudioResult, "下行音频已到达，请点击播放器启用声音", "running");
+      });
+    });
+    bindRtcPeerEvents(peer);
+    startRtcControlLoops();
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    await api("/api/rtc/session/signal", {
+      method: "POST",
+      body: JSON.stringify({ kind: "offer", sdp: offer.sdp }),
+    });
+    setRtcAudioState("signaling", "电脑麦克风已开启，等待 Watcher 应答…");
+    await refreshStatus();
+  } catch (error) {
+    const message = error?.name === "NotAllowedError"
+      ? "未获得电脑麦克风权限，请允许后重试"
+      : error?.name === "NotFoundError"
+        ? "未检测到可用的电脑麦克风"
+        : error.message;
+    await failRtcAudio(message);
+  }
+}
+
+function bindRtcPeerEvents(peer) {
+  peer.addEventListener("connectionstatechange", () => {
+    const connectionState = peer.connectionState;
+    if (connectionState === "connected" && state.rtc.mode === "audio") {
+      state.rtc.audioConnectedAt = performance.now();
+      state.rtc.audioHealthState = "connecting";
+      setRtcAudioState("connecting", "媒体连接已建立，正在验证机器人麦克风上行…");
+    }
+    if (["failed", "disconnected", "closed"].includes(connectionState) && state.rtc.peer) {
+      failRtcSession(`WebRTC 连接${connectionState === "failed" ? "失败" : "已断开"}`);
+    }
+  });
+  peer.addEventListener("icecandidate", (event) => {
+    if (!event.candidate || !state.rtc.peer) return;
+    api(rtcEndpoint("signal"), {
+      method: "POST",
+      body: JSON.stringify({
+        kind: "candidate",
+        candidate: event.candidate.candidate,
+        sdp_mid: event.candidate.sdpMid || "0",
+        sdp_mline_index: event.candidate.sdpMLineIndex || 0,
+      }),
+    }).catch((error) => { failRtcSession(error.message); });
+  });
+}
+
 function setLiveVideoState(value, message = null) {
   const normalized = ["connected", "live"].includes(value) ? "live"
     : ["starting", "signaling", "connecting"].includes(value) ? "connecting"
@@ -425,7 +725,8 @@ function setLiveVideoState(value, message = null) {
 }
 
 async function startLiveVideo() {
-  if (state.rtc.peer || !hasCapability("rtc.video.mjpeg.v1")) return;
+  if (state.rtc.mode || state.rtc.peer || !hasCapability("rtc.video.mjpeg.v1")) return;
+  state.rtc.mode = "video";
   resetLiveVideoMetrics();
   setLiveVideoState("starting", "正在申请相机与实时传输资源…");
   elements.startLiveVideoButton.disabled = true;
@@ -450,24 +751,7 @@ async function startLiveVideo() {
     channel.addEventListener("close", () => {
       if (state.rtc.peer) failLiveVideo("实时画面通道已关闭");
     });
-    peer.addEventListener("connectionstatechange", () => {
-      const connectionState = peer.connectionState;
-      if (["failed", "disconnected", "closed"].includes(connectionState) && state.rtc.peer) {
-        failLiveVideo(`WebRTC 连接${connectionState === "failed" ? "失败" : "已断开"}`);
-      }
-    });
-    peer.addEventListener("icecandidate", (event) => {
-      if (!event.candidate || !state.rtc.peer) return;
-      api("/api/video/session/signal", {
-        method: "POST",
-        body: JSON.stringify({
-          kind: "candidate",
-          candidate: event.candidate.candidate,
-          sdp_mid: event.candidate.sdpMid || "0",
-          sdp_mline_index: event.candidate.sdpMLineIndex || 0,
-        }),
-      }).catch((error) => { failLiveVideo(error.message); });
-    });
+    bindRtcPeerEvents(peer);
     startRtcControlLoops();
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
@@ -489,45 +773,83 @@ function startRtcControlLoops() {
     const browserSendUs = Math.round((performance.timeOrigin + performance.now()) * 1000);
     const startedAt = performance.now();
     try {
-      await api("/api/video/session/clock-ping", {
+      await api(rtcEndpoint("clock-ping"), {
         method: "POST",
         body: JSON.stringify({ browser_send_us: browserSendUs }),
       });
       state.rtc.rttUs = Math.max(0, Math.round((performance.now() - startedAt) * 1000));
     } catch (error) {
-      if (state.rtc.peer) failLiveVideo(error.message);
+      if (state.rtc.peer) failRtcSession(error.message);
     }
   }, 1500);
-  state.rtc.feedbackTimer = window.setInterval(() => {
+  state.rtc.feedbackTimer = window.setInterval(async () => {
     if (!state.rtc.peer) return;
     const fps = currentDisplayFps();
-    api("/api/video/session/feedback", {
+    let audio = { queueMs: 0, packetLossX100: 0, jitterUs: 0, concealedFrames: 0 };
+    try {
+      if (state.rtc.mode === "audio") audio = await collectRtcAudioStats();
+    } catch (_) {}
+    api(rtcEndpoint("feedback"), {
       method: "POST",
       body: JSON.stringify({
         display_fps_x100: Math.round(fps * 100),
         frame_age_p95_us: 0,
         rtt_us: state.rtc.rttUs,
-        audio_queue_ms: 0,
-        audio_packet_loss_x100: 0,
-        audio_jitter_us: 0,
-        audio_concealed_frames: 0,
+        audio_queue_ms: audio.queueMs,
+        audio_packet_loss_x100: audio.packetLossX100,
+        audio_jitter_us: audio.jitterUs,
+        audio_concealed_frames: audio.concealedFrames,
         congestion_level: state.rtc.droppedFrames > 0 ? 1 : 0,
       }),
     }).catch(() => {});
   }, 1000);
 }
 
+async function collectRtcAudioStats() {
+  let sent = 0;
+  let received = 0;
+  let lost = 0;
+  let jitterUs = 0;
+  let queueMs = 0;
+  let concealedFrames = 0;
+  const reports = await state.rtc.peer.getStats();
+  reports.forEach((report) => {
+    if (report.kind !== "audio" && report.mediaType !== "audio") return;
+    if (report.type === "outbound-rtp") sent += report.packetsSent || 0;
+    if (report.type === "inbound-rtp") {
+      received += report.packetsReceived || 0;
+      lost += Math.max(0, report.packetsLost || 0);
+      jitterUs = Math.max(jitterUs, Math.round((report.jitter || 0) * 1_000_000));
+      if (report.jitterBufferEmittedCount > 0) {
+        queueMs = Math.max(queueMs, Math.round((report.jitterBufferDelay / report.jitterBufferEmittedCount) * 1000));
+      }
+      concealedFrames += report.concealedSamples || 0;
+    }
+  });
+  elements.rtcAudioUpPackets.textContent = String(sent);
+  elements.rtcAudioDownPackets.textContent = String(received);
+  state.rtc.browserAudioSent = sent;
+  state.rtc.browserAudioReceived = received;
+  updateRtcAudioHealth();
+  return {
+    queueMs,
+    packetLossX100: Math.round((lost / Math.max(1, received + lost)) * 10_000),
+    jitterUs,
+    concealedFrames,
+  };
+}
+
 async function pollRtcEvents() {
   if (!state.rtc.peer) return;
   try {
-    const payload = await api(`/api/video/session/events?after=${state.rtc.eventCursor}`);
+    const payload = await api(`${rtcEndpoint("events")}?after=${state.rtc.eventCursor}`);
     for (const event of payload.events || []) {
       state.rtc.eventCursor = Math.max(state.rtc.eventCursor, event.id || 0);
       await handleRtcEvent(event.message || {});
       if (!state.rtc.peer) return;
     }
   } catch (error) {
-    if (state.rtc.peer) await failLiveVideo(error.message);
+    if (state.rtc.peer) await failRtcSession(error.message);
     return;
   }
   state.rtc.pollTimer = window.setTimeout(pollRtcEvents, 100);
@@ -536,13 +858,13 @@ async function pollRtcEvents() {
 async function handleRtcEvent(message) {
   const data = message.data || {};
   if (message.type === "sys.nack") {
-    await failLiveVideo(localizeError(data.error || data.reason || "设备拒绝了实时视频请求"));
+    await failRtcSession(localizeError(data.error || data.reason || "设备拒绝了 RTC 请求"));
     return;
   }
   if (message.type === "evt.rtc.state") {
-    setLiveVideoState(data.state || "connecting");
-    if (data.state === "failed") await failLiveVideo(localizeError(data.reason || "设备实时视频会话失败"));
-    if (data.state === "stopped" && state.rtc.peer) cleanupLiveVideo();
+    setRtcSessionState(data.state || "connecting");
+    if (data.state === "failed") await failRtcSession(localizeError(data.reason || "设备 RTC 会话失败"));
+    if (data.state === "stopped" && state.rtc.peer) cleanupRtcSession();
     return;
   }
   if (message.type === "evt.rtc.capabilities") {
@@ -583,6 +905,34 @@ async function stopLiveVideo() {
   }
 }
 
+async function stopRtcAudio() {
+  elements.stopRtcAudioButton.disabled = true;
+  try {
+    await api("/api/rtc/session/stop", { method: "POST" });
+    setResult(elements.rtcAudioResult, "全双工通话已结束", "ok");
+    cleanupRtcSession();
+    await refreshStatus();
+  } catch (error) {
+    notify(error.message, "error");
+    elements.stopRtcAudioButton.disabled = !state.rtc.peer;
+    setResult(elements.rtcAudioResult, "停止失败，请重试", "error");
+  }
+}
+
+async function failRtcSession(message) {
+  if (state.rtc.mode === "audio") await failRtcAudio(message);
+  else await failLiveVideo(message);
+}
+
+async function failRtcAudio(message) {
+  const hadSession = Boolean(state.rtc.peer);
+  cleanupRtcSession();
+  setRtcAudioState("failed", message);
+  notify(message, "error");
+  try { await api("/api/rtc/session/stop", { method: "POST" }); } catch (_) {}
+  if (hadSession || state.status) await refreshStatus();
+}
+
 async function failLiveVideo(message) {
   if (!state.rtc.peer) {
     setLiveVideoState("failed", message);
@@ -600,6 +950,11 @@ async function failLiveVideo(message) {
 }
 
 function cleanupLiveVideo() {
+  cleanupRtcSession();
+}
+
+function cleanupRtcSession() {
+  state.rtc.generation += 1;
   window.clearTimeout(state.rtc.pollTimer);
   window.clearInterval(state.rtc.heartbeatTimer);
   window.clearInterval(state.rtc.feedbackTimer);
@@ -608,8 +963,16 @@ function cleanupLiveVideo() {
   state.rtc.feedbackTimer = null;
   const channel = state.rtc.channel;
   const peer = state.rtc.peer;
+  const localStream = state.rtc.localStream;
+  const mode = state.rtc.mode;
   state.rtc.channel = null;
   state.rtc.peer = null;
+  state.rtc.localStream = null;
+  state.rtc.remoteStream = null;
+  state.rtc.browserAudioSent = 0;
+  state.rtc.browserAudioReceived = 0;
+  state.rtc.audioConnectedAt = 0;
+  state.rtc.audioHealthState = "idle";
   if (channel) {
     channel.onclose = null;
     try { channel.close(); } catch (_) {}
@@ -618,9 +981,19 @@ function cleanupLiveVideo() {
     peer.onconnectionstatechange = null;
     try { peer.close(); } catch (_) {}
   }
+  if (localStream) {
+    for (const track of localStream.getTracks()) track.stop();
+  }
+  elements.rtcRemoteAudio.pause();
+  elements.rtcRemoteAudio.srcObject = null;
+  elements.rtcAudioLocalState.textContent = "未占用";
   elements.stopLiveVideoButton.disabled = true;
+  elements.stopRtcAudioButton.disabled = true;
   elements.startLiveVideoButton.disabled = !state.status?.connected || !hasCapability("rtc.video.mjpeg.v1");
-  if (elements.liveVideoStage.dataset.state !== "idle") setLiveVideoState("idle");
+  elements.startRtcAudioButton.disabled = !state.status?.connected || !hasCapability("rtc.audio.full_duplex.v1");
+  if (mode === "video" && elements.liveVideoStage.dataset.state !== "idle") setLiveVideoState("idle");
+  if (mode === "audio" && elements.rtcAudioConsole.dataset.state !== "idle") setRtcAudioState("idle");
+  state.rtc.mode = null;
 }
 
 async function enqueueMjpegPacket(value) {
@@ -741,15 +1114,17 @@ async function recordMicrophone() {
 }
 
 async function runAll() {
-  const allowed = window.confirm("媒体全检将播放声音、拍摄一张照片并录制麦克风。是否继续？");
+  const allowed = window.confirm("基础全检将移动云台、点亮灯光、播放声音、拍照并录制麦克风。请确保机器人周围无遮挡，是否继续？");
   if (!allowed) return;
   try {
+    await applyMotion();
+    await applyLight();
     await playAudio();
     await capturePhoto();
     await recordMicrophone();
-    notify("媒体全检通过：三条链路均已完成", "ok");
+    notify("基础全检通过：执行器与媒体链路均已完成", "ok");
   } catch (_) {
-    notify("媒体全检已在首个失败环节停止", "error");
+    notify("基础全检已在首个失败环节停止", "error");
   }
 }
 
@@ -760,6 +1135,23 @@ function formatBytes(value) {
 }
 
 elements.playAudioButton.addEventListener("click", () => { playAudio().catch(() => {}); });
+elements.panControl.addEventListener("input", updateMotionPreview);
+elements.tiltControl.addEventListener("input", updateMotionPreview);
+document.querySelectorAll("[data-motion-preset]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const preset = button.dataset.motionPreset;
+    elements.panControl.value = preset === "left" ? "30" : preset === "right" ? "150" : "90";
+    elements.tiltControl.value = "90";
+    updateMotionPreview();
+  });
+});
+elements.applyMotionButton.addEventListener("click", () => { applyMotion().catch(() => {}); });
+elements.stopMotionButton.addEventListener("click", () => { stopMotion().catch(() => {}); });
+elements.lightColor.addEventListener("input", updateLightPreview);
+elements.lightBrightness.addEventListener("input", updateLightPreview);
+elements.applyLightButton.addEventListener("click", () => { applyLight().catch(() => {}); });
+elements.playLightEffectButton.addEventListener("click", () => { playLightEffect().catch(() => {}); });
+elements.lightsOffButton.addEventListener("click", () => { lightsOff().catch(() => {}); });
 elements.pairingForm.addEventListener("submit", (event) => {
   event.preventDefault();
   pairDevice();
@@ -767,13 +1159,20 @@ elements.pairingForm.addEventListener("submit", (event) => {
 elements.pairingCode.addEventListener("input", () => {
   elements.pairingCode.value = elements.pairingCode.value.replace(/[^0-9]/g, "").slice(0, 6);
 });
-elements.stopAudioButton.addEventListener("click", async () => {
-  try { await api("/api/actions/stop-audio", { method: "POST" }); notify("已请求停止播放"); }
-  catch (error) { notify(error.message, "error"); }
+elements.stopAudioButton.addEventListener("click", () => {
+  runAction({
+    path: "/api/actions/stop-audio",
+    result: elements.audioResult,
+    pending: "正在停止播放…",
+    complete: () => "已请求停止播放",
+    interrupt: true,
+  }).catch(() => {});
 });
 elements.capturePhotoButton.addEventListener("click", () => { capturePhoto().catch(() => {}); });
 elements.startLiveVideoButton.addEventListener("click", () => { startLiveVideo(); });
 elements.stopLiveVideoButton.addEventListener("click", () => { stopLiveVideo(); });
+elements.startRtcAudioButton.addEventListener("click", () => { startRtcAudio(); });
+elements.stopRtcAudioButton.addEventListener("click", () => { stopRtcAudio(); });
 elements.recordMicrophoneButton.addEventListener("click", () => { recordMicrophone().catch(() => {}); });
 elements.runAllButton.addEventListener("click", runAll);
 elements.recordDuration.addEventListener("input", () => { elements.durationValue.textContent = elements.recordDuration.value; });
@@ -791,10 +1190,12 @@ setInterval(() => {
   }
 }, 1000);
 window.addEventListener("pagehide", () => {
-  if (!state.rtc.peer) return;
-  navigator.sendBeacon("/api/video/session/stop");
-  cleanupLiveVideo();
+  if (!state.rtc.peer && !state.rtc.localStream) return;
+  navigator.sendBeacon(rtcEndpoint("stop"));
+  cleanupRtcSession();
 });
 setInterval(refreshStatus, 1000);
 refreshStatus({ quiet: false });
 drawEmptyWaveform();
+updateMotionPreview();
+updateLightPreview();

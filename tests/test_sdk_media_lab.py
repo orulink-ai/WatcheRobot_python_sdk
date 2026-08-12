@@ -81,6 +81,48 @@ class FakeMicrophone:
         )
 
 
+class FakeJob:
+    def __init__(self, operation_id: int) -> None:
+        self.id = operation_id
+        self.wait_calls: list[float] = []
+
+    def wait(self, timeout: float) -> "FakeJob":
+        self.wait_calls.append(timeout)
+        return self
+
+
+class FakeMotion:
+    def __init__(self) -> None:
+        self.moves: list[dict[str, int | str]] = []
+        self.stop_calls = 0
+        self.job = FakeJob(101)
+
+    def move_to(self, **kwargs: int | str) -> FakeJob:
+        self.moves.append(kwargs)
+        return self.job
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+
+class FakeLights:
+    def __init__(self) -> None:
+        self.colors: list[tuple[str, float, str]] = []
+        self.effects: list[dict[str, object]] = []
+        self.off_calls = 0
+        self.job = FakeJob(202)
+
+    def set_color(self, color: str, *, brightness: float, zone: str) -> None:
+        self.colors.append((color, brightness, zone))
+
+    def play_effect(self, effect: str, **kwargs: object) -> FakeJob:
+        self.effects.append({"effect": effect, **kwargs})
+        return self.job
+
+    def off(self) -> None:
+        self.off_calls += 1
+
+
 class FakeRtc:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
@@ -147,15 +189,20 @@ class FakeRtc:
 def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         capabilities=(
+            "motion",
+            "light",
             "audio.stream",
             "microphone",
             "camera.capture",
+            "rtc.audio.full_duplex.v1",
             "rtc.video.mjpeg.v1",
         ),
         device_info={"firmware_version": "V3.1", "device_id": "watcher-test"},
         audio=FakeAudio(playback or FakePlayback()),
         camera=FakeCamera(),
         microphone=FakeMicrophone(),
+        motion=FakeMotion(),
+        lights=FakeLights(),
     )
 
 
@@ -193,6 +240,14 @@ def _service(
     )
 
 
+def _client_for_service(module: ModuleType, tmp_path: Path, service: object) -> TestClient:
+    web_root = tmp_path / "control-web"
+    web_root.mkdir(exist_ok=True)
+    for filename in ("index.html", "app.js", "styles.css", "rtc-audio-health.mjs"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    return TestClient(module.create_web_app(service, web_root=web_root))
+
+
 def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -> None:
     module = _load_service_module()
     service = _service(module, tmp_path)
@@ -203,9 +258,12 @@ def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -
     assert status["busy"] is False
     assert status["active_action"] is None
     assert status["capabilities"] == [
+        "motion",
+        "light",
         "audio.stream",
         "microphone",
         "camera.capture",
+        "rtc.audio.full_duplex.v1",
         "rtc.video.mjpeg.v1",
     ]
     assert status["device"]["firmware_version"] == "V3.1"
@@ -431,6 +489,105 @@ def test_record_microphone_writes_valid_pcm_wave_and_metrics(tmp_path: Path) -> 
     ]
 
 
+def test_motion_control_uses_public_sdk_domain_and_waits_for_completion(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    client = _client_for_service(module, tmp_path, _service(module, tmp_path, robot))
+
+    response = client.post(
+        "/api/controls/motion/move",
+        json={"pan_deg": 40, "tilt_deg": 135, "duration_ms": 600},
+    )
+
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "completed": True,
+        "operation_id": 101,
+        "pan_deg": 40,
+        "tilt_deg": 135,
+    }
+    assert robot.motion.moves == [
+        {
+            "pan_deg": 40,
+            "tilt_deg": 135,
+            "duration_ms": 600,
+            "profile": "ease_in_out",
+        }
+    ]
+    assert robot.motion.job.wait_calls == [2.6]
+
+
+def test_light_controls_use_public_sdk_domain(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    client = _client_for_service(module, tmp_path, _service(module, tmp_path, robot))
+
+    color = client.post(
+        "/api/controls/lights/color",
+        json={"color": "#4da3ff", "brightness": 0.7, "zone": "side"},
+    )
+    effect = client.post(
+        "/api/controls/lights/effect",
+        json={
+            "effect": "breathing",
+            "color": "#D9FF57",
+            "brightness": 0.5,
+            "zone": "all",
+            "period_ms": 800,
+        },
+    )
+    off = client.post("/api/controls/lights/off")
+
+    assert color.json() == {"applied": True}
+    assert effect.json() == {"started": True, "operation_id": 202}
+    assert off.json() == {"off": True}
+    assert robot.lights.colors == [("#4da3ff", 0.7, "side")]
+    assert robot.lights.effects == [
+        {
+            "effect": "breathing",
+            "color": "#D9FF57",
+            "brightness": 0.5,
+            "zone": "all",
+            "period_ms": 800,
+            "repeat": 0,
+        }
+    ]
+    assert robot.lights.off_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("path", "capability"),
+    [
+        ("/api/controls/motion/move", "motion"),
+        ("/api/controls/lights/color", "light"),
+    ],
+)
+def test_control_http_contract_rejects_missing_firmware_capability(
+    tmp_path: Path,
+    path: str,
+    capability: str,
+) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities = tuple(item for item in robot.capabilities if item != capability)
+    client = _client_for_service(module, tmp_path, _service(module, tmp_path, robot))
+    payload = (
+        {"pan_deg": 90, "tilt_deg": 90, "duration_ms": 600}
+        if capability == "motion"
+        else {"color": "#D9FF57", "brightness": 0.7, "zone": "all"}
+    )
+
+    response = client.post(path, json=payload)
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "error": "capability_unavailable",
+        "message": f"Robot firmware does not advertise required capability: {capability}",
+        "capability": capability,
+    }
+
+
 @pytest.mark.parametrize("duration", [0, -1, 30.1, float("inf"), float("nan")])
 def test_record_microphone_rejects_unsafe_durations(
     tmp_path: Path,
@@ -492,6 +649,26 @@ def test_http_app_serves_local_ui_actions_and_artifacts(tmp_path: Path) -> None:
     assert client.get("/artifacts/../app.py").status_code == 404
 
 
+def test_http_app_serves_rtc_audio_health_module(tmp_path: Path) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    web_root.joinpath("index.html").write_text("lab", encoding="utf-8")
+    web_root.joinpath("app.js").write_text("", encoding="utf-8")
+    web_root.joinpath("styles.css").write_text("", encoding="utf-8")
+    web_root.joinpath("rtc-audio-health.mjs").write_text(
+        "export const ready = true;",
+        encoding="utf-8",
+    )
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    response = client.get("/assets/rtc-audio-health.mjs")
+
+    assert response.status_code == 200
+    assert "export const ready" in response.text
+
+
 def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
     tmp_path: Path,
 ) -> None:
@@ -540,6 +717,58 @@ def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
         ("clock_ping", 123456),
         ("stop", None),
     ]
+
+
+def test_full_duplex_audio_http_contract_starts_audio_rtc_session(tmp_path: Path) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    service = _service(module, tmp_path, rtc=rtc)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    started = client.post("/api/rtc/session/start", json={"mode": "audio"})
+    stopped = client.post("/api/rtc/session/stop")
+
+    assert started.status_code == 200
+    assert started.json()["session"]["mode"] == "audio"
+    assert stopped.json() == {"stopped": True}
+    assert rtc.calls == [("start", "audio"), ("stop", None)]
+
+
+def test_media_lab_keeps_audio_capability_compatible_with_older_sdk_runtime() -> None:
+    module = _load_service_module()
+
+    assert module.RTC_AUDIO_CAPABILITY == "rtc.audio.full_duplex.v1"
+
+
+def test_full_duplex_audio_requires_explicit_firmware_capability(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities = ("rtc.video.mjpeg.v1",)
+    service = _service(module, tmp_path, robot)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    response = client.post("/api/rtc/session/start", json={"mode": "audio"})
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "rtc_unavailable"
+
+
+def test_combined_rtc_mode_requires_both_audio_and_video_capabilities(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities = ("rtc.video.mjpeg.v1",)
+    service = _service(module, tmp_path, robot)
+
+    with pytest.raises(module.MediaLabRtcError, match="rtc.audio.full_duplex.v1"):
+        service.start_live_video(mode="av")
 
 
 def test_live_video_requires_explicit_firmware_capability(tmp_path: Path) -> None:
@@ -721,14 +950,18 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
 
     assert '<html lang="zh-CN">' in html
     for copy in (
-        "SDK 媒体实验室",
+        "SDK 测试台",
         "连接机器人",
         "输入设备屏幕上的六位配对码",
-        "运行媒体全检",
+        "运行基础全检",
+        "云台姿态",
+        "机身灯效",
         "扬声器流式播放",
         "相机拍照",
         "相机实时画面",
         "开启实时画面",
+        "全双工音频通话",
+        "开启全双工通话",
         "麦克风录音",
         "设备能力矩阵",
         "运行日志",
@@ -745,8 +978,13 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "mjpeg-data",
         "parseWjpgPacket",
         'api("/api/video/session/start"',
+        "navigator.mediaDevices.getUserMedia",
+        "for (const track of localStream.getTracks()) track.stop();",
+        "state.rtc.generation !== generation",
+        'api("/api/rtc/session/start"',
+        'addEventListener("track"',
         "停止失败，请重试",
-        "媒体全检通过",
+        "基础全检通过",
     ):
         assert copy in javascript
 
@@ -757,10 +995,16 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "Microphone record",
         "Awaiting test",
         "SYSTEM IDLE",
+        "SDK 媒体实验室",
     ):
         assert untranslated_copy not in html + javascript
 
     assert "const unavailable = busy || !status.connected" in javascript
+    assert "if (state.localBusy && !interrupt) return null;" in javascript
+    assert "const ownsBusyState = !interrupt;" in javascript
+    assert 'path: "/api/actions/stop-audio"' in javascript
+    assert 'path: "/api/controls/motion/stop"' in javascript
+    assert javascript.count("interrupt: true") >= 2
     assert "设备已断开，请重新连接后再测试" in javascript
     assert 'api("/api/device/pair"' in javascript
     assert 'autocomplete="one-time-code"' in html
