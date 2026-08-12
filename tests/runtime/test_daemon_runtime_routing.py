@@ -8,7 +8,6 @@ import venv
 from pathlib import Path
 
 import pytest
-import typing_extensions
 import websockets
 from websockets.asyncio.client import connect
 
@@ -136,12 +135,7 @@ def _create_test_python_environment(root: Path) -> Path:
             / "site-packages"
         )
     site_packages.joinpath("watcher-test-dependencies.pth").write_text(
-        "\n".join(
-            (
-                str(Path(websockets.__file__).resolve().parent.parent),
-                str(Path(typing_extensions.__file__).resolve().parent),
-            )
-        ),
+        str(Path(websockets.__file__).resolve().parent.parent),
         encoding="utf-8",
     )
     return executable.resolve()
