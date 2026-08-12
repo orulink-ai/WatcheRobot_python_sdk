@@ -224,6 +224,29 @@ def test_operation_event_updates_matching_job():
     assert job.id not in robot._jobs
 
 
+def test_new_command_reuses_operation_id_after_device_restart():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    first = robot.behavior.play("greeting")
+    transport.message_callback(
+        {"type": "evt.sdk.operation", "code": 0, "data": {"operation_id": first.id, "state": "completed"}}
+    )
+    assert first.wait(timeout=0).state.value == "completed"
+
+    transport.next_operation_id = first.id
+    restarted = robot.motion.move_to(pan_deg=110, tilt_deg=95, duration_ms=600)
+    transport.message_callback(
+        {
+            "type": "evt.sdk.operation",
+            "code": 0,
+            "data": {"operation_id": restarted.id, "state": "completed"},
+        }
+    )
+
+    assert restarted.wait(timeout=0).state.value == "completed"
+    assert restarted.id not in robot._jobs
+
+
 def test_audio_play_pcm_streams_binary_and_completes_from_device_status():
     transport = FakeTransport()
     robot = WatcheRobot._from_transport(transport)

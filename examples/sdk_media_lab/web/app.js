@@ -11,6 +11,7 @@ const state = {
     peer: null,
     channel: null,
     localStream: null,
+    diagnosticAudio: null,
     remoteStream: null,
     eventCursor: 0,
     pollTimer: null,
@@ -33,6 +34,27 @@ const state = {
     audioHealthState: "idle",
   },
 };
+
+function rtcDiagnosticAudioEnabled() {
+  const params = new URLSearchParams(window.location.search);
+  return window.location.hostname === "127.0.0.1" && params.get("rtc_hil") === "1";
+}
+
+async function createRtcDiagnosticAudioStream() {
+  const audioContext = new AudioContext();
+  await audioContext.resume();
+  const destination = audioContext.createMediaStreamDestination();
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  oscillator.type = "sine";
+  oscillator.frequency.value = 880;
+  gain.gain.value = 0.18;
+  oscillator.connect(gain);
+  gain.connect(destination);
+  oscillator.start();
+  state.rtc.diagnosticAudio = { audioContext, oscillator };
+  return destination.stream;
+}
 
 const elements = {
   connectionBadge: document.querySelector("#connectionBadge"),
@@ -676,10 +698,12 @@ async function startRtcAudio() {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("当前浏览器不支持麦克风采集");
     }
-    const localStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: false,
-    });
+    const localStream = rtcDiagnosticAudioEnabled()
+      ? await createRtcDiagnosticAudioStream()
+      : await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: false,
+        });
     if (state.rtc.generation !== generation || state.rtc.mode !== "audio") {
       for (const track of localStream.getTracks()) track.stop();
       return;
@@ -1009,10 +1033,12 @@ function cleanupRtcSession() {
   const channel = state.rtc.channel;
   const peer = state.rtc.peer;
   const localStream = state.rtc.localStream;
+  const diagnosticAudio = state.rtc.diagnosticAudio;
   const mode = state.rtc.mode;
   state.rtc.channel = null;
   state.rtc.peer = null;
   state.rtc.localStream = null;
+  state.rtc.diagnosticAudio = null;
   state.rtc.remoteStream = null;
   state.rtc.browserAudioSent = 0;
   state.rtc.browserAudioReceived = 0;
@@ -1029,6 +1055,10 @@ function cleanupRtcSession() {
   }
   if (localStream) {
     for (const track of localStream.getTracks()) track.stop();
+  }
+  if (diagnosticAudio) {
+    try { diagnosticAudio.oscillator.stop(); } catch (_) {}
+    diagnosticAudio.audioContext.close().catch(() => {});
   }
   elements.rtcRemoteAudio.pause();
   elements.rtcRemoteAudio.srcObject = null;
