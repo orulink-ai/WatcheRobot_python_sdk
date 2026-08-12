@@ -97,6 +97,7 @@ class DaemonRuntime:
             current_app=current_app,
             python_executable=python_executable,
             log_service=self.application_logs,
+            control_url=f"http://{control_host}:{control_port}",
         )
         self.catalog = ApplicationCatalog(
             catalog_root or Path(application_dir).resolve().parent / "catalog",

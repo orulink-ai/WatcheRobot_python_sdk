@@ -139,6 +139,29 @@ def test_runtime_starts_only_current_app_and_stops_cleanly(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
+def test_runtime_injects_daemon_control_url_into_application_environment(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        _write_application(app_dir, CONNECTED_APP)
+        manager = ApplicationRuntimeManager(
+            application_dir=app_dir,
+            current_app="test_app",
+            control_url="http://127.0.0.1:9988",
+        )
+        await manager.bridge.start()
+        try:
+            run = manager.registry.begin_start()
+            environment = manager._build_environment(run)
+        finally:
+            await manager.bridge.stop()
+
+        assert environment["WATCHER_APP_CONTROL_URL"] == "http://127.0.0.1:9988"
+
+    asyncio.run(scenario())
+
+
 def test_runtime_releases_session_when_application_fails_to_start(
     tmp_path: Path,
 ) -> None:

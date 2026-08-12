@@ -61,6 +61,7 @@ class ApplicationRuntimeManager:
         startup_timeout: float = DEFAULT_APPLICATION_STARTUP_TIMEOUT,
         stop_timeout: float = 5.0,
         log_service: ApplicationLogService | None = None,
+        control_url: str = "http://127.0.0.1:8767",
     ) -> None:
         self._application_dir = Path(application_dir).resolve()
         self._python_executable = python_executable
@@ -71,6 +72,7 @@ class ApplicationRuntimeManager:
         self._startup_timeout = startup_timeout
         self._stop_timeout = stop_timeout
         self._log_service = log_service
+        self._control_url = control_url.rstrip("/")
         self.registry = ApplicationSessionRegistry(current_app=current_app)
         self.bridge = LocalWebSocketApplicationBridge(
             registry=self.registry,
@@ -219,6 +221,7 @@ class ApplicationRuntimeManager:
                     ApplicationChannel.DEVICE,
                     credential=run.credential,
                 ),
+                "WATCHER_APP_CONTROL_URL": self._control_url,
             }
         )
         return environment
