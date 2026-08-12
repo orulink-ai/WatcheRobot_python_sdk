@@ -150,9 +150,9 @@ class DaemonApplicationTransport:
         stream_id: int,
         chunk_bytes: int = 4096,
     ) -> Future[None]:
-        if chunk_bytes <= 0 or chunk_bytes > 32768 or chunk_bytes % 2 != 0:
+        if chunk_bytes != AUDIO_DEVICE_SLOT_BYTES:
             raise ValueError(
-                "chunk_bytes must be an even value between 2 and 32768"
+                f"chunk_bytes must be {AUDIO_DEVICE_SLOT_BYTES} for device audio flow control"
             )
         return self._submit(
             self._send_audio_stream(bytes(pcm), stream_id, chunk_bytes)
@@ -379,6 +379,8 @@ class DaemonApplicationTransport:
                 pending_frames = data.get("pending_frames")
                 free_frames = data.get("free_frames")
                 queue_depth = data.get("queue_depth")
+                start_buffer_frames = data.get("start_buffer_frames")
+                playing = data.get("playing") is True
                 if (
                     isinstance(pending_frames, int)
                     and pending_frames >= 0
@@ -386,6 +388,12 @@ class DaemonApplicationTransport:
                     and queue_depth > 0
                 ):
                     target_pending = max(4, queue_depth // 2)
+                    if (
+                        not playing
+                        and isinstance(start_buffer_frames, int)
+                        and start_buffer_frames > 0
+                    ):
+                        target_pending = min(queue_depth, start_buffer_frames)
                     available_slots = max(
                         0,
                         target_pending - pending_frames,

@@ -7,6 +7,14 @@ export function evaluateRtcAudioHealth({
   deviceCaptureFrames,
   deviceTxPackets,
   deviceTxErrors,
+  deviceCapturePeak,
+  browserAudioLevel,
+  browserPlaybackActive,
+  deviceRxPackets,
+  deviceDecodedFrames,
+  deviceRenderErrors,
+  deviceI2sBytes,
+  devicePlaybackPeak,
   elapsedMs,
 }) {
   if (!peerConnected) return { state: "connecting", missing: [] };
@@ -16,6 +24,13 @@ export function evaluateRtcAudioHealth({
   if (deviceCaptureFrames <= 0) missing.push("device_capture");
   if (deviceTxPackets <= 0) missing.push("device_tx");
   if (browserRxPackets <= 0) missing.push("browser_rx");
+  if (!Number.isFinite(deviceCapturePeak) || deviceCapturePeak < 32) missing.push("device_signal");
+  if (!Number.isFinite(browserAudioLevel) || browserAudioLevel < 0.001) missing.push("browser_signal");
+  if (!browserPlaybackActive) missing.push("browser_playback");
+  if (deviceRxPackets <= 0) missing.push("device_rx");
+  if (deviceDecodedFrames <= 0) missing.push("device_decode");
+  if (deviceI2sBytes <= 0) missing.push("device_playback");
+  if (devicePlaybackPeak < 32) missing.push("device_playback_signal");
 
   if (missing.length > 0) {
     return {
@@ -23,6 +38,6 @@ export function evaluateRtcAudioHealth({
       missing,
     };
   }
-  if (deviceTxErrors > 0) return { state: "degraded", missing: [] };
+  if (deviceTxErrors > 0 || deviceRenderErrors > 0) return { state: "degraded", missing: [] };
   return { state: "healthy", missing: [] };
 }

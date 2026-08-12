@@ -35,6 +35,13 @@ heartbeat while the page is open, uses latest-frame-wins rendering, and releases
 camera resources when stopped, disconnected, or when the page closes. Full-duplex
 audio requires `rtc.audio.full_duplex.v1`, requests the computer microphone only
 after the user starts the call, enables browser echo cancellation, and releases
-all local tracks on stop, failure, disconnect, or page close. Camera and
+all local tracks on stop, failure, disconnect, or page close. Its healthy
+verdict also requires non-silent capture reported by the device, non-silent
+audio decoded by the browser, and an active remote player; this verifies the
+robot-to-browser path. The browser-to-robot path additionally requires device
+receive, decode, I2S output, and non-silent playback evidence with no renderer
+errors. The operator still confirms the selected OS
+output device and physical earphones. Packet counters alone do not prove that
+the robot microphone is audible. Camera and
 microphone actions capture the surrounding environment; obtain consent
 before use and handle generated artifacts appropriately.

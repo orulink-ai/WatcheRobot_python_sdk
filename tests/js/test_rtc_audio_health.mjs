@@ -13,6 +13,14 @@ const healthy = {
   deviceCaptureFrames: 10,
   deviceTxPackets: 8,
   deviceTxErrors: 0,
+  deviceCapturePeak: 1200,
+  browserAudioLevel: 0.25,
+  browserPlaybackActive: true,
+  deviceRxPackets: 10,
+  deviceDecodedFrames: 10,
+  deviceRenderErrors: 0,
+  deviceI2sBytes: 3200,
+  devicePlaybackPeak: 1400,
   elapsedMs: 1000,
 };
 
@@ -46,4 +54,48 @@ test("both directions and device capture are required for healthy", () => {
 
 test("send errors are visible even when packets get through", () => {
   assert.equal(evaluateRtcAudioHealth({ ...healthy, deviceTxErrors: 1 }).state, "degraded");
+});
+
+test("packets containing silence cannot claim healthy full duplex", () => {
+  assert.deepEqual(evaluateRtcAudioHealth({ ...healthy, deviceCapturePeak: 8 }), {
+    state: "verifying",
+    missing: ["device_signal"],
+  });
+  assert.equal(evaluateRtcAudioHealth({
+    ...healthy,
+    deviceCapturePeak: 8,
+    elapsedMs: RTC_AUDIO_VERIFY_TIMEOUT_MS,
+  }).state, "failed");
+});
+
+test("paused browser playback cannot claim audible full duplex", () => {
+  assert.deepEqual(evaluateRtcAudioHealth({ ...healthy, browserPlaybackActive: false }), {
+    state: "verifying",
+    missing: ["browser_playback"],
+  });
+});
+
+test("older firmware without signal metrics remains in verification", () => {
+  const { deviceCapturePeak, browserAudioLevel, ...withoutSignalMetrics } = healthy;
+  assert.deepEqual(evaluateRtcAudioHealth(withoutSignalMetrics), {
+    state: "verifying",
+    missing: ["device_signal", "browser_signal"],
+  });
+});
+
+test("browser RTP send alone cannot prove robot speaker playback", () => {
+  assert.deepEqual(evaluateRtcAudioHealth({
+    ...healthy,
+    deviceRxPackets: 0,
+    deviceDecodedFrames: 0,
+    deviceI2sBytes: 0,
+    devicePlaybackPeak: 0,
+  }), {
+    state: "verifying",
+    missing: ["device_rx", "device_decode", "device_playback", "device_playback_signal"],
+  });
+});
+
+test("robot audio renderer failures degrade an otherwise audible call", () => {
+  assert.equal(evaluateRtcAudioHealth({ ...healthy, deviceRenderErrors: 1 }).state, "degraded");
 });

@@ -460,6 +460,11 @@ class WatcheRobot:
             raise WatcheRobotError(f"{message_type} ACK did not include operation_id")
         job = Job(operation_id, self._transport)
         with self._jobs_lock:
+            # Firmware operation ids are session-local and restart from one after
+            # a device reboot. A successful ACK is authoritative evidence that
+            # this id belongs to a new command, so retire any terminal tombstone
+            # left by the previous device session before tracking the job.
+            self._terminal_job_ids.pop(operation_id, None)
             self._jobs[operation_id] = job
             pending_event = self._pending_job_events.pop(operation_id, None)
         if pending_event is not None:
