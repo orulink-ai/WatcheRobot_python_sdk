@@ -61,6 +61,37 @@ def test_cli_status_reports_not_running_for_empty_user_state(
     assert payload == {"running": False}
 
 
+def test_cli_launches_rtc_diagnostics_with_runtime_urls(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+    state = type(
+        "State",
+        (),
+        {
+            "control_url": "http://127.0.0.1:8767",
+            "external_url": "ws://127.0.0.1:8765",
+        },
+    )()
+    monkeypatch.setattr(
+        "watcherobot.cli.ensure_runtime",
+        lambda: (state, True),
+    )
+    monkeypatch.setattr(
+        "watcherobot.cli.run_rtc_diagnostics",
+        lambda **kwargs: calls.append(kwargs) or 0,
+        raising=False,
+    )
+
+    assert main(["diagnostics", "rtc", "--no-open", "--port", "9876"]) == 0
+    assert calls == [
+        {
+            "control_url": state.control_url,
+            "external_url": state.external_url,
+            "port": 9876,
+            "open_browser": False,
+        }
+    ]
+
+
 def test_windows_background_daemon_uses_pythonw_redirector(
     tmp_path: Path,
 ) -> None:

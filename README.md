@@ -162,6 +162,10 @@ watcherobot app uninstall <app-id>
 watcherobot bluetooth scan
 watcherobot bluetooth provision --device <id> --ssid MyWiFi
 watcherobot bluetooth status --device <id>
+
+# Loopback-only RTC diagnostics (starts or reuses the Runtime)
+watcherobot diagnostics rtc
+watcherobot diagnostics rtc --no-open --port 0
 ```
 
 See the [complete CLI reference](docs/cli-reference.md) for every

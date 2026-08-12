@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WatcheRobot RTC Diagnostics</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div><p class="eyebrow">PYTHON SDK · RTC LAB</p><h1>WatcheRobot RTC Diagnostics</h1></div>
+        <span id="state" class="pill idle">未连接</span>
+      </header>
+      <section class="layout">
+        <article class="viewer">
+          <canvas id="video" width="640" height="480"></canvas>
+          <div class="viewer-meta"><span id="resolution">640 × 480 MJPEG</span><span id="session">—</span></div>
+        </article>
+        <aside>
+          <label>设备六位配对码<input id="pairing-code" inputmode="numeric" maxlength="6" placeholder="000000"></label>
+          <label>会话模式<select id="mode"><option value="av">音频 + 视频</option><option value="video">仅视频</option><option value="audio">仅音频</option></select></label>
+          <div class="actions"><button id="pair">配对</button><button id="start" disabled>开始 RTC</button><button id="stop" class="secondary" disabled>停止</button></div>
+          <div class="actions"><button id="stress" class="secondary" disabled>2 Mbps 压力</button><button id="cycles" class="secondary" disabled>20 次循环</button><button id="report" class="secondary">导出报告</button></div>
+          <p id="message" class="message">请先在设备上打开 Python SDK App。</p>
+        </aside>
+      </section>
+      <section id="metrics" class="metrics"></section>
+      <section class="log"><h2>事件</h2><pre id="events"></pre></section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -29,6 +29,7 @@ from watcherobot.distribution.install import (
     ApplicationInstallError,
     list_installed_applications,
 )
+from watcherobot.diagnostics.rtc import run_rtc_diagnostics
 from watcherobot.provisioning import (
     BluetoothDevice,
     BluetoothProvisioner,
@@ -168,6 +169,21 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--device", required=True)
     clear = bluetooth_commands.add_parser("clear")
     clear.add_argument("--device", required=True)
+
+    diagnostics = commands.add_parser(
+        "diagnostics",
+        help="Run SDK-owned hardware diagnostics",
+    )
+    diagnostics_commands = diagnostics.add_subparsers(
+        dest="diagnostics_command",
+        required=True,
+    )
+    rtc = diagnostics_commands.add_parser(
+        "rtc",
+        help="Open the loopback RTC audio/video diagnostics page",
+    )
+    rtc.add_argument("--no-open", action="store_true")
+    rtc.add_argument("--port", type=int, default=0)
     return parser
 
 
@@ -240,6 +256,14 @@ def main(argv: list[str] | None = None) -> int:
                 return _print_bluetooth_cancelled()
             except ValueError as exc:
                 raise CliError(str(exc)) from exc
+        if args.command == "diagnostics" and args.diagnostics_command == "rtc":
+            state, _reused = ensure_runtime()
+            return run_rtc_diagnostics(
+                control_url=state.control_url,
+                external_url=state.external_url,
+                port=args.port,
+                open_browser=not args.no_open,
+            )
     except (
         ApplicationProjectInitError,
         BluetoothProvisioningError,
