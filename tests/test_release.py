@@ -108,6 +108,9 @@ def test_publish_workflow_tests_supported_dependency_profiles_before_one_build()
     assert "python -m pip check" in workflow
     assert workflow.count("name: Create isolated virtual environment") == 3
     assert 'echo "$PWD/.venv/bin" >> "$GITHUB_PATH"' in workflow
+    assert workflow.count("uses: actions/checkout@") == 0
+    assert workflow.count("api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}") == 3
+    assert workflow.count("tar --extract --gzip --strip-components=1") == 3
 
 
 def test_fake_ble_tests_run_on_self_hosted_linux() -> None:
