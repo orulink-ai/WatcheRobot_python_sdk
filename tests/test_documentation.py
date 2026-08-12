@@ -1,8 +1,5 @@
 from pathlib import Path
 
-from watcherobot import __version__
-
-
 ROOT = Path(__file__).parents[1]
 
 
@@ -44,11 +41,12 @@ def test_resource_and_troubleshooting_guides_match_runtime_ownership() -> None:
     assert "WatcheRobot.connect" not in troubleshooting
 
 
-def test_release_guide_uses_the_current_package_version() -> None:
+def test_release_guide_uses_the_single_package_version_source() -> None:
     guide = (ROOT / "docs" / "releasing.md").read_text(encoding="utf-8")
 
-    assert f"watcherobot=={__version__}" in guide
-    assert f"v{__version__}" in guide
+    assert "`watcherobot.__version__`" in guide
+    assert "watcherobot==<version>" in guide
+    assert "文档不重复维护当前版本号" in guide
 
 
 def test_release_guide_uses_managed_application_acceptance() -> None:
