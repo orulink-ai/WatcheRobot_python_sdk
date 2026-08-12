@@ -110,6 +110,7 @@ def test_publish_workflow_tests_supported_dependency_profiles_before_one_build()
     assert 'echo "$PWD/.venv/bin" >> "$GITHUB_PATH"' in workflow
     assert workflow.count("api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}") == 3
     assert workflow.count("tar --extract --gzip --strip-components=1") == 3
+    assert "actions/checkout" not in workflow
     assert "Building is deliberately independent of Git history and tags" in workflow
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'build-backend = "hatchling.build"' in pyproject

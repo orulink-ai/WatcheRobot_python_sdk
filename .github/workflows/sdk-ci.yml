@@ -12,8 +12,8 @@ concurrency:
 permissions:
   contents: read
 
-# Snapshot jobs intentionally have no .git directory. Keep the three download
-# blocks aligned when changing headers, retries, or extraction behavior.
+# WARNING: snapshot jobs intentionally have no .git directory. Keep the three
+# identical download blocks aligned when changing headers, retries, or extraction.
 jobs:
   test:
     name: Python ${{ matrix.python-version }} / ${{ matrix.dependency-profile }}
