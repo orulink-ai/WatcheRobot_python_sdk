@@ -147,6 +147,8 @@ jobs:
           path: artifact/
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
       - name: Publish immutable distributions to TestPyPI with OIDC
+        env:
+          UV_PUBLISH_CHECK_URL: https://test.pypi.org/simple/
         run: >-
           uv publish
           --trusted-publishing always

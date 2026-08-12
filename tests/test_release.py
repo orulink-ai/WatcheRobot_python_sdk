@@ -38,6 +38,7 @@ def test_release_workflow_separates_test_and_production_indexes() -> None:
     assert "astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b" in workflow
     assert workflow.count("uv publish") == 2
     assert workflow.count("--trusted-publishing always") == 2
+    assert "UV_PUBLISH_CHECK_URL: https://test.pypi.org/simple/" in workflow
     assert "actions/upload-artifact@v7" in workflow
     assert workflow.count("actions/download-artifact@v8") >= 3
     assert "runs-on: [self-hosted, Linux, X64, sdk-release]" in workflow
