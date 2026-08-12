@@ -41,6 +41,7 @@ def test_release_workflow_separates_test_and_production_indexes() -> None:
     assert "UV_PUBLISH_CHECK_URL: https://test.pypi.org/simple/" in workflow
     assert "actions/upload-artifact@v7" in workflow
     assert workflow.count("actions/download-artifact@v8") >= 3
+    assert workflow.count("watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}") >= 4
     assert "runs-on: [self-hosted, Linux, X64, sdk-release]" in workflow
     assert "tools/check_release_gate.py" in workflow
     assert 'tag_commit=$(git rev-list -n 1 "${GITHUB_REF_NAME}")' in workflow

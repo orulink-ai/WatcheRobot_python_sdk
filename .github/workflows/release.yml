@@ -116,7 +116,7 @@ jobs:
           sha256sum --check SHA256SUMS
       - uses: actions/upload-artifact@v7
         with:
-          name: watcherobot-${{ needs.gate.outputs.version }}
+          name: watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}
           path: |
             dist/
             SHA256SUMS
@@ -132,7 +132,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: watcherobot-${{ needs.gate.outputs.version }}
+          name: watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}
           path: artifact/
       - name: Create immutable draft Release
         env:
@@ -162,7 +162,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: watcherobot-${{ needs.gate.outputs.version }}
+          name: watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}
           path: artifact/
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
       - name: Publish immutable distributions to TestPyPI with OIDC
@@ -184,7 +184,7 @@ jobs:
           python-version: "3.12"
       - uses: actions/download-artifact@v8
         with:
-          name: watcherobot-${{ needs.gate.outputs.version }}
+          name: watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}
           path: artifact/
       - name: Install exact release from TestPyPI
         run: |
@@ -222,7 +222,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: watcherobot-${{ needs.gate.outputs.version }}
+          name: watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}
           path: artifact/
       - name: Verify artifact hashes before production upload
         run: (cd artifact && sha256sum --check SHA256SUMS)
