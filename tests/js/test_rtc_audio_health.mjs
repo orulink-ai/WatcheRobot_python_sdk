@@ -16,6 +16,11 @@ const healthy = {
   deviceCapturePeak: 1200,
   browserAudioLevel: 0.25,
   browserPlaybackActive: true,
+  deviceRxPackets: 10,
+  deviceDecodedFrames: 10,
+  deviceRenderErrors: 0,
+  deviceI2sBytes: 3200,
+  devicePlaybackPeak: 1400,
   elapsedMs: 1000,
 };
 
@@ -76,4 +81,21 @@ test("older firmware without signal metrics remains in verification", () => {
     state: "verifying",
     missing: ["device_signal", "browser_signal"],
   });
+});
+
+test("browser RTP send alone cannot prove robot speaker playback", () => {
+  assert.deepEqual(evaluateRtcAudioHealth({
+    ...healthy,
+    deviceRxPackets: 0,
+    deviceDecodedFrames: 0,
+    deviceI2sBytes: 0,
+    devicePlaybackPeak: 0,
+  }), {
+    state: "verifying",
+    missing: ["device_rx", "device_decode", "device_playback", "device_playback_signal"],
+  });
+});
+
+test("robot audio renderer failures degrade an otherwise audible call", () => {
+  assert.equal(evaluateRtcAudioHealth({ ...healthy, deviceRenderErrors: 1 }).state, "degraded");
 });

@@ -38,7 +38,9 @@ after the user starts the call, enables browser echo cancellation, and releases
 all local tracks on stop, failure, disconnect, or page close. Its healthy
 verdict also requires non-silent capture reported by the device, non-silent
 audio decoded by the browser, and an active remote player; this verifies the
-software playback path, while the operator still confirms the selected OS
+robot-to-browser path. The browser-to-robot path additionally requires device
+receive, decode, I2S output, and non-silent playback evidence with no renderer
+errors. The operator still confirms the selected OS
 output device and physical earphones. Packet counters alone do not prove that
 the robot microphone is audible. Camera and
 microphone actions capture the surrounding environment; obtain consent

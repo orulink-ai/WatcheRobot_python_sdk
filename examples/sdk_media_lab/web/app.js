@@ -586,6 +586,11 @@ function updateRtcAudioHealth() {
   const txPackets = Number(deviceStats.audio_tx_packets || 0);
   const txErrors = Number(deviceStats.audio_tx_errors || 0);
   const capturePeak = Number(deviceStats.audio_capture_peak || 0);
+  const deviceRxPackets = Number(deviceStats.audio_packets || 0);
+  const deviceDecodedFrames = Number(deviceStats.audio_decoded_frames || 0);
+  const deviceRenderErrors = Number(deviceStats.audio_render_errors || 0);
+  const deviceI2sBytes = Number(deviceStats.audio_i2s_bytes || 0);
+  const devicePlaybackPeak = Number(deviceStats.audio_pcm_peak || 0);
   elements.rtcAudioDeviceCapture.textContent = String(captureFrames);
   elements.rtcAudioDeviceTx.textContent = txErrors > 0 ? `${txPackets} / 错误 ${txErrors}` : String(txPackets);
   elements.rtcAudioSignal.textContent = `${capturePeak} / ${state.rtc.browserAudioLevel.toFixed(3)}`;
@@ -601,6 +606,11 @@ function updateRtcAudioHealth() {
     browserPlaybackActive: !elements.rtcRemoteAudio.paused
       && !elements.rtcRemoteAudio.muted
       && elements.rtcRemoteAudio.volume > 0,
+    deviceRxPackets,
+    deviceDecodedFrames,
+    deviceRenderErrors,
+    deviceI2sBytes,
+    devicePlaybackPeak,
     elapsedMs: state.rtc.audioConnectedAt ? performance.now() - state.rtc.audioConnectedAt : 0,
   });
   if (health.state === state.rtc.audioHealthState && health.state !== "failed") return;
@@ -610,12 +620,19 @@ function updateRtcAudioHealth() {
     setResult(elements.rtcAudioResult, "全双工链路已验证：浏览器正在播放 Watcher 的非静音音频轨道", "ok");
   } else if (health.state === "degraded") {
     setRtcAudioState("connected");
-    setResult(elements.rtcAudioResult, `双向音频已建立，但机器人发送出现 ${txErrors} 次错误`, "error");
+    setResult(
+      elements.rtcAudioResult,
+      `双向音频已建立，但设备发送错误 ${txErrors} 次、扬声器渲染错误 ${deviceRenderErrors} 次`,
+      "error",
+    );
   } else if (health.state === "failed") {
     const missingDeviceCapture = health.missing.includes("device_capture");
     const missingDeviceSignal = health.missing.includes("device_signal");
     const missingBrowserSignal = health.missing.includes("browser_signal");
     const missingBrowserPlayback = health.missing.includes("browser_playback");
+    const missingDevicePlayback = health.missing.some((item) => [
+      "device_rx", "device_decode", "device_playback", "device_playback_signal",
+    ].includes(item));
     const message = missingDeviceCapture
       ? "机器人麦克风没有产生音频帧，请检查麦克风采集与音频资源占用"
       : missingDeviceSignal
@@ -624,6 +641,8 @@ function updateRtcAudioHealth() {
           ? "浏览器已收到机器人音频包，但解码信号接近静音；请检查编码与浏览器音频轨道"
           : missingBrowserPlayback
             ? "机器人音频已到达，但浏览器播放器处于暂停或静音状态；请点击播放器开启声音"
+            : missingDevicePlayback
+              ? "电脑音频已发送，但机器人没有完成有声解码与扬声器输出；请检查设备播放统计"
       : "机器人麦克风音频未到达电脑，请查看机器人发送计数与错误码";
     setRtcAudioState("failed", message);
   } else if (health.state === "verifying") {
