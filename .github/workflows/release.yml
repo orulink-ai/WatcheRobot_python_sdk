@@ -34,6 +34,7 @@ jobs:
     outputs:
       version: ${{ steps.gate.outputs.version }}
       prerelease: ${{ steps.gate.outputs.prerelease }}
+      commit: ${{ steps.gate.outputs.commit }}
     permissions:
       contents: read
       pull-requests: read
@@ -52,11 +53,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          tag_commit=$(git rev-list -n 1 "${GITHUB_REF_NAME}")
           version=$(python tools/check_release_gate.py \
             --repository "${GITHUB_REPOSITORY}" \
             --tag "${GITHUB_REF_NAME}" \
-            --sha "${GITHUB_SHA}")
+            --sha "${tag_commit}")
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "commit=${tag_commit}" >> "${GITHUB_OUTPUT}"
           python tools/check_release_version.py "${GITHUB_REF_NAME}"
           if [[ "${version}" =~ (a|b|rc)[0-9]+$ ]]; then
             echo "prerelease=true" >> "${GITHUB_OUTPUT}"
@@ -123,7 +126,7 @@ jobs:
           else
             gh release create "${GITHUB_REF_NAME}" artifact/dist/* artifact/SHA256SUMS \
               --repo "${GITHUB_REPOSITORY}" \
-              --target "${GITHUB_SHA}" \
+              --target "${{ needs.gate.outputs.commit }}" \
               --title "watcherobot ${{ needs.gate.outputs.version }}" \
               --generate-notes \
               --draft \

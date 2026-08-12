@@ -42,6 +42,8 @@ def test_release_workflow_separates_test_and_production_indexes() -> None:
     assert workflow.count("actions/download-artifact@v8") >= 3
     assert "runs-on: [self-hosted, Linux, X64, sdk-release]" in workflow
     assert "tools/check_release_gate.py" in workflow
+    assert 'tag_commit=$(git rev-list -n 1 "${GITHUB_REF_NAME}")' in workflow
+    assert '--target "${{ needs.gate.outputs.commit }}"' in workflow
     assert "sha256sum dist/* > SHA256SUMS" in workflow
     assert "name: Clean release workspace before use" in workflow
     assert "name: Clean release workspace after use" in workflow
@@ -61,6 +63,8 @@ def test_production_publish_requires_a_release_and_version_check() -> None:
     assert "tools/check_release_version.py" in workflow
     gate = (ROOT / "tools" / "check_release_gate.py").read_text(encoding="utf-8")
     assert '"merge-base", "--is-ancestor"' in gate
+    assert '"cat-file", "-t", tag' in gate
+    assert "release ref must be an annotated tag" in gate
     assert "environment:\n      name: pypi" in workflow
 
 
@@ -116,3 +120,5 @@ def test_prepare_release_uses_repository_scoped_github_app() -> None:
     assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in workflow
     assert "workflow_dispatch:" in workflow
     assert "tools/check_release_availability.py" in workflow
+    assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in workflow
+    assert "runs-on: [self-hosted, Linux, X64, sdk-release]" not in workflow

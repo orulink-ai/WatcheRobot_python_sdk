@@ -28,7 +28,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main')
-    runs-on: [self-hosted, Linux, X64, sdk-release]
+    runs-on: [self-hosted, Linux, X64, sdk-ci]
     steps:
       - name: Resolve one explicit release request
         id: release

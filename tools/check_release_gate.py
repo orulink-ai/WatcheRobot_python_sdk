@@ -105,6 +105,12 @@ def _associated_pull_requests(repository: str, sha: str) -> list[dict[str, objec
 
 def validate_gate(*, repository: str, tag: str, sha: str) -> str:
     version = validate_release_tag(tag, read_package_version())
+    tag_type = _run("git", "cat-file", "-t", tag)
+    if tag_type != "tag":
+        raise ValueError("release ref must be an annotated tag")
+    resolved_sha = _run("git", "rev-list", "-n", "1", tag)
+    if resolved_sha != sha:
+        raise ValueError("resolved annotated tag commit does not match the release gate input")
     _run("git", "fetch", "origin", "main:refs/remotes/origin/main", "--no-tags")
     _run("git", "merge-base", "--is-ancestor", sha, "refs/remotes/origin/main")
 
