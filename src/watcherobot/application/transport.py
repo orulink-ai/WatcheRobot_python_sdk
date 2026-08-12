@@ -150,9 +150,9 @@ class DaemonApplicationTransport:
         stream_id: int,
         chunk_bytes: int = 4096,
     ) -> Future[None]:
-        if chunk_bytes <= 0 or chunk_bytes > 32768 or chunk_bytes % 2 != 0:
+        if chunk_bytes != AUDIO_DEVICE_SLOT_BYTES:
             raise ValueError(
-                "chunk_bytes must be an even value between 2 and 32768"
+                f"chunk_bytes must be {AUDIO_DEVICE_SLOT_BYTES} for device audio flow control"
             )
         return self._submit(
             self._send_audio_stream(bytes(pcm), stream_id, chunk_bytes)

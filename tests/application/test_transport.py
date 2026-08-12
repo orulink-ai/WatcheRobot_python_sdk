@@ -4,6 +4,8 @@ import asyncio
 import json
 import struct
 
+import pytest
+
 from watcherobot.application.transport import DaemonApplicationTransport
 from watcherobot.protocol import FRAME_VIDEO
 from watcherobot.runtime.daemon.application.session import ApplicationChannel
@@ -133,7 +135,7 @@ def test_audio_stream_prefills_the_device_start_buffer_before_waiting() -> None:
 
         transport._send = capture  # type: ignore[method-assign]
         task = asyncio.create_task(
-            transport._send_audio_stream(b"\x00\x01" * 17, stream_id=9, chunk_bytes=2)
+            transport._send_audio_stream(b"\x00" * (4096 * 17), stream_id=9, chunk_bytes=4096)
         )
 
         for _ in range(100):
@@ -206,6 +208,13 @@ def test_audio_stream_prefills_the_device_start_buffer_before_waiting() -> None:
         assert len(sent) == 17
 
     asyncio.run(scenario())
+
+
+def test_public_audio_stream_rejects_non_device_slot_chunk_size() -> None:
+    transport = DaemonApplicationTransport()
+
+    with pytest.raises(ValueError, match="chunk_bytes must be 4096"):
+        transport.send_audio_stream(b"\x00" * 4096, stream_id=1, chunk_bytes=2048)
 
 
 def test_transport_dispatches_face_preview_packet_as_video_frame() -> None:
