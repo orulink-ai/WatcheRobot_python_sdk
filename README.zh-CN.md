@@ -49,10 +49,6 @@ do {
 watcherobot app run .\examples\hello_robot
 ```
 
-也可以在浏览器打开 `$runtime.control_url/control/` 使用本地
-[链路测试控制台](docs/control-console.md)。控制台支持输入新配对码、替换旧设备
-会话，以及查看 Daemon、设备、Application 和本机 Qwen Gateway 的状态。
-
 如果当前 Runtime 已持有在线设备会话，可以跳过配对请求，直接运行
 Application。
 

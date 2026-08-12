@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from pathlib import Path
 from typing import Any, Protocol
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from watcherobot.application.catalog import (
@@ -25,19 +23,6 @@ from watcherobot.runtime.daemon.application.manifest import (
 )
 from watcherobot.runtime.daemon.application.session import SessionOccupiedError
 from watcherobot.runtime.daemon.pairing.session import PairingSessionError
-
-
-_CONTROL_CONSOLE_DIR = Path(__file__).with_name("static")
-_CONTROL_CONSOLE_CSP = (
-    "default-src 'self'; "
-    "connect-src 'self' http://127.0.0.1:3101 http://localhost:3101; "
-    "img-src 'self' data:; "
-    "style-src 'self'; "
-    "script-src 'self'; "
-    "object-src 'none'; "
-    "base-uri 'none'; "
-    "frame-ancestors 'none'"
-)
 
 
 class PairDeviceRequest(BaseModel):
@@ -139,29 +124,6 @@ class DaemonControlAPI:
             allow_headers=["Content-Type"],
             allow_private_network=True,
         )
-        app.mount(
-            "/control/assets",
-            StaticFiles(directory=_CONTROL_CONSOLE_DIR),
-            name="control-console-assets",
-        )
-
-        @app.get("/control", include_in_schema=False)
-        async def redirect_control_console() -> RedirectResponse:
-            return RedirectResponse(url="/control/")
-
-        @app.get("/control/", include_in_schema=False)
-        async def get_control_console() -> FileResponse:
-            return FileResponse(
-                _CONTROL_CONSOLE_DIR / "index.html",
-                media_type="text/html",
-                headers={
-                    "Cache-Control": "no-store",
-                    "Content-Security-Policy": _CONTROL_CONSOLE_CSP,
-                    "X-Content-Type-Options": "nosniff",
-                    "X-Frame-Options": "DENY",
-                },
-            )
-
         @app.get("/daemon/status")
         async def get_status() -> dict[str, Any]:
             return self._status_response()
