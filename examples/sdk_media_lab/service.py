@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
 import math
 import re
 import socket
@@ -16,9 +17,9 @@ import urllib.parse
 import wave
 from collections import deque
 from collections.abc import Callable, Mapping
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, AsyncIterator, Iterator
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -30,6 +31,8 @@ from watcherobot.application.rtc import RTC_VIDEO_CAPABILITY
 _MDNS_HOST_CANDIDATE = re.compile(
     r"(?im)(^(?:a=)?candidate:\S+\s+\d+\s+\S+\s+\d+\s+)(\S+\.local)(\s+\d+\s+typ\s+host\b)"
 )
+_MAINTENANCE_INTERVAL_SECONDS = 0.25
+_LOGGER = logging.getLogger(__name__)
 
 
 class MediaLabBusyError(RuntimeError):
@@ -214,14 +217,7 @@ class MediaLabService:
                     "url": f"/artifacts/{filename}?v={path.stat().st_mtime_ns}",
                 }
         connection = self._device_status()
-        self._refresh_device_snapshot(connection)
-        if connection.get("online") is not True:
-            self._rtc.reset(reason="device_offline")
         rtc = self._rtc.snapshot()
-        if connection.get("online") is not True or rtc.get("state") in {"stopped", "failed"}:
-            self._release_live_video_lock()
-            with self._state_lock:
-                active_action = self._active_action
         return {
             "connected": connection.get("online") is True,
             "connection": connection,
@@ -233,6 +229,18 @@ class MediaLabService:
             "artifacts": artifacts,
             "events": self.events(),
         }
+
+    def maintain(self) -> None:
+        """Reconcile device and RTC lifecycle outside HTTP status requests."""
+
+        connection = self._device_status()
+        self._refresh_device_snapshot(connection)
+        rtc = self._rtc.snapshot()
+        if connection.get("online") is not True and rtc.get("active") is True:
+            self._rtc.reset(reason="device_offline")
+            rtc = self._rtc.snapshot()
+        if connection.get("online") is not True or rtc.get("state") in {"stopped", "failed"}:
+            self._release_live_video_lock()
 
     def events(self, *, after: int = 0) -> list[dict[str, object]]:
         with self._state_lock:
@@ -552,11 +560,38 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     """Create the loopback-only HTTP surface used by the browser dashboard."""
 
     web_root = Path(web_root)
+
+    async def maintain_service() -> None:
+        while True:
+            try:
+                await asyncio.to_thread(service.maintain)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.exception("SDK Media Lab maintenance failed")
+            await asyncio.sleep(_MAINTENANCE_INTERVAL_SECONDS)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        maintenance_task = asyncio.create_task(
+            maintain_service(),
+            name="sdk-media-lab-maintenance",
+        )
+        try:
+            yield
+        finally:
+            maintenance_task.cancel()
+            try:
+                await maintenance_task
+            except asyncio.CancelledError:
+                pass
+
     app = FastAPI(
         title="WatcheRobot SDK Media Lab",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=lifespan,
     )
 
     @app.middleware("http")

@@ -284,6 +284,7 @@ def test_online_transition_refreshes_the_sdk_device_snapshot(tmp_path: Path) -> 
     robot.refresh_device_info = refresh_device_info
     service = _service(module, tmp_path, robot, online=True)
 
+    service.maintain()
     status = service.status()
 
     assert refresh_calls == [1.0]
@@ -589,6 +590,13 @@ def test_live_video_offline_cleanup_resets_rtc_before_releasing_media_lock(tmp_p
     }
 
     online = False
+    status_before_maintenance = service.status()
+
+    assert ("reset", "device_offline") not in rtc.calls
+    assert status_before_maintenance["active_action"] == "live_video"
+    assert status_before_maintenance["rtc"]["active"] is True
+
+    service.maintain()
     status = service.status()
 
     assert ("reset", "device_offline") in rtc.calls
@@ -598,6 +606,26 @@ def test_live_video_offline_cleanup_resets_rtc_before_releasing_media_lock(tmp_p
     online = True
     restarted = service.start_live_video()
     assert restarted["session"]["active"] is True
+
+
+def test_web_app_lifespan_runs_media_lab_maintenance(tmp_path: Path) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    maintenance_started = threading.Event()
+    original_maintain = service.maintain
+
+    def tracked_maintain() -> None:
+        original_maintain()
+        maintenance_started.set()
+
+    service.maintain = tracked_maintain  # type: ignore[method-assign]
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+
+    with TestClient(module.create_web_app(service, web_root=web_root)):
+        assert maintenance_started.wait(timeout=1.0)
 
 
 def test_browser_counts_drop_only_when_pending_frame_is_replaced() -> None:
