@@ -36,7 +36,7 @@ def _publish(
         identity_hub=identity_hub or FakeIdentityHub(),
         publish_hub=publish_hub,
         events=events or RecordingEvents(),
-        watcherobot_version="0.1.1a2",
+        watcherobot_version="0.1.1a3",
     )
 
 

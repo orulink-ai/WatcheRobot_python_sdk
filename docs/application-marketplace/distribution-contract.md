@@ -6,7 +6,7 @@
 
 | 项目 | 当前值 | 真值来源 |
 | --- | --- | --- |
-| SDK 包版本 | `0.1.1a2` | `src/watcherobot/__init__.py` |
+| SDK 包版本 | `0.1.1a3` | `src/watcherobot/__init__.py` |
 | 支持的 Python | `>=3.10` | `pyproject.toml` |
 | 分发控制台入口 | `watcher-distribution` | `pyproject.toml` |
 | Desktop Runtime/分发工具的 SDK 来源 | 读取 `runtime-build.json` 的 `sdk_commit` | Desktop `src-tauri/resources/server/<platform>/runtime-build.json` |

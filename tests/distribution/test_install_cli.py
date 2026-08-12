@@ -30,7 +30,7 @@ def test_cli_install_jsonl_uses_sdk_store_service_without_daemon(
         application_root=store_root / "apps/com.example.demo",
         source_url=f"https://huggingface.co/spaces/{SPACE_ID}/tree/{COMMIT}",
         commit=COMMIT,
-        runtime_id="win32-x64-python-3.12.13-watcherobot-0.1.1a2",
+        runtime_id="win32-x64-python-3.12.13-watcherobot-0.1.1a3",
         replaced_existing=False,
     )
     calls: list[dict[str, object]] = []
