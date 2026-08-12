@@ -155,6 +155,32 @@ class ApplicationRtc:
             self._active = False
         return True
 
+    def reset(self, *, reason: str) -> bool:
+        """Forget an active session that can no longer be signalled.
+
+        This is intentionally local-only: callers use it after the Device channel is
+        known to be offline, where sending ``ctrl.rtc.session.stop`` cannot succeed.
+        Clearing the identifiers also prevents late events from the abandoned session
+        from mutating a future session.
+        """
+        if not isinstance(reason, str) or not reason:
+            raise ValueError("reason must be a non-empty string")
+        with self._lock:
+            if not self._active:
+                return False
+            self._active = False
+            self._stop_sent = False
+            self._state = "failed"
+            self._last_error = reason
+            self._client_id = None
+            self._session_id = None
+            self._mode = None
+            self._capabilities = {}
+            self._stats = {}
+            self._events.clear()
+            self._event_sequence = 0
+            return True
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {

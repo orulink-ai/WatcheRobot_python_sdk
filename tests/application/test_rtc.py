@@ -167,3 +167,45 @@ def test_rtc_stop_can_retry_after_transport_send_failure() -> None:
     assert rtc.snapshot()["state"] == "starting"
     assert rtc.stop() is True
     assert stop_attempts == 2
+
+
+def test_rtc_reset_abandons_offline_session_and_ignores_late_events() -> None:
+    transport = FakeTransport()
+    rtc = ApplicationRtc(
+        transport,  # type: ignore[arg-type]
+        id_factory=iter(("client-0001", "session-0001", "command-0001")).__next__,
+    )
+    rtc.start()
+    transport.emit(
+        {
+            "type": "evt.rtc.stats",
+            "protocol": "watcher-rtc/1",
+            "client_id": "client-0001",
+            "session_id": "session-0001",
+            "data": {"source_frames": 3},
+        }
+    )
+
+    assert rtc.reset(reason="device_offline") is True
+    transport.emit(
+        {
+            "type": "evt.rtc.state",
+            "protocol": "watcher-rtc/1",
+            "client_id": "client-0001",
+            "session_id": "session-0001",
+            "data": {"state": "connected"},
+        }
+    )
+
+    assert rtc.snapshot() == {
+        "active": False,
+        "client_id": None,
+        "session_id": None,
+        "state": "failed",
+        "mode": None,
+        "last_error": "device_offline",
+        "capabilities": {},
+        "stats": {},
+    }
+    assert rtc.events() == []
+    assert rtc.reset(reason="device_offline") is False

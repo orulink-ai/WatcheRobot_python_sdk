@@ -215,6 +215,8 @@ class MediaLabService:
                 }
         connection = self._device_status()
         self._refresh_device_snapshot(connection)
+        if connection.get("online") is not True:
+            self._rtc.reset(reason="device_offline")
         rtc = self._rtc.snapshot()
         if connection.get("online") is not True or rtc.get("state") in {"stopped", "failed"}:
             self._release_live_video_lock()
@@ -356,6 +358,8 @@ class MediaLabService:
             with self._state_lock:
                 active_action = self._active_action or "another action"
             raise MediaLabBusyError(f"media lab is busy with {active_action}")
+        # Live video owns the media-operation lock for the whole RTC session. The
+        # stop, terminal-event and device-offline paths all release it explicitly.
         with self._state_lock:
             self._live_video_lock_held = True
         try:

@@ -123,6 +123,12 @@ class FakeRtc:
         self._state.update(active=False, state="stopping")
         return True
 
+    def reset(self, *, reason: str) -> bool:
+        self.calls.append(("reset", reason))
+        was_active = bool(self._state["active"])
+        self._state.update(active=False, state="failed", last_error=reason)
+        return was_active
+
     def snapshot(self) -> dict[str, object]:
         return dict(self._state)
 
@@ -568,6 +574,37 @@ def test_live_video_stop_failure_keeps_media_operation_exclusive(tmp_path: Path)
 
     with pytest.raises(module.MediaLabBusyError, match="live_video"):
         service.play_audio()
+
+
+def test_live_video_offline_cleanup_resets_rtc_before_releasing_media_lock(tmp_path: Path) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    online = True
+    service = _service(module, tmp_path, rtc=rtc)
+    service.start_live_video()
+    service._device_status_provider = lambda: {  # noqa: SLF001 - simulate a disconnect
+        "online": online,
+        "state": "connected" if online else "idle",
+        "last_error": None,
+    }
+
+    online = False
+    status = service.status()
+
+    assert ("reset", "device_offline") in rtc.calls
+    assert status["active_action"] is None
+    assert status["rtc"]["active"] is False
+
+    online = True
+    restarted = service.start_live_video()
+    assert restarted["session"]["active"] is True
+
+
+def test_browser_counts_drop_only_when_pending_frame_is_replaced() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+
+    assert "if (state.rtc.pendingFrame !== null) state.rtc.droppedFrames += 1;" in javascript
+    assert "state.rtc.pendingFrame = frame;\n      state.rtc.droppedFrames += 1;" not in javascript
 
 
 def test_browser_mdns_host_candidates_are_rewritten_without_touching_other_candidates() -> None:

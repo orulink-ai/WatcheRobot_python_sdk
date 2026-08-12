@@ -635,8 +635,8 @@ async function enqueueMjpegPacket(value) {
     }
     state.rtc.lastSequence = frame.sequence;
     if (state.rtc.decodeBusy) {
+      if (state.rtc.pendingFrame !== null) state.rtc.droppedFrames += 1;
       state.rtc.pendingFrame = frame;
-      state.rtc.droppedFrames += 1;
       return;
     }
     state.rtc.decodeBusy = true;
