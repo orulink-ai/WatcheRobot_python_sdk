@@ -105,6 +105,15 @@ def test_fake_ble_tests_run_on_self_hosted_linux() -> None:
     assert "from watcherobot.provisioning.bleak_backend import BleakBackend" in workflow
 
 
+def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "pr-review.yml").read_text(encoding="utf-8")
+
+    assert "${RUNNER_TEMP}/pr-${{ github.event.pull_request.number }}.diff" in workflow
+    assert "${RUNNER_TEMP}/review_result.md" in workflow
+    assert "/tmp/pr.diff" not in workflow
+    assert "/tmp/review_result.md" not in workflow
+
+
 def test_legacy_publish_workflow_is_removed() -> None:
     assert not (ROOT / ".github" / "workflows" / "publish.yml").exists()
 

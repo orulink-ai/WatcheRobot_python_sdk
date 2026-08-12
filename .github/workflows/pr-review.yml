@@ -17,9 +17,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr diff ${{ github.event.pull_request.number }} -R ${{ github.repository }} > /tmp/pr.diff 2>/dev/null
-          if [ ! -s /tmp/pr.diff ]; then echo "empty" > /tmp/pr.diff; fi
-          echo "Diff lines: $(wc -l < /tmp/pr.diff)"
+          diff_file="${RUNNER_TEMP}/pr-${{ github.event.pull_request.number }}.diff"
+          gh pr diff ${{ github.event.pull_request.number }} -R ${{ github.repository }} > "${diff_file}" 2>/dev/null
+          if [ ! -s "${diff_file}" ]; then echo "empty" > "${diff_file}"; fi
+          echo "DIFF_FILE=${diff_file}" >> "${GITHUB_ENV}"
+          echo "Diff lines: $(wc -l < "${diff_file}")"
 
       - name: Run Luxiao Review
         run: |
@@ -29,17 +31,18 @@ jobs:
             "${{ github.event.pull_request.additions }}" \
             "${{ github.event.pull_request.deletions }}" \
             "${{ github.event.pull_request.changed_files }}" \
-            /tmp/pr.diff \
-            /tmp/review_result.md
+            "${DIFF_FILE}" \
+            "${RUNNER_TEMP}/review_result.md"
 
       - name: Post Review Comment
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ ! -s /tmp/review_result.md ]; then
-            echo "## 🤖 Luxiao PR 审查报告" > /tmp/review_result.md
-            echo "" >> /tmp/review_result.md
-            echo "⚠️ Review agent did not produce output." >> /tmp/review_result.md
+          review_file="${RUNNER_TEMP}/review_result.md"
+          if [ ! -s "${review_file}" ]; then
+            echo "## 🤖 Luxiao PR 审查报告" > "${review_file}"
+            echo "" >> "${review_file}"
+            echo "⚠️ Review agent did not produce output." >> "${review_file}"
           fi
-          gh pr comment ${{ github.event.pull_request.number }} --body "$(cat /tmp/review_result.md)"
+          gh pr comment ${{ github.event.pull_request.number }} --body "$(cat "${review_file}")"
