@@ -7,12 +7,16 @@ from .channels import (
     FrameCallback,
 )
 from .context import ApplicationContext, ApplicationEnvironmentError
+from .rtc import ApplicationRtc, RTC_PROTOCOL, RTC_VIDEO_CAPABILITY
 
 __all__ = [
     "ApplicationChannel",
     "ApplicationChannels",
     "ApplicationContext",
     "ApplicationEnvironmentError",
+    "ApplicationRtc",
     "Frame",
     "FrameCallback",
+    "RTC_PROTOCOL",
+    "RTC_VIDEO_CAPABILITY",
 ]

@@ -55,6 +55,8 @@ class DaemonApplicationTransport:
         self._startup_error: BaseException | None = None
         self._stop_event: asyncio.Event | None = None
         self._message_callback: MessageCallback = lambda _message: None
+        self._message_listeners: list[MessageCallback] = []
+        self._message_listeners_lock = threading.Lock()
         self._binary_callback: BinaryCallback = lambda _frame: None
         self._disconnect_callback: DisconnectCallback = lambda: None
         self._desktop_callback: DesktopCallback = lambda _frame: None
@@ -76,6 +78,18 @@ class DaemonApplicationTransport:
 
     def set_desktop_callback(self, callback: DesktopCallback) -> None:
         self._desktop_callback = callback
+
+    def add_message_listener(self, callback: MessageCallback) -> None:
+        """Observe parsed Device-channel messages without replacing Robot handlers."""
+
+        with self._message_listeners_lock:
+            if callback not in self._message_listeners:
+                self._message_listeners.append(callback)
+
+    def remove_message_listener(self, callback: MessageCallback) -> None:
+        with self._message_listeners_lock:
+            if callback in self._message_listeners:
+                self._message_listeners.remove(callback)
 
     def start(self, *, timeout: float = 5.0) -> None:
         if self._thread is not None:
@@ -146,6 +160,14 @@ class DaemonApplicationTransport:
 
     def send_desktop(self, frame: str | bytes) -> Future[None]:
         return self._submit(self._send(ApplicationChannel.DESKTOP, frame))
+
+    def send_device(self, frame: str | bytes) -> Future[None]:
+        """Send a protocol frame through the Application's authorized Device channel."""
+
+        return self._submit(self._send_device(frame))
+
+    async def _send_device(self, frame: str | bytes) -> None:
+        await self._send(ApplicationChannel.DEVICE, frame)
 
     def _submit(
         self,
@@ -414,6 +436,7 @@ class DaemonApplicationTransport:
             )
             return
         message = parse_json_message(frame)
+        self._notify_message_listeners(message)
         message_type = message["type"]
         data = message.get("data", {})
         if message_type == "evt.audio.buffer_status":
@@ -441,6 +464,16 @@ class DaemonApplicationTransport:
             )
             return
         self._message_callback(message)
+
+    def _notify_message_listeners(self, message: dict[str, Any]) -> None:
+        with self._message_listeners_lock:
+            listeners = tuple(self._message_listeners)
+        for listener in listeners:
+            try:
+                listener(message)
+            except Exception:
+                # Observers must not be able to break transport routing.
+                continue
 
     def _dispatch_binary(self, raw: bytes) -> None:
         if len(raw) >= 12 and raw.startswith(b"FTW1"):

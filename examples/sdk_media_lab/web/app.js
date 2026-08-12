@@ -3,6 +3,24 @@ const state = {
   localBusy: false,
   pairingBusy: false,
   hiddenEventIds: new Set(),
+  rtc: {
+    peer: null,
+    channel: null,
+    eventCursor: 0,
+    pollTimer: null,
+    heartbeatTimer: null,
+    feedbackTimer: null,
+    remoteCandidates: [],
+    decodeBusy: false,
+    pendingFrame: null,
+    lastSequence: null,
+    receivedFrames: 0,
+    displayedFrames: 0,
+    droppedFrames: 0,
+    frameTimes: [],
+    lastFrameAt: 0,
+    rttUs: 0,
+  },
 };
 
 const elements = {
@@ -26,6 +44,19 @@ const elements = {
   playAudioButton: document.querySelector("#playAudioButton"),
   stopAudioButton: document.querySelector("#stopAudioButton"),
   capturePhotoButton: document.querySelector("#capturePhotoButton"),
+  liveVideoPanel: document.querySelector("#liveVideoPanel"),
+  liveVideoCapability: document.querySelector("#liveVideoCapability"),
+  startLiveVideoButton: document.querySelector("#startLiveVideoButton"),
+  stopLiveVideoButton: document.querySelector("#stopLiveVideoButton"),
+  liveVideoResult: document.querySelector("#liveVideoResult"),
+  liveVideoStage: document.querySelector("#liveVideoStage"),
+  liveVideoCanvas: document.querySelector("#liveVideoCanvas"),
+  liveVideoState: document.querySelector("#liveVideoState"),
+  liveVideoFps: document.querySelector("#liveVideoFps"),
+  liveVideoResolution: document.querySelector("#liveVideoResolution"),
+  liveVideoDrops: document.querySelector("#liveVideoDrops"),
+  liveVideoIndicator: document.querySelector("#liveVideoIndicator"),
+  liveVideoFrameAge: document.querySelector("#liveVideoFrameAge"),
   recordMicrophoneButton: document.querySelector("#recordMicrophoneButton"),
   recordDuration: document.querySelector("#recordDuration"),
   durationValue: document.querySelector("#durationValue"),
@@ -48,6 +79,7 @@ const actionLabels = {
   capture_photo: "相机拍照",
   record_microphone: "麦克风录音",
   device_pairing: "设备配对",
+  live_video: "实时视频",
   system: "系统",
 };
 
@@ -58,6 +90,16 @@ const pairingErrors = {
   device_connect_timeout: "设备连接超时，请重新获取配对码后重试",
   reconnect_timeout: "设备重连超时，请重新配对",
   pairing_unavailable: "无法连接 SDK Daemon 的配对服务",
+  "Robot firmware does not advertise RTC MJPEG video": "当前固件未声明实时视频能力，请更新并重新连接设备",
+  "Live video session is not active": "实时视频会话尚未开启",
+};
+
+const rtcErrors = {
+  video_source_timeout: "相机视频源未输出画面；请确认 HX6538 已安装配套视频桥固件",
+  peer_connection_failed: "浏览器与设备的实时连接建立失败",
+  mjpeg_start_failed: "设备相机推流器启动失败",
+  mjpeg_data_channel_closed: "实时视频数据通道已断开",
+  heartbeat_timeout: "实时视频心跳超时",
 };
 
 async function api(path, options = {}) {
@@ -90,6 +132,7 @@ function localizeError(message, status) {
   const durationMatch = message.match(/^duration must be (.+)$/);
   if (durationMatch) return `录音时长必须为 ${durationMatch[1]}`;
   if (pairingErrors[message]) return pairingErrors[message];
+  if (rtcErrors[message]) return rtcErrors[message];
   return message;
 }
 
@@ -100,6 +143,7 @@ function localizeEvent(event) {
   const label = actionLabel(event.action);
   if (event.message.endsWith(" started")) return `${label}已开始`;
   if (event.message.endsWith(" completed")) return `${label}已完成`;
+  if (event.message.endsWith(" stopped")) return `${label}已停止`;
   const failedAt = event.message.indexOf(" failed:");
   if (failedAt >= 0) return `${label}失败：${event.message.slice(failedAt + 8).trim()}`;
   return event.message;
@@ -149,6 +193,14 @@ function renderStatus(status) {
 
   const busy = status.busy || state.localBusy;
   const unavailable = busy || !status.connected;
+  const liveAvailable = status.connected && hasCapability("rtc.video.mjpeg.v1");
+  const liveActive = Boolean(state.rtc.peer) || status.active_action === "live_video";
+  elements.liveVideoPanel.dataset.available = String(liveAvailable);
+  elements.liveVideoCapability.textContent = !status.connected
+    ? "设备离线"
+    : liveAvailable ? "已就绪" : "需要新固件";
+  elements.startLiveVideoButton.disabled = busy || !liveAvailable;
+  elements.stopLiveVideoButton.disabled = !liveActive;
   elements.playAudioButton.disabled = unavailable || !hasCapability("audio.stream");
   elements.stopAudioButton.disabled = unavailable || !hasCapability("audio.stream");
   elements.capturePhotoButton.disabled = unavailable || !hasCapability("camera.capture");
@@ -158,7 +210,7 @@ function renderStatus(status) {
   elements.capabilityGrid.replaceChildren(...status.capabilities.map((capability) => {
     const chip = document.createElement("span");
     chip.className = "capability-chip";
-    chip.dataset.media = String(["audio.stream", "camera.capture", "microphone"].includes(capability));
+    chip.dataset.media = String(["audio.stream", "camera.capture", "microphone", "rtc.video.mjpeg.v1"].includes(capability));
     chip.textContent = capability;
     return chip;
   }));
@@ -341,6 +393,317 @@ function drawEmptyWaveform() {
   context.fillText("等待 PCM 音频信号", 18, height / 2 - 14);
 }
 
+function resetLiveVideoMetrics() {
+  Object.assign(state.rtc, {
+    eventCursor: 0,
+    remoteCandidates: [],
+    decodeBusy: false,
+    pendingFrame: null,
+    lastSequence: null,
+    receivedFrames: 0,
+    displayedFrames: 0,
+    droppedFrames: 0,
+    frameTimes: [],
+    lastFrameAt: 0,
+    rttUs: 0,
+  });
+  elements.liveVideoFps.textContent = "0.0 FPS";
+  elements.liveVideoResolution.textContent = "—";
+  elements.liveVideoDrops.textContent = "0";
+  elements.liveVideoFrameAge.textContent = "NO FRAME";
+}
+
+function setLiveVideoState(value, message = null) {
+  const normalized = ["connected", "live"].includes(value) ? "live"
+    : ["starting", "signaling", "connecting"].includes(value) ? "connecting"
+      : "idle";
+  elements.liveVideoStage.dataset.state = normalized;
+  elements.liveVideoState.textContent = String(value || "idle").toUpperCase();
+  elements.liveVideoIndicator.textContent = normalized === "live" ? "● LIVE"
+    : normalized === "connecting" ? "LINKING" : "STANDBY";
+  if (message) setResult(elements.liveVideoResult, message, normalized === "idle" ? "error" : "running");
+}
+
+async function startLiveVideo() {
+  if (state.rtc.peer || !hasCapability("rtc.video.mjpeg.v1")) return;
+  resetLiveVideoMetrics();
+  setLiveVideoState("starting", "正在申请相机与实时传输资源…");
+  elements.startLiveVideoButton.disabled = true;
+  try {
+    await api("/api/video/session/start", {
+      method: "POST",
+      body: JSON.stringify({ mode: "video" }),
+    });
+    const peer = new RTCPeerConnection({ iceServers: [] });
+    const channel = peer.createDataChannel("mjpeg-data", {
+      ordered: false,
+      maxPacketLifeTime: 200,
+    });
+    state.rtc.peer = peer;
+    state.rtc.channel = channel;
+    channel.binaryType = "arraybuffer";
+    channel.addEventListener("open", () => {
+      setLiveVideoState("connected");
+      setResult(elements.liveVideoResult, "实时画面通道已连接", "ok");
+    });
+    channel.addEventListener("message", (event) => { enqueueMjpegPacket(event.data); });
+    channel.addEventListener("close", () => {
+      if (state.rtc.peer) failLiveVideo("实时画面通道已关闭");
+    });
+    peer.addEventListener("connectionstatechange", () => {
+      const connectionState = peer.connectionState;
+      if (["failed", "disconnected", "closed"].includes(connectionState) && state.rtc.peer) {
+        failLiveVideo(`WebRTC 连接${connectionState === "failed" ? "失败" : "已断开"}`);
+      }
+    });
+    peer.addEventListener("icecandidate", (event) => {
+      if (!event.candidate || !state.rtc.peer) return;
+      api("/api/video/session/signal", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "candidate",
+          candidate: event.candidate.candidate,
+          sdp_mid: event.candidate.sdpMid || "0",
+          sdp_mline_index: event.candidate.sdpMLineIndex || 0,
+        }),
+      }).catch((error) => { failLiveVideo(error.message); });
+    });
+    startRtcControlLoops();
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    await api("/api/video/session/signal", {
+      method: "POST",
+      body: JSON.stringify({ kind: "offer", sdp: offer.sdp }),
+    });
+    setLiveVideoState("signaling", "已发送浏览器协商信息，等待 Watcher 应答…");
+    await refreshStatus();
+  } catch (error) {
+    await failLiveVideo(error.message);
+  }
+}
+
+function startRtcControlLoops() {
+  pollRtcEvents();
+  state.rtc.heartbeatTimer = window.setInterval(async () => {
+    if (!state.rtc.peer) return;
+    const browserSendUs = Math.round((performance.timeOrigin + performance.now()) * 1000);
+    const startedAt = performance.now();
+    try {
+      await api("/api/video/session/clock-ping", {
+        method: "POST",
+        body: JSON.stringify({ browser_send_us: browserSendUs }),
+      });
+      state.rtc.rttUs = Math.max(0, Math.round((performance.now() - startedAt) * 1000));
+    } catch (error) {
+      if (state.rtc.peer) failLiveVideo(error.message);
+    }
+  }, 1500);
+  state.rtc.feedbackTimer = window.setInterval(() => {
+    if (!state.rtc.peer) return;
+    const fps = currentDisplayFps();
+    api("/api/video/session/feedback", {
+      method: "POST",
+      body: JSON.stringify({
+        display_fps_x100: Math.round(fps * 100),
+        frame_age_p95_us: 0,
+        rtt_us: state.rtc.rttUs,
+        audio_queue_ms: 0,
+        audio_packet_loss_x100: 0,
+        audio_jitter_us: 0,
+        audio_concealed_frames: 0,
+        congestion_level: state.rtc.droppedFrames > 0 ? 1 : 0,
+      }),
+    }).catch(() => {});
+  }, 1000);
+}
+
+async function pollRtcEvents() {
+  if (!state.rtc.peer) return;
+  try {
+    const payload = await api(`/api/video/session/events?after=${state.rtc.eventCursor}`);
+    for (const event of payload.events || []) {
+      state.rtc.eventCursor = Math.max(state.rtc.eventCursor, event.id || 0);
+      await handleRtcEvent(event.message || {});
+      if (!state.rtc.peer) return;
+    }
+  } catch (error) {
+    if (state.rtc.peer) await failLiveVideo(error.message);
+    return;
+  }
+  state.rtc.pollTimer = window.setTimeout(pollRtcEvents, 100);
+}
+
+async function handleRtcEvent(message) {
+  const data = message.data || {};
+  if (message.type === "sys.nack") {
+    await failLiveVideo(localizeError(data.error || data.reason || "设备拒绝了实时视频请求"));
+    return;
+  }
+  if (message.type === "evt.rtc.state") {
+    setLiveVideoState(data.state || "connecting");
+    if (data.state === "failed") await failLiveVideo(localizeError(data.reason || "设备实时视频会话失败"));
+    if (data.state === "stopped" && state.rtc.peer) cleanupLiveVideo();
+    return;
+  }
+  if (message.type === "evt.rtc.capabilities") {
+    const video = data.video || {};
+    if (video.width && video.height) elements.liveVideoResolution.textContent = `${video.width} × ${video.height}`;
+    return;
+  }
+  if (message.type !== "evt.rtc.signal" || !state.rtc.peer) return;
+  if (data.kind === "answer" && data.sdp) {
+    if (!state.rtc.peer.remoteDescription) {
+      await state.rtc.peer.setRemoteDescription({ type: "answer", sdp: data.sdp });
+      for (const candidate of state.rtc.remoteCandidates.splice(0)) {
+        await state.rtc.peer.addIceCandidate(candidate);
+      }
+    }
+  } else if (data.kind === "candidate" && data.candidate) {
+    const candidate = new RTCIceCandidate({
+      candidate: data.candidate,
+      sdpMid: data.sdp_mid,
+      sdpMLineIndex: data.sdp_mline_index,
+    });
+    if (state.rtc.peer.remoteDescription) await state.rtc.peer.addIceCandidate(candidate);
+    else state.rtc.remoteCandidates.push(candidate);
+  }
+}
+
+async function stopLiveVideo() {
+  elements.stopLiveVideoButton.disabled = true;
+  try {
+    await api("/api/video/session/stop", { method: "POST" });
+    setResult(elements.liveVideoResult, "实时画面已停止", "ok");
+    cleanupLiveVideo();
+    await refreshStatus();
+  } catch (error) {
+    notify(error.message, "error");
+    elements.stopLiveVideoButton.disabled = !state.rtc.peer;
+    setResult(elements.liveVideoResult, "停止失败，请重试", "error");
+  }
+}
+
+async function failLiveVideo(message) {
+  if (!state.rtc.peer) {
+    setLiveVideoState("failed", message);
+    notify(message, "error");
+    try { await api("/api/video/session/stop", { method: "POST" }); } catch (_) {}
+    await refreshStatus();
+    return;
+  }
+  const peer = state.rtc.peer;
+  cleanupLiveVideo();
+  setLiveVideoState("failed", message);
+  notify(message, "error");
+  try { await api("/api/video/session/stop", { method: "POST" }); } catch (_) {}
+  if (peer) await refreshStatus();
+}
+
+function cleanupLiveVideo() {
+  window.clearTimeout(state.rtc.pollTimer);
+  window.clearInterval(state.rtc.heartbeatTimer);
+  window.clearInterval(state.rtc.feedbackTimer);
+  state.rtc.pollTimer = null;
+  state.rtc.heartbeatTimer = null;
+  state.rtc.feedbackTimer = null;
+  const channel = state.rtc.channel;
+  const peer = state.rtc.peer;
+  state.rtc.channel = null;
+  state.rtc.peer = null;
+  if (channel) {
+    channel.onclose = null;
+    try { channel.close(); } catch (_) {}
+  }
+  if (peer) {
+    peer.onconnectionstatechange = null;
+    try { peer.close(); } catch (_) {}
+  }
+  elements.stopLiveVideoButton.disabled = true;
+  elements.startLiveVideoButton.disabled = !state.status?.connected || !hasCapability("rtc.video.mjpeg.v1");
+  if (elements.liveVideoStage.dataset.state !== "idle") setLiveVideoState("idle");
+}
+
+async function enqueueMjpegPacket(value) {
+  try {
+    const packet = value instanceof ArrayBuffer ? value : await value.arrayBuffer();
+    const frame = parseWjpgPacket(packet);
+    state.rtc.receivedFrames += 1;
+    if (state.rtc.lastSequence !== null) {
+      const expected = (state.rtc.lastSequence + 1) >>> 0;
+      const gap = (frame.sequence - expected) >>> 0;
+      if (gap > 0 && gap < 10000) state.rtc.droppedFrames += gap;
+    }
+    state.rtc.lastSequence = frame.sequence;
+    if (state.rtc.decodeBusy) {
+      if (state.rtc.pendingFrame !== null) state.rtc.droppedFrames += 1;
+      state.rtc.pendingFrame = frame;
+      return;
+    }
+    state.rtc.decodeBusy = true;
+    let current = frame;
+    while (current) {
+      await drawMjpegFrame(current);
+      current = state.rtc.pendingFrame;
+      state.rtc.pendingFrame = null;
+    }
+  } catch (error) {
+    state.rtc.droppedFrames += 1;
+  } finally {
+    state.rtc.decodeBusy = false;
+    elements.liveVideoDrops.textContent = String(state.rtc.droppedFrames);
+  }
+}
+
+function parseWjpgPacket(packet) {
+  const bytes = new Uint8Array(packet);
+  if (bytes.byteLength < 24 || bytes[0] !== 0x57 || bytes[1] !== 0x4a || bytes[2] !== 0x50 || bytes[3] !== 0x47) {
+    throw new Error("invalid WJPG magic");
+  }
+  const view = new DataView(packet);
+  const headerSize = view.getUint16(6, true);
+  const jpegSize = view.getUint32(16, true);
+  if (bytes[4] !== 1 || headerSize !== 20 || jpegSize !== bytes.byteLength - headerSize) {
+    throw new Error("invalid WJPG header");
+  }
+  const jpeg = bytes.slice(headerSize);
+  if (jpeg[0] !== 0xff || jpeg[1] !== 0xd8 || jpeg[jpeg.length - 2] !== 0xff || jpeg[jpeg.length - 1] !== 0xd9) {
+    throw new Error("invalid JPEG payload");
+  }
+  return {
+    sequence: view.getUint32(8, true),
+    captureTimestampMs: view.getUint32(12, true),
+    jpeg,
+  };
+}
+
+async function drawMjpegFrame(frame) {
+  const bitmap = await createImageBitmap(new Blob([frame.jpeg], { type: "image/jpeg" }));
+  try {
+    const canvas = elements.liveVideoCanvas;
+    if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      elements.liveVideoResolution.textContent = `${bitmap.width} × ${bitmap.height}`;
+    }
+    canvas.getContext("2d", { alpha: false }).drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  } finally {
+    bitmap.close();
+  }
+  const now = performance.now();
+  state.rtc.lastFrameAt = now;
+  state.rtc.displayedFrames += 1;
+  state.rtc.frameTimes.push(now);
+  state.rtc.frameTimes = state.rtc.frameTimes.filter((time) => now - time <= 1000);
+  elements.liveVideoFps.textContent = `${currentDisplayFps().toFixed(1)} FPS`;
+  setLiveVideoState("live");
+}
+
+function currentDisplayFps() {
+  const now = performance.now();
+  state.rtc.frameTimes = state.rtc.frameTimes.filter((time) => now - time <= 1000);
+  return state.rtc.frameTimes.length;
+}
+
 async function playAudio() {
   return runAction({
     path: "/api/actions/play-audio",
@@ -409,6 +772,8 @@ elements.stopAudioButton.addEventListener("click", async () => {
   catch (error) { notify(error.message, "error"); }
 });
 elements.capturePhotoButton.addEventListener("click", () => { capturePhoto().catch(() => {}); });
+elements.startLiveVideoButton.addEventListener("click", () => { startLiveVideo(); });
+elements.stopLiveVideoButton.addEventListener("click", () => { stopLiveVideo(); });
 elements.recordMicrophoneButton.addEventListener("click", () => { recordMicrophone().catch(() => {}); });
 elements.runAllButton.addEventListener("click", runAll);
 elements.recordDuration.addEventListener("input", () => { elements.durationValue.textContent = elements.recordDuration.value; });
@@ -419,7 +784,17 @@ document.querySelector("#clearVisualLog").addEventListener("click", () => {
 
 setInterval(() => {
   elements.footerClock.textContent = new Date().toLocaleTimeString([], { hour12: false });
+  if (state.rtc.lastFrameAt > 0 && state.rtc.peer) {
+    const age = Math.max(0, Math.round(performance.now() - state.rtc.lastFrameAt));
+    elements.liveVideoFrameAge.textContent = `${age} MS AGO`;
+    elements.liveVideoFps.textContent = `${currentDisplayFps().toFixed(1)} FPS`;
+  }
 }, 1000);
+window.addEventListener("pagehide", () => {
+  if (!state.rtc.peer) return;
+  navigator.sendBeacon("/api/video/session/stop");
+  cleanupLiveVideo();
+});
 setInterval(refreshStatus, 1000);
 refreshStatus({ quiet: false });
 drawEmptyWaveform();

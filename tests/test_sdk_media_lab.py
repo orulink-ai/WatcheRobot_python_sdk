@@ -81,9 +81,77 @@ class FakeMicrophone:
         )
 
 
+class FakeRtc:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+        self._state = {
+            "active": False,
+            "client_id": None,
+            "session_id": None,
+            "state": "idle",
+            "mode": None,
+            "last_error": None,
+            "capabilities": {},
+            "stats": {},
+        }
+
+    def start(self, *, mode: str = "video") -> dict[str, object]:
+        self.calls.append(("start", mode))
+        self._state.update(
+            active=True,
+            client_id="client-0001",
+            session_id="session-0001",
+            state="starting",
+            mode=mode,
+        )
+        return self.snapshot()
+
+    def send_offer(self, sdp: str) -> None:
+        self.calls.append(("offer", sdp))
+
+    def send_candidate(self, candidate: str, *, sdp_mid: str, sdp_mline_index: int) -> None:
+        self.calls.append(("candidate", (candidate, sdp_mid, sdp_mline_index)))
+
+    def clock_ping(self, browser_send_us: int) -> None:
+        self.calls.append(("clock_ping", browser_send_us))
+
+    def feedback(self, **metrics: int) -> None:
+        self.calls.append(("feedback", metrics))
+
+    def stop(self) -> bool:
+        self.calls.append(("stop", None))
+        self._state.update(active=False, state="stopping")
+        return True
+
+    def reset(self, *, reason: str) -> bool:
+        self.calls.append(("reset", reason))
+        was_active = bool(self._state["active"])
+        self._state.update(active=False, state="failed", last_error=reason)
+        return was_active
+
+    def snapshot(self) -> dict[str, object]:
+        return dict(self._state)
+
+    def events(self, *, after: int = 0) -> list[dict[str, object]]:
+        return [
+            {
+                "id": 2,
+                "message": {
+                    "type": "evt.rtc.signal",
+                    "data": {"kind": "answer", "sdp": "v=0\r\n"},
+                },
+            }
+        ] if after < 2 else []
+
+
 def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
     return SimpleNamespace(
-        capabilities=("audio.stream", "microphone", "camera.capture"),
+        capabilities=(
+            "audio.stream",
+            "microphone",
+            "camera.capture",
+            "rtc.video.mjpeg.v1",
+        ),
         device_info={"firmware_version": "V3.1", "device_id": "watcher-test"},
         audio=FakeAudio(playback or FakePlayback()),
         camera=FakeCamera(),
@@ -98,11 +166,13 @@ def _service(
     *,
     online: bool = True,
     device_pairer=None,
+    rtc: object | None = None,
 ):
     sample_audio = tmp_path / "sample.wav"
     sample_audio.write_bytes(b"RIFF-test-audio")
     return module.MediaLabService(
         robot=robot or _robot(),
+        rtc=rtc or FakeRtc(),
         artifacts_dir=tmp_path / "artifacts",
         sample_audio=sample_audio,
         device_status_provider=lambda: {
@@ -136,6 +206,7 @@ def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -
         "audio.stream",
         "microphone",
         "camera.capture",
+        "rtc.video.mjpeg.v1",
     ]
     assert status["device"]["firmware_version"] == "V3.1"
     assert status["artifacts"] == {}
@@ -213,6 +284,7 @@ def test_online_transition_refreshes_the_sdk_device_snapshot(tmp_path: Path) -> 
     robot.refresh_device_info = refresh_device_info
     service = _service(module, tmp_path, robot, online=True)
 
+    service.maintain()
     status = service.status()
 
     assert refresh_calls == [1.0]
@@ -420,6 +492,199 @@ def test_http_app_serves_local_ui_actions_and_artifacts(tmp_path: Path) -> None:
     assert client.get("/artifacts/../app.py").status_code == 404
 
 
+def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
+    tmp_path: Path,
+) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    service = _service(module, tmp_path, rtc=rtc)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    started = client.post("/api/video/session/start", json={"mode": "video"})
+    offered = client.post(
+        "/api/video/session/signal",
+        json={"kind": "offer", "sdp": "v=0\r\n"},
+    )
+    candidate = client.post(
+        "/api/video/session/signal",
+        json={
+            "kind": "candidate",
+            "candidate": "candidate:1 1 UDP 1 192.168.1.2 1234 typ host",
+            "sdp_mid": "0",
+            "sdp_mline_index": 0,
+        },
+    )
+    heartbeat = client.post(
+        "/api/video/session/clock-ping",
+        json={"browser_send_us": 123456},
+    )
+    events = client.get("/api/video/session/events?after=0")
+    stopped = client.post("/api/video/session/stop")
+
+    assert started.status_code == 200
+    assert started.json()["session"]["state"] == "starting"
+    assert offered.status_code == candidate.status_code == heartbeat.status_code == 200
+    assert events.json()["events"][0]["message"]["type"] == "evt.rtc.signal"
+    assert stopped.json() == {"stopped": True}
+    assert rtc.calls == [
+        ("start", "video"),
+        ("offer", "v=0\r\n"),
+        (
+            "candidate",
+            ("candidate:1 1 UDP 1 192.168.1.2 1234 typ host", "0", 0),
+        ),
+        ("clock_ping", 123456),
+        ("stop", None),
+    ]
+
+
+def test_live_video_requires_explicit_firmware_capability(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities = ("camera.capture",)
+    service = _service(module, tmp_path, robot)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    response = client.post("/api/video/session/start", json={"mode": "video"})
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "rtc_unavailable"
+
+
+def test_live_video_stop_failure_keeps_media_operation_exclusive(tmp_path: Path) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    service = _service(module, tmp_path, rtc=rtc)
+    service.start_live_video()
+
+    def fail_stop() -> bool:
+        raise ConnectionError("device channel unavailable")
+
+    rtc.stop = fail_stop  # type: ignore[method-assign]
+
+    with pytest.raises(ConnectionError, match="device channel unavailable"):
+        service.stop_live_video()
+
+    with pytest.raises(module.MediaLabBusyError, match="live_video"):
+        service.play_audio()
+
+
+def test_live_video_offline_cleanup_resets_rtc_before_releasing_media_lock(tmp_path: Path) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    online = True
+    service = _service(module, tmp_path, rtc=rtc)
+    service.start_live_video()
+    service._device_status_provider = lambda: {  # noqa: SLF001 - simulate a disconnect
+        "online": online,
+        "state": "connected" if online else "idle",
+        "last_error": None,
+    }
+
+    online = False
+    status_before_maintenance = service.status()
+
+    assert ("reset", "device_offline") not in rtc.calls
+    assert status_before_maintenance["active_action"] == "live_video"
+    assert status_before_maintenance["rtc"]["active"] is True
+
+    service.maintain()
+    status = service.status()
+
+    assert ("reset", "device_offline") in rtc.calls
+    assert status["active_action"] is None
+    assert status["rtc"]["active"] is False
+
+    online = True
+    restarted = service.start_live_video()
+    assert restarted["session"]["active"] is True
+
+
+def test_maintenance_does_not_release_media_lock_while_live_video_is_starting(
+    tmp_path: Path,
+) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    rtc._state.update(active=False, state="stopped")
+    service = _service(module, tmp_path, rtc=rtc)
+    start_entered = threading.Event()
+    allow_start = threading.Event()
+    original_ensure_online = service._ensure_device_online  # noqa: SLF001 - race harness
+
+    def block_before_rtc_start() -> None:
+        original_ensure_online()
+        start_entered.set()
+        assert allow_start.wait(timeout=1.0)
+
+    service._ensure_device_online = block_before_rtc_start  # type: ignore[method-assign]  # noqa: SLF001
+    start_thread = threading.Thread(target=service.start_live_video)
+    start_thread.start()
+    assert start_entered.wait(timeout=1.0)
+
+    maintenance_thread = threading.Thread(target=service.maintain)
+    maintenance_thread.start()
+    maintenance_thread.join(timeout=0.05)
+    assert maintenance_thread.is_alive()
+    allow_start.set()
+    start_thread.join(timeout=1.0)
+    maintenance_thread.join(timeout=1.0)
+
+    assert not start_thread.is_alive()
+    assert not maintenance_thread.is_alive()
+    with pytest.raises(module.MediaLabBusyError, match="live_video"):
+        service.play_audio()
+
+
+def test_web_app_lifespan_runs_media_lab_maintenance(tmp_path: Path) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    maintenance_started = threading.Event()
+    original_maintain = service.maintain
+
+    def tracked_maintain() -> None:
+        original_maintain()
+        maintenance_started.set()
+
+    service.maintain = tracked_maintain  # type: ignore[method-assign]
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+
+    with TestClient(module.create_web_app(service, web_root=web_root)):
+        assert maintenance_started.wait(timeout=1.0)
+
+
+def test_browser_counts_drop_only_when_pending_frame_is_replaced() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+
+    assert "if (state.rtc.pendingFrame !== null) state.rtc.droppedFrames += 1;" in javascript
+    assert "state.rtc.pendingFrame = frame;\n      state.rtc.droppedFrames += 1;" not in javascript
+
+
+def test_browser_mdns_host_candidates_are_rewritten_without_touching_other_candidates() -> None:
+    module = _load_service_module()
+    offer = (
+        "v=0\r\n"
+        "a=candidate:1 1 udp 2113937151 browser-host.local 62768 typ host generation 0\r\n"
+        "a=candidate:2 1 udp 1677734911 203.0.113.20 45678 typ srflx\r\n"
+    )
+
+    rewritten = module._rewrite_mdns_host_candidates(offer, "192.168.1.110")
+
+    assert "browser-host.local" not in rewritten
+    assert "192.168.1.110 62768 typ host" in rewritten
+    assert "203.0.113.20 45678 typ srflx" in rewritten
+
+
 def test_http_app_maps_validation_and_busy_failures_to_stable_errors(tmp_path: Path) -> None:
     module = _load_service_module()
     service = _service(module, tmp_path)
@@ -462,6 +727,8 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "运行媒体全检",
         "扬声器流式播放",
         "相机拍照",
+        "相机实时画面",
+        "开启实时画面",
         "麦克风录音",
         "设备能力矩阵",
         "运行日志",
@@ -475,6 +742,10 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "正在发现设备",
         "系统空闲",
         "正在传输 PCM 示例音频",
+        "mjpeg-data",
+        "parseWjpgPacket",
+        'api("/api/video/session/start"',
+        "停止失败，请重试",
         "媒体全检通过",
     ):
         assert copy in javascript
