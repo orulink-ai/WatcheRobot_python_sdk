@@ -1,7 +1,6 @@
 import re
 from pathlib import Path
 
-from watcherobot import __version__
 from watcherobot.distribution.events import ErrorCode, ExitCode
 
 
@@ -54,7 +53,8 @@ def test_application_cli_reference_separates_human_and_machine_usage() -> None:
 def test_sdk_application_usage_guide_is_executable_and_matches_store_boundary() -> None:
     guide = USAGE_GUIDE_PATH.read_text(encoding="utf-8")
 
-    assert f"`{__version__}`" in guide
+    assert "`watcherobot.__version__`" in guide
+    assert "does not duplicate that value" in guide
     for command in (
         "app check",
         "app run",
@@ -103,7 +103,8 @@ def test_readmes_describe_sdk_store_commands_but_not_daemon_selection() -> None:
 def test_distribution_contract_covers_current_version_and_commands() -> None:
     contract = CONTRACT_PATH.read_text(encoding="utf-8")
 
-    assert f"`{__version__}`" in contract
+    assert "`watcherobot.__version__`" in contract
+    assert "`src/watcherobot/__init__.py`" in contract
     assert "`runtime-build.json` 的 `sdk_commit`" in contract
     assert not re.search(
         r"当前 Windows Desktop 随包 SDK 提交\s*\|\s*`[0-9a-f]{40}`",

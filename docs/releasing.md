@@ -30,8 +30,8 @@ PyPI 与 TestPyPI 均使用 OIDC Trusted Publishing，不在仓库、Runner 或�
 Tag 门禁还会验证该 commit 属于 `main`、关联恰好一个合法版本 PR，且 PyPI、TestPyPI 和 GitHub Release
 不存在冲突版本。
 
-当前源码版本是 `watcherobot==0.1.1a3`，对应既有 Tag 是 `v0.1.1a3`。自动发布启用后的下一次请求必须先
-查询 PyPI、TestPyPI、Tag 与 GitHub Release，以最新外部状态计算或校验目标版本。
+当前源码版本以 `src/watcherobot/__init__.py` 中的 `watcherobot.__version__` 为唯一真值。每次发布请求必须先
+查询 PyPI、TestPyPI、Tag 与 GitHub Release，以最新外部状态计算或校验目标版本，文档不重复维护当前版本号。
 
 ## CI 与不可变制品
 
@@ -95,14 +95,14 @@ TestPyPI 安装验证需要让 SDK 来自 TestPyPI，同时从正式 PyPI 解析
 python -m pip install `
   --index-url https://test.pypi.org/simple/ `
   --extra-index-url https://pypi.org/simple/ `
-  watcherobot==0.1.1a3
+  watcherobot==<version>
 ```
 
 正式发布完成后验证：
 
 ```powershell
 python -m venv .venv-pypi-test
-.venv-pypi-test\Scripts\python -m pip install watcherobot==0.1.1a3
+.venv-pypi-test\Scripts\python -m pip install watcherobot==<version>
 .venv-pypi-test\Scripts\python -c "import watcherobot; print(watcherobot.__version__)"
 .venv-pypi-test\Scripts\watcherobot --help
 ```
