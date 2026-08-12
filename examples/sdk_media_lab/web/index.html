@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <title>WatcheRobot SDK 媒体实验室</title>
+    <title>WatcheRobot SDK 测试台</title>
     <link rel="stylesheet" href="/assets/styles.css" />
     <script src="/assets/app.js" type="module"></script>
   </head>
@@ -14,8 +14,8 @@
       <div class="identity">
         <span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <div>
-          <p class="eyebrow">WATCHE / 媒体诊断台 01</p>
-          <h1>SDK 媒体实验室</h1>
+          <p class="eyebrow">WATCHE / HARDWARE SDK CONSOLE 01</p>
+          <h1>SDK 测试台</h1>
         </div>
       </div>
       <div class="connection" id="connectionBadge" data-state="waiting">
@@ -31,16 +31,16 @@
       <section class="mission-panel" aria-labelledby="missionTitle">
         <div>
           <p class="section-index">00 / 系统说明</p>
-          <h2 id="missionTitle">一张工作台，验证五条媒体链路。</h2>
+          <h2 id="missionTitle">一张工作台，验证整台机器人。</h2>
           <p class="mission-copy">
-            本地测试台通过 SDK Runtime 驱动当前托管应用。实时画面、全双工通话、扬声器、相机和麦克风测试
-            始终通过已授权的设备通道执行，不会建立额外连接。
+            从运动、灯光到相机和全双工音频，所有测试均由当前 Python Application 调用公开 SDK API，
+            并通过已授权的设备通道执行。
           </p>
         </div>
         <div class="run-block">
           <button class="primary-action" id="runAllButton" type="button">
-            <span>运行媒体全检</span>
-            <small>扬声器 → 相机 → 麦克风</small>
+            <span>运行基础全检</span>
+            <small>运动 → 灯光 → 扬声器 → 相机 → 麦克风</small>
           </button>
           <p id="activeOperation" class="active-operation" aria-live="polite">系统空闲</p>
         </div>
@@ -50,7 +50,7 @@
         <div>
           <p class="section-index">00.5 / 设备接入</p>
           <h2 id="pairingTitle">连接机器人</h2>
-          <p>输入设备屏幕上的六位配对码。配对请求由本机 SDK Daemon 管理，配对码不会保存在实验室日志中。</p>
+          <p>输入设备屏幕上的六位配对码。配对请求由本机 SDK Daemon 管理，配对码不会保存在测试台日志中。</p>
         </div>
         <form class="pairing-form" id="pairingForm">
           <label for="pairingCode">六位配对码</label>
@@ -90,10 +90,58 @@
         <div><span>最近同步</span><strong id="lastSync">—</strong></div>
       </section>
 
+      <section class="actuator-grid" aria-label="执行器测试台">
+        <article class="control-card motion-card" data-capability="motion">
+          <div class="station-head">
+            <p class="section-index">01 / 运动控制</p>
+            <span class="capability-state">检测中</span>
+          </div>
+          <h2>云台姿态</h2>
+          <p>拖动水平与俯仰角度，通过 <code>robot.motion.move_to()</code> 平滑移动机器人。</p>
+          <div class="motion-visual" aria-hidden="true"><span id="motionHead"></span><i></i></div>
+          <div class="control-fields">
+            <label>水平 PAN <strong id="panValue">90°</strong><input id="panControl" type="range" min="0" max="180" value="90" /></label>
+            <label>俯仰 TILT <strong id="tiltValue">90°</strong><input id="tiltControl" type="range" min="0" max="180" value="90" /></label>
+          </div>
+          <div class="preset-row">
+            <button type="button" data-motion-preset="left">向左</button>
+            <button type="button" data-motion-preset="center">回中</button>
+            <button type="button" data-motion-preset="right">向右</button>
+          </div>
+          <div class="button-row">
+            <button class="station-action" id="applyMotionButton" type="button">执行移动</button>
+            <button class="quiet-action" id="stopMotionButton" type="button">立即停止</button>
+          </div>
+          <output class="station-result" id="motionResult">等待控制</output>
+        </article>
+
+        <article class="control-card light-card" data-capability="light">
+          <div class="station-head">
+            <p class="section-index">02 / 灯光控制</p>
+            <span class="capability-state">检测中</span>
+          </div>
+          <h2>机身灯效</h2>
+          <p>设置颜色、亮度、灯区或循环效果，通过 <code>robot.lights</code> 公共接口下发。</p>
+          <div class="light-visual" id="lightVisual" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="light-fields">
+            <label>颜色<input id="lightColor" type="color" value="#d9ff57" /></label>
+            <label>亮度 <strong id="brightnessValue">70%</strong><input id="lightBrightness" type="range" min="0" max="100" value="70" /></label>
+            <label>灯区<select id="lightZone"><option value="all">全部</option><option value="side">侧面</option><option value="bottom">底部</option></select></label>
+            <label>效果<select id="lightEffect"><option value="breathing">呼吸</option><option value="blink">闪烁</option><option value="rainbow">彩虹</option><option value="status_pulse">状态脉冲</option></select></label>
+          </div>
+          <div class="button-row">
+            <button class="station-action" id="applyLightButton" type="button">应用常亮</button>
+            <button class="quiet-action" id="playLightEffectButton" type="button">播放效果</button>
+            <button class="quiet-action" id="lightsOffButton" type="button">关闭</button>
+          </div>
+          <output class="station-result" id="lightResult">等待控制</output>
+        </article>
+      </section>
+
       <section class="live-video-panel" id="liveVideoPanel" data-available="false" aria-labelledby="liveVideoTitle">
         <div class="live-video-copy">
           <div class="station-head">
-            <p class="section-index">01 / 实时视频</p>
+            <p class="section-index">03 / 实时视频</p>
             <span class="capability-state" id="liveVideoCapability">检测中</span>
           </div>
           <h2 id="liveVideoTitle">相机实时画面</h2>
@@ -132,7 +180,7 @@
       <section class="rtc-audio-panel" id="rtcAudioPanel" data-available="false" aria-labelledby="rtcAudioTitle">
         <div>
           <div class="station-head">
-            <p class="section-index">02 / RTC 音频</p>
+            <p class="section-index">04 / RTC 音频</p>
             <span class="capability-state" id="rtcAudioCapability">检测中</span>
           </div>
           <h2 id="rtcAudioTitle">全双工音频通话</h2>
@@ -164,7 +212,7 @@
       <section class="stations" aria-label="媒体测试台">
         <article class="station station-audio" data-capability="audio.stream">
           <div class="station-head">
-            <p class="section-index">03 / 音频下行</p>
+            <p class="section-index">05 / 音频下行</p>
             <span class="capability-state">检测中</span>
           </div>
           <h2>扬声器流式播放</h2>
@@ -184,7 +232,7 @@
 
         <article class="station station-camera" data-capability="camera.capture">
           <div class="station-head">
-            <p class="section-index">04 / 图像采集</p>
+            <p class="section-index">06 / 图像采集</p>
             <span class="capability-state">检测中</span>
           </div>
           <h2>相机拍照</h2>
@@ -208,7 +256,7 @@
 
         <article class="station station-microphone" data-capability="microphone">
           <div class="station-head">
-            <p class="section-index">05 / 音频上行</p>
+            <p class="section-index">07 / 音频上行</p>
             <span class="capability-state">检测中</span>
           </div>
           <h2>麦克风录音</h2>
@@ -231,7 +279,7 @@
       <section class="lower-grid">
         <article class="capability-panel">
           <div class="panel-heading">
-            <div><p class="section-index">06 / 能力合同</p><h2>设备能力矩阵</h2></div>
+            <div><p class="section-index">08 / 能力合同</p><h2>设备能力矩阵</h2></div>
             <span id="capabilitySummary">同步中</span>
           </div>
           <div class="capability-grid" id="capabilityGrid" aria-live="polite"></div>
@@ -239,7 +287,7 @@
 
         <article class="event-panel">
           <div class="panel-heading">
-            <div><p class="section-index">07 / 运行追踪</p><h2>运行日志</h2></div>
+            <div><p class="section-index">09 / 运行追踪</p><h2>运行日志</h2></div>
             <button class="text-button" id="clearVisualLog" type="button">清空显示</button>
           </div>
           <ol class="event-log" id="eventLog" aria-live="polite"></ol>

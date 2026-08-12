@@ -1,4 +1,4 @@
-"""Local-only HTTP service for the standalone SDK Media Lab Application."""
+"""Local-only HTTP service for the standalone SDK Test Bench Application."""
 
 from __future__ import annotations
 
@@ -49,6 +49,14 @@ class MediaLabBusyError(RuntimeError):
 
 class MediaLabDeviceOfflineError(RuntimeError):
     """Raised when a hardware action is attempted without an online Watcher."""
+
+
+class MediaLabCapabilityError(RuntimeError):
+    """Raised when firmware does not advertise a requested public SDK domain."""
+
+    def __init__(self, capability: str) -> None:
+        super().__init__(f"Robot firmware does not advertise required capability: {capability}")
+        self.capability = capability
 
 
 class MediaLabPairingError(RuntimeError):
@@ -144,6 +152,23 @@ class RecordMicrophoneRequest(BaseModel):
     duration: float = Field(default=5.0, gt=0.0, le=30.0, allow_inf_nan=False)
 
 
+class MotionMoveRequest(BaseModel):
+    pan_deg: int = Field(ge=0, le=180)
+    tilt_deg: int = Field(ge=0, le=180)
+    duration_ms: int = Field(default=600, ge=100, le=5000)
+
+
+class LightColorRequest(BaseModel):
+    color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
+    brightness: float = Field(default=1.0, ge=0.0, le=1.0, allow_inf_nan=False)
+    zone: str = Field(default="all", pattern=r"^(all|side|bottom)$")
+
+
+class LightEffectRequest(LightColorRequest):
+    effect: str = Field(pattern=r"^(blink|breathing|rainbow|status_pulse)$")
+    period_ms: int = Field(default=800, ge=100, le=5000)
+
+
 class PairDeviceRequest(BaseModel):
     pairing_code: str = Field(pattern=r"^[0-9]{6}$")
     device_ip: str | None = None
@@ -213,7 +238,7 @@ class MediaLabService:
         self._refreshed_connection_token: str | None = None
         self._live_video_lock_held = False
         self._browser_host_ipv4: str | None = None
-        self._append_event("system", "Media Lab ready", "ok")
+        self._append_event("system", "SDK Test Bench ready", "ok")
 
     def status(self) -> dict[str, object]:
         with self._state_lock:
@@ -322,6 +347,64 @@ class MediaLabService:
         self._robot.audio.stop()
         self._append_event("stop_audio", "Audio stop requested", "ok")
         return {"stopped": True}
+
+    def move_motion(self, *, pan_deg: int, tilt_deg: int, duration_ms: int) -> dict[str, object]:
+        with self._operation("motion_move"):
+            self._ensure_capability("motion")
+            job = self._robot.motion.move_to(
+                pan_deg=pan_deg,
+                tilt_deg=tilt_deg,
+                duration_ms=duration_ms,
+                profile="ease_in_out",
+            )
+            job.wait(duration_ms / 1000.0 + 2.0)
+            return {
+                "completed": True,
+                "operation_id": job.id,
+                "pan_deg": pan_deg,
+                "tilt_deg": tilt_deg,
+            }
+
+    def stop_motion(self) -> dict[str, object]:
+        self._ensure_device_online()
+        self._ensure_capability("motion")
+        self._robot.motion.stop()
+        self._append_event("motion_stop", "Motion stop requested", "ok")
+        return {"stopped": True}
+
+    def set_light_color(self, *, color: str, brightness: float, zone: str) -> dict[str, object]:
+        with self._operation("light_color"):
+            self._ensure_capability("light")
+            self._robot.lights.set_color(color, brightness=brightness, zone=zone)
+            return {"applied": True}
+
+    def play_light_effect(
+        self,
+        *,
+        effect: str,
+        color: str,
+        brightness: float,
+        zone: str,
+        period_ms: int,
+    ) -> dict[str, object]:
+        with self._operation("light_effect"):
+            self._ensure_capability("light")
+            job = self._robot.lights.play_effect(
+                effect,
+                color=color,
+                brightness=brightness,
+                zone=zone,
+                period_ms=period_ms,
+                repeat=0,
+            )
+            return {"started": True, "operation_id": job.id}
+
+    def turn_lights_off(self) -> dict[str, object]:
+        self._ensure_device_online()
+        self._ensure_capability("light")
+        self._robot.lights.off()
+        self._append_event("light_off", "Lights off requested", "ok")
+        return {"off": True}
 
     def capture_photo(self) -> dict[str, object]:
         with self._operation("capture_photo"):
@@ -473,6 +556,10 @@ class MediaLabService:
         if self._device_status().get("online") is not True:
             raise MediaLabDeviceOfflineError("Watcher device is offline")
 
+    def _ensure_capability(self, capability: str) -> None:
+        if capability not in self._robot.capabilities:
+            raise MediaLabCapabilityError(capability)
+
     def _ensure_live_video_active(self) -> None:
         self._ensure_device_online()
         with self._state_lock:
@@ -599,7 +686,7 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                _LOGGER.exception("SDK Media Lab maintenance failed")
+                _LOGGER.exception("SDK Test Bench maintenance failed")
             await asyncio.sleep(_MAINTENANCE_INTERVAL_SECONDS)
 
     @asynccontextmanager
@@ -618,7 +705,7 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
                 pass
 
     app = FastAPI(
-        title="WatcheRobot SDK Media Lab",
+        title="WatcheRobot SDK Test Bench",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -699,6 +786,20 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
             media_type="text/javascript",
         )
 
+    @app.exception_handler(MediaLabCapabilityError)
+    async def capability_handler(
+        _request: Request,
+        error: MediaLabCapabilityError,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "capability_unavailable",
+                "message": str(error),
+                "capability": error.capability,
+            },
+        )
+
     @app.get("/assets/styles.css")
     async def stylesheet() -> FileResponse:
         return FileResponse(web_root / "styles.css", media_type="text/css")
@@ -726,6 +827,43 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     @app.post("/api/actions/stop-audio")
     async def stop_audio() -> dict[str, object]:
         return await _run_action(service.stop_audio)
+
+    @app.post("/api/controls/motion/move")
+    async def move_motion(request: MotionMoveRequest) -> dict[str, object]:
+        return await _run_action(
+            service.move_motion,
+            pan_deg=request.pan_deg,
+            tilt_deg=request.tilt_deg,
+            duration_ms=request.duration_ms,
+        )
+
+    @app.post("/api/controls/motion/stop")
+    async def stop_motion() -> dict[str, object]:
+        return await _run_action(service.stop_motion)
+
+    @app.post("/api/controls/lights/color")
+    async def set_light_color(request: LightColorRequest) -> dict[str, object]:
+        return await _run_action(
+            service.set_light_color,
+            color=request.color,
+            brightness=request.brightness,
+            zone=request.zone,
+        )
+
+    @app.post("/api/controls/lights/effect")
+    async def play_light_effect(request: LightEffectRequest) -> dict[str, object]:
+        return await _run_action(
+            service.play_light_effect,
+            effect=request.effect,
+            color=request.color,
+            brightness=request.brightness,
+            zone=request.zone,
+            period_ms=request.period_ms,
+        )
+
+    @app.post("/api/controls/lights/off")
+    async def turn_lights_off() -> dict[str, object]:
+        return await _run_action(service.turn_lights_off)
 
     @app.post("/api/actions/capture-photo")
     async def capture_photo() -> dict[str, object]:
@@ -790,6 +928,7 @@ async def _run_action(callback: Any, **kwargs: object) -> dict[str, object]:
         return await asyncio.to_thread(callback, **kwargs)
     except (
         MediaLabBusyError,
+        MediaLabCapabilityError,
         MediaLabDeviceOfflineError,
         MediaLabPairingError,
         MediaLabRtcError,
@@ -821,6 +960,7 @@ def _action_label(action: str) -> str:
 __all__ = [
     "DaemonDeviceStatusProvider",
     "MediaLabBusyError",
+    "MediaLabCapabilityError",
     "MediaLabDeviceOfflineError",
     "MediaLabPairingError",
     "MediaLabRtcError",

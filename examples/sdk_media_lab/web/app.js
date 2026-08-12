@@ -51,6 +51,24 @@ const elements = {
   capabilitySummary: document.querySelector("#capabilitySummary"),
   eventLog: document.querySelector("#eventLog"),
   runAllButton: document.querySelector("#runAllButton"),
+  panControl: document.querySelector("#panControl"),
+  panValue: document.querySelector("#panValue"),
+  tiltControl: document.querySelector("#tiltControl"),
+  tiltValue: document.querySelector("#tiltValue"),
+  motionHead: document.querySelector("#motionHead"),
+  applyMotionButton: document.querySelector("#applyMotionButton"),
+  stopMotionButton: document.querySelector("#stopMotionButton"),
+  motionResult: document.querySelector("#motionResult"),
+  lightColor: document.querySelector("#lightColor"),
+  lightBrightness: document.querySelector("#lightBrightness"),
+  brightnessValue: document.querySelector("#brightnessValue"),
+  lightZone: document.querySelector("#lightZone"),
+  lightEffect: document.querySelector("#lightEffect"),
+  lightVisual: document.querySelector("#lightVisual"),
+  applyLightButton: document.querySelector("#applyLightButton"),
+  playLightEffectButton: document.querySelector("#playLightEffectButton"),
+  lightsOffButton: document.querySelector("#lightsOffButton"),
+  lightResult: document.querySelector("#lightResult"),
   playAudioButton: document.querySelector("#playAudioButton"),
   stopAudioButton: document.querySelector("#stopAudioButton"),
   capturePhotoButton: document.querySelector("#capturePhotoButton"),
@@ -104,6 +122,11 @@ const actionLabels = {
   device_pairing: "设备配对",
   live_video: "实时视频",
   rtc_audio: "全双工音频",
+  motion_move: "运动控制",
+  motion_stop: "运动停止",
+  light_color: "灯光设置",
+  light_effect: "灯光效果",
+  light_off: "灯光关闭",
   system: "系统",
 };
 
@@ -153,7 +176,7 @@ function localizeError(message, status) {
   if (!message) return `请求失败（状态码 ${status}）`;
   if (typeof message !== "string") return `请求失败（状态码 ${status}）`;
   const busyMatch = message.match(/^media lab is busy with (.+)$/);
-  if (busyMatch) return `媒体实验室正忙于${actionLabel(busyMatch[1])}`;
+  if (busyMatch) return `SDK 测试台正忙于${actionLabel(busyMatch[1])}`;
   const durationMatch = message.match(/^duration must be (.+)$/);
   if (durationMatch) return `录音时长必须为 ${durationMatch[1]}`;
   if (message.startsWith("Robot firmware does not advertise required RTC capabilities:")) {
@@ -165,7 +188,7 @@ function localizeError(message, status) {
 }
 
 function localizeEvent(event) {
-  if (event.message === "Media Lab ready") return "媒体实验室已就绪";
+  if (["Media Lab ready", "SDK Test Bench ready"].includes(event.message)) return "SDK 测试台已就绪";
   if (event.message === "Device pairing started") return "设备配对已开始";
   if (event.message === "Audio stop requested") return "已请求停止播放";
   const label = actionLabel(event.action);
@@ -211,7 +234,7 @@ function renderStatus(status) {
     );
   }
 
-  document.querySelectorAll(".station[data-capability]").forEach((station) => {
+  document.querySelectorAll("[data-capability]").forEach((station) => {
     const available = status.capabilities.includes(station.dataset.capability);
     station.dataset.available = String(status.connected && available);
     station.querySelector(".capability-state").textContent = !status.connected
@@ -239,10 +262,17 @@ function renderStatus(status) {
   elements.stopRtcAudioButton.disabled = !rtcAudioActive;
   updateRtcAudioHealth();
   elements.playAudioButton.disabled = unavailable || !hasCapability("audio.stream");
-  elements.stopAudioButton.disabled = unavailable || !hasCapability("audio.stream");
+  elements.stopAudioButton.disabled = !status.connected || !hasCapability("audio.stream");
   elements.capturePhotoButton.disabled = unavailable || !hasCapability("camera.capture");
   elements.recordMicrophoneButton.disabled = unavailable || !hasCapability("microphone");
-  elements.runAllButton.disabled = unavailable || !["audio.stream", "camera.capture", "microphone"].every(hasCapability);
+  elements.applyMotionButton.disabled = unavailable || !hasCapability("motion");
+  elements.stopMotionButton.disabled = !status.connected || !hasCapability("motion");
+  elements.applyLightButton.disabled = unavailable || !hasCapability("light");
+  elements.playLightEffectButton.disabled = unavailable || !hasCapability("light");
+  elements.lightsOffButton.disabled = unavailable || !hasCapability("light");
+  elements.runAllButton.disabled = unavailable || ![
+    "motion", "light", "audio.stream", "camera.capture", "microphone",
+  ].every(hasCapability);
 
   elements.capabilityGrid.replaceChildren(...status.capabilities.map((capability) => {
     const chip = document.createElement("span");
@@ -284,19 +314,20 @@ async function refreshStatus({ quiet = true } = {}) {
     renderStatus(await api("/api/status"));
   } catch (error) {
     elements.connectionBadge.dataset.state = "offline";
-    elements.connectionText.textContent = "实验室离线";
+    elements.connectionText.textContent = "测试台离线";
     if (!quiet) notify(error.message, "error");
   }
 }
 
-async function runAction({ path, result, pending, complete, body, station }) {
-  if (state.localBusy) return null;
+async function runAction({ path, result, pending, complete, body, station, interrupt = false }) {
+  if (state.localBusy && !interrupt) return null;
   if (!state.status?.connected) {
     const error = new Error("设备已断开，请重新连接后再测试");
     notify(error.message, "error");
     throw error;
   }
-  state.localBusy = true;
+  const ownsBusyState = !interrupt;
+  if (ownsBusyState) state.localBusy = true;
   if (station) station.dataset.running = "true";
   setResult(result, pending, "running");
   await refreshStatus();
@@ -314,7 +345,7 @@ async function runAction({ path, result, pending, complete, body, station }) {
     notify(error.message, "error");
     throw error;
   } finally {
-    state.localBusy = false;
+    if (ownsBusyState) state.localBusy = false;
     if (station) station.dataset.running = "false";
     await refreshStatus();
   }
@@ -448,6 +479,88 @@ function resetLiveVideoMetrics() {
   elements.liveVideoResolution.textContent = "—";
   elements.liveVideoDrops.textContent = "0";
   elements.liveVideoFrameAge.textContent = "NO FRAME";
+}
+
+function updateMotionPreview() {
+  const pan = Number(elements.panControl.value);
+  const tilt = Number(elements.tiltControl.value);
+  elements.panValue.textContent = `${pan}°`;
+  elements.tiltValue.textContent = `${tilt}°`;
+  elements.motionHead.style.transform = `rotate(${(pan - 90) * 0.42}deg) translateY(${(tilt - 90) * 0.18}px)`;
+}
+
+async function applyMotion() {
+  const pan = Number(elements.panControl.value);
+  const tilt = Number(elements.tiltControl.value);
+  return runAction({
+    path: "/api/controls/motion/move",
+    body: { pan_deg: pan, tilt_deg: tilt, duration_ms: 600 },
+    result: elements.motionResult,
+    pending: `正在移动到 PAN ${pan}° / TILT ${tilt}°…`,
+    complete: () => `移动完成：PAN ${pan}° / TILT ${tilt}°`,
+    station: elements.applyMotionButton.closest(".control-card"),
+  });
+}
+
+async function stopMotion() {
+  return runAction({
+    path: "/api/controls/motion/stop",
+    result: elements.motionResult,
+    pending: "正在停止运动…",
+    complete: () => "运动已停止",
+    interrupt: true,
+  });
+}
+
+function updateLightPreview() {
+  const color = elements.lightColor.value;
+  const brightness = Number(elements.lightBrightness.value);
+  elements.brightnessValue.textContent = `${brightness}%`;
+  elements.lightVisual.style.setProperty("--light-color", color);
+  elements.lightVisual.style.setProperty("--light-alpha", String(Math.max(0.08, brightness / 100)));
+}
+
+async function applyLight() {
+  const body = {
+    color: elements.lightColor.value,
+    brightness: Number(elements.lightBrightness.value) / 100,
+    zone: elements.lightZone.value,
+  };
+  return runAction({
+    path: "/api/controls/lights/color",
+    body,
+    result: elements.lightResult,
+    pending: "正在应用灯光…",
+    complete: () => `灯光已应用：${body.color.toUpperCase()} / ${Math.round(body.brightness * 100)}%`,
+    station: elements.applyLightButton.closest(".control-card"),
+  });
+}
+
+async function playLightEffect() {
+  const body = {
+    effect: elements.lightEffect.value,
+    color: elements.lightColor.value,
+    brightness: Number(elements.lightBrightness.value) / 100,
+    zone: elements.lightZone.value,
+    period_ms: 800,
+  };
+  return runAction({
+    path: "/api/controls/lights/effect",
+    body,
+    result: elements.lightResult,
+    pending: "正在启动灯效…",
+    complete: () => `灯效已启动：${elements.lightEffect.selectedOptions[0].textContent}`,
+    station: elements.applyLightButton.closest(".control-card"),
+  });
+}
+
+async function lightsOff() {
+  return runAction({
+    path: "/api/controls/lights/off",
+    result: elements.lightResult,
+    pending: "正在关闭灯光…",
+    complete: () => "灯光已关闭",
+  });
 }
 
 function rtcEndpoint(action) {
@@ -1001,15 +1114,17 @@ async function recordMicrophone() {
 }
 
 async function runAll() {
-  const allowed = window.confirm("媒体全检将播放声音、拍摄一张照片并录制麦克风。是否继续？");
+  const allowed = window.confirm("基础全检将移动云台、点亮灯光、播放声音、拍照并录制麦克风。请确保机器人周围无遮挡，是否继续？");
   if (!allowed) return;
   try {
+    await applyMotion();
+    await applyLight();
     await playAudio();
     await capturePhoto();
     await recordMicrophone();
-    notify("媒体全检通过：三条链路均已完成", "ok");
+    notify("基础全检通过：执行器与媒体链路均已完成", "ok");
   } catch (_) {
-    notify("媒体全检已在首个失败环节停止", "error");
+    notify("基础全检已在首个失败环节停止", "error");
   }
 }
 
@@ -1020,6 +1135,23 @@ function formatBytes(value) {
 }
 
 elements.playAudioButton.addEventListener("click", () => { playAudio().catch(() => {}); });
+elements.panControl.addEventListener("input", updateMotionPreview);
+elements.tiltControl.addEventListener("input", updateMotionPreview);
+document.querySelectorAll("[data-motion-preset]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const preset = button.dataset.motionPreset;
+    elements.panControl.value = preset === "left" ? "30" : preset === "right" ? "150" : "90";
+    elements.tiltControl.value = "90";
+    updateMotionPreview();
+  });
+});
+elements.applyMotionButton.addEventListener("click", () => { applyMotion().catch(() => {}); });
+elements.stopMotionButton.addEventListener("click", () => { stopMotion().catch(() => {}); });
+elements.lightColor.addEventListener("input", updateLightPreview);
+elements.lightBrightness.addEventListener("input", updateLightPreview);
+elements.applyLightButton.addEventListener("click", () => { applyLight().catch(() => {}); });
+elements.playLightEffectButton.addEventListener("click", () => { playLightEffect().catch(() => {}); });
+elements.lightsOffButton.addEventListener("click", () => { lightsOff().catch(() => {}); });
 elements.pairingForm.addEventListener("submit", (event) => {
   event.preventDefault();
   pairDevice();
@@ -1027,9 +1159,14 @@ elements.pairingForm.addEventListener("submit", (event) => {
 elements.pairingCode.addEventListener("input", () => {
   elements.pairingCode.value = elements.pairingCode.value.replace(/[^0-9]/g, "").slice(0, 6);
 });
-elements.stopAudioButton.addEventListener("click", async () => {
-  try { await api("/api/actions/stop-audio", { method: "POST" }); notify("已请求停止播放"); }
-  catch (error) { notify(error.message, "error"); }
+elements.stopAudioButton.addEventListener("click", () => {
+  runAction({
+    path: "/api/actions/stop-audio",
+    result: elements.audioResult,
+    pending: "正在停止播放…",
+    complete: () => "已请求停止播放",
+    interrupt: true,
+  }).catch(() => {});
 });
 elements.capturePhotoButton.addEventListener("click", () => { capturePhoto().catch(() => {}); });
 elements.startLiveVideoButton.addEventListener("click", () => { startLiveVideo(); });
@@ -1060,3 +1197,5 @@ window.addEventListener("pagehide", () => {
 setInterval(refreshStatus, 1000);
 refreshStatus({ quiet: false });
 drawEmptyWaveform();
+updateMotionPreview();
+updateLightPreview();
