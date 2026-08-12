@@ -1,0 +1,166 @@
+name: Prepare SDK release
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: "显式 PEP 440 版本；飞书指令使用此字段"
+        required: false
+        type: string
+      release_type:
+        description: "未指定显式版本时使用的版本增量"
+        required: false
+        type: choice
+        options: [none, prerelease, stable, minor, major]
+        default: none
+      source:
+        description: "发布请求来源"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main')
+    # Trusted orchestration never shares an execution identity with pull-request code.
+    runs-on: [self-hosted, Linux, X64, sdk-orchestrator]
+    steps:
+      - name: Resolve one explicit release request
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          INPUT_TARGET: ${{ inputs.target_version }}
+          INPUT_TYPE: ${{ inputs.release_type }}
+          INPUT_SOURCE: ${{ inputs.source }}
+          SOURCE_PR: ${{ github.event.pull_request.number }}
+          SOURCE_TITLE: ${{ github.event.pull_request.title }}
+        shell: bash
+        run: |
+          python - <<'PY' >> "${GITHUB_OUTPUT}"
+          import json
+          import os
+
+          if os.environ["EVENT_NAME"] == "workflow_dispatch":
+              target = os.environ.get("INPUT_TARGET", "").strip()
+              release_type = os.environ.get("INPUT_TYPE", "").strip()
+              if release_type == "none":
+                  release_type = ""
+              if bool(target) == bool(release_type):
+                  raise SystemExit("Exactly one of target_version or release_type is required")
+              print(f"target={target}")
+              print(f"release_type={release_type}")
+              print(f"source={os.environ['INPUT_SOURCE'].strip()}")
+              print("skip=false")
+          else:
+              mapping = {
+                  "release:prerelease": "prerelease",
+                  "release:stable": "stable",
+                  "release:minor": "minor",
+                  "release:major": "major",
+              }
+              labels = json.loads(os.environ.get("LABELS_JSON") or "[]")
+              selected = [mapping[label] for label in labels if label in mapping]
+              if len(selected) > 1:
+                  raise SystemExit("A merged PR may have only one release:* label")
+              if not selected:
+                  print("skip=true")
+              else:
+                  print("target=")
+                  print(f"release_type={selected[0]}")
+                  print(
+                      "source=PR #{}：{}".format(
+                          os.environ["SOURCE_PR"], os.environ["SOURCE_TITLE"].strip()
+                      )
+                  )
+                  print("skip=false")
+          PY
+
+      - name: Mint repository-scoped GitHub App token
+        if: steps.release.outputs.skip == 'false'
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.ORULINK_RELEASE_APP_ID }}
+          private-key: ${{ secrets.ORULINK_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: WatcheRobot_python_sdk
+
+      - name: Check out main
+        if: steps.release.outputs.skip == 'false'
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/setup-python@v6
+        if: steps.release.outputs.skip == 'false'
+        with:
+          python-version: "3.12"
+
+      - name: Prepare version branch and pull request
+        if: steps.release.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_TYPE: ${{ steps.release.outputs.release_type }}
+          TARGET_VERSION: ${{ steps.release.outputs.target }}
+          RELEASE_SOURCE: ${{ steps.release.outputs.source }}
+        shell: bash
+        run: |
+          python -m pip install --upgrade packaging
+          arguments=(--source "${RELEASE_SOURCE}")
+          if [[ -n "${TARGET_VERSION}" ]]; then
+            arguments+=(--target "${TARGET_VERSION}")
+          else
+            arguments+=(--release-type "${RELEASE_TYPE}")
+          fi
+          version=$(python tools/prepare_release.py "${arguments[@]}")
+          python tools/check_release_availability.py "${version}" --repository "${GITHUB_REPOSITORY}"
+          branch="release/watcherobot-${version}"
+          existing=$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${branch}" --state open --json number --jq 'length')
+          if [[ "${existing}" != "0" ]]; then
+            echo "Release PR already exists for ${version}; nothing to do."
+            exit 0
+          fi
+          git switch -c "${branch}"
+          git config user.name "orulink-release-bot"
+          git config user.email "release-bot@users.noreply.github.com"
+          git add src/watcherobot/__init__.py CHANGELOG.md
+          git commit -m "chore(release): 准备发布 watcherobot ${version}" \
+            -m "由 ${RELEASE_SOURCE} 触发。此提交仅更新 SDK 唯一版本源和中文更新日志，正式发布仍需版本 PR 审查、标签门禁、TestPyPI 验证与 GitHub Environment 人工批准。"
+          git push origin "${branch}"
+          body=$(cat <<EOF
+          ## 发布来源
+
+          - 来源：${RELEASE_SOURCE}
+          - 发布类型：${RELEASE_TYPE:-显式版本}
+          - 目标版本：${version}
+
+          ## 门禁
+
+          - 本 PR 必须人工审查和合并
+          - 合并后由陆骁创建 annotated tag
+          - Tag 构建先发布并验证 TestPyPI
+          - 正式 PyPI 发布需要 GitHub Environment 人工批准
+
+          ## 已知风险与实机状态
+
+          - 本 PR 只准备版本元数据，不代表已完成实机验收
+          - 稳定版发布前必须补充 RTC 实机验证结果
+          EOF
+          )
+          gh pr create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --base main \
+            --head "${branch}" \
+            --title "chore(release): 发布 watcherobot ${version}" \
+            --label "release:version" \
+            --body "${body}"

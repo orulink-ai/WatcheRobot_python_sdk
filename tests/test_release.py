@@ -25,56 +25,135 @@ def test_releasing_uses_one_next_patch_version_family() -> None:
     assert "0.1.0rc1" not in releasing
 
 
-def test_publish_workflow_separates_test_and_production_indexes() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+def test_release_workflow_separates_test_and_production_indexes() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
-    assert "pull_request:" in workflow
-    assert "push:\n    branches: [main]" in workflow
-    assert "workflow_dispatch:" in workflow
-    assert "release:" in workflow
-    assert "types: [published]" in workflow
+    assert "tags: [\"v*\"]" in workflow
+    assert "pull_request:" not in workflow
+    assert "workflow_dispatch:" not in workflow
     assert "environment: testpypi" in workflow
     assert "environment:\n      name: pypi" in workflow
     assert "id-token: write" in workflow
     assert "https://test.pypi.org/legacy/" in workflow
-    assert "pypa/gh-action-pypi-publish@release/v1" in workflow
+    assert "astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b" in workflow
+    assert workflow.count("uv publish") == 2
+    assert workflow.count("--trusted-publishing always") == 2
+    assert "UV_PUBLISH_CHECK_URL: https://test.pypi.org/simple/" in workflow
     assert "actions/upload-artifact@v7" in workflow
-    assert workflow.count("actions/download-artifact@v8") == 2
+    assert workflow.count("actions/download-artifact@v8") >= 3
+    assert workflow.count("watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}") >= 4
+    assert "runs-on: [self-hosted, Linux, X64, sdk-release]" in workflow
+    assert "tools/check_release_gate.py" in workflow
+    assert 'tag_commit=$(git rev-list -n 1 "${GITHUB_REF_NAME}")' in workflow
+    assert '--target "${{ needs.gate.outputs.commit }}"' in workflow
+    assert "sha256sum dist/* > SHA256SUMS" in workflow
+    assert "name: Clean release workspace before use" in workflow
+    assert "name: Clean release workspace after use" in workflow
+    assert "artifact/dist/*" in workflow
+    assert "--index-url https://test.pypi.org/simple/" in workflow
+    assert "--extra-index-url https://pypi.org/simple/" not in workflow
+    assert "--no-deps --only-binary=:all:" in workflow
+    assert "needs.gate.outputs.prerelease == 'false'" in workflow
+    assert "needs.gate.outputs.prerelease == 'true'" in workflow
+    assert "finalize-prerelease:" in workflow
+    assert "gh release create" in workflow
+    assert "--draft" in workflow
+    assert "gh release edit" in workflow
     assert "PYPI_API_TOKEN" not in workflow
     assert "password:" not in workflow
 
 
 def test_production_publish_requires_a_release_and_version_check() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
-    assert "github.event_name == 'release'" in workflow
     assert "tools/check_release_version.py" in workflow
-    assert "git merge-base --is-ancestor" in workflow
+    gate = (ROOT / "tools" / "check_release_gate.py").read_text(encoding="utf-8")
+    assert '"merge-base", "--is-ancestor"' in gate
+    assert '"cat-file", "-t", tag' in gate
+    assert "release ref must be an annotated tag" in gate
+    assert "environment:\n      name: pypi" in workflow
 
 
 def test_publish_workflow_tests_supported_dependency_profiles_before_one_build() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
 
+    assert "pull_request:" in workflow
+    assert "push:\n    branches: [main]" in workflow
+    assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in workflow
     assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
     assert 'dependency-profile: ["lowest", "latest"]' in workflow
     assert "python-version: ${{ matrix.python-version }}" in workflow
     assert '"fastapi==0.129.*"' in workflow
+    assert '"huggingface-hub==1.26.*"' in workflow
+    assert '"packaging==24.*"' in workflow
+    assert '"uvicorn==0.30.*"' in workflow
     assert '"starlette==0.51.*"' in workflow
     assert '"websockets==14.*"' in workflow
     assert '"fastapi>=0.129,<1"' in workflow
     assert '"starlette>=0.51,<1"' in workflow
     assert '"websockets>=14,<16"' in workflow
     assert "python -m mypy src/watcherobot" in workflow
+    assert "id-token: write" not in workflow
+    assert "environment:" not in workflow
     assert "name: Build distributions" in workflow
     assert "needs: [test, ble-provisioning]" in workflow
     assert "python -m pip install --force-reinstall dist/*.whl" in workflow
     assert "python -m pip check" in workflow
+    assert workflow.count("name: Create isolated virtual environment") == 3
+    assert 'echo "$PWD/.venv/bin" >> "$GITHUB_PATH"' in workflow
 
 
-def test_fake_ble_tests_run_on_windows_and_macos() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "publish.yml").read_text(encoding="utf-8")
+def test_fake_ble_tests_run_on_self_hosted_linux() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
 
     assert "ble-provisioning:" in workflow
-    assert "os: [windows-latest, macos-latest]" in workflow
+    assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in workflow
     assert "python -m pytest tests/provisioning" in workflow
     assert "from watcherobot.provisioning.bleak_backend import BleakBackend" in workflow
+
+
+def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "pr-review.yml").read_text(encoding="utf-8")
+
+    assert "${RUNNER_TEMP}/pr-${{ github.event.pull_request.number }}.diff" in workflow
+    assert "${RUNNER_TEMP}/review_result.md" in workflow
+    assert "/tmp/pr.diff" not in workflow
+    assert "/tmp/review_result.md" not in workflow
+    assert "PR_BODY: ${{ github.event.pull_request.body }}" in workflow
+    assert '"${{ github.event.pull_request.body }}" \\' not in workflow
+    bridge = (ROOT / ".github" / "scripts" / "luxiao_review.py").read_text(encoding="utf-8")
+    assert "os.environ.get('PR_BODY', '')" in bridge
+    assert "NamedTemporaryFile" in bridge
+    assert '"LUXIAO_REMOTE_DIR", "/home/hermesadmin/.cache/luxiao-review"' in bridge
+    assert 'local_file = "/tmp/luxiao_prompt.txt"' not in bridge
+    assert 'MAX_DIFF_CHARS = 100_000' in bridge
+    assert 'REMOTE_REVIEW_TIMEOUT_SECONDS = 600' in bridge
+    assert '"timeout",' in bridge
+    assert '"--kill-after=30s",' in bridge
+    assert "timeout=REMOTE_REVIEW_TIMEOUT_SECONDS + 60" in bridge
+    assert 'os.environ.get("LUXIAO_HERMES_HOST", "")' in bridge
+    assert "LUXIAO_HERMES_HOST: ${{ vars.LUXIAO_HERMES_HOST }}" in workflow
+    assert 'HERMES_HOST = "hermesadmin@192.168.1.116"' not in bridge
+    assert "审查结论必须注明未覆盖范围" in bridge
+    assert "runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review]" in workflow
+
+
+def test_legacy_publish_workflow_is_removed() -> None:
+    assert not (ROOT / ".github" / "workflows" / "publish.yml").exists()
+
+
+def test_prepare_release_uses_repository_scoped_github_app() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "prepare-release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "actions/create-github-app-token@v2" in workflow
+    assert "ORULINK_RELEASE_APP_ID" in workflow
+    assert "ORULINK_RELEASE_APP_PRIVATE_KEY" in workflow
+    assert "token: ${{ steps.app-token.outputs.token }}" in workflow
+    assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "tools/check_release_availability.py" in workflow
+    assert "runs-on: [self-hosted, Linux, X64, sdk-orchestrator]" in workflow
+    assert "runs-on: [self-hosted, Linux, X64, sdk-release]" not in workflow
+    assert '--state open' in workflow

@@ -1,106 +1,121 @@
-# 发布 watcherobot 到 PyPI
+# watcherobot 自动发布说明
 
-项目通过 GitHub Actions 和 PyPI Trusted Publishing 发布，不在 GitHub Secrets 或开发者电脑中保存长期
-PyPI Token。
+`watcherobot` 由陆骁编排、自有 Runner 构建、飞书通知，并通过 GitHub Environment 人工批准后发布。
+PyPI 与 TestPyPI 均使用 OIDC Trusted Publishing，不在仓库、Runner 或个人电脑保存长期 PyPI Token。
 
-## 发布质量门
+## 不会直接发布的事件
 
-每一个不可覆盖的 PyPI/TestPyPI 版本在发布前必须同时满足：
+- 普通 PR 或草稿 PR；
+- 没有发布标签的合并 PR；
+- 未关联合法版本 PR 的普通 `v*` Tag；
+- 任意非 `v*` Tag。
 
-1. PR 与 `main` 的 CI 全绿，包括 Python 3.10/3.11/3.12、`websockets 14.x` 与当前允许最新版、
-   pytest、mypy、wheel/sdist 构建、重装和 `pip check`。
-2. 记录用于验收的 ESP32 完整 commit、固件版本、协议版本和 SDK 版本，不能只写浮动分支名。
-3. 按[硬件测试说明](hardware-testing.md)完成 Runtime 配对，并通过
-   `watcherobot app run` 运行受管 Application，验证行为、灯光、Job、相机和麦克风。
-4. 从目标索引在全新虚拟环境安装并验证版本；TestPyPI 的依赖仍从正式 PyPI 安装。
+发布入口只能是飞书显式指令，或已合并 PR 上恰好一个发布标签：
 
-自动化测试中的内联 Transport、Runtime 和协议替身不会进入 wheel，也不能替代发布前真机验收。
+- `release:prerelease`
+- `release:stable`
+- `release:minor`
+- `release:major`
 
-## 一次性配置
+多个标签、非法 PEP 440 版本、版本倒退以及 PyPI 已存在的版本都会失败关闭，不会猜测或覆盖。
 
-在 GitHub 仓库中创建两个 Environment：
+## 版本 PR 与 Tag
 
-- `testpypi`：供手动测试发布使用。
-- `pypi`：供 GitHub Release 正式发布使用，必须配置人工审批。
+发布请求会创建 `release/watcherobot-<version>` 分支和带 `release:version` 标签的版本 PR。版本 PR 只更新：
 
-分别在 [PyPI](https://pypi.org/manage/account/publishing/) 和
-[TestPyPI](https://test.pypi.org/manage/account/publishing/) 注册 Pending Trusted Publisher：
+- `src/watcherobot/__init__.py` 中的唯一版本源；
+- 中文 `CHANGELOG.md`。
 
-| 字段 | PyPI | TestPyPI |
-|---|---|---|
-| PyPI Project Name | `watcherobot` | `watcherobot` |
-| Owner | `orulink-ai` | `orulink-ai` |
-| Repository | `WatcheRobot_python_sdk` | `WatcheRobot_python_sdk` |
-| Workflow | `publish.yml` | `publish.yml` |
-| Environment | `pypi` | `testpypi` |
+版本 PR 必须人工审查和合并。合并后，陆骁才能在该 merge commit 上创建 annotated tag `v<version>`。
+Tag 门禁还会验证该 commit 属于 `main`、关联恰好一个合法版本 PR，且 PyPI、TestPyPI 和 GitHub Release
+不存在冲突版本。
 
-PyPI 与 TestPyPI 是两个独立账号系统，需要分别完成配置。首次成功发布会创建对应项目。
+当前源码版本是 `watcherobot==0.1.1a3`，对应既有 Tag 是 `v0.1.1a3`。自动发布启用后的下一次请求必须先
+查询 PyPI、TestPyPI、Tag 与 GitHub Release，以最新外部状态计算或校验目标版本。
 
-## TestPyPI 验证
+## CI 与不可变制品
 
-发布 workflow 合入 `main` 后，手动触发测试发布：
+PR 和 `main` push 由 `.github/workflows/sdk-ci.yml` 在自托管 `sdk-ci` Runner 上执行：
+
+- Python 3.10、3.11、3.12；
+- 最低和最新受支持依赖；
+- pytest、BLE fake backend、mypy；
+- wheel/sdist 构建、`twine check`、安装和 `pip check`。
+
+BLE fake backend 按公司自托管 Runner 策略在 Linux 执行契约测试；不使用 GitHub 托管的 Windows/macOS Runner。
+这项门禁验证导入和 fake backend 行为，不替代 Windows/macOS 实机蓝牙验收。
+
+合法 Tag 由 `.github/workflows/release.yml` 在隔离的 `sdk-release` Runner 上执行。wheel 与 sdist 只构建一次，
+随后生成 `SHA256SUMS` 并上传为 GitHub Actions Artifact。TestPyPI 与 PyPI 下载并使用同一份 Artifact，正式发布前
+再次验证哈希，不重新构建。
+
+## 发布顺序
+
+1. 发布并验证 TestPyPI；
+2. 创建 Draft GitHub Release；
+3. 预发布版直接发布 GitHub prerelease，到此结束，不进入正式 PyPI；
+4. 只有稳定版才由飞书群收到正式发布待审批提醒；
+5. 负责人在 GitHub `pypi` Environment 批准；
+6. 使用原始 Artifact 发布 PyPI；
+7. 从正式 PyPI 安装验证；
+8. 将 Draft GitHub Release 转为已发布状态。
+
+正式审批默认等待七天。陆骁监视器会在超时后取消运行并标记为 `CANCELLED`，不会自动恢复。陆骁无权合并版本
+PR，也无权批准 `pypi` Environment。
+
+## 一次性平台配置
+
+GitHub App 仅安装到 `orulink-ai/WatcheRobot_python_sdk`，向仓库提供版本 PR、Tag 和 Actions 监视能力。
+工作流使用以下仓库 Secret 获取短期安装令牌：
+
+- `ORULINK_RELEASE_APP_ID`
+- `ORULINK_RELEASE_APP_PRIVATE_KEY`
+
+PyPI Pending Trusted Publisher：
+
+| 字段 | 值 |
+|---|---|
+| Project | `watcherobot` |
+| Owner | `orulink-ai` |
+| Repository | `WatcheRobot_python_sdk` |
+| Workflow | `release.yml` |
+| Environment | `pypi` |
+
+TestPyPI 使用相同仓库与 Workflow，Environment 为 `testpypi`。GitHub `pypi` Environment 只允许 `v*` Tag，
+并配置负责人为 Required Reviewer。
+
+## 首次自动演练与验证
+
+`0.1.1a3` 已由人工流程发布，不再作为自动演练目标。RTC 实机验证通过后可请求稳定版 `0.1.1`；若仍需
+预发布修复，必须递增到新的 PEP 440 版本。实际目标以启用自动发布时重新读取的索引状态为准。
+
+TestPyPI 安装验证需要让 SDK 来自 TestPyPI，同时从正式 PyPI 解析依赖：
 
 ```powershell
-gh workflow run publish.yml --ref main
-gh run list --workflow publish.yml --limit 1
-gh run watch
-```
-
-由于 PyPI 不允许覆盖同名版本，每次重复测试前都必须先递增 `src/watcherobot/__init__.py` 中的版本。
-
-使用全新虚拟环境验证 TestPyPI 产物：
-
-```powershell
-python -m venv .venv-release-test
-.venv-release-test\Scripts\python -m pip install `
+python -m pip install `
   --index-url https://test.pypi.org/simple/ `
   --extra-index-url https://pypi.org/simple/ `
   watcherobot==0.1.1a3
-.venv-release-test\Scripts\python -m pip check
-.venv-release-test\Scripts\python -c "import watcherobot; print(watcherobot.__version__)"
-.venv-release-test\Scripts\python -m watcherobot.runtime.daemon --help
 ```
 
-安装后还需按照[硬件测试说明](hardware-testing.md)，使用验收记录中的同一固件完成
-Runtime 配对并运行受管 Application。若版本已经上传但验收失败，不得覆盖上传，
-必须递增 Alpha 版本后重新发布。
-
-## 正式发布
-
-1. 修改 `src/watcherobot/__init__.py` 中的版本并通过 PR 合入 `main`。
-2. 确认测试、构建、TestPyPI 安装和必要的真机验收全部通过。
-3. 创建 Draft GitHub Release，标签必须严格等于 `v` 加包版本：
-
-```powershell
-gh release create v0.1.1a3 --target main --draft --prerelease --generate-notes
-```
-
-4. 核对 Release 内容后发布：
-
-```powershell
-gh release edit v0.1.1a3 --draft=false
-```
-
-`release.published` 事件会启动正式发布任务。流水线会再次运行测试，并检查：
-
-- Release 标签与包版本完全一致。
-- Release 对应 commit 已经属于 `main`。
-- wheel 和 sdist 均能通过 `twine check`。
-- `pypi` Environment 已完成人工审批。
-
-发布完成后验证：
+正式发布完成后验证：
 
 ```powershell
 python -m venv .venv-pypi-test
 .venv-pypi-test\Scripts\python -m pip install watcherobot==0.1.1a3
 .venv-pypi-test\Scripts\python -c "import watcherobot; print(watcherobot.__version__)"
+.venv-pypi-test\Scripts\watcherobot --help
 ```
 
-## 版本规则
+PyPI 版本一旦发布不得覆盖。问题版本只能 yank，然后递增版本重新修复和发布。
 
-- Alpha：正式版 `0.1.0` 之后从 `0.1.1a1` 开始递增
-- Beta：`0.1.1b1`
-- Release Candidate：`0.1.1rc1`
-- 正式版：`0.1.1`
+## 实机发布门禁
 
-PyPI 版本不可覆盖或重新上传。发布失败但文件已经进入索引时，必须递增版本号后重新发布。
+稳定版发布前必须按[硬件测试说明](hardware-testing.md)记录 ESP32 完整 commit、固件版本、协议版本和 SDK
+版本，并完成 Runtime 配对、受管 Application、行为、灯光、Job、相机、麦克风及 RTC 实时视频验收。自动化
+Transport/Runtime 替身不能替代实机验收。
+
+实机验收必须通过 `watcherobot app run` 启动当前受管 Application，桌面和设备业务帧均保持经过 Daemon 与
+当前 Application 的既定路由，不得为发布验证增加协议旁路。
+
+版本族遵循 PEP 440：Alpha `0.1.1a1`、Beta `0.1.1b1`、RC `0.1.1rc1`、稳定版 `0.1.1`。

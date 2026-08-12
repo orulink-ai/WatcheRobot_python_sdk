@@ -1,0 +1,288 @@
+name: Release Python package
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  start-clean:
+    name: Clean release workspace before use
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    steps:
+      - name: Remove files left by a previous release job
+        shell: bash
+        run: |
+          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
+          [[ "${workspace}" == /opt/actions-runner-release/_work/* ]] || {
+            echo "Refusing to clean unexpected workspace: ${workspace}" >&2
+            exit 1
+          }
+          shopt -s dotglob nullglob
+          rm -rf -- "${workspace}"/*
+
+  gate:
+    name: Validate release request
+    needs: start-clean
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      prerelease: ${{ steps.gate.outputs.prerelease }}
+      commit: ${{ steps.gate.outputs.commit }}
+      reuse-artifact: ${{ steps.gate.outputs.reuse-artifact }}
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade packaging
+      - id: gate
+        name: Validate tag, main ancestry, version PR and registries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag_commit=$(git rev-list -n 1 "${GITHUB_REF_NAME}")
+          gate_json=$(python tools/check_release_gate.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --tag "${GITHUB_REF_NAME}" \
+            --sha "${tag_commit}")
+          version=$(python -c 'import json,sys; print(json.load(sys.stdin)["version"])' <<< "${gate_json}")
+          reuse_artifact=$(python -c 'import json,sys; print(str(json.load(sys.stdin)["reuse_artifact"]).lower())' <<< "${gate_json}")
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "commit=${tag_commit}" >> "${GITHUB_OUTPUT}"
+          echo "reuse-artifact=${reuse_artifact}" >> "${GITHUB_OUTPUT}"
+          python tools/check_release_version.py "${GITHUB_REF_NAME}"
+          python -c 'from packaging.version import Version; import sys; print(f"prerelease={str(Version(sys.argv[1]).is_prerelease).lower()}")' "${version}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build immutable distributions
+    needs: gate
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    steps:
+      - uses: actions/checkout@v6
+        if: needs.gate.outputs.reuse-artifact != 'true'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        if: needs.gate.outputs.reuse-artifact != 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+      - if: needs.gate.outputs.reuse-artifact != 'true'
+        run: python -m pip install --upgrade pip build twine
+      - if: needs.gate.outputs.reuse-artifact != 'true'
+        run: python -m pip install -e ".[test]"
+      - if: needs.gate.outputs.reuse-artifact != 'true'
+        run: python -m pytest
+      - if: needs.gate.outputs.reuse-artifact != 'true'
+        run: python -m mypy src/watcherobot
+      - if: needs.gate.outputs.reuse-artifact != 'true'
+        run: python -m build
+      - if: needs.gate.outputs.reuse-artifact != 'true'
+        run: python -m twine check dist/*
+      - name: Verify wheel installation
+        if: needs.gate.outputs.reuse-artifact != 'true'
+        run: |
+          python -m venv .venv-wheel-check
+          .venv-wheel-check/bin/python -m pip install --force-reinstall dist/*.whl
+          .venv-wheel-check/bin/python -m pip check
+          .venv-wheel-check/bin/python -c "import watcherobot; assert watcherobot.__version__ == '${{ needs.gate.outputs.version }}'"
+          .venv-wheel-check/bin/watcherobot --help
+      - name: Record distribution hashes
+        if: needs.gate.outputs.reuse-artifact != 'true'
+        run: sha256sum dist/* > SHA256SUMS
+      - name: Recover immutable distributions from the matching draft Release
+        if: needs.gate.outputs.reuse-artifact == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern 'watcherobot-*' --dir dist
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern SHA256SUMS --dir .
+          sha256sum --check SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}
+          path: |
+            dist/
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
+
+  draft-release:
+    name: Create draft GitHub Release
+    needs: [gate, build]
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}
+          path: artifact/
+      - name: Create immutable draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease_flag=()
+          if [[ "${{ needs.gate.outputs.prerelease }}" == "true" ]]; then prerelease_flag=(--prerelease); fi
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Matching draft Release already exists; reusing it."
+          else
+            gh release create "${GITHUB_REF_NAME}" artifact/dist/* artifact/SHA256SUMS \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${{ needs.gate.outputs.commit }}" \
+              --title "watcherobot ${{ needs.gate.outputs.version }}" \
+              --generate-notes \
+              --draft \
+              "${prerelease_flag[@]}"
+          fi
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [gate, build, draft-release]
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}
+          path: artifact/
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - name: Publish immutable distributions to TestPyPI with OIDC
+        env:
+          UV_PUBLISH_CHECK_URL: https://test.pypi.org/simple/
+        run: >-
+          uv publish
+          --trusted-publishing always
+          --publish-url https://test.pypi.org/legacy/
+          artifact/dist/*
+
+  verify-testpypi:
+    name: Verify TestPyPI installation
+    needs: [gate, build, publish-testpypi]
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          name: watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}
+          path: artifact/
+      - name: Install exact release from TestPyPI
+        run: |
+          python -m venv .venv-testpypi
+          .venv-testpypi/bin/python -m pip install --index-url https://pypi.org/simple/ artifact/dist/*.whl
+          .venv-testpypi/bin/python -m pip uninstall -y watcherobot
+          for attempt in {1..12}; do
+            if .venv-testpypi/bin/python -m pip download \
+              --index-url https://test.pypi.org/simple/ \
+              --no-deps --only-binary=:all: --dest testpypi-download \
+              "watcherobot==${{ needs.gate.outputs.version }}"; then
+              break
+            fi
+            if [[ "${attempt}" == "12" ]]; then exit 1; fi
+            sleep 10
+          done
+          expected_wheel=$(find artifact/dist -maxdepth 1 -name '*.whl' -printf '%f\n')
+          test "$(sha256sum "testpypi-download/${expected_wheel}" | cut -d' ' -f1)" = \
+            "$(sha256sum "artifact/dist/${expected_wheel}" | cut -d' ' -f1)"
+          .venv-testpypi/bin/python -m pip install --no-deps "testpypi-download/${expected_wheel}"
+          .venv-testpypi/bin/python -m pip check
+          .venv-testpypi/bin/python -c "import watcherobot; assert watcherobot.__version__ == '${{ needs.gate.outputs.version }}'"
+          .venv-testpypi/bin/watcherobot --help
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [gate, build, verify-testpypi, draft-release]
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    environment:
+      name: pypi
+      url: https://pypi.org/p/watcherobot
+    permissions:
+      id-token: write
+    if: needs.gate.outputs.prerelease == 'false'
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}
+          path: artifact/
+      - name: Verify artifact hashes before production upload
+        run: (cd artifact && sha256sum --check SHA256SUMS)
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - name: Publish the original distributions to PyPI with OIDC
+        run: uv publish --trusted-publishing always artifact/dist/*
+
+  verify-pypi:
+    name: Verify PyPI and publish GitHub Release
+    needs: [gate, publish-pypi]
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    permissions:
+      contents: write
+    if: needs.gate.outputs.prerelease == 'false'
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install exact release from PyPI
+        run: |
+          python -m venv .venv-pypi
+          for attempt in {1..12}; do
+            if .venv-pypi/bin/python -m pip install "watcherobot==${{ needs.gate.outputs.version }}"; then break; fi
+            if [[ "${attempt}" == "12" ]]; then exit 1; fi
+            sleep 10
+          done
+          .venv-pypi/bin/python -m pip check
+          .venv-pypi/bin/python -c "import watcherobot; assert watcherobot.__version__ == '${{ needs.gate.outputs.version }}'"
+          .venv-pypi/bin/watcherobot --help
+      - name: Publish verified GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false
+
+  finalize-prerelease:
+    name: Publish verified TestPyPI prerelease
+    needs: [gate, verify-testpypi]
+    if: needs.gate.outputs.prerelease == 'true'
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    permissions:
+      contents: write
+    steps:
+      - name: Publish GitHub prerelease after TestPyPI verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false --prerelease
+
+  finish-clean:
+    name: Clean release workspace after use
+    if: always()
+    needs: [gate, build, draft-release, publish-testpypi, verify-testpypi, publish-pypi, verify-pypi, finalize-prerelease]
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    steps:
+      - name: Remove checked-out code, environments and downloaded artifacts
+        shell: bash
+        run: |
+          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
+          [[ "${workspace}" == /opt/actions-runner-release/_work/* ]] || {
+            echo "Refusing to clean unexpected workspace: ${workspace}" >&2
+            exit 1
+          }
+          shopt -s dotglob nullglob
+          rm -rf -- "${workspace}"/*
