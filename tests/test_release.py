@@ -117,8 +117,14 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     bridge = (ROOT / ".github" / "scripts" / "luxiao_review.py").read_text(encoding="utf-8")
     assert "os.environ.get('PR_BODY', '')" in bridge
     assert "NamedTemporaryFile" in bridge
-    assert 'REMOTE_DIR = "/home/hermesadmin/.cache/luxiao-review"' in bridge
+    assert '"LUXIAO_REMOTE_DIR", "/home/hermesadmin/.cache/luxiao-review"' in bridge
     assert 'local_file = "/tmp/luxiao_prompt.txt"' not in bridge
+    assert 'MAX_DIFF_CHARS = 100_000' in bridge
+    assert 'os.environ.get("LUXIAO_HERMES_HOST", "")' in bridge
+    assert "LUXIAO_HERMES_HOST: ${{ vars.LUXIAO_HERMES_HOST }}" in workflow
+    assert 'HERMES_HOST = "hermesadmin@192.168.1.116"' not in bridge
+    assert "审查结论必须注明未覆盖范围" in bridge
+    assert "runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review]" in workflow
 
 
 def test_legacy_publish_workflow_is_removed() -> None:

@@ -12,9 +12,7 @@ import uuid
 from pathlib import Path
 
 
-HERMES_HOST = "hermesadmin@192.168.1.116"
-REMOTE_SCRIPT = "/home/hermesadmin/scripts/luxiao-run.sh"
-REMOTE_DIR = "/home/hermesadmin/.cache/luxiao-review"
+MAX_DIFF_CHARS = 100_000
 SSH_OPTIONS = ("-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=yes")
 
 
@@ -34,7 +32,31 @@ def main() -> int:
         _write_result(output_path, "## 🤖 Luxiao PR 审查报告\n\n⚠️ Diff 文件不存在。")
         return 1
 
-    diff_text = diff_path.read_text(encoding="utf-8", errors="replace")[:8000]
+    hermes_host = os.environ.get("LUXIAO_HERMES_HOST", "").strip()
+    remote_script = os.environ.get(
+        "LUXIAO_REMOTE_SCRIPT", "/home/hermesadmin/scripts/luxiao-run.sh"
+    ).strip()
+    remote_dir = os.environ.get(
+        "LUXIAO_REMOTE_DIR", "/home/hermesadmin/.cache/luxiao-review"
+    ).strip()
+    if not hermes_host:
+        _write_result(
+            output_path,
+            "## 🤖 Luxiao PR 审查报告\n\n⚠️ Runner 未配置 LUXIAO_HERMES_HOST。",
+        )
+        return 1
+
+    full_diff = diff_path.read_text(encoding="utf-8", errors="replace")
+    diff_text = full_diff[:MAX_DIFF_CHARS]
+    truncation_notice = ""
+    if len(full_diff) > MAX_DIFF_CHARS:
+        omitted_chars = len(full_diff) - MAX_DIFF_CHARS
+        omitted_lines = full_diff[MAX_DIFF_CHARS:].count("\n")
+        truncation_notice = (
+            "\n\n> ⚠️ Diff 过大，本次输入已明确截断："
+            f"省略 {omitted_chars} 个字符、约 {omitted_lines} 行。"
+            "审查结论必须注明未覆盖范围，不能宣称完成全量审查。"
+        )
     if not diff_text.strip() or diff_text.strip() == "empty":
         _write_result(output_path, "## 🤖 Luxiao PR 审查报告\n\n✅ 无代码变更。")
         return 0
@@ -49,13 +71,13 @@ def main() -> int:
 
 ## 代码 Diff
 
-{diff_text}
+{diff_text}{truncation_notice}
 
 请直接输出审查报告，不要多余的前缀。"""
 
     runner_temp = Path(os.environ.get("RUNNER_TEMP", tempfile.gettempdir()))
     runner_temp.mkdir(parents=True, exist_ok=True)
-    remote_file = f"{REMOTE_DIR}/{uuid.uuid4().hex}.txt"
+    remote_file = f"{remote_dir}/{uuid.uuid4().hex}.txt"
     with tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", prefix="luxiao-prompt-", suffix=".txt", dir=runner_temp, delete=False
     ) as prompt_file:
@@ -64,21 +86,21 @@ def main() -> int:
 
     try:
         subprocess.run(
-            ["ssh", *SSH_OPTIONS, HERMES_HOST, "mkdir", "-p", REMOTE_DIR],
+            ["ssh", *SSH_OPTIONS, hermes_host, "mkdir", "-p", remote_dir],
             check=True,
             capture_output=True,
             text=True,
             timeout=30,
         )
         subprocess.run(
-            ["scp", *SSH_OPTIONS, str(local_file), f"{HERMES_HOST}:{remote_file}"],
+            ["scp", *SSH_OPTIONS, str(local_file), f"{hermes_host}:{remote_file}"],
             check=True,
             capture_output=True,
             text=True,
             timeout=30,
         )
         result = subprocess.run(
-            ["ssh", *SSH_OPTIONS, HERMES_HOST, f"{REMOTE_SCRIPT} {shlex.quote(remote_file)}"],
+            ["ssh", *SSH_OPTIONS, hermes_host, f"{remote_script} {shlex.quote(remote_file)}"],
             capture_output=True,
             text=True,
             timeout=300,
@@ -86,7 +108,7 @@ def main() -> int:
     finally:
         local_file.unlink(missing_ok=True)
         subprocess.run(
-            ["ssh", *SSH_OPTIONS, HERMES_HOST, "rm", "-f", "--", remote_file],
+            ["ssh", *SSH_OPTIONS, hermes_host, "rm", "-f", "--", remote_file],
             capture_output=True,
             text=True,
             timeout=30,

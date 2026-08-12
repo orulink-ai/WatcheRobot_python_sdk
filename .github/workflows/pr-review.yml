@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   review:
-    runs-on: [self-hosted, Linux, X64, sdk-ci]
+    runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review]
     if: github.event.pull_request.draft == false
     steps:
       - name: Get PR Diff via API
@@ -25,6 +25,7 @@ jobs:
 
       - name: Run Luxiao Review
         env:
+          LUXIAO_HERMES_HOST: ${{ vars.LUXIAO_HERMES_HOST }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_ADDITIONS: ${{ github.event.pull_request.additions }}
