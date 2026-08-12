@@ -23,7 +23,7 @@ def test_init_creates_one_publish_ready_application_project(
         name="Robot Demo",
         author="Example Team",
         description="A generated WatcheRobot Application.",
-        watcherobot_version="0.1.1a2",
+        watcherobot_version="0.1.1a3",
     )
 
     assert result.to_dict() == {
@@ -31,7 +31,7 @@ def test_init_creates_one_publish_ready_application_project(
         "id": "com.example.robot_demo",
         "name": "Robot Demo",
         "version": "0.1.0",
-        "requires_watcherobot": ">=0.1.1a2,<0.2",
+        "requires_watcherobot": ">=0.1.1a3,<0.2",
         "files": [
             ".gitignore",
             "README.md",
@@ -49,7 +49,7 @@ def test_init_creates_one_publish_ready_application_project(
         "id": "com.example.robot_demo",
         "name": "Robot Demo",
         "version": "0.1.0",
-        "requires_watcherobot": ">=0.1.1a2,<0.2",
+        "requires_watcherobot": ">=0.1.1a3,<0.2",
         "dependencies": [],
         "description": "A generated WatcheRobot Application.",
         "author": "Example Team",
@@ -57,7 +57,7 @@ def test_init_creates_one_publish_ready_application_project(
     }
     manifest = ApplicationManifest.load(
         target,
-        watcherobot_version="0.1.1a2",
+        watcherobot_version="0.1.1a3",
     )
     assert manifest.app_id == "com.example.robot_demo"
     compile(
@@ -92,7 +92,7 @@ def test_init_never_overwrites_an_existing_target(
             name="Demo",
             author="Example",
             description="Example Application",
-            watcherobot_version="0.1.1a2",
+            watcherobot_version="0.1.1a3",
         )
 
     assert str(captured.value) == f"Target already exists: {target.resolve()}"
@@ -129,7 +129,7 @@ def test_init_rejects_invalid_metadata_without_leaving_a_project(
         init_application_project(
             target,
             **values,
-            watcherobot_version="0.1.1a2",
+            watcherobot_version="0.1.1a3",
         )
 
     assert not target.exists()
@@ -138,7 +138,7 @@ def test_init_rejects_invalid_metadata_without_leaving_a_project(
 @pytest.mark.parametrize(
     ("sdk_version", "expected"),
     [
-        ("0.1.1a2", ">=0.1.1a2,<0.2"),
+        ("0.1.1a3", ">=0.1.1a3,<0.2"),
         ("0.9.4", ">=0.9.4,<0.10"),
         ("1.3.0", ">=1.3.0,<2"),
     ],
