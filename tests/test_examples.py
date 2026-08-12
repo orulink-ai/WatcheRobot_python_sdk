@@ -56,7 +56,7 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     assert "127.0.0.1" in entrypoint
     assert "ApplicationContext.from_environment()" in entrypoint
     assert "app.robot" in entrypoint
-    assert "SDK 媒体实验室" in page
+    assert "SDK 测试台" in page
     assert "api/status" in script
     assert "api/actions/play-audio" in script
     assert "api/actions/capture-photo" in script
