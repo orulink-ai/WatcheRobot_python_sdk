@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 MAX_DIFF_CHARS = 100_000
+REMOTE_REVIEW_TIMEOUT_SECONDS = 600
 SSH_OPTIONS = ("-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=yes")
 
 
@@ -100,10 +101,20 @@ def main() -> int:
             timeout=30,
         )
         result = subprocess.run(
-            ["ssh", *SSH_OPTIONS, hermes_host, f"{remote_script} {shlex.quote(remote_file)}"],
+            [
+                "ssh",
+                *SSH_OPTIONS,
+                hermes_host,
+                "timeout",
+                "--signal=TERM",
+                "--kill-after=30s",
+                f"{REMOTE_REVIEW_TIMEOUT_SECONDS}s",
+                shlex.quote(remote_script),
+                shlex.quote(remote_file),
+            ],
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=REMOTE_REVIEW_TIMEOUT_SECONDS + 60,
         )
     finally:
         local_file.unlink(missing_ok=True)

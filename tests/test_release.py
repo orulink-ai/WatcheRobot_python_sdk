@@ -127,6 +127,10 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     assert '"LUXIAO_REMOTE_DIR", "/home/hermesadmin/.cache/luxiao-review"' in bridge
     assert 'local_file = "/tmp/luxiao_prompt.txt"' not in bridge
     assert 'MAX_DIFF_CHARS = 100_000' in bridge
+    assert 'REMOTE_REVIEW_TIMEOUT_SECONDS = 600' in bridge
+    assert '"timeout",' in bridge
+    assert '"--kill-after=30s",' in bridge
+    assert "timeout=REMOTE_REVIEW_TIMEOUT_SECONDS + 60" in bridge
     assert 'os.environ.get("LUXIAO_HERMES_HOST", "")' in bridge
     assert "LUXIAO_HERMES_HOST: ${{ vars.LUXIAO_HERMES_HOST }}" in workflow
     assert 'HERMES_HOST = "hermesadmin@192.168.1.116"' not in bridge
