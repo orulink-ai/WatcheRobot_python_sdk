@@ -192,6 +192,10 @@ class MediaLabService:
         self._sample_audio = Path(sample_audio)
         self._device_status_provider = device_status_provider
         self._device_pairer = device_pairer
+        # The lifecycle lock makes RTC start/stop/reconciliation atomic. The
+        # operation lock excludes every other media action for the full live-video
+        # session; the boolean records whether that session currently owns it.
+        self._live_video_lifecycle_lock = threading.Lock()
         self._operation_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._active_action: str | None = None
@@ -233,14 +237,15 @@ class MediaLabService:
     def maintain(self) -> None:
         """Reconcile device and RTC lifecycle outside HTTP status requests."""
 
-        connection = self._device_status()
-        self._refresh_device_snapshot(connection)
-        rtc = self._rtc.snapshot()
-        if connection.get("online") is not True and rtc.get("active") is True:
-            self._rtc.reset(reason="device_offline")
+        with self._live_video_lifecycle_lock:
+            connection = self._device_status()
             rtc = self._rtc.snapshot()
-        if connection.get("online") is not True or rtc.get("state") in {"stopped", "failed"}:
-            self._release_live_video_lock()
+            if connection.get("online") is not True and rtc.get("active") is True:
+                self._rtc.reset(reason="device_offline")
+                rtc = self._rtc.snapshot()
+            if connection.get("online") is not True or rtc.get("state") in {"stopped", "failed"}:
+                self._release_live_video_lock()
+        self._refresh_device_snapshot(connection)
 
     def events(self, *, after: int = 0) -> list[dict[str, object]]:
         with self._state_lock:
@@ -362,23 +367,23 @@ class MediaLabService:
                 "rtc_unavailable",
                 "Robot firmware does not advertise RTC MJPEG video",
             )
-        if not self._operation_lock.acquire(blocking=False):
+        with self._live_video_lifecycle_lock:
+            if not self._operation_lock.acquire(blocking=False):
+                with self._state_lock:
+                    active_action = self._active_action or "another action"
+                raise MediaLabBusyError(f"media lab is busy with {active_action}")
+            # Live video owns the media-operation lock for the whole RTC session. The
+            # stop, terminal-event and device-offline paths all release it explicitly.
             with self._state_lock:
-                active_action = self._active_action or "another action"
-            raise MediaLabBusyError(f"media lab is busy with {active_action}")
-        # Live video owns the media-operation lock for the whole RTC session. The
-        # stop, terminal-event and device-offline paths all release it explicitly.
-        with self._state_lock:
-            self._live_video_lock_held = True
-        try:
-            self._ensure_device_online()
-            with self._state_lock:
+                self._live_video_lock_held = True
                 self._active_action = "live_video"
-            self._browser_host_ipv4 = self._resolve_browser_host_ipv4()
-            session = dict(self._rtc.start(mode=mode))
-        except Exception:
-            self._release_live_video_lock()
-            raise
+            try:
+                self._ensure_device_online()
+                self._browser_host_ipv4 = self._resolve_browser_host_ipv4()
+                session = dict(self._rtc.start(mode=mode))
+            except Exception:
+                self._release_live_video_lock()
+                raise
         self._append_event("live_video", "Live video session started", "running")
         return {"session": session}
 
@@ -409,8 +414,9 @@ class MediaLabService:
         return {"accepted": True}
 
     def stop_live_video(self) -> dict[str, object]:
-        stopped = bool(self._rtc.stop())
-        self._release_live_video_lock()
+        with self._live_video_lifecycle_lock:
+            stopped = bool(self._rtc.stop())
+            self._release_live_video_lock()
         self._append_event("live_video", "Live video session stopped", "ok")
         return {"stopped": stopped}
 

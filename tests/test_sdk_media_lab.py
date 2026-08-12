@@ -608,6 +608,41 @@ def test_live_video_offline_cleanup_resets_rtc_before_releasing_media_lock(tmp_p
     assert restarted["session"]["active"] is True
 
 
+def test_maintenance_does_not_release_media_lock_while_live_video_is_starting(
+    tmp_path: Path,
+) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    rtc._state.update(active=False, state="stopped")
+    service = _service(module, tmp_path, rtc=rtc)
+    start_entered = threading.Event()
+    allow_start = threading.Event()
+    original_ensure_online = service._ensure_device_online  # noqa: SLF001 - race harness
+
+    def block_before_rtc_start() -> None:
+        original_ensure_online()
+        start_entered.set()
+        assert allow_start.wait(timeout=1.0)
+
+    service._ensure_device_online = block_before_rtc_start  # type: ignore[method-assign]  # noqa: SLF001
+    start_thread = threading.Thread(target=service.start_live_video)
+    start_thread.start()
+    assert start_entered.wait(timeout=1.0)
+
+    maintenance_thread = threading.Thread(target=service.maintain)
+    maintenance_thread.start()
+    maintenance_thread.join(timeout=0.05)
+    assert maintenance_thread.is_alive()
+    allow_start.set()
+    start_thread.join(timeout=1.0)
+    maintenance_thread.join(timeout=1.0)
+
+    assert not start_thread.is_alive()
+    assert not maintenance_thread.is_alive()
+    with pytest.raises(module.MediaLabBusyError, match="live_video"):
+        service.play_audio()
+
+
 def test_web_app_lifespan_runs_media_lab_maintenance(tmp_path: Path) -> None:
     module = _load_service_module()
     service = _service(module, tmp_path)
