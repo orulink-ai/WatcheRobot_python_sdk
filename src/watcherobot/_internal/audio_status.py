@@ -20,6 +20,7 @@ FAILED_AUDIO_REASONS = frozenset(
         "sequence_gap",
         "stale_stream",
         "stale_frame",
+        "playback_start_failed",
         "playback_write_failed",
     }
 )

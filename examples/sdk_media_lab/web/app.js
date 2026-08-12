@@ -28,6 +28,7 @@ const state = {
     rttUs: 0,
     browserAudioSent: 0,
     browserAudioReceived: 0,
+    browserAudioLevel: 0,
     audioConnectedAt: 0,
     audioHealthState: "idle",
   },
@@ -97,6 +98,7 @@ const elements = {
   rtcAudioDownPackets: document.querySelector("#rtcAudioDownPackets"),
   rtcAudioDeviceCapture: document.querySelector("#rtcAudioDeviceCapture"),
   rtcAudioDeviceTx: document.querySelector("#rtcAudioDeviceTx"),
+  rtcAudioSignal: document.querySelector("#rtcAudioSignal"),
   rtcRemoteAudio: document.querySelector("#rtcRemoteAudio"),
   recordMicrophoneButton: document.querySelector("#recordMicrophoneButton"),
   recordDuration: document.querySelector("#recordDuration"),
@@ -583,8 +585,10 @@ function updateRtcAudioHealth() {
   const captureFrames = Number(deviceStats.audio_capture_frames || 0);
   const txPackets = Number(deviceStats.audio_tx_packets || 0);
   const txErrors = Number(deviceStats.audio_tx_errors || 0);
+  const capturePeak = Number(deviceStats.audio_capture_peak || 0);
   elements.rtcAudioDeviceCapture.textContent = String(captureFrames);
   elements.rtcAudioDeviceTx.textContent = txErrors > 0 ? `${txPackets} / 错误 ${txErrors}` : String(txPackets);
+  elements.rtcAudioSignal.textContent = `${capturePeak} / ${state.rtc.browserAudioLevel.toFixed(3)}`;
   const health = evaluateRtcAudioHealth({
     peerConnected: state.rtc.peer.connectionState === "connected",
     browserTxPackets: state.rtc.browserAudioSent,
@@ -592,20 +596,34 @@ function updateRtcAudioHealth() {
     deviceCaptureFrames: captureFrames,
     deviceTxPackets: txPackets,
     deviceTxErrors: txErrors,
+    deviceCapturePeak: capturePeak,
+    browserAudioLevel: state.rtc.browserAudioLevel,
+    browserPlaybackActive: !elements.rtcRemoteAudio.paused
+      && !elements.rtcRemoteAudio.muted
+      && elements.rtcRemoteAudio.volume > 0,
     elapsedMs: state.rtc.audioConnectedAt ? performance.now() - state.rtc.audioConnectedAt : 0,
   });
   if (health.state === state.rtc.audioHealthState && health.state !== "failed") return;
   state.rtc.audioHealthState = health.state;
   if (health.state === "healthy") {
     setRtcAudioState("connected");
-    setResult(elements.rtcAudioResult, "真全双工已验证：电脑与 Watcher 双向音频都在传输", "ok");
+    setResult(elements.rtcAudioResult, "全双工链路已验证：浏览器正在播放 Watcher 的非静音音频轨道", "ok");
   } else if (health.state === "degraded") {
     setRtcAudioState("connected");
     setResult(elements.rtcAudioResult, `双向音频已建立，但机器人发送出现 ${txErrors} 次错误`, "error");
   } else if (health.state === "failed") {
     const missingDeviceCapture = health.missing.includes("device_capture");
+    const missingDeviceSignal = health.missing.includes("device_signal");
+    const missingBrowserSignal = health.missing.includes("browser_signal");
+    const missingBrowserPlayback = health.missing.includes("browser_playback");
     const message = missingDeviceCapture
       ? "机器人麦克风没有产生音频帧，请检查麦克风采集与音频资源占用"
+      : missingDeviceSignal
+        ? "机器人已发送音频包，但采集内容接近静音；请对着机器人麦克风说话并检查采集链路"
+        : missingBrowserSignal
+          ? "浏览器已收到机器人音频包，但解码信号接近静音；请检查编码与浏览器音频轨道"
+          : missingBrowserPlayback
+            ? "机器人音频已到达，但浏览器播放器处于暂停或静音状态；请点击播放器开启声音"
       : "机器人麦克风音频未到达电脑，请查看机器人发送计数与错误码";
     setRtcAudioState("failed", message);
   } else if (health.state === "verifying") {
@@ -630,6 +648,7 @@ async function startRtcAudio() {
   elements.rtcAudioDeviceTx.textContent = "0";
   state.rtc.browserAudioSent = 0;
   state.rtc.browserAudioReceived = 0;
+  state.rtc.browserAudioLevel = 0;
   state.rtc.audioConnectedAt = 0;
   state.rtc.audioHealthState = "starting";
   setRtcAudioState("starting", "正在请求电脑麦克风权限…");
@@ -812,6 +831,7 @@ async function collectRtcAudioStats() {
   let jitterUs = 0;
   let queueMs = 0;
   let concealedFrames = 0;
+  let audioLevel = 0;
   const reports = await state.rtc.peer.getStats();
   reports.forEach((report) => {
     if (report.kind !== "audio" && report.mediaType !== "audio") return;
@@ -824,18 +844,24 @@ async function collectRtcAudioStats() {
         queueMs = Math.max(queueMs, Math.round((report.jitterBufferDelay / report.jitterBufferEmittedCount) * 1000));
       }
       concealedFrames += report.concealedSamples || 0;
+      if (Number.isFinite(report.audioLevel)) audioLevel = Math.max(audioLevel, report.audioLevel);
+      if (report.totalSamplesDuration > 0 && report.totalAudioEnergy >= 0) {
+        audioLevel = Math.max(audioLevel, Math.sqrt(report.totalAudioEnergy / report.totalSamplesDuration));
+      }
     }
   });
   elements.rtcAudioUpPackets.textContent = String(sent);
   elements.rtcAudioDownPackets.textContent = String(received);
   state.rtc.browserAudioSent = sent;
   state.rtc.browserAudioReceived = received;
+  state.rtc.browserAudioLevel = audioLevel;
   updateRtcAudioHealth();
   return {
     queueMs,
     packetLossX100: Math.round((lost / Math.max(1, received + lost)) * 10_000),
     jitterUs,
     concealedFrames,
+    audioLevel,
   };
 }
 
@@ -971,6 +997,7 @@ function cleanupRtcSession() {
   state.rtc.remoteStream = null;
   state.rtc.browserAudioSent = 0;
   state.rtc.browserAudioReceived = 0;
+  state.rtc.browserAudioLevel = 0;
   state.rtc.audioConnectedAt = 0;
   state.rtc.audioHealthState = "idle";
   if (channel) {

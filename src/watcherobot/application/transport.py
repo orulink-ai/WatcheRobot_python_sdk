@@ -379,6 +379,8 @@ class DaemonApplicationTransport:
                 pending_frames = data.get("pending_frames")
                 free_frames = data.get("free_frames")
                 queue_depth = data.get("queue_depth")
+                start_buffer_frames = data.get("start_buffer_frames")
+                playing = data.get("playing") is True
                 if (
                     isinstance(pending_frames, int)
                     and pending_frames >= 0
@@ -386,6 +388,12 @@ class DaemonApplicationTransport:
                     and queue_depth > 0
                 ):
                     target_pending = max(4, queue_depth // 2)
+                    if (
+                        not playing
+                        and isinstance(start_buffer_frames, int)
+                        and start_buffer_frames > 0
+                    ):
+                        target_pending = min(queue_depth, start_buffer_frames)
                     available_slots = max(
                         0,
                         target_pending - pending_frames,

@@ -121,6 +121,93 @@ def test_audio_stream_waits_for_device_buffer_credit() -> None:
     asyncio.run(scenario())
 
 
+def test_audio_stream_prefills_the_device_start_buffer_before_waiting() -> None:
+    async def scenario() -> None:
+        transport = DaemonApplicationTransport(command_timeout=1.0)
+        sent: list[bytes] = []
+
+        async def capture(channel: ApplicationChannel, frame: str | bytes) -> None:
+            assert channel is ApplicationChannel.DEVICE
+            assert isinstance(frame, bytes)
+            sent.append(frame)
+
+        transport._send = capture  # type: ignore[method-assign]
+        task = asyncio.create_task(
+            transport._send_audio_stream(b"\x00\x01" * 17, stream_id=9, chunk_bytes=2)
+        )
+
+        for _ in range(100):
+            if len(sent) == 4:
+                break
+            await asyncio.sleep(0)
+        assert len(sent) == 4
+
+        await transport._on_frame(
+            ApplicationChannel.DEVICE,
+            json.dumps(
+                {
+                    "type": "evt.audio.buffer_status",
+                    "code": 0,
+                    "data": {
+                        "stream_id": 9,
+                        "playing": False,
+                        "pending_frames": 4,
+                        "queue_depth": 16,
+                        "start_buffer_frames": 16,
+                    },
+                }
+            ),
+        )
+        for _ in range(100):
+            if len(sent) == 12:
+                break
+            await asyncio.sleep(0)
+        assert len(sent) == 12
+
+        await transport._on_frame(
+            ApplicationChannel.DEVICE,
+            json.dumps(
+                {
+                    "type": "evt.audio.buffer_status",
+                    "code": 0,
+                    "data": {
+                        "stream_id": 9,
+                        "playing": False,
+                        "pending_frames": 12,
+                        "queue_depth": 16,
+                        "start_buffer_frames": 16,
+                    },
+                }
+            ),
+        )
+        for _ in range(100):
+            if len(sent) == 16:
+                break
+            await asyncio.sleep(0)
+        assert len(sent) == 16
+
+        await transport._on_frame(
+            ApplicationChannel.DEVICE,
+            json.dumps(
+                {
+                    "type": "evt.audio.buffer_status",
+                    "code": 0,
+                    "data": {
+                        "stream_id": 9,
+                        "playing": True,
+                        "pending_frames": 7,
+                        "queue_depth": 16,
+                        "start_buffer_frames": 16,
+                    },
+                }
+            ),
+        )
+        await asyncio.wait_for(task, timeout=1.0)
+        assert len(sent) == 17
+
+    asyncio.run(scenario())
+
+
 def test_transport_dispatches_face_preview_packet_as_video_frame() -> None:
     transport = DaemonApplicationTransport()
     received = []

@@ -297,6 +297,32 @@ def test_audio_playback_write_failure_is_a_terminal_failure():
     assert transport.future.cancelled()
 
 
+def test_audio_playback_start_failure_is_a_terminal_failure():
+    class PendingAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            self.future = Future()
+            return self.future
+
+    transport = PendingAudioTransport()
+    robot = WatcheRobot._from_transport(transport)
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    transport.message_callback(
+        {
+            "type": "evt.audio.buffer_status",
+            "code": 0,
+            "data": {
+                "reason": "playback_start_failed",
+                "stream_id": playback.id,
+            },
+        }
+    )
+
+    assert playback.state.value == "failed"
+    assert playback.reason == "playback_start_failed"
+    assert transport.future.cancelled()
+
+
 def test_rejected_audio_stop_keeps_the_host_sender_alive():
     class RejectingStopTransport(FakeTransport):
         def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
