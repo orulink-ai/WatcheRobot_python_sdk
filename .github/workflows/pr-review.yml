@@ -24,13 +24,14 @@ jobs:
           echo "Diff lines: $(wc -l < "${diff_file}")"
 
       - name: Run Luxiao Review
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_ADDITIONS: ${{ github.event.pull_request.additions }}
+          PR_DELETIONS: ${{ github.event.pull_request.deletions }}
+          PR_FILES: ${{ github.event.pull_request.changed_files }}
         run: |
           python3 /home/runner-ci/scripts/luxiao-review.py \
-            "${{ github.event.pull_request.title }}" \
-            "${{ github.event.pull_request.body }}" \
-            "${{ github.event.pull_request.additions }}" \
-            "${{ github.event.pull_request.deletions }}" \
-            "${{ github.event.pull_request.changed_files }}" \
             "${DIFF_FILE}" \
             "${RUNNER_TEMP}/review_result.md"
 

@@ -112,6 +112,13 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     assert "${RUNNER_TEMP}/review_result.md" in workflow
     assert "/tmp/pr.diff" not in workflow
     assert "/tmp/review_result.md" not in workflow
+    assert "PR_BODY: ${{ github.event.pull_request.body }}" in workflow
+    assert '"${{ github.event.pull_request.body }}" \\' not in workflow
+    bridge = (ROOT / ".github" / "scripts" / "luxiao_review.py").read_text(encoding="utf-8")
+    assert "os.environ.get('PR_BODY', '')" in bridge
+    assert "NamedTemporaryFile" in bridge
+    assert 'REMOTE_DIR = "/home/hermesadmin/.cache/luxiao-review"' in bridge
+    assert 'local_file = "/tmp/luxiao_prompt.txt"' not in bridge
 
 
 def test_legacy_publish_workflow_is_removed() -> None:
