@@ -42,6 +42,9 @@ PR 和 `main` push 由 `.github/workflows/sdk-ci.yml` 在自托管 `sdk-ci` Runn
 - pytest、BLE fake backend、mypy；
 - wheel/sdist 构建、`twine check`、安装和 `pip check`。
 
+BLE fake backend 按公司自托管 Runner 策略在 Linux 执行契约测试；不使用 GitHub 托管的 Windows/macOS Runner。
+这项门禁验证导入和 fake backend 行为，不替代 Windows/macOS 实机蓝牙验收。
+
 合法 Tag 由 `.github/workflows/release.yml` 在隔离的 `sdk-release` Runner 上执行。wheel 与 sdist 只构建一次，
 随后生成 `SHA256SUMS` 并上传为 GitHub Actions Artifact。TestPyPI 与 PyPI 下载并使用同一份 Artifact，正式发布前
 再次验证哈希，不重新构建。
@@ -50,11 +53,12 @@ PR 和 `main` push 由 `.github/workflows/sdk-ci.yml` 在自托管 `sdk-ci` Runn
 
 1. 发布并验证 TestPyPI；
 2. 创建 Draft GitHub Release；
-3. 飞书群收到待审批提醒；
-4. 负责人在 GitHub `pypi` Environment 批准；
-5. 使用原始 Artifact 发布 PyPI；
-6. 从正式 PyPI 安装验证；
-7. 将 Draft GitHub Release 转为已发布状态。
+3. 预发布版直接发布 GitHub prerelease，到此结束，不进入正式 PyPI；
+4. 只有稳定版才由飞书群收到正式发布待审批提醒；
+5. 负责人在 GitHub `pypi` Environment 批准；
+6. 使用原始 Artifact 发布 PyPI；
+7. 从正式 PyPI 安装验证；
+8. 将 Draft GitHub Release 转为已发布状态。
 
 正式审批默认等待七天。陆骁监视器会在超时后取消运行并标记为 `CANCELLED`，不会自动恢复。陆骁无权合并版本
 PR，也无权批准 `pypi` Environment。

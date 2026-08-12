@@ -28,7 +28,8 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main')
-    runs-on: [self-hosted, Linux, X64, sdk-ci]
+    # Trusted orchestration never shares an execution identity with pull-request code.
+    runs-on: [self-hosted, Linux, X64, sdk-orchestrator]
     steps:
       - name: Resolve one explicit release request
         id: release
@@ -124,7 +125,7 @@ jobs:
           version=$(python tools/prepare_release.py "${arguments[@]}")
           python tools/check_release_availability.py "${version}" --repository "${GITHUB_REPOSITORY}"
           branch="release/watcherobot-${version}"
-          existing=$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${branch}" --state all --json number --jq 'length')
+          existing=$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${branch}" --state open --json number --jq 'length')
           if [[ "${existing}" != "0" ]]; then
             echo "Release PR already exists for ${version}; nothing to do."
             exit 0

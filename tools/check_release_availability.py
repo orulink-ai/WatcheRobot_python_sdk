@@ -20,7 +20,14 @@ def http_status(url: str) -> int:
         return error.code
 
 
-def validate_absent(version: str, *, pypi_status: int, testpypi_status: int, release_exists: bool) -> None:
+def validate_absent(
+    version: str,
+    *,
+    pypi_status: int,
+    testpypi_status: int,
+    release_exists: bool,
+    tag_exists: bool,
+) -> None:
     canonical = str(Version(version))
     if canonical != version:
         raise ValueError(f"version {version!r} is not canonical PEP 440 ({canonical!r})")
@@ -31,21 +38,36 @@ def validate_absent(version: str, *, pypi_status: int, testpypi_status: int, rel
         existing.append("TestPyPI")
     if release_exists:
         existing.append("GitHub Release")
+    if tag_exists:
+        existing.append("Git tag")
     if existing:
         raise ValueError(f"watcherobot {version} already exists on {', '.join(existing)}")
 
 
-def check(version: str, repository: str) -> None:
-    release = subprocess.run(
-        ["gh", "release", "view", f"v{version}", "--repo", repository, "--json", "tagName"],
+def github_resource_exists(repository: str, resource: str) -> bool:
+    """Return False only for a verified GitHub 404; fail closed otherwise."""
+
+    result = subprocess.run(
+        ["gh", "api", f"repos/{repository}/{resource}"],
         text=True,
         capture_output=True,
     )
+    if result.returncode == 0:
+        return True
+    diagnostic = f"{result.stdout}\n{result.stderr}"
+    if "HTTP 404" in diagnostic:
+        return False
+    raise RuntimeError(f"GitHub lookup failed for {resource}: {diagnostic.strip()}")
+
+
+def check(version: str, repository: str) -> None:
+    tag = f"v{version}"
     validate_absent(
         version,
         pypi_status=http_status(f"https://pypi.org/pypi/watcherobot/{version}/json"),
         testpypi_status=http_status(f"https://test.pypi.org/pypi/watcherobot/{version}/json"),
-        release_exists=release.returncode == 0,
+        release_exists=github_resource_exists(repository, f"releases/tags/{tag}"),
+        tag_exists=github_resource_exists(repository, f"git/ref/tags/{tag}"),
     )
 
 

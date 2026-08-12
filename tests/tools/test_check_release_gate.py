@@ -39,6 +39,8 @@ def test_release_version_pr_contract_is_strict() -> None:
         labels=["release:version"],
         head_ref="release/watcherobot-0.1.1a3",
         version="0.1.1a3",
+        merge_commit_sha="abc123",
+        tag_sha="abc123",
     )
     with pytest.raises(ValueError, match="merged into main"):
         module.validate_version_pull_request(
@@ -47,6 +49,8 @@ def test_release_version_pr_contract_is_strict() -> None:
             labels=["release:version"],
             head_ref="release/watcherobot-0.1.1a3",
             version="0.1.1a3",
+            merge_commit_sha="abc123",
+            tag_sha="abc123",
         )
     with pytest.raises(ValueError, match="release:version"):
         module.validate_version_pull_request(
@@ -55,6 +59,23 @@ def test_release_version_pr_contract_is_strict() -> None:
             labels=[],
             head_ref="release/watcherobot-0.1.1a3",
             version="0.1.1a3",
+            merge_commit_sha="abc123",
+            tag_sha="abc123",
+        )
+
+
+def test_release_tag_must_target_version_pr_merge_commit() -> None:
+    module = _load_module()
+
+    with pytest.raises(ValueError, match="merge commit"):
+        module.validate_version_pull_request(
+            merged=True,
+            base_ref="main",
+            labels=["release:version"],
+            head_ref="release/watcherobot-0.1.1a4",
+            version="0.1.1a4",
+            merge_commit_sha="merge123",
+            tag_sha="bump123",
         )
 
 

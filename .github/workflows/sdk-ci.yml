@@ -68,6 +68,8 @@ jobs:
 
   ble-provisioning:
     name: BLE fake backend
+    # CI executes on company-owned runners by policy. This Linux contract test
+    # covers the fake backend without reintroducing GitHub-hosted runners.
     runs-on: [self-hosted, Linux, X64, sdk-ci]
     steps:
       - uses: actions/checkout@v6

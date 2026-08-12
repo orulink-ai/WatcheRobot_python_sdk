@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import subprocess
 import sys
@@ -26,6 +27,12 @@ _REQUEST_LABELS = {
 }
 
 
+@dataclass(frozen=True)
+class ReleaseGateResult:
+    version: str
+    reuse_artifact: bool
+
+
 def select_release_label(labels: Iterable[str]) -> str:
     matches = [_REQUEST_LABELS[label] for label in labels if label in _REQUEST_LABELS]
     if len(matches) != 1:
@@ -40,6 +47,8 @@ def validate_version_pull_request(
     labels: Iterable[str],
     head_ref: str,
     version: str,
+    merge_commit_sha: str,
+    tag_sha: str,
 ) -> None:
     if not merged or base_ref != "main":
         raise ValueError("release version PR must be merged into main")
@@ -48,6 +57,8 @@ def validate_version_pull_request(
     expected_head = f"release/watcherobot-{version}"
     if head_ref != expected_head:
         raise ValueError(f"release version PR head must be {expected_head!r}")
+    if merge_commit_sha != tag_sha:
+        raise ValueError("release tag must target the version PR merge commit")
 
 
 def validate_version_absent(
@@ -103,7 +114,7 @@ def _associated_pull_requests(repository: str, sha: str) -> list[dict[str, objec
     return value
 
 
-def validate_gate(*, repository: str, tag: str, sha: str) -> str:
+def validate_gate(*, repository: str, tag: str, sha: str) -> ReleaseGateResult:
     version = validate_release_tag(tag, read_package_version())
     tag_type = _run("git", "cat-file", "-t", tag)
     if tag_type != "tag":
@@ -125,6 +136,8 @@ def validate_gate(*, repository: str, tag: str, sha: str) -> str:
                 labels=[str(label) for label in labels if label],
                 head_ref=str((pull_request.get("head") or {}).get("ref") or ""),
                 version=version,
+                merge_commit_sha=str(pull_request.get("merge_commit_sha") or ""),
+                tag_sha=sha,
             )
         except ValueError:
             continue
@@ -164,7 +177,7 @@ def validate_gate(*, repository: str, tag: str, sha: str) -> str:
         _http_status(f"https://test.pypi.org/pypi/watcherobot/{version}/json"),
         allow_existing=reusable_draft,
     )
-    return version
+    return ReleaseGateResult(version=version, reuse_artifact=reusable_draft)
 
 
 def main() -> int:
@@ -173,7 +186,8 @@ def main() -> int:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--sha", required=True)
     args = parser.parse_args()
-    print(validate_gate(repository=args.repository, tag=args.tag, sha=args.sha))
+    result = validate_gate(repository=args.repository, tag=args.tag, sha=args.sha)
+    print(json.dumps({"version": result.version, "reuse_artifact": result.reuse_artifact}))
     return 0
 
 

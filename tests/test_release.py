@@ -50,7 +50,11 @@ def test_release_workflow_separates_test_and_production_indexes() -> None:
     assert "name: Clean release workspace after use" in workflow
     assert "artifact/dist/*" in workflow
     assert "--index-url https://test.pypi.org/simple/" in workflow
-    assert "--extra-index-url https://pypi.org/simple/" in workflow
+    assert "--extra-index-url https://pypi.org/simple/" not in workflow
+    assert "--no-deps --only-binary=:all:" in workflow
+    assert "needs.gate.outputs.prerelease == 'false'" in workflow
+    assert "needs.gate.outputs.prerelease == 'true'" in workflow
+    assert "finalize-prerelease:" in workflow
     assert "gh release create" in workflow
     assert "--draft" in workflow
     assert "gh release edit" in workflow
@@ -143,5 +147,6 @@ def test_prepare_release_uses_repository_scoped_github_app() -> None:
     assert "GH_TOKEN: ${{ steps.app-token.outputs.token }}" in workflow
     assert "workflow_dispatch:" in workflow
     assert "tools/check_release_availability.py" in workflow
-    assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in workflow
+    assert "runs-on: [self-hosted, Linux, X64, sdk-orchestrator]" in workflow
     assert "runs-on: [self-hosted, Linux, X64, sdk-release]" not in workflow
+    assert '--state open' in workflow
