@@ -99,6 +99,8 @@ def test_publish_workflow_tests_supported_dependency_profiles_before_one_build()
     assert "needs: [test, ble-provisioning]" in workflow
     assert "python -m pip install --force-reinstall dist/*.whl" in workflow
     assert "python -m pip check" in workflow
+    assert workflow.count("name: Create isolated virtual environment") == 3
+    assert 'echo "$PWD/.venv/bin" >> "$GITHUB_PATH"' in workflow
 
 
 def test_fake_ble_tests_run_on_self_hosted_linux() -> None:
