@@ -110,6 +110,10 @@ def test_publish_workflow_tests_supported_dependency_profiles_before_one_build()
     assert 'echo "$PWD/.venv/bin" >> "$GITHUB_PATH"' in workflow
     assert workflow.count("api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}") == 3
     assert workflow.count("tar --extract --gzip --strip-components=1") == 3
+    assert workflow.count("name: Clean workspace before snapshot download") == 3
+    assert workflow.count('workspace=$(realpath -m "${GITHUB_WORKSPACE}")') == 3
+    assert workflow.count('[[ "${workspace}" == /opt/actions-runner-ci/_work/*/* ]]') == 3
+    assert workflow.count('rm -rf -- "${workspace}"/*') == 3
     assert "actions/checkout" not in workflow
     assert workflow.count("--retry 5 --retry-connrefused") == 3
     assert "--retry-all-errors" not in workflow
@@ -154,6 +158,8 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     assert 'HERMES_HOST = "hermesadmin@192.168.1.116"' not in bridge
     assert "审查结论必须注明未覆盖范围" in bridge
     assert "runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review]" in workflow
+    assert "gh pr comment ${{ github.event.pull_request.number }} \\" in workflow
+    assert "-R ${{ github.repository }} \\" in workflow
 
 
 def test_legacy_publish_workflow_is_removed() -> None:

@@ -24,6 +24,16 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
         dependency-profile: ["lowest", "latest"]
     steps:
+      - name: Clean workspace before snapshot download
+        run: |
+          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
+          [[ "${workspace}" == /opt/actions-runner-ci/_work/*/* ]] || {
+            echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
+            exit 1
+          }
+          shopt -s dotglob nullglob
+          rm -rf -- "${workspace}"/*
+
       - name: Download immutable source snapshot
         env:
           GH_TOKEN: ${{ github.token }}
@@ -88,6 +98,16 @@ jobs:
     # covers the fake backend without reintroducing GitHub-hosted runners.
     runs-on: [self-hosted, Linux, X64, sdk-ci]
     steps:
+      - name: Clean workspace before snapshot download
+        run: |
+          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
+          [[ "${workspace}" == /opt/actions-runner-ci/_work/*/* ]] || {
+            echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
+            exit 1
+          }
+          shopt -s dotglob nullglob
+          rm -rf -- "${workspace}"/*
+
       - name: Download immutable source snapshot
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,6 +140,16 @@ jobs:
     steps:
       # The package uses Hatch's explicit src/watcherobot/__init__.py version
       # source. Building is deliberately independent of Git history and tags.
+      - name: Clean workspace before snapshot download
+        run: |
+          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
+          [[ "${workspace}" == /opt/actions-runner-ci/_work/*/* ]] || {
+            echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
+            exit 1
+          }
+          shopt -s dotglob nullglob
+          rm -rf -- "${workspace}"/*
+
       - name: Download immutable source snapshot
         env:
           GH_TOKEN: ${{ github.token }}

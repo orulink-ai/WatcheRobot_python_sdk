@@ -75,16 +75,24 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     assert "127.0.0.1" in hardware_guide
 
 
-def test_runtime_artifacts_are_ignored() -> None:
+def test_runtime_artifacts_are_ignored(tmp_path: Path) -> None:
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
 
     assert "/artifacts/" in ignore
     assert "/examples/*/artifacts/" in ignore
     assert "/.vscode/" in ignore
 
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / ".gitignore").write_text(ignore, encoding="utf-8")
+    subprocess.run(
+        ["git", "init", "--quiet"],
+        cwd=repository,
+        check=True,
+    )
     result = subprocess.run(
         ["git", "check-ignore", "examples/capture_photo/artifacts/camera.jpg"],
-        cwd=ROOT,
+        cwd=repository,
         capture_output=True,
         check=False,
         text=True,
