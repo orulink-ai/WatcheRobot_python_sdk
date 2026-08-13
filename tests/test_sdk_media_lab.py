@@ -496,7 +496,7 @@ def test_motion_control_uses_public_sdk_domain_and_waits_for_completion(tmp_path
 
     response = client.post(
         "/api/controls/motion/move",
-        json={"pan_deg": 40, "tilt_deg": 135, "duration_ms": 600},
+        json={"pan_deg": 40, "tilt_deg": 115, "duration_ms": 600},
     )
 
 
@@ -505,17 +505,37 @@ def test_motion_control_uses_public_sdk_domain_and_waits_for_completion(tmp_path
         "completed": True,
         "operation_id": 101,
         "pan_deg": 40,
-        "tilt_deg": 135,
+        "tilt_deg": 115,
     }
     assert robot.motion.moves == [
         {
             "pan_deg": 40,
-            "tilt_deg": 135,
+            "tilt_deg": 115,
             "duration_ms": 600,
             "profile": "ease_in_out",
         }
     ]
     assert robot.motion.job.wait_calls == [2.6]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"pan_deg": 29, "tilt_deg": 115, "duration_ms": 600},
+        {"pan_deg": 151, "tilt_deg": 115, "duration_ms": 600},
+        {"pan_deg": 90, "tilt_deg": 99, "duration_ms": 600},
+        {"pan_deg": 90, "tilt_deg": 131, "duration_ms": 600},
+    ],
+)
+def test_motion_control_rejects_targets_outside_physical_limits(
+    tmp_path: Path, payload: dict[str, int]
+) -> None:
+    module = _load_service_module()
+    client = _client_for_service(module, tmp_path, _service(module, tmp_path, _robot()))
+
+    response = client.post("/api/controls/motion/move", json=payload)
+
+    assert response.status_code == 422
 
 
 def test_light_controls_use_public_sdk_domain(tmp_path: Path) -> None:
@@ -573,7 +593,7 @@ def test_control_http_contract_rejects_missing_firmware_capability(
     robot.capabilities = tuple(item for item in robot.capabilities if item != capability)
     client = _client_for_service(module, tmp_path, _service(module, tmp_path, robot))
     payload = (
-        {"pan_deg": 90, "tilt_deg": 90, "duration_ms": 600}
+        {"pan_deg": 90, "tilt_deg": 115, "duration_ms": 600}
         if capability == "motion"
         else {"color": "#D9FF57", "brightness": 0.7, "zone": "all"}
     )
