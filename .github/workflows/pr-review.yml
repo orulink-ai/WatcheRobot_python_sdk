@@ -47,4 +47,6 @@ jobs:
             echo "" >> "${review_file}"
             echo "⚠️ Review agent did not produce output." >> "${review_file}"
           fi
-          gh pr comment ${{ github.event.pull_request.number }} --body "$(cat "${review_file}")"
+          gh pr comment ${{ github.event.pull_request.number }} \
+            -R ${{ github.repository }} \
+            --body "$(cat "${review_file}")"
