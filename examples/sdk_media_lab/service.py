@@ -153,8 +153,8 @@ class RecordMicrophoneRequest(BaseModel):
 
 
 class MotionMoveRequest(BaseModel):
-    pan_deg: int = Field(ge=0, le=180)
-    tilt_deg: int = Field(ge=0, le=180)
+    pan_deg: int = Field(ge=30, le=150)
+    tilt_deg: int = Field(ge=100, le=130)
     duration_ms: int = Field(default=600, ge=100, le=5000)
 
 

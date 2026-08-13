@@ -1217,7 +1217,7 @@ document.querySelectorAll("[data-motion-preset]").forEach((button) => {
   button.addEventListener("click", () => {
     const preset = button.dataset.motionPreset;
     elements.panControl.value = preset === "left" ? "30" : preset === "right" ? "150" : "90";
-    elements.tiltControl.value = "90";
+    elements.tiltControl.value = "115";
     updateMotionPreview();
   });
 });
