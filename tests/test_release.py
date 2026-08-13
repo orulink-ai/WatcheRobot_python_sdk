@@ -110,6 +110,10 @@ def test_publish_workflow_tests_supported_dependency_profiles_before_one_build()
     assert 'echo "$PWD/.venv/bin" >> "$GITHUB_PATH"' in workflow
     assert workflow.count("api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}") == 3
     assert workflow.count("tar --extract --gzip --strip-components=1") == 3
+    assert workflow.count("name: Clean workspace before snapshot download") == 3
+    assert workflow.count('workspace=$(realpath -m "${GITHUB_WORKSPACE}")') == 3
+    assert workflow.count('[[ "${workspace}" == /opt/actions-runner-ci/_work/*/* ]]') == 3
+    assert workflow.count('rm -rf -- "${workspace}"/*') == 3
     assert "actions/checkout" not in workflow
     assert workflow.count("--retry 5 --retry-connrefused") == 3
     assert "--retry-all-errors" not in workflow
