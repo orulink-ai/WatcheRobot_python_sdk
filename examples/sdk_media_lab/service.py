@@ -262,6 +262,12 @@ class MediaLabService:
             "active_action": active_action,
             "capabilities": list(self._robot.capabilities),
             "device": dict(self._robot.device_info),
+            "resources": {
+                "baseline": dict(self._robot.resource_baseline),
+                "rtc_baseline": dict(self._robot.resource_rtc_baseline),
+                "current": dict(self._robot.resource_snapshot),
+                "history": list(self._robot.resource_history),
+            },
             "rtc": rtc,
             "artifacts": artifacts,
             "events": self.events(),
@@ -783,6 +789,13 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     async def rtc_audio_health_javascript() -> FileResponse:
         return FileResponse(
             web_root / "rtc-audio-health.mjs",
+            media_type="text/javascript",
+        )
+
+    @app.get("/assets/resource-health.mjs")
+    async def resource_health_javascript() -> FileResponse:
+        return FileResponse(
+            web_root / "resource-health.mjs",
             media_type="text/javascript",
         )
 

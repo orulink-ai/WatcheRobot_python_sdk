@@ -198,12 +198,64 @@ def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
             "rtc.video.mjpeg.v1",
         ),
         device_info={"firmware_version": "V3.1", "device_id": "watcher-test"},
+        resource_baseline={
+            "sequence": 1,
+            "stage": "baseline",
+            "captured_at_ms": 100,
+            "memory": {
+                "internal": {
+                    "free_bytes": 128000,
+                    "largest_free_block_bytes": 64000,
+                }
+            },
+        },
+        resource_snapshot={
+            "sequence": 7,
+            "stage": "periodic",
+            "captured_at_ms": 1234,
+            "memory": {
+                "internal": {
+                    "free_bytes": 48000,
+                    "largest_free_block_bytes": 24000,
+                    "minimum_free_bytes": 12000,
+                }
+            },
+            "resources": {"rtc": False, "media_system": False},
+            "release": {"complete": True, "failures": []},
+        },
+        resource_rtc_baseline={
+            "sequence": 5,
+            "stage": "rtc_pre_start",
+            "captured_at_ms": 800,
+            "memory": {
+                "internal": {
+                    "free_bytes": 50000,
+                    "largest_free_block_bytes": 26000,
+                }
+            },
+        },
+        resource_history=[],
         audio=FakeAudio(playback or FakePlayback()),
         camera=FakeCamera(),
         microphone=FakeMicrophone(),
         motion=FakeMotion(),
         lights=FakeLights(),
     )
+
+
+def test_status_exposes_device_resource_snapshot_outside_rtc(tmp_path: Path) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+
+    status = service.status()
+
+    assert status["resources"] == {
+        "baseline": service._robot.resource_baseline,
+        "rtc_baseline": service._robot.resource_rtc_baseline,
+        "current": service._robot.resource_snapshot,
+        "history": service._robot.resource_history,
+    }
+    assert status["rtc"]["stats"] == {}
 
 
 def _service(
@@ -243,7 +295,13 @@ def _service(
 def _client_for_service(module: ModuleType, tmp_path: Path, service: object) -> TestClient:
     web_root = tmp_path / "control-web"
     web_root.mkdir(exist_ok=True)
-    for filename in ("index.html", "app.js", "styles.css", "rtc-audio-health.mjs"):
+    for filename in (
+        "index.html",
+        "app.js",
+        "styles.css",
+        "rtc-audio-health.mjs",
+        "resource-health.mjs",
+    ):
         web_root.joinpath(filename).write_text(filename, encoding="utf-8")
     return TestClient(module.create_web_app(service, web_root=web_root))
 
@@ -669,7 +727,7 @@ def test_http_app_serves_local_ui_actions_and_artifacts(tmp_path: Path) -> None:
     assert client.get("/artifacts/../app.py").status_code == 404
 
 
-def test_http_app_serves_rtc_audio_health_module(tmp_path: Path) -> None:
+def test_http_app_serves_browser_health_modules(tmp_path: Path) -> None:
     module = _load_service_module()
     service = _service(module, tmp_path)
     web_root = tmp_path / "web"
@@ -681,12 +739,19 @@ def test_http_app_serves_rtc_audio_health_module(tmp_path: Path) -> None:
         "export const ready = true;",
         encoding="utf-8",
     )
+    web_root.joinpath("resource-health.mjs").write_text(
+        "export const resourceReady = true;",
+        encoding="utf-8",
+    )
     client = TestClient(module.create_web_app(service, web_root=web_root))
 
     response = client.get("/assets/rtc-audio-health.mjs")
 
     assert response.status_code == 200
     assert "export const ready" in response.text
+    resource_response = client.get("/assets/resource-health.mjs")
+    assert resource_response.status_code == 200
+    assert "export const resourceReady" in resource_response.text
 
 
 def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
@@ -919,6 +984,24 @@ def test_browser_counts_drop_only_when_pending_frame_is_replaced() -> None:
     assert "state.rtc.pendingFrame = frame;\n      state.rtc.droppedFrames += 1;" not in javascript
 
 
+def test_browser_declares_shared_formatters_only_once() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+
+    assert javascript.count("function formatBytes(") == 1
+
+
+def test_rtc_audio_ui_uses_raw_microphone_and_aec_diagnostics() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+    document = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
+
+    assert "audio_microphone_peak" in javascript
+    assert "audio_aec_active" in javascript
+    assert "audio_aec_reference_bytes" in javascript
+    assert "rtcAudioAec" in javascript
+    assert "id=\"rtcAudioAec\"" in document
+    assert "物理麦克风峰值" in document
+
+
 def test_browser_mdns_host_candidates_are_rewritten_without_touching_other_candidates() -> None:
     module = _load_service_module()
     offer = (
@@ -977,6 +1060,8 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "云台姿态",
         "机身灯效",
         "扬声器流式播放",
+        "资源生命周期",
+        "释放结果",
         "相机拍照",
         "相机实时画面",
         "开启实时画面",

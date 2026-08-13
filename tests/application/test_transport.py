@@ -300,3 +300,77 @@ def test_transport_exposes_raw_device_send_and_fans_out_protocol_messages() -> N
         assert observed == [message]
 
     asyncio.run(scenario())
+
+
+def test_transport_keeps_resource_baseline_latest_snapshot_and_history() -> None:
+    async def scenario() -> None:
+        transport = DaemonApplicationTransport()
+        baseline = {
+            "type": "evt.sdk.resource_snapshot",
+            "code": 0,
+            "data": {
+                "sequence": 2,
+                "stage": "baseline",
+                "captured_at_ms": 100,
+                "memory": {"internal": {"free_bytes": 120000}},
+            },
+        }
+        release = {
+            "type": "evt.sdk.resource_snapshot",
+            "code": 0,
+            "data": {
+                "sequence": 3,
+                "stage": "rtc_release_1000ms",
+                "captured_at_ms": 4200,
+                "memory": {
+                    "internal": {
+                        "free_bytes": 48000,
+                        "largest_free_block_bytes": 24000,
+                        "minimum_free_bytes": 12000,
+                    }
+                },
+                "resources": {"rtc": False, "media_system": False},
+                "release": {"complete": True, "failures": []},
+            },
+        }
+        rtc_baseline = {
+            "type": "evt.sdk.resource_snapshot",
+            "code": 0,
+            "data": {
+                "sequence": 3,
+                "stage": "rtc_pre_start",
+                "captured_at_ms": 1200,
+                "memory": {"internal": {"free_bytes": 52000}},
+            },
+        }
+        release["data"]["sequence"] = 4
+
+        await transport._on_frame(ApplicationChannel.DEVICE, json.dumps(baseline))
+        await transport._on_frame(
+            ApplicationChannel.DEVICE,
+            json.dumps(rtc_baseline),
+        )
+        await transport._on_frame(ApplicationChannel.DEVICE, json.dumps(release))
+
+        assert transport.resource_baseline == baseline["data"]
+        assert transport.resource_rtc_baseline == rtc_baseline["data"]
+        assert transport.resource_snapshot == release["data"]
+        assert transport.resource_history == [
+            baseline["data"],
+            rtc_baseline["data"],
+            release["data"],
+        ]
+
+        reconnected_baseline = {
+            **baseline,
+            "data": {**baseline["data"], "sequence": 4, "captured_at_ms": 9000},
+        }
+        await transport._on_frame(
+            ApplicationChannel.DEVICE,
+            json.dumps(reconnected_baseline),
+        )
+        assert transport.resource_baseline == reconnected_baseline["data"]
+        assert transport.resource_rtc_baseline == {}
+        assert transport.resource_history == [reconnected_baseline["data"]]
+
+    asyncio.run(scenario())

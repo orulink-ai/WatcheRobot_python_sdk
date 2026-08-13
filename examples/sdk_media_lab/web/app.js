@@ -1,4 +1,9 @@
 import { evaluateRtcAudioHealth } from "./rtc-audio-health.mjs";
+import {
+  evaluateResourceLifecycle,
+  selectLifecycleBaseline,
+  selectLatestReleaseSnapshot,
+} from "./resource-health.mjs";
 
 const state = {
   status: null,
@@ -121,6 +126,17 @@ const elements = {
   rtcAudioDeviceCapture: document.querySelector("#rtcAudioDeviceCapture"),
   rtcAudioDeviceTx: document.querySelector("#rtcAudioDeviceTx"),
   rtcAudioSignal: document.querySelector("#rtcAudioSignal"),
+  rtcAudioAec: document.querySelector("#rtcAudioAec"),
+  resourcePanel: document.querySelector("#resourcePanel"),
+  resourceState: document.querySelector("#resourceState"),
+  resourceStage: document.querySelector("#resourceStage"),
+  resourceInternal: document.querySelector("#resourceInternal"),
+  resourceLargest: document.querySelector("#resourceLargest"),
+  resourceDma: document.querySelector("#resourceDma"),
+  resourcePsram: document.querySelector("#resourcePsram"),
+  resourceOwners: document.querySelector("#resourceOwners"),
+  resourceDelta: document.querySelector("#resourceDelta"),
+  resourceRelease: document.querySelector("#resourceRelease"),
   rtcRemoteAudio: document.querySelector("#rtcRemoteAudio"),
   recordMicrophoneButton: document.querySelector("#recordMicrophoneButton"),
   recordDuration: document.querySelector("#recordDuration"),
@@ -224,6 +240,88 @@ function localizeEvent(event) {
   return event.message;
 }
 
+function formatBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes)) return "—";
+  if (Math.abs(bytes) < 1024) return `${bytes} B`;
+  if (Math.abs(bytes) < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MiB`;
+}
+
+function formatSignedBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes)) return "—";
+  return `${bytes > 0 ? "+" : ""}${formatBytes(bytes)}`;
+}
+
+function updateResourceMonitor(status) {
+  const baseline = status.resources?.baseline;
+  const rtcBaseline = status.resources?.rtc_baseline;
+  const current = status.resources?.current;
+  const latestRelease = selectLatestReleaseSnapshot(status.resources?.history);
+  const lifecycleSnapshot = current?.stage === "rtc_running"
+    ? current
+    : latestRelease || current;
+  const hasRtcBaseline = rtcBaseline && Object.keys(rtcBaseline).length > 0;
+  const lifecycleBaseline = selectLifecycleBaseline(status.resources);
+  const health = evaluateResourceLifecycle(lifecycleSnapshot, lifecycleBaseline);
+  const stateLabels = {
+    waiting: "等待设备快照",
+    observing: "持续观察中",
+    recovered: "RTC 资源已回到基线",
+    degraded: "RTC 停止后仍有资源占用",
+    failed: "资源释放调用失败",
+  };
+  const stageLabels = {
+    baseline: "连接基线",
+    rtc_pre_start: "RTC 启动前基线",
+    periodic: "空闲周期采样",
+    rtc_running: "RTC 运行中",
+    rtc_release_200ms: "RTC 停止后 200 ms",
+    rtc_release_1000ms: "RTC 停止后 1 s",
+    rtc_release_3000ms: "RTC 停止后 3 s",
+  };
+  elements.resourcePanel.dataset.state = health.state;
+  elements.resourceState.textContent = stateLabels[health.state] || health.state;
+  elements.resourceStage.textContent = current
+    ? `${status.connected ? "实时" : "设备离线，最后样本"} · ${stageLabels[current.stage] || current.stage || "未知阶段"} · #${current.sequence || 0}`
+    : "尚未收到 evt.sdk.resource_snapshot";
+
+  const memory = current?.memory || {};
+  elements.resourceInternal.textContent = formatBytes(memory.internal?.free_bytes);
+  elements.resourceLargest.textContent = formatBytes(memory.internal?.largest_free_block_bytes);
+  elements.resourceDma.textContent = formatBytes(memory.dma?.free_bytes);
+  elements.resourcePsram.textContent = memory.psram
+    ? formatBytes(memory.psram.free_bytes)
+    : "未启用";
+
+  const resourceLabels = {
+    rtc: "RTC",
+    media_system: "媒体系统",
+    tts_playback: "扬声器",
+    microphone_runtime: "麦克风",
+    voice_runtime: "语音任务",
+    face_tracking_preview: "人脸预览",
+    audio_codec: "音频编解码器",
+  };
+  const owners = Object.entries(current?.resources || {})
+    .filter(([name, active]) => name !== "voice_state" && active === true)
+    .map(([name]) => resourceLabels[name] || name);
+  elements.resourceOwners.textContent = owners.length > 0 ? owners.join(" / ") : "无活动媒体资源";
+  elements.resourceDelta.textContent = lifecycleBaseline
+    ? `相对 ${hasRtcBaseline ? "RTC 启动前" : "连接基线"}：内部 ${formatSignedBytes(health.deltas.internalFreeBytes)} · 连续块 ${formatSignedBytes(health.deltas.internalLargestBytes)}`
+    : "等待资源基线";
+
+  const release = current?.release;
+  if (!release || !release.sequence) {
+    elements.resourceRelease.textContent = "尚无 RTC 停止记录";
+  } else if (release.complete === false) {
+    elements.resourceRelease.textContent = `失败：${(release.failures || []).join(" / ") || "未知释放步骤"}`;
+  } else {
+    elements.resourceRelease.textContent = `成功 · 第 ${release.sequence} 次 RTC 释放`;
+  }
+}
+
 function renderStatus(status) {
   state.status = status;
   elements.connectionBadge.dataset.state = status.connected ? "online" : "offline";
@@ -232,6 +330,7 @@ function renderStatus(status) {
   elements.firmwareVersion.textContent = status.device?.firmware_version || "未知";
   elements.capabilityCount.textContent = String(status.capabilities.length).padStart(2, "0");
   elements.lastSync.textContent = new Date().toLocaleTimeString([], { hour12: false });
+  updateResourceMonitor(status);
   elements.activeOperation.textContent = !status.connected
     ? "设备已断开，请重新连接后再测试"
     : status.active_action
@@ -607,7 +706,13 @@ function updateRtcAudioHealth() {
   const captureFrames = Number(deviceStats.audio_capture_frames || 0);
   const txPackets = Number(deviceStats.audio_tx_packets || 0);
   const txErrors = Number(deviceStats.audio_tx_errors || 0);
-  const capturePeak = Number(deviceStats.audio_capture_peak || 0);
+  const hasRawMicrophonePeak = Number.isFinite(Number(deviceStats.audio_microphone_peak));
+  const capturePeak = hasRawMicrophonePeak
+    ? Number(deviceStats.audio_microphone_peak)
+    : Number(deviceStats.audio_capture_peak || 0);
+  const aecActive = deviceStats.audio_aec_active === true;
+  const aecReferenceBytes = Number(deviceStats.audio_aec_reference_bytes || 0);
+  const aecReferenceDrops = Number(deviceStats.audio_aec_reference_drops || 0);
   const deviceRxPackets = Number(deviceStats.audio_packets || 0);
   const deviceDecodedFrames = Number(deviceStats.audio_decoded_frames || 0);
   const deviceRenderErrors = Number(deviceStats.audio_render_errors || 0);
@@ -616,6 +721,15 @@ function updateRtcAudioHealth() {
   elements.rtcAudioDeviceCapture.textContent = String(captureFrames);
   elements.rtcAudioDeviceTx.textContent = txErrors > 0 ? `${txPackets} / 错误 ${txErrors}` : String(txPackets);
   elements.rtcAudioSignal.textContent = `${capturePeak} / ${state.rtc.browserAudioLevel.toFixed(3)}`;
+  elements.rtcAudioAec.textContent = !hasRawMicrophonePeak
+    ? "旧固件：无物理麦克风遥测"
+    : !aecActive
+      ? "未启用（原始麦克风兜底）"
+      : aecReferenceDrops > 0
+        ? `工作中 · 参考 ${formatBytes(aecReferenceBytes)} · 丢弃 ${aecReferenceDrops}`
+        : aecReferenceBytes > 0
+          ? `工作中 · 参考 ${formatBytes(aecReferenceBytes)}`
+          : "工作中 · 等待电脑下行参考音频";
   const health = evaluateRtcAudioHealth({
     peerConnected: state.rtc.peer.connectionState === "connected",
     browserTxPackets: state.rtc.browserAudioSent,
@@ -687,6 +801,8 @@ async function startRtcAudio() {
   elements.rtcAudioDownPackets.textContent = "0";
   elements.rtcAudioDeviceCapture.textContent = "0";
   elements.rtcAudioDeviceTx.textContent = "0";
+  elements.rtcAudioSignal.textContent = "0 / 0.000";
+  elements.rtcAudioAec.textContent = "等待设备遥测";
   state.rtc.browserAudioSent = 0;
   state.rtc.browserAudioReceived = 0;
   state.rtc.browserAudioLevel = 0;
@@ -1202,12 +1318,6 @@ async function runAll() {
   } catch (_) {
     notify("基础全检已在首个失败环节停止", "error");
   }
-}
-
-function formatBytes(value) {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
-  return `${(value / 1024 / 1024).toFixed(2)} MiB`;
 }
 
 elements.playAudioButton.addEventListener("click", () => { playAudio().catch(() => {}); });
