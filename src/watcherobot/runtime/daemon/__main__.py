@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--managed-app-root", type=Path)
     parser.add_argument("--bundled-resource-root", type=Path)
+    parser.add_argument("--development-application-root", type=Path)
     return parser
 
 
@@ -80,6 +81,11 @@ async def run_runtime(args: argparse.Namespace) -> int:
             Path(args.bundled_resource_root).resolve()
             if args.bundled_resource_root is not None
             else state_root / "bundled-resources"
+        ),
+        development_application_root=(
+            Path(args.development_application_root).resolve()
+            if args.development_application_root is not None
+            else None
         ),
     )
     loop = asyncio.get_running_loop()

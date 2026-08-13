@@ -58,11 +58,17 @@ class ApplicationLauncher:
         *,
         managed_app_root: Path,
         bundled_resource_root: Path,
+        development_application_root: Path | None = None,
         default_app_id: str = DEFAULT_APPLICATION_ID,
         is_windows: bool | None = None,
     ) -> None:
         self._managed_app_root = Path(managed_app_root).resolve()
         self._bundled_resource_root = Path(bundled_resource_root).resolve()
+        self._development_application_root = (
+            Path(development_application_root).resolve()
+            if development_application_root is not None
+            else None
+        )
         self._default_app_id = default_app_id
         self._is_windows = os.name == "nt" if is_windows is None else is_windows
 
@@ -83,11 +89,16 @@ class ApplicationLauncher:
             app_id=manifest.app_id,
             default_app_id=self._default_app_id,
         )
-        controlled_root = (
-            self._bundled_resource_root
-            if launcher_kind is ApplicationLauncherKind.BUNDLED
-            else self._managed_app_root
-        )
+        if launcher_kind is ApplicationLauncherKind.BUNDLED:
+            controlled_root = self._bundled_resource_root
+        elif (
+            manifest.app_id == self._default_app_id
+            and self._development_application_root is not None
+            and selected_dir.is_relative_to(self._development_application_root)
+        ):
+            controlled_root = self._development_application_root
+        else:
+            controlled_root = self._managed_app_root
         resolved_executable = _require_controlled_executable(
             executable,
             controlled_root=controlled_root,

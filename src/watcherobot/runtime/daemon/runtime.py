@@ -68,6 +68,7 @@ class DaemonRuntime:
         preview_udp_port: int = 0,
         managed_app_root: Path | None = None,
         bundled_resource_root: Path | None = None,
+        development_application_root: Path | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         connection_registry = ExternalConnectionRegistry()
@@ -93,6 +94,7 @@ class DaemonRuntime:
         application_launcher = ApplicationLauncher(
             managed_app_root=managed_app_root or application_parent,
             bundled_resource_root=bundled_resource_root or application_parent,
+            development_application_root=development_application_root,
         )
         self.application = ApplicationRuntimeManager(
             application_dir=application_dir,

@@ -259,6 +259,60 @@ def test_launcher_rejects_executable_outside_its_controlled_root(
         )
 
 
+def test_launcher_allows_default_application_from_explicit_development_root(
+    tmp_path: Path,
+) -> None:
+    development_root = tmp_path / "watcher-server"
+    application_dir = _write_application(
+        development_root,
+        app_id="watcher_default",
+    )
+    executable = _write_executable(
+        development_root / ".venv" / ("Scripts" if os.name == "nt" else "bin"),
+        _python_name(),
+    )
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+        development_application_root=development_root,
+    )
+
+    spec = launcher.build_spec(
+        application_dir=application_dir,
+        kind="python",
+        executable=executable,
+    )
+
+    assert spec.application_dir == development_root.resolve()
+    assert spec.command[-1] == development_root.resolve() / "app.py"
+
+
+def test_launcher_does_not_extend_development_root_to_third_party_apps(
+    tmp_path: Path,
+) -> None:
+    development_root = tmp_path / "watcher-server"
+    application_dir = _write_application(
+        development_root,
+        app_id="com.example.unmanaged",
+    )
+    executable = _write_executable(
+        development_root / ".venv" / ("Scripts" if os.name == "nt" else "bin"),
+        _python_name(),
+    )
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+        development_application_root=development_root,
+    )
+
+    with pytest.raises(ApplicationLaunchError, match="controlled root"):
+        launcher.build_spec(
+            application_dir=application_dir,
+            kind="python",
+            executable=executable,
+        )
+
+
 @pytest.mark.parametrize(
     ("kind", "wrong_name"),
     [("python", "arbitrary.exe"), ("bundled", "other-app.exe")],
