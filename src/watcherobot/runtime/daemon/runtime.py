@@ -288,27 +288,6 @@ class DaemonRuntime:
             volume_id=volume_id,
         )
 
-    def start_maintenance_job(
-        self,
-        kind: str,
-        package_path: str,
-        port: str,
-        *,
-        transport: str = "serial",
-        volume_id: str = "",
-        release_version: str = "",
-        release_asset: str = "",
-    ) -> dict[str, object]:
-        return self.maintenance.start(
-            kind,
-            package_path,
-            port,
-            transport=transport,
-            volume_id=volume_id,
-            release_version=release_version,
-            release_asset=release_asset,
-        )
-
     def maintenance_job(self, job_id: str) -> dict[str, object]:
         return self.maintenance.get(job_id)
 

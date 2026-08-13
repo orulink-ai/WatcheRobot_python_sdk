@@ -46,15 +46,6 @@ class SelectApplicationRequest(BaseModel):
     launcher: ApplicationLauncherRequest
 
 
-class MaintenanceInstallRequest(BaseModel):
-    package_path: str = ""
-    port: str = ""
-    transport: str = "serial"
-    volume_id: str = ""
-    release_version: str = ""
-    release_asset: str = ""
-
-
 class MaintenanceDeviceInfoRequest(BaseModel):
     port: str
 
@@ -171,19 +162,6 @@ class ApplicationController(Protocol):
         volume_id: str = "",
     ) -> dict[str, Any]:
         """Read one work together with its editable source media."""
-
-    def start_maintenance_job(
-        self,
-        kind: str,
-        package_path: str,
-        port: str,
-        *,
-        transport: str = "serial",
-        volume_id: str = "",
-        release_version: str = "",
-        release_asset: str = "",
-    ) -> dict[str, Any]:
-        """Start a non-blocking firmware or SD resource job."""
 
     def maintenance_job(self, job_id: str) -> dict[str, Any]:
         """Return a maintenance job snapshot."""
@@ -422,14 +400,6 @@ class DaemonControlAPI:
             except MaintenanceError as exc:
                 return JSONResponse(status_code=409, content={"error": "device_info_unavailable", "message": str(exc)})
 
-        @app.post("/daemon/maintenance/firmware", status_code=202)
-        async def install_firmware(request: MaintenanceInstallRequest) -> Any:
-            return self._start_maintenance("firmware", request)
-
-        @app.post("/daemon/maintenance/sd-resources", status_code=202)
-        async def install_sd_resources(request: MaintenanceInstallRequest) -> Any:
-            return self._start_maintenance("sd_resources", request)
-
         @app.post("/daemon/maintenance/work", status_code=202)
         async def install_work(request: MaintenanceWorkRequest) -> Any:
             try:
@@ -519,21 +489,6 @@ class DaemonControlAPI:
                 return JSONResponse(status_code=404, content={"error": "maintenance_job_not_found", "message": str(exc)})
 
         return app
-
-    def _start_maintenance(self, kind: str, request: MaintenanceInstallRequest) -> Any:
-        try:
-            job = self._controller.start_maintenance_job(
-                kind,
-                request.package_path,
-                request.port,
-                transport=request.transport,
-                volume_id=request.volume_id,
-                release_version=request.release_version,
-                release_asset=request.release_asset,
-            )
-        except MaintenanceError as exc:
-            return JSONResponse(status_code=409, content={"error": "maintenance_unavailable", "message": str(exc)})
-        return {"job": job}
 
     def _status_response(self) -> dict[str, Any]:
         return {"application": self._controller.application_status()}
