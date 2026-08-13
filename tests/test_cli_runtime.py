@@ -25,6 +25,23 @@ async def main():
 asyncio.run(main())
 """
 
+TEST_BENCH_URL = "http://127.0.0.1:54321"
+
+URL_APPLICATION = f"""
+import asyncio
+
+from watcherobot.application import ApplicationContext
+
+
+async def main():
+    async with ApplicationContext.from_environment() as app:
+        app.logger.info("SDK 测试网页：{TEST_BENCH_URL}")
+        await asyncio.sleep(0.05)
+
+
+asyncio.run(main())
+"""
+
 
 def _write_application(root: Path) -> None:
     root.mkdir(parents=True)
@@ -135,6 +152,8 @@ def test_cli_runs_managed_application_and_leaves_runtime_alive(
         run_output = capsys.readouterr().out
         assert f"Running Application: {application_dir.resolve()}" in run_output
         assert "Press Ctrl+C to stop." in run_output
+        assert "Application stdout:" in run_output
+        assert "managed application entered" in run_output
         assert "Application finished: ended" in run_output
         assert main(["daemon", "status"]) == 0
         status = json.loads(capsys.readouterr().out)
@@ -144,6 +163,63 @@ def test_cli_runs_managed_application_and_leaves_runtime_alive(
     finally:
         main(["daemon", "stop"])
         capsys.readouterr()
+
+
+def test_cli_echoes_test_bench_url_from_application_startup_log(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    state_root = tmp_path / "runtime"
+    application_dir = tmp_path / "application"
+    _write_application(application_dir)
+    application_dir.joinpath("app.py").write_text(
+        URL_APPLICATION,
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("WATCHER_RUNTIME_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
+    monkeypatch.setenv("WATCHER_RUNTIME_EXTERNAL_PORT", "0")
+    monkeypatch.setenv("WATCHER_RUNTIME_PAIRING_PORT", "0")
+    monkeypatch.setenv("WATCHER_RUNTIME_PREVIEW_UDP_PORT", "0")
+
+    try:
+        assert main(["app", "run", str(application_dir)]) == 0
+        run_output = capsys.readouterr().out
+        assert f"SDK 测试网页：{TEST_BENCH_URL}" in run_output
+    finally:
+        main(["daemon", "stop"])
+        capsys.readouterr()
+
+
+def test_application_log_echo_waits_for_complete_json_line(
+    tmp_path,
+    capsys,
+) -> None:
+    log_path = tmp_path / "application.jsonl"
+    message = "SDK 测试网页：http://127.0.0.1:54321"
+    encoded = json.dumps(
+        {"stream": "stdout", "message": message},
+        ensure_ascii=False,
+    ).encode("utf-8")
+    split_at = len(encoded) // 2
+    log_path.write_bytes(encoded[:split_at])
+
+    offset = watcherobot_cli._print_application_logs(log_path, after_offset=0)
+
+    assert offset == 0
+    assert capsys.readouterr().out == ""
+
+    with log_path.open("ab") as log_file:
+        log_file.write(encoded[split_at:] + b"\n")
+
+    offset = watcherobot_cli._print_application_logs(
+        log_path,
+        after_offset=offset,
+    )
+
+    assert offset == len(encoded) + 1
+    assert message in capsys.readouterr().out
 
 
 def test_cli_runs_installed_application_in_an_isolated_store_runtime(

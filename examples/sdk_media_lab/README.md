@@ -11,8 +11,10 @@ Start the Runtime, then run:
 watcherobot app run .\examples\sdk_media_lab
 ```
 
-The Application opens its `http://127.0.0.1:<port>` dashboard automatically.
-Set `WATCHER_MEDIA_LAB_NO_BROWSER=1` to suppress automatic browser launch.
+The Application opens its `http://127.0.0.1:<port>` dashboard automatically and
+the `watcherobot app run` terminal echoes the startup log containing the exact
+URL. Set `WATCHER_MEDIA_LAB_NO_BROWSER=1` to suppress automatic browser launch;
+the URL is still printed so it can be opened manually.
 
 When no device is connected, enter the six-digit code shown on the Watcher in
 the dashboard's **Connect robot** panel. The local Application sends that code

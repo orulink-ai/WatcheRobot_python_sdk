@@ -37,6 +37,7 @@ from watcherobot.provisioning import (
     DeviceNotFoundError,
     ProvisioningCancelledError,
 )
+from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 from watcherobot.runtime.daemon.instance import (
     RuntimeProcessState,
     RuntimeStateStore,
@@ -516,6 +517,14 @@ def run_application(application: Path) -> int:
         raise CliError(
             f"Application directory does not exist: {application_path}"
         )
+    manifest = ApplicationManifest.load(application_path)
+    application_log_path = (
+        default_runtime_state_root()
+        / "logs"
+        / "applications"
+        / f"{manifest.app_id}.jsonl"
+    )
+    application_log_offset = _file_size(application_log_path)
     print(f"Running Application: {application_path}")
     print("Press Ctrl+C to stop.")
     state, _reused = ensure_runtime()
@@ -539,9 +548,17 @@ def run_application(application: Path) -> int:
     )
     try:
         while True:
+            application_log_offset = _print_application_logs(
+                application_log_path,
+                after_offset=application_log_offset,
+            )
             status = _request_json(state.control_url, "/daemon/status")
             application_status = status["application"]
             if application_status["state"] in {"ended", "error"}:
+                _print_application_logs(
+                    application_log_path,
+                    after_offset=application_log_offset,
+                )
                 final_state = str(application_status["state"])
                 print(f"Application finished: {final_state}")
                 return 0 if final_state == "ended" else 1
@@ -554,6 +571,44 @@ def run_application(application: Path) -> int:
         )
         print("Application stopped by user.")
         return 130
+
+
+def _file_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _print_application_logs(path: Path, *, after_offset: int) -> int:
+    """Print newly persisted Application process logs and return the next offset."""
+
+    try:
+        with path.open("rb") as log_file:
+            size = log_file.seek(0, os.SEEK_END)
+            if size < after_offset:
+                after_offset = 0
+            log_file.seek(after_offset)
+            payload = log_file.read()
+    except OSError:
+        return after_offset
+
+    last_newline = payload.rfind(b"\n")
+    if last_newline < 0:
+        return after_offset
+    complete_payload = payload[: last_newline + 1]
+    next_offset = after_offset + len(complete_payload)
+
+    for raw_line in complete_payload.splitlines():
+        try:
+            record = json.loads(raw_line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        stream = str(record.get("stream") or "stdout")
+        message = str(record.get("message") or "")
+        if message:
+            print(f"Application {stream}: {message}")
+    return next_offset
 
 
 def run_installed_application(*, store_root: Path, application_id: str) -> int:
