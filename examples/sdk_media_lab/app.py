@@ -63,7 +63,7 @@ async def main() -> None:
                 if server_task.done():
                     await server_task
                 await asyncio.sleep(0.02)
-            app.logger.info("SDK Test Bench ready: %s", url)
+            app.logger.info("SDK 测试网页：%s", url)
             if os.environ.get("WATCHER_MEDIA_LAB_NO_BROWSER") != "1":
                 await asyncio.to_thread(webbrowser.open, url)
             await server_task
