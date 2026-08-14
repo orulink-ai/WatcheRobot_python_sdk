@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import threading
 import wave
 from pathlib import Path
@@ -743,6 +744,14 @@ def test_http_app_serves_browser_health_modules(tmp_path: Path) -> None:
         "export const resourceReady = true;",
         encoding="utf-8",
     )
+    web_root.joinpath("video-feedback.mjs").write_text(
+        "export const feedbackReady = true;",
+        encoding="utf-8",
+    )
+    web_root.joinpath("video-frame-queue.mjs").write_text(
+        "export const frameQueueReady = true;",
+        encoding="utf-8",
+    )
     client = TestClient(module.create_web_app(service, web_root=web_root))
 
     response = client.get("/assets/rtc-audio-health.mjs")
@@ -752,6 +761,29 @@ def test_http_app_serves_browser_health_modules(tmp_path: Path) -> None:
     resource_response = client.get("/assets/resource-health.mjs")
     assert resource_response.status_code == 200
     assert "export const resourceReady" in resource_response.text
+    feedback_response = client.get("/assets/video-feedback.mjs")
+    assert feedback_response.status_code == 200
+    assert "export const feedbackReady" in feedback_response.text
+    frame_queue_response = client.get("/assets/video-frame-queue.mjs")
+    assert frame_queue_response.status_code == 200
+    assert "export const frameQueueReady" in frame_queue_response.text
+    assert client.get("/assets/unknown.mjs").status_code == 404
+
+
+def test_http_app_serves_every_module_imported_by_browser_entrypoint(
+    tmp_path: Path,
+) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    web_root = LAB_ROOT / "web"
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+    javascript = web_root.joinpath("app.js").read_text(encoding="utf-8")
+    imported_modules = re.findall(r'from "\./([^"/]+\.mjs)"', javascript)
+
+    assert imported_modules
+    for imported_module in imported_modules:
+        response = client.get(f"/assets/{imported_module}")
+        assert response.status_code == 200, imported_module
 
 
 def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
