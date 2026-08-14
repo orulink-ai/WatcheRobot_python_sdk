@@ -5,7 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from watcherobot.cli import main
+from watcherobot.distribution.events import ErrorCode
 from watcherobot.distribution.install import (
+    ApplicationInstallError,
     ApplicationInstallResult,
     ApplicationUninstallResult,
     InstalledApplication,
@@ -78,6 +80,50 @@ def test_cli_install_jsonl_uses_sdk_store_service_without_daemon(
     assert calls[0]["runtime_root"] == runtime_root
     assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [
         {"type": "result", "ok": True, "data": result.to_dict()}
+    ]
+
+
+def test_cli_install_jsonl_preserves_runtime_integrity_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        "watcherobot.distribution.cli._build_install_dependencies",
+        lambda: SimpleNamespace(hub=object()),
+    )
+    monkeypatch.setattr(
+        "watcherobot.distribution.cli.install_application",
+        lambda **_: (_ for _ in ()).throw(
+            ApplicationInstallError(
+                ErrorCode.RUNTIME_PYTHON_INTEGRITY_FAILED,
+                "Application Runtime Python integrity verification failed",
+            )
+        ),
+    )
+
+    assert main(
+        [
+            "app",
+            "install",
+            "--space-id",
+            SPACE_ID,
+            "--commit",
+            COMMIT,
+            "--store-root",
+            str(tmp_path / "store"),
+            "--runtime-root",
+            str(tmp_path / "runtime"),
+            "--jsonl",
+        ]
+    ) == 5
+    assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [
+        {
+            "type": "error",
+            "ok": False,
+            "code": "runtime_python_integrity_failed",
+            "message": "Application Runtime Python integrity verification failed",
+        }
     ]
 
 

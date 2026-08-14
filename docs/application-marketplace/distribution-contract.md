@@ -84,9 +84,14 @@ stdout 每行必须是一个完整 JSON 对象，事件类型只允许 `progress
 | Application 校验 | `app_manifest_missing`、`app_entrypoint_missing`、`app_manifest_invalid`、`app_sdk_incompatible`、`app_dependency_invalid`、`app_content_forbidden` |
 | OAuth 与凭据 | `auth_required`、`auth_denied`、`auth_expired`、`auth_invalid_response`、`auth_network_error`、`credential_store_error` |
 | Space 与官方名单 | `space_ownership_conflict`、`catalog_invalid`、`catalog_pr_conflict`、`remote_error` |
+| Application Runtime | `runtime_manifest_invalid`、`runtime_resources_missing`、`runtime_python_integrity_failed`、`runtime_uv_integrity_failed`、`runtime_sdk_wheel_integrity_failed` |
 | 生命周期 | `operation_cancelled`、`internal_error` |
 
-`auth_network_error` 属于远程错误并返回退出码 4；`operation_cancelled` 返回 130；未单独分类的 `internal_error` 返回 5。Desktop 应以稳定错误码选择 UI 状态，以退出码判断进程类别，不能匹配 `message` 文案。
+`auth_network_error` 属于远程错误并返回退出码 4；`operation_cancelled` 返回 130；
+Application Runtime 完整性错误与未单独分类的 `internal_error` 返回 5。Runtime 错误只区分
+清单、缺失资源和三个受锁定内容保护的组件，不在 JSONL 中包含本机路径、原始命令输出或
+traceback。Desktop 应以稳定错误码选择 UI 状态，以退出码判断进程类别，不能匹配
+`message` 文案。
 
 ## 发布、名单与固定快照
 

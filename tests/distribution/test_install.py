@@ -6,10 +6,14 @@ import platform
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import watcherobot.distribution.install as install_module
+from watcherobot.distribution.events import ErrorCode
 from watcherobot.distribution.install import (
     ApplicationEnvironmentCommand,
     ApplicationEnvironmentOutput,
+    ApplicationInstallError,
     SystemApplicationEnvironmentRunner,
     install_application,
     list_installed_applications,
@@ -167,6 +171,60 @@ def test_invalid_cached_runtime_is_archived_and_rebuilt(tmp_path: Path) -> None:
     assert store_root.joinpath("runtime/runtime.json").is_file()
     assert len(archived_runtimes) == 1
     assert archived_runtimes[0].joinpath("invalid.txt").read_text(encoding="utf-8") == "stale"
+
+
+@pytest.mark.parametrize(
+    ("damage", "expected_code", "expected_message"),
+    [
+        (
+            lambda root: root.joinpath("runtime.json").write_text("not-json", encoding="utf-8"),
+            ErrorCode.RUNTIME_MANIFEST_INVALID,
+            "Application Runtime manifest is invalid",
+        ),
+        (
+            lambda root: root.joinpath("uv.exe" if platform.system() == "Windows" else "uv").unlink(),
+            ErrorCode.RUNTIME_RESOURCES_MISSING,
+            "Application Runtime resources are missing",
+        ),
+        (
+            lambda root: root.joinpath(
+                "python/python.exe" if platform.system() == "Windows" else "python/bin/python"
+            ).write_bytes(b"modified-python"),
+            ErrorCode.RUNTIME_PYTHON_INTEGRITY_FAILED,
+            "Application Runtime Python integrity verification failed",
+        ),
+        (
+            lambda root: root.joinpath(
+                "uv.exe" if platform.system() == "Windows" else "uv"
+            ).write_bytes(b"modified-uv"),
+            ErrorCode.RUNTIME_UV_INTEGRITY_FAILED,
+            "Application Runtime uv integrity verification failed",
+        ),
+        (
+            lambda root: root.joinpath(
+                "wheels/watcherobot-0.1.1a3-py3-none-any.whl"
+            ).write_bytes(b"modified-wheel"),
+            ErrorCode.RUNTIME_SDK_WHEEL_INTEGRITY_FAILED,
+            "Application Runtime SDK wheel integrity verification failed",
+        ),
+    ],
+)
+def test_source_runtime_failures_have_stable_sanitized_errors(
+    tmp_path: Path,
+    damage,
+    expected_code: ErrorCode,
+    expected_message: str,
+) -> None:
+    runtime = tmp_path / "runtime-source"
+    _write_runtime(runtime)
+    damage(runtime)
+
+    with pytest.raises(ApplicationInstallError) as captured:
+        install_module._load_runtime(runtime)
+
+    assert captured.value.code is expected_code
+    assert str(captured.value) == expected_message
+    assert str(tmp_path) not in str(captured.value)
 
 
 def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) -> None:

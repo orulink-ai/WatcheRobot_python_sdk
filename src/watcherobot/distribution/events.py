@@ -28,6 +28,11 @@ class ErrorCode(str, Enum):
     CATALOG_PR_CONFLICT = "catalog_pr_conflict"
     REMOTE_ERROR = "remote_error"
     OPERATION_CANCELLED = "operation_cancelled"
+    RUNTIME_MANIFEST_INVALID = "runtime_manifest_invalid"
+    RUNTIME_RESOURCES_MISSING = "runtime_resources_missing"
+    RUNTIME_PYTHON_INTEGRITY_FAILED = "runtime_python_integrity_failed"
+    RUNTIME_UV_INTEGRITY_FAILED = "runtime_uv_integrity_failed"
+    RUNTIME_SDK_WHEEL_INTEGRITY_FAILED = "runtime_sdk_wheel_integrity_failed"
     INTERNAL_ERROR = "internal_error"
 
 
