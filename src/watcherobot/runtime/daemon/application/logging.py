@@ -6,7 +6,6 @@ import asyncio
 import inspect
 import json
 import re
-from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,28 +32,6 @@ class ApplicationLogService:
     def log_path(self, app_id: str) -> Path:
         safe_app_id = re.sub(r"[^0-9A-Za-z_.-]+", "_", app_id).strip("._")
         return self._log_dir / f"{safe_app_id or 'application'}.jsonl"
-
-    def read_recent(self, app_id: str, *, limit: int = 100) -> list[dict[str, object]]:
-        """Read a bounded tail of persisted stdout/stderr records."""
-
-        bounded_limit = max(1, min(int(limit), 500))
-        path = self.log_path(app_id)
-        if not path.is_file():
-            return []
-        records: deque[dict[str, object]] = deque(maxlen=bounded_limit)
-        try:
-            with path.open("r", encoding="utf-8") as log_file:
-                for line in log_file:
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(record, dict):
-                        records.append(record)
-        except OSError as exc:
-            self.last_write_error = str(exc)
-            return []
-        return list(records)
 
     async def record(
         self,

@@ -249,14 +249,6 @@ class DaemonControlAPI:
         async def get_logs(after_id: int = 0) -> dict[str, Any]:
             return {"logs": self._controller.daemon_logs(after_id)}
 
-        @app.get("/daemon/application/logs")
-        async def get_application_logs(limit: int = 100) -> dict[str, Any]:
-            return {
-                "logs": self._controller.application_log_records(
-                    max(1, min(limit, 500))
-                )
-            }
-
         @app.post("/daemon/application/start")
         async def start_application() -> Any:
             try:
@@ -278,14 +270,11 @@ class DaemonControlAPI:
                     },
                 )
             except ApplicationStartError as exc:
-                application = self._controller.application_status()
                 return JSONResponse(
                     status_code=500,
                     content={
                         "error": "application_start_failed",
                         "message": str(exc),
-                        "exit_code": application.get("last_exit_code"),
-                        "recent_logs": self._controller.application_log_records(20),
                     },
                 )
             return self._status_response()

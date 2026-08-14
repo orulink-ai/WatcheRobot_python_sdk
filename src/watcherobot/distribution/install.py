@@ -457,16 +457,27 @@ def _load_runtime(runtime_root: Path) -> _RuntimeResources:
         if root.is_symlink() or not root.is_dir():
             raise OSError("Application Runtime root is unavailable")
         root = root.resolve()
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         raise ApplicationInstallError(
             ErrorCode.RUNTIME_RESOURCES_MISSING,
             "Application Runtime resources are missing",
         ) from exc
 
+    manifest_path = root / _RUNTIME_MANIFEST
     try:
-        manifest_path = root / _RUNTIME_MANIFEST
-        if manifest_path.is_symlink() or not manifest_path.is_file():
-            raise ValueError("Application Runtime manifest is unavailable")
+        manifest_missing = manifest_path.is_symlink() or not manifest_path.is_file()
+    except (OSError, RuntimeError) as exc:
+        raise ApplicationInstallError(
+            ErrorCode.RUNTIME_RESOURCES_MISSING,
+            "Application Runtime resources are missing",
+        ) from exc
+    if manifest_missing:
+        raise ApplicationInstallError(
+            ErrorCode.RUNTIME_RESOURCES_MISSING,
+            "Application Runtime resources are missing",
+        )
+
+    try:
         if manifest_path.stat().st_size > _MAX_OUTPUT_BYTES:
             raise ValueError("manifest is too large")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -479,7 +490,15 @@ def _load_runtime(runtime_root: Path) -> _RuntimeResources:
             raise ValueError("Python executable escapes its Runtime root")
         if not wheel.name.startswith("watcherobot-") or wheel.suffix != ".whl":
             raise ValueError("watcherobot wheel is invalid")
-    except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        UnicodeError,
+        ValueError,
+        KeyError,
+        TypeError,
+        json.JSONDecodeError,
+    ) as exc:
         raise ApplicationInstallError(
             ErrorCode.RUNTIME_MANIFEST_INVALID,
             "Application Runtime manifest is invalid",

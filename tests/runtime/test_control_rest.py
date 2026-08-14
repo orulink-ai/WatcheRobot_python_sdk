@@ -4,6 +4,7 @@ import asyncio
 import time
 
 import httpx
+from watcherobot import __version__
 from fastapi.testclient import TestClient
 
 from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchError
@@ -52,14 +53,6 @@ class _ControllerStub:
                 "timestamp_ms": 2_000,
             },
         ]
-        self.app_logs = [
-            {
-                "timestamp": "2026-08-14T10:00:00+00:00",
-                "app_id": "watcher_default",
-                "stream": "stderr",
-                "message": "missing runtime dependency",
-            }
-        ]
         self.work_requests: list[tuple[dict, str, str]] = []
         self.work_read_requests: list[dict] = []
         self.maintenance_requests: list[dict] = []
@@ -72,9 +65,6 @@ class _ControllerStub:
             "process_id": self.process_id,
             "last_exit_code": self.last_exit_code,
         }
-
-    def application_log_records(self, limit: int = 100) -> list[dict]:
-        return self.app_logs[-limit:]
 
     async def start_application(self) -> ApplicationRun:
         if self.start_error is not None:
@@ -234,7 +224,7 @@ def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None
     assert client.get("/daemon/status").json() == {
         "runtime": {
             "control_protocol": 2,
-            "sdk_version": "0.1.1a4",
+            "sdk_version": __version__,
         },
         "application": {
             "current_app": "watcher_default",
@@ -350,19 +340,13 @@ def test_control_rest_reports_occupied_and_start_failure() -> None:
     }
 
     controller.start_error = ApplicationStartError("entrypoint failed")
-    controller.last_exit_code = 1
     failed = client.post("/daemon/application/start")
     assert failed.status_code == 500
     assert failed.json() == {
         "error": "application_start_failed",
         "message": "entrypoint failed",
-        "exit_code": 1,
-        "recent_logs": controller.app_logs,
     }
-
-    assert client.get("/daemon/application/logs?limit=20").json() == {
-        "logs": controller.app_logs
-    }
+    assert client.get("/daemon/application/logs").status_code == 404
 
 
 def test_control_rest_starts_creator_work_install() -> None:
@@ -589,7 +573,7 @@ def test_control_status_identifies_the_daemon_control_protocol() -> None:
     assert response.status_code == 200
     assert response.json()["runtime"] == {
         "control_protocol": 2,
-        "sdk_version": "0.1.1a4",
+        "sdk_version": __version__,
     }
 
 

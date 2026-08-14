@@ -135,25 +135,5 @@ def test_runtime_captures_application_stdout_and_stderr(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_log_service_reads_a_bounded_recent_tail(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        service = ApplicationLogService(
-            log_dir=tmp_path / "logs",
-            desktop_forwarder=lambda _frame: None,
-        )
-        for index in range(4):
-            await service.record(
-                app_id="logging_app",
-                stream="stderr",
-                message=f"line-{index}",
-            )
-
-        records = service.read_recent("logging_app", limit=2)
-
-        assert [record["message"] for record in records] == ["line-2", "line-3"]
-
-    asyncio.run(scenario())
-
-
 async def _append(target: list[str], frame: str) -> None:
     target.append(frame)

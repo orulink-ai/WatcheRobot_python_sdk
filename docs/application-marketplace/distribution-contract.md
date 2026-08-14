@@ -105,6 +105,11 @@ traceback。Desktop 应以稳定错误码选择 UI 状态，以退出码判断�
 
 ## Desktop 集成与验证证据
 
+Daemon 管理接口的版本握手、兼容矩阵和日志安全边界见
+[Daemon 控制协议](../contracts/daemon-control-protocol.md)。Application Runtime 缺少
+`runtime.json` 时返回 `runtime_resources_missing`；文件存在但无法解析、结构错误或路径声明非法时返回
+`runtime_manifest_invalid`。所有 Runtime 错误只公开稳定错误码和消息，不透传底层异常内容。
+
 - Desktop 当前实现说明：`WatcheRobot_client/Watcher Desktop App/docs/application-store-implementation.zh-CN.md`。
 - Desktop 当前发行检查：`npm run test:packaged-runtime`、`npm run test:application-marketplace-ui`、`npm run test:application-marketplace-s9-live`。
 - SDK 合同检查：`.venv\\Scripts\\python -m pytest -o addopts='' -q tests/distribution`。
