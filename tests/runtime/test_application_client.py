@@ -42,6 +42,8 @@ def test_communicators_send_only_after_channel_is_connected() -> None:
 def test_communicators_receive_while_connected_callback_waits(
     monkeypatch,
 ) -> None:
+    connect_calls: list[tuple[str, dict[str, Any]]] = []
+
     class FakeConnection:
         def __init__(self, frames: list[str]) -> None:
             self._frames = frames
@@ -71,7 +73,8 @@ def test_communicators_receive_while_connected_callback_waits(
     desktop = FakeConnection([])
     device = FakeConnection(["ready"])
 
-    def fake_connect(url: str, **_kwargs: Any) -> FakeContext:
+    def fake_connect(url: str, **kwargs: Any) -> FakeContext:
+        connect_calls.append((url, kwargs))
         return FakeContext(desktop if url.endswith("desktop") else device)
 
     monkeypatch.setattr(
@@ -107,3 +110,7 @@ def test_communicators_receive_while_connected_callback_waits(
         await asyncio.gather(*done, return_exceptions=True)
 
     asyncio.run(scenario())
+    assert connect_calls == [
+        ("ws://test/desktop", {"max_size": None, "proxy": None}),
+        ("ws://test/device", {"max_size": None, "proxy": None}),
+    ]
