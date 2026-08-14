@@ -214,6 +214,12 @@ class DaemonRuntime:
         )
         return run
 
+    def application_log_records(self, limit: int = 100) -> list[dict[str, object]]:
+        app_id = self.application.registry.current_app
+        if not app_id:
+            return []
+        return self.application_logs.read_recent(app_id, limit=limit)
+
     async def stop_application(self) -> None:
         app_id = self.application.registry.current_app
         self.logs.record(f"Application stop requested (app_id={app_id})")
