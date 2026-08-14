@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
+from watcherobot import __version__
 from watcherobot.runtime.daemon.application.runtime import ApplicationStartError
 from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchError
 from watcherobot.runtime.daemon.application.manifest import (
@@ -24,6 +25,9 @@ from watcherobot.runtime.daemon.application.session import (
 )
 from watcherobot.runtime.daemon.pairing.session import PairingSessionError
 from watcherobot.runtime.daemon.maintenance import MaintenanceError
+
+
+DAEMON_CONTROL_PROTOCOL_VERSION = 2
 
 
 class PairDeviceRequest(BaseModel):
@@ -536,7 +540,13 @@ class DaemonControlAPI:
         return {"job": job}
 
     def _status_response(self) -> dict[str, Any]:
-        return {"application": self._controller.application_status()}
+        return {
+            "runtime": {
+                "control_protocol": DAEMON_CONTROL_PROTOCOL_VERSION,
+                "sdk_version": __version__,
+            },
+            "application": self._controller.application_status(),
+        }
 
 
 class DaemonControlServer:

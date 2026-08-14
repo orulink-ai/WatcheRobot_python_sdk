@@ -221,6 +221,10 @@ def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None
     client = TestClient(DaemonControlAPI(controller=controller).create_app())
 
     assert client.get("/daemon/status").json() == {
+        "runtime": {
+            "control_protocol": 2,
+            "sdk_version": "0.1.1a4",
+        },
         "application": {
             "current_app": "watcher_default",
             "state": "not_running",
@@ -553,6 +557,19 @@ def test_control_rest_selects_application_and_requests_runtime_shutdown() -> Non
     )
     assert stopped.status_code == 202
     assert controller.shutdown_requested is True
+
+
+def test_control_status_identifies_the_daemon_control_protocol() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    response = client.get("/daemon/status")
+
+    assert response.status_code == 200
+    assert response.json()["runtime"] == {
+        "control_protocol": 2,
+        "sdk_version": "0.1.1a4",
+    }
 
 
 def test_control_rest_rejects_legacy_or_arbitrary_launcher_requests() -> None:
