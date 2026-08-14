@@ -389,6 +389,33 @@ class WatcheRobot:
     def device_info(self) -> dict[str, Any]:
         return dict(self._transport.device_info)
 
+    @property
+    def resource_snapshot(self) -> dict[str, Any]:
+        """Return the latest device-wide resource snapshot."""
+
+        return dict(getattr(self._transport, "resource_snapshot", {}))
+
+    @property
+    def resource_baseline(self) -> dict[str, Any]:
+        """Return the device resource baseline captured for this connection."""
+
+        return dict(getattr(self._transport, "resource_baseline", {}))
+
+    @property
+    def resource_rtc_baseline(self) -> dict[str, Any]:
+        """Return the resource snapshot captured before the latest RTC start."""
+
+        return dict(getattr(self._transport, "resource_rtc_baseline", {}))
+
+    @property
+    def resource_history(self) -> list[dict[str, Any]]:
+        """Return recent device-wide resource snapshots in capture order."""
+
+        return [
+            dict(snapshot)
+            for snapshot in getattr(self._transport, "resource_history", [])
+        ]
+
     def refresh_device_info(self, *, timeout: float = 1.0) -> dict[str, Any]:
         """Request a fresh capability and device-information snapshot.
 

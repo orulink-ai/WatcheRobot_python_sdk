@@ -47,6 +47,10 @@ class DaemonApplicationTransport:
         self.command_timeout = command_timeout
         self.capabilities: tuple[str, ...] = ()
         self.device_info: dict[str, Any] = {}
+        self.resource_baseline: dict[str, Any] = {}
+        self.resource_rtc_baseline: dict[str, Any] = {}
+        self.resource_snapshot: dict[str, Any] = {}
+        self.resource_history: list[dict[str, Any]] = []
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._communicators: ApplicationCommunicators | None = None
@@ -456,6 +460,16 @@ class DaemonApplicationTransport:
             ):
                 self.capabilities = tuple(capabilities)
             self.device_info.update(data)
+        if message_type == "evt.sdk.resource_snapshot":
+            snapshot = dict(data)
+            if snapshot.get("stage") == "baseline":
+                self.resource_baseline = snapshot
+                self.resource_rtc_baseline = {}
+                self.resource_history = []
+            elif snapshot.get("stage") == "rtc_pre_start":
+                self.resource_rtc_baseline = snapshot
+            self.resource_snapshot = snapshot
+            self.resource_history = [*self.resource_history[-63:], snapshot]
         if message_type in {"sys.ack", "sys.nack"}:
             command_id = data.get("command_id")
             future = self._pending.get(command_id)

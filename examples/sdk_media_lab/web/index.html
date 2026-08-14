@@ -90,6 +90,32 @@
         <div><span>最近同步</span><strong id="lastSync">—</strong></div>
       </section>
 
+      <section class="resource-panel" id="resourcePanel" data-state="waiting" aria-labelledby="resourceTitle">
+        <div class="resource-heading">
+          <div>
+            <p class="section-index">00.8 / 资源生命周期</p>
+            <h2 id="resourceTitle">设备资源监视器</h2>
+            <p>持续观察内部内存、最大连续块和媒体资源；RTC 停止后自动对比启动基线。</p>
+          </div>
+          <div class="resource-verdict">
+            <span>生命周期判断</span>
+            <strong id="resourceState">等待设备快照</strong>
+            <small id="resourceStage">尚未收到 evt.sdk.resource_snapshot</small>
+          </div>
+        </div>
+        <dl class="resource-metrics">
+          <div><dt>内部可用</dt><dd id="resourceInternal">—</dd></div>
+          <div><dt>最大连续块</dt><dd id="resourceLargest">—</dd></div>
+          <div><dt>DMA 可用</dt><dd id="resourceDma">—</dd></div>
+          <div><dt>PSRAM 可用</dt><dd id="resourcePsram">—</dd></div>
+        </dl>
+        <div class="resource-details">
+          <div><span>占用状态</span><strong id="resourceOwners">等待遥测</strong></div>
+          <div><span>相对基线</span><strong id="resourceDelta">等待基线</strong></div>
+          <div><span>释放结果</span><strong id="resourceRelease">尚无 RTC 停止记录</strong></div>
+        </div>
+      </section>
+
       <section class="actuator-grid" aria-label="执行器测试台">
         <article class="control-card motion-card" data-capability="motion">
           <div class="station-head">
@@ -203,7 +229,8 @@
             <div><dt>Watcher → 电脑</dt><dd id="rtcAudioDownPackets">0</dd></div>
             <div><dt>机器人麦克风采集</dt><dd id="rtcAudioDeviceCapture">0</dd></div>
             <div><dt>机器人成功发送</dt><dd id="rtcAudioDeviceTx">0</dd></div>
-            <div><dt>有声信号（设备 / 浏览器）</dt><dd id="rtcAudioSignal">0 / 0.000</dd></div>
+            <div><dt>物理麦克风峰值 / 浏览器播放</dt><dd id="rtcAudioSignal">0 / 0.000</dd></div>
+            <div><dt>设备回声消除</dt><dd id="rtcAudioAec">等待设备遥测</dd></div>
             <div><dt>验收动作</dt><dd>请对机器人说话</dd></div>
           </dl>
           <audio id="rtcRemoteAudio" autoplay controls aria-label="Watcher 实时麦克风声音"></audio>

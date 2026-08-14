@@ -262,6 +262,12 @@ class MediaLabService:
             "active_action": active_action,
             "capabilities": list(self._robot.capabilities),
             "device": dict(self._robot.device_info),
+            "resources": {
+                "baseline": dict(self._robot.resource_baseline),
+                "rtc_baseline": dict(self._robot.resource_rtc_baseline),
+                "current": dict(self._robot.resource_snapshot),
+                "history": list(self._robot.resource_history),
+            },
             "rtc": rtc,
             "artifacts": artifacts,
             "events": self.events(),
@@ -779,12 +785,14 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     async def javascript() -> FileResponse:
         return FileResponse(web_root / "app.js", media_type="text/javascript")
 
-    @app.get("/assets/rtc-audio-health.mjs")
-    async def rtc_audio_health_javascript() -> FileResponse:
-        return FileResponse(
-            web_root / "rtc-audio-health.mjs",
-            media_type="text/javascript",
-        )
+    @app.get("/assets/{module_name}.mjs")
+    async def browser_module(module_name: str) -> FileResponse:
+        if re.fullmatch(r"[a-z0-9-]+", module_name) is None:
+            raise HTTPException(status_code=404, detail="Browser module not found")
+        module_path = web_root / f"{module_name}.mjs"
+        if not module_path.is_file():
+            raise HTTPException(status_code=404, detail="Browser module not found")
+        return FileResponse(module_path, media_type="text/javascript")
 
     @app.exception_handler(MediaLabCapabilityError)
     async def capability_handler(

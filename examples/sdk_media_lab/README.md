@@ -47,3 +47,20 @@ output device and physical earphones. Packet counters alone do not prove that
 the robot microphone is audible. Camera and
 microphone actions capture the surrounding environment; obtain consent
 before use and handle generated artifacts appropriately.
+
+Current full-duplex firmware negotiates mono Opus with a 48 kHz WebRTC clock
+while the robot microphone, speaker, and device-side AEC remain at 16 kHz. The
+browser never attaches its local microphone track to the local audio player.
+When the computer microphone is heard again in the headphones, inspect the
+robot's acoustic echo path: healthy playback makes `audio_aec_chunks` advance,
+keeps `audio_aec_reference_drops` at zero, and leaves
+`audio_render_errors`/`audio_queue_dropped` at zero. With no far-end playback,
+`audio_aec_bypass_chunks` advances so AEC nonlinear processing does not color
+near-end robot speech.
+
+The resource panel is backed by the public `Robot.resource_baseline`,
+`Robot.resource_rtc_baseline`, `Robot.resource_snapshot`, and
+`Robot.resource_history` properties. Compare the idle baseline, the snapshot
+immediately before RTC starts, and the post-stop snapshots when checking for a
+resource leak. A stable reusable high/low range is acceptable; continuously
+falling available heap across repeated start/stop cycles is not.
