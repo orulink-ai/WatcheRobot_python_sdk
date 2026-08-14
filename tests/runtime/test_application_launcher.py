@@ -110,6 +110,35 @@ def test_python_launcher_can_start_the_default_application_from_source(
     assert spec.command == (executable, application_dir / "app.py")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX virtualenvs use Python symlinks")
+def test_python_launcher_preserves_virtualenv_symlink_for_execution(
+    tmp_path: Path,
+) -> None:
+    """Validation may resolve the interpreter, but execution must retain venv semantics."""
+
+    application_dir = _write_application(
+        tmp_path / "watcher-default-source",
+        app_id="watcher_default",
+    )
+    base_python = _write_executable(tmp_path / "python-runtime", "python3.14")
+    virtualenv_python = tmp_path / "server-venv" / "bin" / "python"
+    virtualenv_python.parent.mkdir(parents=True)
+    virtualenv_python.symlink_to(base_python)
+    launcher = ApplicationLauncher(
+        managed_app_root=base_python.parent,
+        bundled_resource_root=tmp_path / "resources",
+    )
+
+    spec = launcher.build_spec(
+        application_dir=application_dir,
+        kind="python",
+        executable=virtualenv_python,
+    )
+
+    assert spec.executable == virtualenv_python
+    assert spec.command == (virtualenv_python, application_dir / "app.py")
+
+
 def test_windows_python_launcher_uses_pythonw_for_the_fixed_entrypoint(
     tmp_path: Path,
 ) -> None:

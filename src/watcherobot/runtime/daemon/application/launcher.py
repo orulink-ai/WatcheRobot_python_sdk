@@ -88,7 +88,8 @@ class ApplicationLauncher:
             if launcher_kind is ApplicationLauncherKind.BUNDLED
             else self._managed_app_root
         )
-        resolved_executable = _require_controlled_executable(
+        requested_executable = Path(os.path.abspath(executable))
+        _require_controlled_executable(
             executable,
             controlled_root=controlled_root,
             kind=launcher_kind,
@@ -96,12 +97,12 @@ class ApplicationLauncher:
         )
         command_executable = (
             _python_executable_for_application(
-                resolved_executable,
+                requested_executable,
                 controlled_root=controlled_root,
                 is_windows=self._is_windows,
             )
             if launcher_kind is ApplicationLauncherKind.PYTHON
-            else resolved_executable
+            else requested_executable.resolve(strict=True)
         )
         if (
             launcher_kind is ApplicationLauncherKind.BUNDLED
@@ -114,7 +115,7 @@ class ApplicationLauncher:
             app_id=manifest.app_id,
             application_dir=selected_dir,
             kind=launcher_kind,
-            executable=resolved_executable,
+            executable=requested_executable,
             command_executable=command_executable,
         )
 

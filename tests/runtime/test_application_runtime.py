@@ -178,12 +178,12 @@ def _build_selected_manager(
     startup_timeout: float = 3,
     stop_timeout: float = 3,
 ) -> ApplicationRuntimeManager:
-    python_executable = Path(sys.executable).resolve()
+    python_executable = Path(sys.executable)
     manager = ApplicationRuntimeManager(
         application_dir=application_dir,
         current_app=app_id,
         application_launcher=ApplicationLauncher(
-            managed_app_root=python_executable.parent,
+            managed_app_root=python_executable.resolve().parent,
             bundled_resource_root=application_dir.parent / "resources",
         ),
         startup_timeout=startup_timeout,
@@ -221,6 +221,32 @@ def test_runtime_injects_only_the_configured_read_only_device_status_url(
         assert with_status_url["WATCHER_APP_DEVICE_STATUS_URL"] == (
             "http://127.0.0.1:8767/daemon/devices"
         )
+
+    asyncio.run(scenario())
+
+
+def test_runtime_bypasses_system_proxy_for_local_application_channels(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        _write_application(app_dir, CONNECTED_APP)
+        manager = _build_selected_manager(app_dir, app_id="test_app")
+        monkeypatch.setenv("NO_PROXY", "internal.example")
+        monkeypatch.setenv("no_proxy", "")
+        run = manager.registry.begin_start()
+        await manager.bridge.start()
+        try:
+            environment = manager._build_environment(run)
+        finally:
+            manager.registry.end_run(ApplicationState.ENDED)
+            await manager.bridge.stop()
+
+        assert environment["NO_PROXY"] == (
+            "internal.example,127.0.0.1,localhost,::1"
+        )
+        assert environment["no_proxy"] == "127.0.0.1,localhost,::1"
 
     asyncio.run(scenario())
 
@@ -419,13 +445,14 @@ def test_runtime_can_select_another_application_without_restarting_itself(
     async def scenario() -> None:
         first_dir = tmp_path / "first"
         second_dir = tmp_path / "second"
+        python_executable = Path(sys.executable)
         _write_application(first_dir, CONNECTED_APP, app_id="first_app")
         _write_application(second_dir, CONNECTED_APP, app_id="second_app")
         manager = ApplicationRuntimeManager(
             application_dir=first_dir,
             current_app="first_app",
             application_launcher=ApplicationLauncher(
-                managed_app_root=Path(sys.executable).resolve().parent,
+                managed_app_root=python_executable.resolve().parent,
                 bundled_resource_root=tmp_path / "resources",
             ),
             startup_timeout=3,
@@ -435,7 +462,7 @@ def test_runtime_can_select_another_application_without_restarting_itself(
         selected = manager.select_application(
             second_dir,
             launcher_kind="python",
-            launcher_executable=Path(sys.executable).resolve(),
+            launcher_executable=python_executable,
         )
 
         assert selected.app_id == "second_app"
@@ -483,7 +510,7 @@ def test_runtime_selects_directory_and_controlled_launcher_atomically(
     assert manager.launch_spec is not None
     assert manager.launch_spec.kind is ApplicationLauncherKind.PYTHON
     assert manager.launch_spec.command == (
-        python_executable.resolve(),
+        python_executable,
         second_dir.resolve() / "app.py",
     )
 
@@ -496,9 +523,9 @@ def test_runtime_cleans_inherited_python_environment_for_selected_app(
         app_dir = tmp_path / "application"
         environment_file = tmp_path / "environment.json"
         _write_application(app_dir, ENVIRONMENT_APP)
-        python_executable = Path(sys.executable).resolve()
+        python_executable = Path(sys.executable)
         launcher = ApplicationLauncher(
-            managed_app_root=python_executable.parent,
+            managed_app_root=python_executable.resolve().parent,
             bundled_resource_root=tmp_path / "resources",
         )
         manager = ApplicationRuntimeManager(
@@ -541,9 +568,9 @@ def test_running_application_cannot_switch_controlled_launcher(
         second_dir = tmp_path / "second"
         _write_application(first_dir, CONNECTED_APP, app_id="first_app")
         _write_application(second_dir, CONNECTED_APP, app_id="second_app")
-        python_executable = Path(sys.executable).resolve()
+        python_executable = Path(sys.executable)
         launcher = ApplicationLauncher(
-            managed_app_root=python_executable.parent,
+            managed_app_root=python_executable.resolve().parent,
             bundled_resource_root=tmp_path / "resources",
         )
         manager = ApplicationRuntimeManager(
