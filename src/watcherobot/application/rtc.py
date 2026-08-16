@@ -18,6 +18,19 @@ RTC_VIDEO_CAPABILITY = "rtc.video.mjpeg.v1"
 _MODES = {"video", "audio", "av"}
 
 
+class RtcSessionRejectedError(RuntimeError):
+    """Raised when the Device rejects an RTC session start command."""
+
+    def __init__(self, message_type: str, error: str, *, owner: str | None = None) -> None:
+        detail = f"{message_type} rejected: {error}"
+        if owner:
+            detail = f"{detail} (owner={owner})"
+        super().__init__(detail)
+        self.message_type = message_type
+        self.error = error
+        self.owner = owner
+
+
 class ApplicationRtc:
     """Manage one browser-facing RTC session through the current Application."""
 
@@ -32,8 +45,14 @@ class ApplicationRtc:
         self._id_factory = id_factory or (lambda: uuid.uuid4().hex)
         self._send_timeout = send_timeout
         self._lock = threading.RLock()
+        self._start_condition = threading.Condition(self._lock)
+        self._stop_condition = threading.Condition(self._lock)
         self._client_id: str | None = None
         self._session_id: str | None = None
+        self._start_command_id: str | None = None
+        self._start_reply: dict[str, Any] | None = None
+        self._stop_command_id: str | None = None
+        self._stop_reply: dict[str, Any] | None = None
         self._mode: str | None = None
         self._state = "idle"
         self._last_error: str | None = None
@@ -60,12 +79,17 @@ class ApplicationRtc:
             self._last_error = None
             self._capabilities = {}
             self._stats = {}
+            self._start_command_id = None
+            self._start_reply = None
+            self._stop_command_id = None
+            self._stop_reply = None
             self._events.clear()
             self._event_sequence = 0
             self._active = True
             self._stop_sent = False
         try:
-            self._send("ctrl.rtc.session.start", {"mode": mode})
+            command_id = self._send("ctrl.rtc.session.start", {"mode": mode})
+            self._wait_for_start_reply(command_id)
         except Exception:
             with self._lock:
                 self._active = False
@@ -145,15 +169,19 @@ class ApplicationRtc:
             self._stop_sent = True
             self._state = "stopping"
         try:
-            self._send("ctrl.rtc.session.stop", {})
+            command_id = self._send("ctrl.rtc.session.stop", {})
+            self._wait_for_stop_reply(command_id)
         except Exception:
             with self._lock:
-                if self._active and self._stop_sent and self._state == "stopping":
+                if self._active and self._stop_sent:
                     self._stop_sent = False
-                    self._state = previous_state
+                    if self._state == "stopping":
+                        self._state = previous_state
             raise
         with self._lock:
             self._active = False
+            if self._state == "stopping":
+                self._state = "stopped"
         return True
 
     def reset(self, *, reason: str) -> bool:
@@ -178,8 +206,14 @@ class ApplicationRtc:
             self._mode = None
             self._capabilities = {}
             self._stats = {}
+            self._start_command_id = None
+            self._start_reply = None
+            self._stop_command_id = None
+            self._stop_reply = None
             self._events.clear()
             self._event_sequence = 0
+            self._start_condition.notify_all()
+            self._stop_condition.notify_all()
             return True
 
     def snapshot(self) -> dict[str, Any]:
@@ -189,7 +223,7 @@ class ApplicationRtc:
                 "client_id": self._client_id,
                 "session_id": self._session_id,
                 "state": self._state,
-                "mode": self._mode,
+                "mode": self._mode if self._active else None,
                 "last_error": self._last_error,
                 "capabilities": dict(self._capabilities),
                 "stats": dict(self._stats),
@@ -211,21 +245,79 @@ class ApplicationRtc:
         with self._lock:
             self._closed = True
 
-    def _send(self, message_type: str, data: dict[str, Any]) -> None:
+    def _send(self, message_type: str, data: dict[str, Any]) -> str:
         with self._lock:
             self._ensure_open()
             if not self._active or self._client_id is None or self._session_id is None:
                 raise RuntimeError("no active RTC session")
+            command_id = self._new_id("command")
             envelope = {
                 "type": message_type,
                 "protocol": RTC_PROTOCOL,
                 "client_id": self._client_id,
                 "session_id": self._session_id,
-                "command_id": self._new_id("command"),
+                "command_id": command_id,
                 "data": data,
             }
+            if message_type == "ctrl.rtc.session.start":
+                self._start_command_id = command_id
+                self._start_reply = None
+            elif message_type == "ctrl.rtc.session.stop":
+                self._stop_command_id = command_id
+                self._stop_reply = None
         frame = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False)
         self._transport.send_device(frame).result(timeout=self._send_timeout)
+        return command_id
+
+    def _wait_for_start_reply(self, command_id: str) -> None:
+        with self._start_condition:
+            replied = self._start_condition.wait_for(
+                lambda: self._start_command_id != command_id or self._start_reply is not None,
+                timeout=self._send_timeout,
+            )
+            reply = dict(self._start_reply) if self._start_reply is not None else None
+        if not replied or reply is None:
+            try:
+                self.stop()
+            except Exception:
+                pass
+            finally:
+                with self._lock:
+                    self._active = False
+                    self._state = "failed"
+                    self._last_error = "start_ack_timeout"
+            raise TimeoutError("device did not acknowledge RTC session start before timeout")
+        if reply.get("accepted") is True:
+            return
+        raise RtcSessionRejectedError(
+            "ctrl.rtc.session.start",
+            str(reply.get("error") or "rtc_rejected"),
+            owner=str(reply["owner"]) if reply.get("owner") else None,
+        )
+
+    def _wait_for_stop_reply(self, command_id: str) -> None:
+        with self._stop_condition:
+            replied = self._stop_condition.wait_for(
+                lambda: (
+                    self._stop_command_id != command_id
+                    or self._stop_reply is not None
+                    or self._state == "stopped"
+                ),
+                timeout=self._send_timeout,
+            )
+            terminal = self._state == "stopped"
+            reply = dict(self._stop_reply) if self._stop_reply is not None else None
+        if terminal:
+            return
+        if not replied or reply is None:
+            raise TimeoutError("device did not acknowledge RTC session stop before timeout")
+        if reply.get("accepted") is True:
+            return
+        raise RtcSessionRejectedError(
+            "ctrl.rtc.session.stop",
+            str(reply.get("error") or "rtc_rejected"),
+            owner=str(reply["owner"]) if reply.get("owner") else None,
+        )
 
     def _on_message(self, message: dict[str, Any]) -> None:
         with self._lock:
@@ -245,20 +337,43 @@ class ApplicationRtc:
                 state = data.get("state")
                 if isinstance(state, str):
                     self._state = state
-                    if state in {"stopped", "failed"}:
+                    if state == "stopped":
                         self._active = False
+                        self._stop_condition.notify_all()
                 reason = data.get("reason")
-                if isinstance(reason, str) and reason:
+                if state == "failed" and isinstance(reason, str) and reason and self._last_error is None:
                     self._last_error = reason
             elif message_type == "evt.rtc.capabilities":
                 self._capabilities = dict(data)
             elif message_type == "evt.rtc.stats":
                 self._stats = dict(data)
+            elif message_type == "sys.ack":
+                if message.get("command_id") == self._start_command_id:
+                    self._start_reply = {"accepted": True}
+                    self._start_condition.notify_all()
+                elif message.get("command_id") == self._stop_command_id:
+                    self._stop_reply = {"accepted": True}
+                    self._stop_condition.notify_all()
             elif message_type == "sys.nack":
                 error = data.get("error") or data.get("reason") or "rtc_rejected"
-                self._last_error = str(error)
+                if self._last_error is None:
+                    self._last_error = str(error)
                 self._state = "failed"
-                self._active = False
+                if message.get("command_id") == self._start_command_id:
+                    self._active = False
+                    self._start_reply = {
+                        "accepted": False,
+                        "error": str(error),
+                        "owner": data.get("owner"),
+                    }
+                    self._start_condition.notify_all()
+                elif message.get("command_id") == self._stop_command_id:
+                    self._stop_reply = {
+                        "accepted": False,
+                        "error": str(error),
+                        "owner": data.get("owner"),
+                    }
+                    self._stop_condition.notify_all()
             self._event_sequence += 1
             self._events.append(
                 {"id": self._event_sequence, "message": json.loads(json.dumps(message))}
@@ -283,4 +398,5 @@ __all__ = [
     "RTC_AUDIO_CAPABILITY",
     "RTC_PROTOCOL",
     "RTC_VIDEO_CAPABILITY",
+    "RtcSessionRejectedError",
 ]

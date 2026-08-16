@@ -71,9 +71,10 @@ class MediaLabPairingError(RuntimeError):
 class MediaLabRtcError(RuntimeError):
     """Expose a stable live-video failure to the local dashboard."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, owner: str | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.owner = owner
 
 
 class DaemonDeviceStatusProvider:
@@ -169,6 +170,10 @@ class LightEffectRequest(LightColorRequest):
     period_ms: int = Field(default=800, ge=100, le=5000)
 
 
+class AnimationPlayRequest(BaseModel):
+    animation_id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,62}$")
+
+
 class PairDeviceRequest(BaseModel):
     pairing_code: str = Field(pattern=r"^[0-9]{6}$")
     device_ip: str | None = None
@@ -202,7 +207,7 @@ class RtcFeedbackRequest(BaseModel):
 
 
 class MediaLabService:
-    """Serialize media actions and expose stable, JSON-ready diagnostics."""
+    """Arbitrate hardware resources and expose stable, JSON-ready diagnostics."""
 
     _ARTIFACT_TYPES = {
         "camera.jpg": "image/jpeg",
@@ -225,13 +230,21 @@ class MediaLabService:
         self._sample_audio = Path(sample_audio)
         self._device_status_provider = device_status_provider
         self._device_pairer = device_pairer
-        # The lifecycle lock makes RTC start/stop/reconciliation atomic. The
-        # operation lock excludes every other media action for the full RTC session;
-        # the boolean records whether that session currently owns it.
+        # RTC lifecycle transitions remain atomic while independent hardware
+        # domains use separate non-blocking resource leases. Media actions still
+        # share one lock because RTC, speaker, camera capture, and microphone all
+        # own at least one member of the audio/video hardware bundle.
         self._live_video_lifecycle_lock = threading.Lock()
         self._operation_lock = threading.Lock()
+        self._resource_locks = {
+            "media": self._operation_lock,
+            "motion": threading.Lock(),
+            "light": threading.Lock(),
+            "animation": threading.Lock(),
+        }
         self._state_lock = threading.Lock()
         self._active_action: str | None = None
+        self._active_actions: dict[str, str] = {}
         self._event_sequence = 0
         self._events: deque[dict[str, object]] = deque(maxlen=160)
         self._device_refresh_lock = threading.Lock()
@@ -243,6 +256,7 @@ class MediaLabService:
     def status(self) -> dict[str, object]:
         with self._state_lock:
             active_action = self._active_action
+            active_actions = dict(self._active_actions)
         artifacts: dict[str, dict[str, object]] = {}
         for filename, content_type in self._ARTIFACT_TYPES.items():
             path = self._artifacts_dir / filename
@@ -258,9 +272,12 @@ class MediaLabService:
         return {
             "connected": connection.get("online") is True,
             "connection": connection,
-            "busy": active_action is not None,
+            "busy": bool(active_actions),
             "active_action": active_action,
+            "active_actions": list(active_actions.values()),
+            "resource_owners": active_actions,
             "capabilities": list(self._robot.capabilities),
+            "animations": list(self._robot.animation.available_ids),
             "device": dict(self._robot.device_info),
             "resources": {
                 "baseline": dict(self._robot.resource_baseline),
@@ -282,7 +299,11 @@ class MediaLabService:
             if connection.get("online") is not True and rtc.get("active") is True:
                 self._rtc.reset(reason="device_offline")
                 rtc = self._rtc.snapshot()
-            if connection.get("online") is not True or rtc.get("state") in {"stopped", "failed"}:
+            # ``failed`` is diagnostic, not a release barrier: the Device follows it
+            # with teardown and a terminal ``stopped`` event. Releasing the media
+            # lease on ``failed`` would allow a new camera/audio action to overlap
+            # the old session's hardware cleanup.
+            if connection.get("online") is not True or rtc.get("state") == "stopped":
                 self._release_live_video_lock()
         self._refresh_device_snapshot(connection)
 
@@ -355,7 +376,7 @@ class MediaLabService:
         return {"stopped": True}
 
     def move_motion(self, *, pan_deg: int, tilt_deg: int, duration_ms: int) -> dict[str, object]:
-        with self._operation("motion_move"):
+        with self._operation("motion_move", resource="motion"):
             self._ensure_capability("motion")
             job = self._robot.motion.move_to(
                 pan_deg=pan_deg,
@@ -379,7 +400,7 @@ class MediaLabService:
         return {"stopped": True}
 
     def set_light_color(self, *, color: str, brightness: float, zone: str) -> dict[str, object]:
-        with self._operation("light_color"):
+        with self._operation("light_color", resource="light"):
             self._ensure_capability("light")
             self._robot.lights.set_color(color, brightness=brightness, zone=zone)
             return {"applied": True}
@@ -393,7 +414,7 @@ class MediaLabService:
         zone: str,
         period_ms: int,
     ) -> dict[str, object]:
-        with self._operation("light_effect"):
+        with self._operation("light_effect", resource="light"):
             self._ensure_capability("light")
             job = self._robot.lights.play_effect(
                 effect,
@@ -411,6 +432,36 @@ class MediaLabService:
         self._robot.lights.off()
         self._append_event("light_off", "Lights off requested", "ok")
         return {"off": True}
+
+    def play_animation(self, *, animation_id: str) -> dict[str, object]:
+        self._validate_animation_id(animation_id)
+        with self._operation("animation_play", resource="animation"):
+            self._ensure_capability("animation")
+            job = self._robot.animation.play(animation_id)
+            return {
+                "started": True,
+                "operation_id": job.id,
+                "animation_id": animation_id,
+            }
+
+    def prefetch_animation(self, *, animation_id: str) -> dict[str, object]:
+        self._validate_animation_id(animation_id)
+        with self._operation("animation_prefetch", resource="animation"):
+            self._ensure_capability("animation.prefetch.v1")
+            self._robot.animation.prefetch(animation_id)
+            return {"prefetched": True, "animation_id": animation_id}
+
+    def stop_animation(self) -> dict[str, object]:
+        self._ensure_device_online()
+        self._ensure_capability("animation")
+        self._robot.animation.stop()
+        self._append_event("animation_stop", "Animation stop requested", "ok")
+        return {"stopped": True}
+
+    @staticmethod
+    def _validate_animation_id(animation_id: str) -> None:
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,62}", animation_id) is None:
+            raise ValueError("animation_id must be a catalog-safe resource id")
 
     def capture_photo(self) -> dict[str, object]:
         with self._operation("capture_photo"):
@@ -459,6 +510,8 @@ class MediaLabService:
             }
 
     def start_live_video(self, *, mode: str = "video") -> dict[str, object]:
+        if mode not in {"video", "audio", "av"}:
+            raise ValueError("RTC mode must be video, audio, or av")
         required_capabilities = {
             "audio": {RTC_AUDIO_CAPABILITY},
             "video": {RTC_VIDEO_CAPABILITY},
@@ -471,7 +524,11 @@ class MediaLabService:
                 "rtc_unavailable",
                 f"Robot firmware does not advertise required RTC capabilities: {feature}",
             )
-        action = "rtc_audio" if mode == "audio" else "live_video"
+        action = {
+            "audio": "rtc_audio",
+            "video": "live_video",
+            "av": "rtc_av",
+        }[mode]
         with self._live_video_lifecycle_lock:
             if not self._operation_lock.acquire(blocking=False):
                 with self._state_lock:
@@ -481,11 +538,26 @@ class MediaLabService:
             # stop, terminal-event and device-offline paths all release it explicitly.
             with self._state_lock:
                 self._live_video_lock_held = True
-                self._active_action = action
+                self._active_actions["media"] = action
+                self._refresh_active_action_locked()
             try:
                 self._ensure_device_online()
                 self._browser_host_ipv4 = self._resolve_browser_host_ipv4()
                 session = dict(self._rtc.start(mode=mode))
+            except application_rtc.RtcSessionRejectedError as error:
+                self._release_live_video_lock()
+                if error.error == "busy":
+                    owner = error.owner or "unknown"
+                    raise MediaLabRtcError(
+                        "rtc_resource_busy",
+                        f"RTC media resource is busy: {owner}",
+                        owner=error.owner,
+                    ) from error
+                raise MediaLabRtcError(
+                    "rtc_start_rejected",
+                    f"RTC session start rejected: {error.error}",
+                    owner=error.owner,
+                ) from error
             except Exception:
                 self._release_live_video_lock()
                 raise
@@ -523,7 +595,7 @@ class MediaLabService:
             with self._state_lock:
                 action = (
                     self._active_action
-                    if self._active_action in {"live_video", "rtc_audio"}
+                    if self._active_action in {"live_video", "rtc_audio", "rtc_av"}
                     else "live_video"
                 )
             stopped = bool(self._rtc.stop())
@@ -569,9 +641,10 @@ class MediaLabService:
     def _ensure_live_video_active(self) -> None:
         self._ensure_device_online()
         with self._state_lock:
-            active = self._live_video_lock_held and self._active_action in {
+            active = self._live_video_lock_held and self._active_actions.get("media") in {
                 "live_video",
                 "rtc_audio",
+                "rtc_av",
             }
         if not active:
             raise MediaLabRtcError("rtc_not_active", "RTC session is not active")
@@ -614,8 +687,8 @@ class MediaLabService:
             if not self._live_video_lock_held:
                 return
             self._live_video_lock_held = False
-            if self._active_action in {"live_video", "rtc_audio"}:
-                self._active_action = None
+            self._active_actions.pop("media", None)
+            self._refresh_active_action_locked()
         self._operation_lock.release()
 
     def _refresh_device_snapshot(self, connection: Mapping[str, object]) -> None:
@@ -641,18 +714,20 @@ class MediaLabService:
             self._refreshed_connection_token = connection_token
 
     @contextmanager
-    def _operation(self, action: str) -> Iterator[None]:
-        if not self._operation_lock.acquire(blocking=False):
+    def _operation(self, action: str, *, resource: str = "media") -> Iterator[None]:
+        resource_lock = self._resource_locks[resource]
+        if not resource_lock.acquire(blocking=False):
             with self._state_lock:
-                active_action = self._active_action or "another action"
+                active_action = self._active_actions.get(resource) or self._active_action or "another action"
             raise MediaLabBusyError(f"media lab is busy with {active_action}")
         try:
             self._ensure_device_online()
         except Exception:
-            self._operation_lock.release()
+            resource_lock.release()
             raise
         with self._state_lock:
-            self._active_action = action
+            self._active_actions[resource] = action
+            self._refresh_active_action_locked()
         self._append_event(action, f"{_action_label(action)} started", "running")
         try:
             yield
@@ -663,8 +738,15 @@ class MediaLabService:
             self._append_event(action, f"{_action_label(action)} completed", "ok")
         finally:
             with self._state_lock:
-                self._active_action = None
-            self._operation_lock.release()
+                if self._active_actions.get(resource) == action:
+                    self._active_actions.pop(resource, None)
+                self._refresh_active_action_locked()
+            resource_lock.release()
+
+    def _refresh_active_action_locked(self) -> None:
+        self._active_action = self._active_actions.get("media")
+        if self._active_action is None and self._active_actions:
+            self._active_action = next(iter(self._active_actions.values()))
 
     def _append_event(self, action: str, message: str, tone: str) -> None:
         with self._state_lock:
@@ -759,9 +841,12 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
 
     @app.exception_handler(MediaLabRtcError)
     async def rtc_handler(_request: Request, error: MediaLabRtcError) -> JSONResponse:
+        content = {"error": error.code, "message": str(error)}
+        if error.owner:
+            content["owner"] = error.owner
         return JSONResponse(
             status_code=409,
-            content={"error": error.code, "message": str(error)},
+            content=content,
         )
 
     @app.exception_handler(RequestValidationError)
@@ -872,6 +957,18 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     @app.post("/api/controls/lights/off")
     async def turn_lights_off() -> dict[str, object]:
         return await _run_action(service.turn_lights_off)
+
+    @app.post("/api/controls/animation/play")
+    async def play_animation(request: AnimationPlayRequest) -> dict[str, object]:
+        return await _run_action(service.play_animation, animation_id=request.animation_id)
+
+    @app.post("/api/controls/animation/prefetch")
+    async def prefetch_animation(request: AnimationPlayRequest) -> dict[str, object]:
+        return await _run_action(service.prefetch_animation, animation_id=request.animation_id)
+
+    @app.post("/api/controls/animation/stop")
+    async def stop_animation() -> dict[str, object]:
+        return await _run_action(service.stop_animation)
 
     @app.post("/api/actions/capture-photo")
     async def capture_photo() -> dict[str, object]:

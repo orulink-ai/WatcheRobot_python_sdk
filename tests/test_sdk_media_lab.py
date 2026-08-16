@@ -124,6 +124,25 @@ class FakeLights:
         self.off_calls += 1
 
 
+class FakeAnimation:
+    def __init__(self) -> None:
+        self.played: list[str] = []
+        self.prefetched: list[str] = []
+        self.stop_calls = 0
+        self.job = FakeJob(303)
+        self.available_ids = ("boot", "happy", "thinking", "standby_little4")
+
+    def play(self, animation_id: str) -> FakeJob:
+        self.played.append(animation_id)
+        return self.job
+
+    def prefetch(self, animation_id: str) -> None:
+        self.prefetched.append(animation_id)
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+
 class FakeRtc:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
@@ -192,6 +211,8 @@ def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
         capabilities=(
             "motion",
             "light",
+            "animation",
+            "animation.prefetch.v1",
             "audio.stream",
             "microphone",
             "camera.capture",
@@ -241,6 +262,7 @@ def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
         microphone=FakeMicrophone(),
         motion=FakeMotion(),
         lights=FakeLights(),
+        animation=FakeAnimation(),
     )
 
 
@@ -257,6 +279,7 @@ def test_status_exposes_device_resource_snapshot_outside_rtc(tmp_path: Path) -> 
         "history": service._robot.resource_history,
     }
     assert status["rtc"]["stats"] == {}
+    assert status["animations"] == ["boot", "happy", "thinking", "standby_little4"]
 
 
 def _service(
@@ -316,9 +339,13 @@ def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -
     assert status["connected"] is True
     assert status["busy"] is False
     assert status["active_action"] is None
+    assert status["active_actions"] == []
+    assert status["resource_owners"] == {}
     assert status["capabilities"] == [
         "motion",
         "light",
+        "animation",
+        "animation.prefetch.v1",
         "audio.stream",
         "microphone",
         "camera.capture",
@@ -635,6 +662,119 @@ def test_light_controls_use_public_sdk_domain(tmp_path: Path) -> None:
     assert robot.lights.off_calls == 1
 
 
+def test_animation_control_uses_public_sdk_domain_and_accepts_catalog_ids(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    client = _client_for_service(module, tmp_path, _service(module, tmp_path, robot))
+
+    played = client.post(
+        "/api/controls/animation/play",
+        json={"animation_id": "standby_little4"},
+    )
+    prefetched = client.post(
+        "/api/controls/animation/prefetch",
+        json={"animation_id": "happy"},
+    )
+    stopped = client.post("/api/controls/animation/stop")
+
+    assert played.status_code == 200
+    assert prefetched.json() == {"prefetched": True, "animation_id": "happy"}
+    assert played.json() == {
+        "started": True,
+        "operation_id": 303,
+        "animation_id": "standby_little4",
+    }
+    assert stopped.json() == {"stopped": True}
+    assert robot.animation.played == ["standby_little4"]
+    assert robot.animation.prefetched == ["happy"]
+    assert robot.animation.stop_calls == 1
+
+
+@pytest.mark.parametrize("animation_id", ["", "UPPER", "../bad", "bad-id", "x" * 64])
+def test_animation_control_rejects_unsafe_resource_ids(
+    tmp_path: Path,
+    animation_id: str,
+) -> None:
+    module = _load_service_module()
+    client = _client_for_service(module, tmp_path, _service(module, tmp_path))
+
+    response = client.post(
+        "/api/controls/animation/play",
+        json={"animation_id": animation_id},
+    )
+
+    assert response.status_code == 422
+
+
+def test_animation_ui_uses_the_device_catalog_and_supports_prefetched_shuffle_bag_playback() -> None:
+    web_root = Path(__file__).parents[1] / "examples" / "sdk_media_lab" / "web"
+    document = web_root.joinpath("index.html").read_text(encoding="utf-8")
+    javascript = web_root.joinpath("app.js").read_text(encoding="utf-8")
+
+    assert 'id="animationSuggestions"></datalist>' in document
+    assert "standby_blink" not in document
+    assert "emotion_happy" not in document
+    assert 'id="startRandomAnimationButton"' in document
+    assert 'id="stopRandomAnimationButton"' in document
+    assert "renderAnimationCatalog(status.animations, status.connected)" in javascript
+    assert 'api("/api/controls/animation/prefetch"' in javascript
+    assert "createAnimationShuffleBag," in javascript
+    assert "remainingIds: []" in javascript
+    assert "randomState.remainingIds = createAnimationShuffleBag(" in javascript
+    assert "const nextId = randomState.remainingIds[0] || null;" in javascript
+
+
+def test_rtc_media_lease_allows_motion_lights_and_animation(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    service = _service(module, tmp_path, robot)
+
+    service.start_live_video(mode="av")
+
+    assert service.move_motion(pan_deg=90, tilt_deg=115, duration_ms=600)["completed"] is True
+    assert service.set_light_color(color="#D9FF57", brightness=0.7, zone="all") == {"applied": True}
+    assert service.play_animation(animation_id="thinking")["started"] is True
+    assert service.status()["resource_owners"] == {"media": "rtc_av"}
+
+
+@pytest.mark.parametrize("action", ["play_audio", "capture_photo", "record_microphone"])
+def test_rtc_media_lease_rejects_standalone_media_actions(tmp_path: Path, action: str) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    service.start_live_video(mode="av")
+
+    with pytest.raises(module.MediaLabBusyError, match="rtc_av"):
+        if action == "record_microphone":
+            service.record_microphone(duration=1.0)
+        else:
+            getattr(service, action)()
+
+
+def test_resource_locks_only_serialize_actions_that_share_the_same_hardware(tmp_path: Path) -> None:
+    module = _load_service_module()
+    release = threading.Event()
+    started = threading.Event()
+
+    class BlockingPlayback(FakePlayback):
+        def wait(self, timeout: float) -> None:
+            started.set()
+            super().wait(timeout)
+
+    service = _service(module, tmp_path, _robot(playback=BlockingPlayback(release)))
+    thread = threading.Thread(target=service.play_audio, daemon=True)
+    thread.start()
+    assert started.wait(timeout=1.0)
+
+    assert service.move_motion(pan_deg=90, tilt_deg=115, duration_ms=600)["completed"] is True
+    assert service.play_animation(animation_id="thinking")["started"] is True
+    with pytest.raises(module.MediaLabBusyError, match="play_audio"):
+        service.capture_photo()
+
+    release.set()
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
+
+
 @pytest.mark.parametrize(
     ("path", "capability"),
     [
@@ -786,6 +926,21 @@ def test_http_app_serves_every_module_imported_by_browser_entrypoint(
         assert response.status_code == 200, imported_module
 
 
+def test_animation_confirmation_accepts_realtime_diagnostics_when_resource_sampling_is_busy() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+
+    assert "status.rtc?.stats?.animation_active === true" in javascript
+    assert "if (!state.animation.requestAccepted) return;" in javascript
+    assert "state.animation.requestAccepted = true;" in javascript
+
+
+def test_audio_latency_diagnostics_expose_the_browser_minimum_buffer() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+
+    assert "browserLatency.minimumMs" in javascript
+    assert "最低 ${browserLatency.minimumMs} ms" in javascript
+
+
 def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
     tmp_path: Path,
 ) -> None:
@@ -855,6 +1010,27 @@ def test_full_duplex_audio_http_contract_starts_audio_rtc_session(tmp_path: Path
     assert rtc.calls == [("start", "audio"), ("stop", None)]
 
 
+def test_combined_rtc_http_contract_uses_one_audio_video_session(tmp_path: Path) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    service = _service(module, tmp_path, rtc=rtc)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    started = client.post("/api/rtc/session/start", json={"mode": "av"})
+    status = client.get("/api/status")
+    stopped = client.post("/api/rtc/session/stop")
+
+    assert started.status_code == 200
+    assert started.json()["session"]["mode"] == "av"
+    assert status.json()["resource_owners"] == {"media": "rtc_av"}
+    assert stopped.json() == {"stopped": True}
+    assert rtc.calls == [("start", "av"), ("stop", None)]
+
+
 def test_media_lab_keeps_audio_capability_compatible_with_older_sdk_runtime() -> None:
     module = _load_service_module()
 
@@ -886,6 +1062,38 @@ def test_combined_rtc_mode_requires_both_audio_and_video_capabilities(tmp_path: 
 
     with pytest.raises(module.MediaLabRtcError, match="rtc.audio.full_duplex.v1"):
         service.start_live_video(mode="av")
+
+
+def test_rtc_start_rejection_exposes_busy_owner_and_releases_media_lease(tmp_path: Path) -> None:
+    module = _load_service_module()
+
+    class RejectingRtc(FakeRtc):
+        def start(self, *, mode: str = "video") -> dict[str, object]:
+            self.calls.append(("start", mode))
+            raise module.application_rtc.RtcSessionRejectedError(
+                "ctrl.rtc.session.start",
+                "busy",
+                owner="audio_playback",
+            )
+
+    rtc = RejectingRtc()
+    service = _service(module, tmp_path, rtc=rtc)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    for filename in ("index.html", "app.js", "styles.css"):
+        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
+    client = TestClient(module.create_web_app(service, web_root=web_root))
+
+    response = client.post("/api/video/session/start", json={"mode": "video"})
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "error": "rtc_resource_busy",
+        "message": "RTC media resource is busy: audio_playback",
+        "owner": "audio_playback",
+    }
+    assert service.status()["resource_owners"] == {}
+    assert rtc.calls == [("start", "video")]
 
 
 def test_live_video_requires_explicit_firmware_capability(tmp_path: Path) -> None:
@@ -921,6 +1129,31 @@ def test_live_video_stop_failure_keeps_media_operation_exclusive(tmp_path: Path)
 
     with pytest.raises(module.MediaLabBusyError, match="live_video"):
         service.play_audio()
+
+
+def test_rtc_failure_event_keeps_media_exclusive_until_device_reports_stopped(
+    tmp_path: Path,
+) -> None:
+    module = _load_service_module()
+    rtc = FakeRtc()
+    service = _service(module, tmp_path, rtc=rtc)
+    service.start_live_video()
+
+    rtc._state.update(  # noqa: SLF001 - simulate the Device's failure-before-stop sequence
+        active=True,
+        state="failed",
+        last_error="mjpeg_data_channel_closed",
+    )
+    service.maintain()
+
+    assert service.status()["resource_owners"] == {"media": "live_video"}
+    with pytest.raises(module.MediaLabBusyError, match="live_video"):
+        service.play_audio()
+
+    rtc._state.update(active=False, state="stopped")  # noqa: SLF001
+    service.maintain()
+
+    assert service.status()["resource_owners"] == {}
 
 
 def test_live_video_offline_cleanup_resets_rtc_before_releasing_media_lock(tmp_path: Path) -> None:
@@ -1012,8 +1245,114 @@ def test_web_app_lifespan_runs_media_lab_maintenance(tmp_path: Path) -> None:
 def test_browser_counts_drop_only_when_pending_frame_is_replaced() -> None:
     javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
 
-    assert "if (state.rtc.pendingFrame !== null) state.rtc.droppedFrames += 1;" in javascript
+    assert 'from "./video-frame-queue.mjs"' in javascript
+    assert "if (admission.replacedPending) state.rtc.droppedFrames += 1;" in javascript
+    assert "finishVideoFrameDecode(state.rtc, admission.ownsDecoder)" in javascript
+    assert "current = takePendingVideoFrame(state.rtc);" in javascript
+    assert "bytes.subarray(headerSize)" in javascript
     assert "state.rtc.pendingFrame = frame;\n      state.rtc.droppedFrames += 1;" not in javascript
+
+
+def test_media_lab_video_feedback_uses_recent_drop_window() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+
+    assert 'from "./video-feedback.mjs"' in javascript
+    assert "updateVideoCongestionFeedback(state.rtc.videoCongestionFeedback" in javascript
+    assert "state.rtc.videoCongestionFeedback = videoCongestion" in javascript
+    assert "previousDroppedFrames: state.rtc.feedbackDroppedFrames" in javascript
+    assert "state.rtc.feedbackDroppedFrames = state.rtc.droppedFrames" in javascript
+    assert "state.rtc.droppedFrames > 0 ? 1 : 0" not in javascript
+
+
+def test_media_lab_video_ui_exposes_pipeline_throughput() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+    document = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
+
+    for metric in ("source_fps_x100", "target_fps", "sent_fps_x100", "video_egress_p95_us"):
+        assert metric in javascript
+    assert 'id="liveVideoPipelineFps"' in document
+    assert 'id="liveVideoTransport"' in document
+
+
+def test_media_lab_video_ui_exposes_animation_and_congestion_pressure() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+    document = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
+
+    for metric in (
+        "browser_congestion_level",
+        "animation_measured_fps_x100",
+        "animation_target_fps_x100",
+        "animation_recent_underruns",
+        "animation_late_max_us",
+        "animation_pressure_level",
+    ):
+        assert metric in javascript
+    assert 'id="liveVideoCongestion"' in document
+    assert 'id="liveVideoAnimation"' in document
+
+
+def test_media_lab_ui_uses_resource_owners_instead_of_global_busy_for_controls() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+    document = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
+
+    assert 'from "./media-resource-policy.mjs"' in javascript
+    assert "status.resource_owners" in javascript
+    assert "elements.applyMotionButton.disabled = unavailable" not in javascript
+    assert "elements.applyLightButton.disabled = unavailable" not in javascript
+    assert 'id="playAnimationButton"' in document
+    assert 'id="animationId"' in document
+    assert 'state.localResources.add("media")' in javascript
+    assert 'state.localResources.delete("media")' in javascript
+    assert 'navigator.sendBeacon(rtcEndpoint("stop", mode))' in javascript
+    assert "status.rtc?.active === true" in javascript
+    assert "state.status?.rtc?.active === true" in javascript
+
+
+def test_media_lab_ui_can_start_one_combined_audio_video_rtc_session() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+    document = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
+
+    assert 'id="startRtcAvButton"' in document
+    assert 'startRtcSession("av")' in javascript
+    assert "rtcModeHasAudio" in javascript
+    assert "rtcModeHasVideo" in javascript
+    assert "teardownInProgress" in javascript
+    assert 'JSON.stringify({ mode })' in javascript
+    assert "isCurrentRtcGeneration(state.rtc.generation, generation)" in javascript
+    assert "pollRtcEvents(generation)" in javascript
+
+
+def test_media_lab_stop_closes_browser_media_before_waiting_for_device_release() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+    stop_body = javascript.split("async function stopRtcSession()", 1)[1].split(
+        "async function failRtcSession", 1
+    )[0]
+
+    assert stop_body.index("cleanupRtcSession();") < stop_body.index(
+        'await api(rtcEndpoint("stop", mode), { method: "POST" });'
+    )
+    assert "本地音视频已结束，设备释放确认超时" in stop_body
+    assert "elements.stopLiveVideoButton.disabled = !hadVideo || !state.rtc.peer" not in stop_body
+    assert "elements.stopRtcAudioButton.disabled = !hadAudio || !state.rtc.peer" not in stop_body
+
+
+def test_media_lab_ui_explains_rtc_audio_playback_conflicts() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+
+    assert "payload.error" in javascript
+    assert 'code === "rtc_resource_busy"' in javascript
+    assert "扬声器或动画音效正在播放，请停止后再开启" in javascript
+
+
+def test_media_lab_browser_entrypoint_only_queries_declared_element_ids() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+    document = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
+
+    queried_ids = set(re.findall(r'document\.querySelector\("#([^" ]+)"\)', javascript))
+    declared_ids = set(re.findall(r'id="([^"]+)"', document))
+
+    assert queried_ids
+    assert queried_ids <= declared_ids
 
 
 def test_browser_declares_shared_formatters_only_once() -> None:
@@ -1029,6 +1368,8 @@ def test_rtc_audio_ui_uses_raw_microphone_and_aec_diagnostics() -> None:
     assert "audio_microphone_peak" in javascript
     assert "audio_aec_active" in javascript
     assert "audio_aec_reference_bytes" in javascript
+    assert "audio_aec_reference_processed_bytes" in javascript
+    assert "参考累计处理" in javascript
     assert "rtcAudioAec" in javascript
     assert "id=\"rtcAudioAec\"" in document
     assert "物理麦克风峰值" in document
@@ -1125,7 +1466,7 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "state.rtc.generation !== generation",
         'api("/api/rtc/session/start"',
         'addEventListener("track"',
-        "停止失败，请重试",
+        "本地音视频已结束，设备释放确认超时",
         "基础全检通过",
     ):
         assert copy in javascript
@@ -1141,9 +1482,12 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
     ):
         assert untranslated_copy not in html + javascript
 
-    assert "const unavailable = busy || !status.connected" in javascript
-    assert "if (state.localBusy && !interrupt) return null;" in javascript
-    assert "const ownsBusyState = !interrupt;" in javascript
+    assert "localResources: new Set()" in javascript
+    assert "if (state.localResources.has(resource) && !interrupt) return null;" in javascript
+    assert "const ownsResource = !interrupt;" in javascript
+    assert 'resource: "motion"' in javascript
+    assert 'resource: "light"' in javascript
+    assert 'resource: "animation"' in javascript
     assert 'path: "/api/actions/stop-audio"' in javascript
     assert 'path: "/api/controls/motion/stop"' in javascript
     assert javascript.count("interrupt: true") >= 2

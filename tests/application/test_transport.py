@@ -302,6 +302,35 @@ def test_transport_exposes_raw_device_send_and_fans_out_protocol_messages() -> N
     asyncio.run(scenario())
 
 
+def test_ready_event_sanitizes_and_deduplicates_the_animation_catalog() -> None:
+    async def scenario() -> None:
+        transport = DaemonApplicationTransport(command_timeout=1.0)
+
+        await transport._on_frame(
+            ApplicationChannel.DEVICE,
+            json.dumps(
+                {
+                    "type": "evt.sdk.ready",
+                    "code": 0,
+                    "data": {
+                        "animations": [
+                            "boot",
+                            "standby_little4",
+                            "boot",
+                            "../unsafe",
+                            "UPPER",
+                            7,
+                        ]
+                    },
+                }
+            ),
+        )
+
+        assert transport.animation_ids == ("boot", "standby_little4")
+
+    asyncio.run(scenario())
+
+
 def test_transport_keeps_resource_baseline_latest_snapshot_and_history() -> None:
     async def scenario() -> None:
         transport = DaemonApplicationTransport()

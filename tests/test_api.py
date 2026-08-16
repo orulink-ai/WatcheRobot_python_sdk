@@ -26,6 +26,7 @@ class FakeTransport:
         self.capabilities = (
             "behavior",
             "animation",
+            "animation.prefetch.v1",
             "motion",
             "audio",
             "audio.stream",
@@ -36,6 +37,7 @@ class FakeTransport:
             "resource.work.expression.play",
         )
         self.device_info = {"device_id": "watcher-test", "firmware_version": "test"}
+        self.animation_ids = ("boot", "happy", "smile")
         self.next_operation_id = 1
         self.next_session_id = 100
         self.closed = False
@@ -102,6 +104,7 @@ def test_public_namespaces_build_protocol_commands():
     motion = robot.motion.move_to(pan_deg=110, tilt_deg=120, duration_ms=500)
     robot.motion.set_target(pan_deg=105)
     animation = robot.animation.play("smile")
+    robot.animation.prefetch("happy")
     audio = robot.audio.play("confirm")
     robot.expressions.play_official("happy")
     robot.works.play("morning_show")
@@ -125,6 +128,7 @@ def test_public_namespaces_build_protocol_commands():
         ),
         ("ctrl.motion.set_target", {"pan_deg": 105}),
         ("ctrl.animation.play", {"animation_id": "smile"}),
+        ("ctrl.animation.prefetch", {"animation_id": "happy"}),
         ("ctrl.audio.play", {"sound_id": "confirm"}),
         ("resource.expression.play", {"source": "official", "resource_id": "happy"}),
         ("resource.work.play", {"work_id": "morning_show"}),
@@ -146,6 +150,13 @@ def test_public_namespaces_build_protocol_commands():
             },
         ),
     ]
+
+
+def test_animation_domain_exposes_the_device_catalog_as_an_immutable_snapshot():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    assert robot.animation.available_ids == ("boot", "happy", "smile")
 
 
 @pytest.mark.parametrize("work_id", ["", "UPPER", "contains-dash", "1starts_with_digit", "x" * 24])

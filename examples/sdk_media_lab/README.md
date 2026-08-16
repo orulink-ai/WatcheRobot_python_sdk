@@ -25,8 +25,9 @@ device IPv4 field sends the same pairing request directly to that same-subnet
 address while the normal broadcast discovery remains enabled.
 
 The dashboard tests motion, lights, host-to-device PCM playback, one-shot JPEG capture,
-decoded microphone recording, capability discovery, artifacts, diagnostic
-events, a live camera preview, and full-duplex RTC audio. The live preview uses
+decoded microphone recording, animation switching, capability discovery,
+artifacts, diagnostic events, a live camera preview, full-duplex RTC audio, and
+one combined audio/video RTC session. The live preview uses
 `watcher-rtc/1` only
 for signaling through the current Application's Device channel; MJPEG frames
 travel directly from the Watcher to the browser over an unordered,
@@ -48,6 +49,23 @@ the robot microphone is audible. Camera and
 microphone actions capture the surrounding environment; obtain consent
 before use and handle generated artifacts appropriately.
 
+Controls are arbitrated by hardware resource rather than by one page-wide busy
+flag. Motion, body lights, and animation each have an independent lease, so all
+three remain available during live video, full-duplex audio, or combined AV.
+Speaker sample playback, one-shot camera capture, microphone recording, and RTC
+share the media lease and therefore remain mutually exclusive. Combined AV is
+one firmware session (`mode=av`), not two peer connections competing for the
+same codec, camera, network, and teardown resources.
+
+The animation selector is populated from the connected device's
+`evt.sdk.ready.data.animations` catalog, so every animation actually installed
+on the current SD resource set is available without a hard-coded browser list.
+**Start random** cycles through that catalog at the selected interval, avoids an
+immediate repeat, and prefetches the next animation when the firmware advertises
+`animation.prefetch.v1`. Random playback remains available during live video,
+full-duplex audio, and combined AV, and its timers are released on stop,
+disconnect, or page close.
+
 Current full-duplex firmware negotiates mono Opus with a 48 kHz WebRTC clock
 while the robot microphone, speaker, and device-side AEC remain at 16 kHz. The
 browser never attaches its local microphone track to the local audio player.
@@ -62,5 +80,11 @@ The resource panel is backed by the public `Robot.resource_baseline`,
 `Robot.resource_rtc_baseline`, `Robot.resource_snapshot`, and
 `Robot.resource_history` properties. Compare the idle baseline, the snapshot
 immediately before RTC starts, and the post-stop snapshots when checking for a
-resource leak. A stable reusable high/low range is acceptable; continuously
-falling available heap across repeated start/stop cycles is not.
+resource leak. The dashboard checks free bytes, minimum free bytes, and largest
+contiguous blocks independently for internal RAM, DMA RAM, and PSRAM; this keeps
+fragmentation visible even when total free RAM still looks healthy. A stable
+reusable high/low range is acceptable; four monotonically declining post-stop
+samples across repeated start/stop cycles are reported as a fragmentation trend.
+The live-video panel also shows source/target/sent FPS, transport latency,
+browser congestion, and animation FPS/underrun/late-frame pressure so a smooth
+idle animation cannot hide contention that appears only under AV load.
