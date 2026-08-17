@@ -104,7 +104,7 @@ def test_runtime_captures_application_stdout_and_stderr(tmp_path: Path) -> None:
             application_dir=app_dir,
             current_app="logging_app",
             application_launcher=ApplicationLauncher(
-                managed_app_root=Path(sys.executable).resolve().parent,
+                managed_app_root=Path(sys.executable).parent,
                 bundled_resource_root=tmp_path / "resources",
             ),
             startup_timeout=3,
@@ -114,7 +114,7 @@ def test_runtime_captures_application_stdout_and_stderr(tmp_path: Path) -> None:
         manager.select_application(
             app_dir,
             launcher_kind="python",
-            launcher_executable=Path(sys.executable).resolve(),
+            launcher_executable=Path(sys.executable),
         )
 
         await manager.start()
@@ -177,7 +177,7 @@ def test_runtime_writes_lifecycle_log_when_application_exits_silently(
             application_dir=app_dir,
             current_app="logging_app",
             application_launcher=ApplicationLauncher(
-                managed_app_root=Path(sys.executable).resolve().parent,
+                managed_app_root=Path(sys.executable).parent,
                 bundled_resource_root=tmp_path / "resources",
             ),
             startup_timeout=3,
@@ -187,7 +187,7 @@ def test_runtime_writes_lifecycle_log_when_application_exits_silently(
         manager.select_application(
             app_dir,
             launcher_kind="python",
-            launcher_executable=Path(sys.executable).resolve(),
+            launcher_executable=Path(sys.executable),
         )
 
         try:

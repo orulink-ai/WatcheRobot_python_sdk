@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
+from websockets.asyncio.server import serve
 
 from watcherobot.runtime.daemon.application.client import (
     ApplicationCommunicators,
+    _local_connect_options,
 )
 from watcherobot.runtime.daemon.application.session import ApplicationChannel
 
@@ -35,6 +38,55 @@ def test_communicators_send_only_after_channel_is_connected() -> None:
             match="Application communicator is not connected: device",
         ):
             await communicators.send(ApplicationChannel.DEVICE, b"frame")
+
+    asyncio.run(scenario())
+
+
+def test_local_connect_options_match_the_installed_websockets_api() -> None:
+    from websockets.asyncio.client import connect
+
+    options = _local_connect_options(connect)
+
+    assert options["max_size"] is None
+    assert ("proxy" in options) is (
+        "proxy" in inspect.signature(connect).parameters
+    )
+
+
+def test_communicators_connect_to_local_channels_with_proxy_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the installed websockets package against real local servers."""
+
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.setenv(name, "http://127.0.0.1:1")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(name, "")
+
+    async def scenario() -> None:
+        async def hold_open(connection: Any) -> None:
+            await connection.wait_closed()
+
+        async with (
+            serve(hold_open, "127.0.0.1", 0) as desktop_server,
+            serve(hold_open, "127.0.0.1", 0) as device_server,
+        ):
+            desktop_port = desktop_server.sockets[0].getsockname()[1]
+            device_port = device_server.sockets[0].getsockname()[1]
+            connected = asyncio.Event()
+
+            async def on_connected() -> None:
+                connected.set()
+
+            communicators = ApplicationCommunicators(
+                desktop_url=f"ws://127.0.0.1:{desktop_port}",
+                device_url=f"ws://127.0.0.1:{device_port}",
+                on_connected=on_connected,
+            )
+            task = asyncio.create_task(communicators.run())
+            await asyncio.wait_for(connected.wait(), timeout=2)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     asyncio.run(scenario())
 
@@ -73,8 +125,13 @@ def test_communicators_receive_while_connected_callback_waits(
     desktop = FakeConnection([])
     device = FakeConnection(["ready"])
 
-    def fake_connect(url: str, **kwargs: Any) -> FakeContext:
-        connect_calls.append((url, kwargs))
+    def fake_connect(
+        url: str,
+        *,
+        max_size: int | None = 2**20,
+        proxy: str | bool | None = True,
+    ) -> FakeContext:
+        connect_calls.append((url, {"max_size": max_size, "proxy": proxy}))
         return FakeContext(desktop if url.endswith("desktop") else device)
 
     monkeypatch.setattr(

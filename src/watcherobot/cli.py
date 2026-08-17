@@ -418,8 +418,9 @@ def ensure_runtime(
 
     resolved_state_root.mkdir(parents=True, exist_ok=True)
     log_path = resolved_state_root / "runtime.log"
+    daemon_python = _canonical_launcher_path(Path(sys.executable))
     command = [
-        os.fspath(_background_python_executable(Path(sys.executable))),
+        os.fspath(_background_python_executable(daemon_python)),
         "-m",
         "watcherobot.runtime.daemon",
         "--state-root",
@@ -429,7 +430,7 @@ def ensure_runtime(
         command.extend(("--managed-app-root", str(managed_app_root.resolve())))
     else:
         command.extend(
-            ("--managed-app-root", str(Path(sys.executable).resolve().parent))
+            ("--managed-app-root", str(daemon_python.parent))
         )
     if ephemeral_ports:
         command.extend(
@@ -487,14 +488,23 @@ def _background_python_executable(
 ) -> Path:
     """Select a Python interpreter that cannot allocate a Windows terminal."""
 
-    resolved = Path(executable).resolve()
+    launcher = _canonical_launcher_path(executable)
     running_on_windows = os.name == "nt" if is_windows is None else is_windows
-    if not running_on_windows or resolved.name.lower() != "python.exe":
-        return resolved
-    pythonw = resolved.with_name("pythonw.exe")
+    if not running_on_windows or launcher.name.lower() != "python.exe":
+        return launcher
+    pythonw = launcher.with_name("pythonw.exe")
     if pythonw.is_file():
-        return pythonw.resolve()
-    return resolved
+        return pythonw
+    return launcher
+
+
+def _canonical_launcher_path(executable: Path) -> Path:
+    """Canonicalize the parent without losing a virtualenv launcher identity."""
+
+    requested = Path(executable)
+    if not requested.is_absolute():
+        requested = Path.cwd() / requested
+    return requested.parent.resolve(strict=True) / requested.name
 
 
 def stop_runtime() -> None:
@@ -536,7 +546,9 @@ def run_application(application: Path) -> int:
             "application_dir": str(application_path),
             "launcher": {
                 "kind": "python",
-                "executable": str(Path(sys.executable).resolve()),
+                "executable": str(
+                    _canonical_launcher_path(Path(sys.executable))
+                ),
             },
         },
     )

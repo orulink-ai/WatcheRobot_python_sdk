@@ -54,7 +54,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validate_source_default_options(args: argparse.Namespace) -> None:
+    has_application_root = args.source_default_application_root is not None
+    has_launcher = args.source_default_launcher is not None
+    if has_application_root != has_launcher:
+        raise ValueError(
+            "--source-default-application-root and "
+            "--source-default-launcher must be provided together"
+        )
+
+
 async def run_runtime(args: argparse.Namespace) -> int:
+    # Keep programmatic callers subject to the same invariant as the CLI.
+    _validate_source_default_options(args)
     state_root = Path(args.state_root).resolve()
     instance_lock = RuntimeInstanceLock(state_root / "runtime.lock")
     state_store = RuntimeStateStore(state_root)
@@ -133,7 +145,13 @@ async def run_runtime(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        # Convert the invariant failure into an actionable argparse message.
+        _validate_source_default_options(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     return asyncio.run(run_runtime(args))
 
 

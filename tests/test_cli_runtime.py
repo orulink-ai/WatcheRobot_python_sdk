@@ -5,6 +5,8 @@ import os
 import time
 from pathlib import Path
 
+import pytest
+
 from watcherobot import cli as watcherobot_cli
 from watcherobot.cli import main
 from watcherobot.distribution.install import InstalledApplication
@@ -94,6 +96,27 @@ def test_windows_background_daemon_uses_pythonw_redirector(
         )
         == pythonw.resolve()
     )
+
+
+def test_posix_background_daemon_preserves_virtualenv_launcher(
+    tmp_path: Path,
+) -> None:
+    if os.name == "nt":
+        pytest.skip("POSIX virtualenv symlink semantics")
+    runtime = tmp_path / "python-runtime"
+    runtime.write_bytes(b"python runtime")
+    scripts_dir = tmp_path / ".venv" / "bin"
+    scripts_dir.mkdir(parents=True)
+    python = scripts_dir / "python"
+    python.symlink_to(runtime)
+
+    selected = watcherobot_cli._background_python_executable(
+        python,
+        is_windows=False,
+    )
+
+    assert selected == python
+    assert selected.resolve() == runtime
 
 
 def test_cli_starts_reuses_and_stops_the_unique_runtime(

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import venv
 from pathlib import Path
 
 import pytest
@@ -143,7 +145,7 @@ def test_source_default_launcher_accepts_only_the_explicit_trusted_pair(
         tmp_path / "workspace" / ".runtime" / "other" / "bin",
         _python_name(),
     )
-    with pytest.raises(ApplicationLaunchError, match="trusted source default"):
+    with pytest.raises(ApplicationLaunchError, match="launcher does not match"):
         launcher.build_spec(
             application_dir=application_dir,
             kind="python",
@@ -154,7 +156,7 @@ def test_source_default_launcher_accepts_only_the_explicit_trusted_pair(
         tmp_path / "workspace" / "other-server",
         app_id="watcher_default",
     )
-    with pytest.raises(ApplicationLaunchError, match="trusted source default"):
+    with pytest.raises(ApplicationLaunchError, match="root does not match"):
         launcher.build_spec(
             application_dir=other_application_dir,
             kind="python",
@@ -200,21 +202,82 @@ def test_source_default_launcher_preserves_trusted_virtualenv_symlink(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX virtualenvs use Python symlinks")
-def test_python_launcher_preserves_virtualenv_symlink_for_execution(
+def test_source_default_launcher_runs_with_workspace_virtualenv_dependencies(
     tmp_path: Path,
 ) -> None:
-    """Validation may resolve the interpreter, but execution must retain venv semantics."""
+    """The retained launcher must preserve a real venv's import semantics."""
+
+    application_dir = _write_application(
+        tmp_path / "workspace" / "WatcheRobot_server",
+        app_id="watcher_default",
+    )
+    virtualenv_root = tmp_path / "workspace" / ".runtime" / "venv"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(virtualenv_root)
+    virtualenv_python = virtualenv_root / "bin" / "python"
+    if not virtualenv_python.is_symlink():
+        pytest.skip("this POSIX interpreter did not create a symlinked venv launcher")
+
+    site_packages_result = subprocess.run(
+        [
+            str(virtualenv_python),
+            "-c",
+            "import site; print(site.getsitepackages()[0])",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    site_packages = Path(site_packages_result.stdout.strip())
+    site_packages.joinpath("workspace_only_dependency.py").write_text(
+        "VALUE = 'workspace-venv'\n",
+        encoding="utf-8",
+    )
+    application_dir.joinpath("app.py").write_text(
+        "from workspace_only_dependency import VALUE\nprint(VALUE)\n",
+        encoding="utf-8",
+    )
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+        source_default_application_root=application_dir,
+        source_default_launcher_executable=virtualenv_python,
+    )
+
+    spec = launcher.build_spec(
+        application_dir=application_dir,
+        kind="python",
+        executable=virtualenv_python,
+    )
+    result = subprocess.run(
+        [str(part) for part in spec.command],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.stdout.strip() == "workspace-venv"
+    assert spec.command_executable == virtualenv_python
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX virtualenvs use Python symlinks")
+def test_managed_python_launcher_preserves_venv_path_inside_controlled_root(
+    tmp_path: Path,
+) -> None:
+    """Ordinary venv launchers retain semantics only inside their managed root."""
 
     application_dir = _write_application(
         tmp_path / "watcher-default-source",
         app_id="watcher_default",
     )
+    managed_root = tmp_path / "application-store"
     base_python = _write_executable(tmp_path / "python-runtime", "python3.14")
-    virtualenv_python = tmp_path / "server-venv" / "bin" / "python"
+    virtualenv_python = managed_root / "apps" / "demo" / ".venv" / "bin" / "python"
     virtualenv_python.parent.mkdir(parents=True)
     virtualenv_python.symlink_to(base_python)
     launcher = ApplicationLauncher(
-        managed_app_root=base_python.parent,
+        managed_app_root=managed_root,
         bundled_resource_root=tmp_path / "resources",
     )
 
@@ -226,6 +289,59 @@ def test_python_launcher_preserves_virtualenv_symlink_for_execution(
 
     assert spec.executable == virtualenv_python
     assert spec.command == (virtualenv_python, application_dir / "app.py")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX virtualenvs use Python symlinks")
+def test_managed_python_launcher_rejects_path_outside_controlled_root(
+    tmp_path: Path,
+) -> None:
+    application_dir = _write_application(
+        tmp_path / "application",
+        app_id="com.example.demo",
+    )
+    managed_root = tmp_path / "application-store"
+    base_python = _write_executable(managed_root / "runtime" / "bin", "python3.14")
+    outside_link = tmp_path / "outside" / "bin" / "python"
+    outside_link.parent.mkdir(parents=True)
+    outside_link.symlink_to(base_python)
+    launcher = ApplicationLauncher(
+        managed_app_root=managed_root,
+        bundled_resource_root=tmp_path / "resources",
+    )
+
+    with pytest.raises(ApplicationLaunchError, match="path must stay inside"):
+        launcher.build_spec(
+            application_dir=application_dir,
+            kind="python",
+            executable=outside_link,
+        )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX virtualenvs use Python symlinks")
+def test_third_party_application_cannot_borrow_source_default_authorization(
+    tmp_path: Path,
+) -> None:
+    source_root = _write_application(
+        tmp_path / "workspace" / "WatcheRobot_server",
+        app_id="com.example.third_party",
+    )
+    base_python = _write_executable(tmp_path / "homebrew" / "bin", "python3.14")
+    virtualenv_python = tmp_path / "workspace" / ".runtime" / "venv" / "bin" / "python"
+    virtualenv_python.parent.mkdir(parents=True)
+    virtualenv_python.symlink_to(base_python)
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+        source_default_application_root=source_root,
+        source_default_launcher_executable=virtualenv_python,
+    )
+
+    with pytest.raises(ApplicationLaunchError, match="controlled root"):
+        launcher.build_spec(
+            application_dir=source_root,
+            kind="python",
+            executable=virtualenv_python,
+        )
 
 
 def test_windows_python_launcher_uses_pythonw_for_the_fixed_entrypoint(
@@ -254,6 +370,167 @@ def test_windows_python_launcher_uses_pythonw_for_the_fixed_entrypoint(
     )
 
     assert spec.command == (pythonw, application_dir / "app.py")
+
+
+def test_windows_python_launcher_cannot_escape_controlled_root(
+    tmp_path: Path,
+) -> None:
+    managed_root = tmp_path / "application-store"
+    application_dir = _write_application(
+        tmp_path / "developer-source",
+        app_id="com.example.demo",
+    )
+    outside_python = _write_executable(tmp_path / "outside", "python.exe")
+    executable = (
+        managed_root
+        / "apps"
+        / "com.example.demo"
+        / ".venv"
+        / "Scripts"
+        / "python.exe"
+    )
+    executable.parent.mkdir(parents=True)
+    try:
+        executable.symlink_to(outside_python)
+    except OSError as exc:
+        pytest.skip(f"symlink is unavailable: {exc}")
+    launcher = ApplicationLauncher(
+        managed_app_root=managed_root,
+        bundled_resource_root=tmp_path / "resources",
+        is_windows=True,
+    )
+
+    with pytest.raises(ApplicationLaunchError, match="controlled root"):
+        launcher.build_spec(
+            application_dir=application_dir,
+            kind="python",
+            executable=executable,
+        )
+
+
+def test_windows_source_default_launcher_uses_adjacent_pythonw(
+    tmp_path: Path,
+) -> None:
+    application_dir = _write_application(
+        tmp_path / "workspace" / "WatcheRobot_server",
+        app_id="watcher_default",
+    )
+    executable_dir = tmp_path / "workspace" / ".runtime" / "venv" / "Scripts"
+    executable = _write_executable(executable_dir, "python.exe")
+    pythonw = _write_executable(executable_dir, "pythonw.exe")
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+        source_default_application_root=application_dir,
+        source_default_launcher_executable=executable,
+        is_windows=True,
+    )
+
+    spec = launcher.build_spec(
+        application_dir=application_dir,
+        kind="python",
+        executable=executable,
+    )
+
+    assert spec.executable == executable
+    assert spec.command == (pythonw, application_dir / "app.py")
+
+
+def test_windows_source_default_launcher_falls_back_to_trusted_python(
+    tmp_path: Path,
+) -> None:
+    application_dir = _write_application(
+        tmp_path / "workspace" / "WatcheRobot_server",
+        app_id="watcher_default",
+    )
+    executable = _write_executable(
+        tmp_path / "workspace" / ".runtime" / "venv" / "Scripts",
+        "python.exe",
+    )
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+        source_default_application_root=application_dir,
+        source_default_launcher_executable=executable,
+        is_windows=True,
+    )
+
+    spec = launcher.build_spec(
+        application_dir=application_dir,
+        kind="python",
+        executable=executable,
+    )
+
+    assert spec.executable == executable
+    assert spec.command == (executable, application_dir / "app.py")
+
+
+def test_windows_source_default_launcher_cannot_escape_trusted_directory(
+    tmp_path: Path,
+) -> None:
+    application_dir = _write_application(
+        tmp_path / "workspace" / "WatcheRobot_server",
+        app_id="watcher_default",
+    )
+    outside_python = _write_executable(tmp_path / "outside", "python.exe")
+    executable = (
+        tmp_path
+        / "workspace"
+        / ".runtime"
+        / "venv"
+        / "Scripts"
+        / "python.exe"
+    )
+    executable.parent.mkdir(parents=True)
+    try:
+        executable.symlink_to(outside_python)
+    except OSError as exc:
+        pytest.skip(f"symlink is unavailable: {exc}")
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+        source_default_application_root=application_dir,
+        source_default_launcher_executable=executable,
+        is_windows=True,
+    )
+
+    with pytest.raises(ApplicationLaunchError, match="trusted directory"):
+        launcher.build_spec(
+            application_dir=application_dir,
+            kind="python",
+            executable=executable,
+        )
+
+
+def test_windows_source_default_pythonw_cannot_escape_launcher_directory(
+    tmp_path: Path,
+) -> None:
+    application_dir = _write_application(
+        tmp_path / "workspace" / "WatcheRobot_server",
+        app_id="watcher_default",
+    )
+    executable_dir = tmp_path / "workspace" / ".runtime" / "venv" / "Scripts"
+    executable = _write_executable(executable_dir, "python.exe")
+    outside_pythonw = _write_executable(tmp_path / "outside", "pythonw.exe")
+    pythonw = executable.with_name("pythonw.exe")
+    try:
+        pythonw.symlink_to(outside_pythonw)
+    except OSError as exc:
+        pytest.skip(f"symlink is unavailable: {exc}")
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+        source_default_application_root=application_dir,
+        source_default_launcher_executable=executable,
+        is_windows=True,
+    )
+
+    with pytest.raises(ApplicationLaunchError, match="pythonw launcher"):
+        launcher.build_spec(
+            application_dir=application_dir,
+            kind="python",
+            executable=executable,
+        )
 
 
 def test_windows_pythonw_must_remain_inside_the_controlled_root(

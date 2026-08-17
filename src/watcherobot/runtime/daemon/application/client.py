@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
 
@@ -13,6 +15,21 @@ from watcherobot.runtime.daemon.application.session import ApplicationChannel
 Frame = str | bytes
 FrameCallback = Callable[[ApplicationChannel, Frame], Awaitable[None] | None]
 ConnectedCallback = Callable[[], Awaitable[None] | None]
+
+
+def _local_connect_options(
+    connect_factory: Callable[..., Any],
+) -> dict[str, Any]:
+    """Use explicit proxy bypass only when the installed API supports it."""
+
+    options: dict[str, Any] = {"max_size": None}
+    try:
+        parameters = inspect.signature(connect_factory).parameters
+    except (TypeError, ValueError):
+        return options
+    if "proxy" in parameters:
+        options["proxy"] = None
+    return options
 
 
 async def _ignore_frame(
@@ -63,8 +80,8 @@ class ApplicationCommunicators:
 
     async def run(self) -> None:
         async with (
-            connect(self._desktop_url, max_size=None, proxy=None) as desktop,
-            connect(self._device_url, max_size=None, proxy=None) as device,
+            connect(self._desktop_url, **_local_connect_options(connect)) as desktop,
+            connect(self._device_url, **_local_connect_options(connect)) as device,
         ):
             self._connections = {
                 ApplicationChannel.DESKTOP: desktop,

@@ -293,16 +293,32 @@ class ApplicationRuntimeManager:
                 ),
             }
         )
-        for name in ("NO_PROXY", "no_proxy"):
+        proxy_names = ("NO_PROXY", "no_proxy")
+        if os.name == "nt":
             entries = [
                 value.strip()
+                for name in proxy_names
                 for value in environment.get(name, "").split(",")
                 if value.strip()
             ]
+            entries = list(dict.fromkeys(entries))
             for loopback in ("127.0.0.1", "localhost", "::1"):
                 if loopback not in entries:
                     entries.append(loopback)
-            environment[name] = ",".join(entries)
+            value = ",".join(entries)
+            for name in proxy_names:
+                environment[name] = value
+        else:
+            for name in proxy_names:
+                entries = [
+                    value.strip()
+                    for value in environment.get(name, "").split(",")
+                    if value.strip()
+                ]
+                for loopback in ("127.0.0.1", "localhost", "::1"):
+                    if loopback not in entries:
+                        entries.append(loopback)
+                environment[name] = ",".join(entries)
         if self._device_status_url is not None:
             environment["WATCHER_APP_DEVICE_STATUS_URL"] = self._device_status_url
         return environment
