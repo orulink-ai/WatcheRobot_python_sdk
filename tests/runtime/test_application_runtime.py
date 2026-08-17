@@ -533,6 +533,56 @@ def test_runtime_cleans_inherited_python_environment_for_selected_app(
     asyncio.run(scenario())
 
 
+def test_runtime_keeps_server_environment_only_for_default_application(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        for name in application_runtime.DEFAULT_APPLICATION_ENVIRONMENT_NAMES:
+            monkeypatch.setenv(name, f"controlled-{name.lower()}")
+
+        third_party_dir = tmp_path / "third-party"
+        _write_application(third_party_dir, CONNECTED_APP, app_id="third_party")
+        third_party = _build_selected_manager(
+            third_party_dir,
+            app_id="third_party",
+        )
+        third_party_run = third_party.registry.begin_start()
+        await third_party.bridge.start()
+        try:
+            third_party_environment = third_party._build_environment(third_party_run)
+        finally:
+            await third_party.bridge.stop()
+
+        default_dir = tmp_path / "default"
+        _write_application(
+            default_dir,
+            CONNECTED_APP,
+            app_id=application_runtime.DEFAULT_APPLICATION_ID,
+        )
+        default = _build_selected_manager(
+            default_dir,
+            app_id=application_runtime.DEFAULT_APPLICATION_ID,
+        )
+        default_run = default.registry.begin_start()
+        await default.bridge.start()
+        try:
+            default_environment = default._build_environment(default_run)
+        finally:
+            await default.bridge.stop()
+
+        assert all(
+            name not in third_party_environment
+            for name in application_runtime.DEFAULT_APPLICATION_ENVIRONMENT_NAMES
+        )
+        assert all(
+            default_environment[name] == f"controlled-{name.lower()}"
+            for name in application_runtime.DEFAULT_APPLICATION_ENVIRONMENT_NAMES
+        )
+
+    asyncio.run(scenario())
+
+
 def test_running_application_cannot_switch_controlled_launcher(
     tmp_path: Path,
 ) -> None:

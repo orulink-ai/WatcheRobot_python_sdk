@@ -14,6 +14,7 @@ from watcherobot.runtime.daemon.application.bridge import (
 )
 from watcherobot.runtime.daemon.application.logging import ApplicationLogService
 from watcherobot.runtime.daemon.application.launcher import (
+    DEFAULT_APPLICATION_ID,
     ApplicationLauncher,
     ApplicationLauncherKind,
     ApplicationLaunchSpec,
@@ -39,6 +40,16 @@ class ApplicationStartError(ApplicationRuntimeError):
 
 DEFAULT_APPLICATION_STARTUP_TIMEOUT = 90.0
 DEFAULT_APPLICATION_CHANNEL_LOSS_GRACE_TIMEOUT = 2.0
+DEFAULT_APPLICATION_ENVIRONMENT_NAMES = (
+    "WATCHER_SERVER_PROJECT_ROOT",
+    "WATCHER_SERVER_ROOT",
+    "WATCHER_SERVER_SOURCE_ROOT",
+    "WATCHER_SERVER_SOURCE_KIND",
+    "WATCHER_SERVER_CONFIG_ROOT",
+    "WATCHER_SERVER_DATA_DIR",
+    "WATCHER_SERVER_LOG_DIR",
+    "WATCHER_WEATHER_MCP_COMMAND",
+)
 
 
 class ApplicationRuntimeManager:
@@ -168,6 +179,10 @@ class ApplicationRuntimeManager:
             run = self.registry.begin_start()
             self.last_state = ApplicationState.STARTING
             self.last_exit_code = None
+            await self._record_lifecycle_log(
+                manifest.app_id,
+                "Application launch requested",
+            )
             await self.bridge.start()
             try:
                 self._process = await asyncio.create_subprocess_exec(
@@ -186,11 +201,19 @@ class ApplicationRuntimeManager:
                     ),
                     creationflags=_application_creation_flags(),
                 )
-            except Exception:
+            except Exception as exc:
+                await self._record_lifecycle_log(
+                    manifest.app_id,
+                    f"Application process spawn failed: {type(exc).__name__}",
+                )
                 await self.bridge.stop()
                 self.registry.end_run(ApplicationState.ERROR)
                 self.last_state = ApplicationState.ERROR
                 raise
+            await self._record_lifecycle_log(
+                manifest.app_id,
+                f"Application process started: pid={self._process.pid}",
+            )
             self._start_log_readers(self._process, manifest.app_id)
             self._monitor_task = asyncio.create_task(
                 self._monitor_process(self._process),
@@ -251,6 +274,9 @@ class ApplicationRuntimeManager:
             "WATCHER_APP_DEVICE_STATUS_URL",
         ):
             environment.pop(name, None)
+        if run.app_id != DEFAULT_APPLICATION_ID:
+            for name in DEFAULT_APPLICATION_ENVIRONMENT_NAMES:
+                environment.pop(name, None)
         environment.update(
             {
                 "PYTHONNOUSERSITE": "1",
@@ -270,6 +296,16 @@ class ApplicationRuntimeManager:
         if self._device_status_url is not None:
             environment["WATCHER_APP_DEVICE_STATUS_URL"] = self._device_status_url
         return environment
+
+    async def _record_lifecycle_log(self, app_id: str, message: str) -> None:
+        if self._log_service is None:
+            return
+        await self._log_service.record(
+            app_id=app_id,
+            stream="lifecycle",
+            message=message,
+            forward_to_desktop=False,
+        )
 
     async def _wait_until_ready(self, run: ApplicationRun) -> None:
         loop = asyncio.get_running_loop()
@@ -294,6 +330,12 @@ class ApplicationRuntimeManager:
     ) -> None:
         return_code = await process.wait()
         await self._wait_for_log_tasks()
+        app_id = self.registry.current_app
+        if app_id is not None:
+            await self._record_lifecycle_log(
+                app_id,
+                f"Application process exited: code={return_code}",
+            )
         self.last_exit_code = return_code
         if not self._closing and self._process is process:
             await self._finalize_exited_process(

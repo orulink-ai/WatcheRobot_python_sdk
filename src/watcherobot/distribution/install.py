@@ -452,52 +452,118 @@ def _archive_cached_runtime(paths: _StorePaths) -> None:
 
 
 def _load_runtime(runtime_root: Path) -> _RuntimeResources:
+    root = Path(runtime_root)
     try:
-        root = _regular_directory(runtime_root, "Application Runtime")
-        manifest_path = _regular_file(
-            root / _RUNTIME_MANIFEST,
-            "Application Runtime manifest",
+        if root.is_symlink() or not root.is_dir():
+            raise OSError("Application Runtime root is unavailable")
+        root = root.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ApplicationInstallError(
+            ErrorCode.RUNTIME_RESOURCES_MISSING,
+            "Application Runtime resources are missing",
+        ) from exc
+
+    manifest_path = root / _RUNTIME_MANIFEST
+    try:
+        manifest_missing = manifest_path.is_symlink() or not manifest_path.is_file()
+    except (OSError, RuntimeError) as exc:
+        raise ApplicationInstallError(
+            ErrorCode.RUNTIME_RESOURCES_MISSING,
+            "Application Runtime resources are missing",
+        ) from exc
+    if manifest_missing:
+        raise ApplicationInstallError(
+            ErrorCode.RUNTIME_RESOURCES_MISSING,
+            "Application Runtime resources are missing",
         )
+
+    try:
         if manifest_path.stat().st_size > _MAX_OUTPUT_BYTES:
             raise ValueError("manifest is too large")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (ApplicationInstallError, OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
-        if isinstance(exc, ApplicationInstallError):
-            raise
-        raise ApplicationInstallError(
-            ErrorCode.INTERNAL_ERROR,
-            "Application Runtime is invalid",
-        ) from exc
-    try:
         _require_runtime_identity(manifest)
-        python_root = _manifest_directory(root, manifest["python"]["root"], "Python Runtime")
-        python = _manifest_file(root, manifest["python"]["executable"], "Python executable")
+        python_root = _manifest_path(root, manifest["python"]["root"], "Python Runtime")
+        python = _manifest_path(root, manifest["python"]["executable"], "Python executable")
+        uv = _manifest_path(root, manifest["uv"]["executable"], "uv executable")
+        wheel = _manifest_path(root, manifest["watcherobot"]["wheel"], "watcherobot wheel")
         if not python.is_relative_to(python_root):
             raise ValueError("Python executable escapes its Runtime root")
-        if _runtime_tree_sha256(python_root) != manifest["python"]["tree_sha256"]:
-            raise ValueError("Python Runtime hash mismatch")
-        uv = _manifest_file(root, manifest["uv"]["executable"], "uv executable")
-        wheel = _manifest_file(root, manifest["watcherobot"]["wheel"], "watcherobot wheel")
-        if _sha256(uv) != manifest["uv"]["sha256"]:
-            raise ValueError("uv hash mismatch")
-        if _sha256(wheel) != manifest["watcherobot"]["sha256"]:
-            raise ValueError("watcherobot wheel hash mismatch")
         if not wheel.name.startswith("watcherobot-") or wheel.suffix != ".whl":
             raise ValueError("watcherobot wheel is invalid")
-        return _RuntimeResources(
-            root=root,
-            runtime_id=manifest["runtime_id"],
-            python_executable=python,
-            uv_executable=uv,
-            watcherobot_wheel=wheel,
-            watcherobot_version=manifest["watcherobot"]["version"],
-            watcherobot_sdk_commit=manifest["watcherobot"]["sdk_commit"],
-        )
-    except (KeyError, TypeError, ValueError, OSError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        UnicodeError,
+        ValueError,
+        KeyError,
+        TypeError,
+        json.JSONDecodeError,
+    ) as exc:
         raise ApplicationInstallError(
-            ErrorCode.INTERNAL_ERROR,
-            "Application Runtime is invalid",
+            ErrorCode.RUNTIME_MANIFEST_INVALID,
+            "Application Runtime manifest is invalid",
         ) from exc
+
+    if (
+        python_root.is_symlink()
+        or not python_root.is_dir()
+        or python.is_symlink()
+        or not python.is_file()
+        or uv.is_symlink()
+        or not uv.is_file()
+        or wheel.is_symlink()
+        or not wheel.is_file()
+    ):
+        raise ApplicationInstallError(
+            ErrorCode.RUNTIME_RESOURCES_MISSING,
+            "Application Runtime resources are missing",
+        )
+
+    try:
+        if _runtime_tree_sha256(python_root) != manifest["python"]["tree_sha256"]:
+            raise ApplicationInstallError(
+                ErrorCode.RUNTIME_PYTHON_INTEGRITY_FAILED,
+                "Application Runtime Python integrity verification failed",
+            )
+    except (OSError, ValueError) as exc:
+        raise ApplicationInstallError(
+            ErrorCode.RUNTIME_PYTHON_INTEGRITY_FAILED,
+            "Application Runtime Python integrity verification failed",
+        ) from exc
+
+    try:
+        if _sha256(uv) != manifest["uv"]["sha256"]:
+            raise ApplicationInstallError(
+                ErrorCode.RUNTIME_UV_INTEGRITY_FAILED,
+                "Application Runtime uv integrity verification failed",
+            )
+    except OSError as exc:
+        raise ApplicationInstallError(
+            ErrorCode.RUNTIME_UV_INTEGRITY_FAILED,
+            "Application Runtime uv integrity verification failed",
+        ) from exc
+
+    try:
+        if _sha256(wheel) != manifest["watcherobot"]["sha256"]:
+            raise ApplicationInstallError(
+                ErrorCode.RUNTIME_SDK_WHEEL_INTEGRITY_FAILED,
+                "Application Runtime SDK wheel integrity verification failed",
+            )
+    except OSError as exc:
+        raise ApplicationInstallError(
+            ErrorCode.RUNTIME_SDK_WHEEL_INTEGRITY_FAILED,
+            "Application Runtime SDK wheel integrity verification failed",
+        ) from exc
+
+    return _RuntimeResources(
+        root=root,
+        runtime_id=manifest["runtime_id"],
+        python_executable=python,
+        uv_executable=uv,
+        watcherobot_wheel=wheel,
+        watcherobot_version=manifest["watcherobot"]["version"],
+        watcherobot_sdk_commit=manifest["watcherobot"]["sdk_commit"],
+    )
 
 
 def _require_runtime_identity(manifest: object) -> None:
@@ -810,16 +876,6 @@ def _resolved_dependencies(payload: bytes, expected_watcherobot_version: str) ->
         ) from exc
 
 
-def _manifest_file(root: Path, value: object, label: str) -> Path:
-    path = _manifest_path(root, value, label)
-    return _regular_file(path, label)
-
-
-def _manifest_directory(root: Path, value: object, label: str) -> Path:
-    path = _manifest_path(root, value, label)
-    return _regular_directory(path, label)
-
-
 def _manifest_path(root: Path, value: object, label: str) -> Path:
     if not isinstance(value, str) or not value or "\\" in value:
         raise ValueError(f"{label} path is invalid")
@@ -835,24 +891,6 @@ def _manifest_path(root: Path, value: object, label: str) -> Path:
     if not resolved.is_relative_to(root):
         raise ValueError(f"{label} path escapes Runtime")
     return resolved
-
-
-def _regular_directory(path: Path, label: str) -> Path:
-    try:
-        if path.is_symlink() or not path.is_dir():
-            raise OSError(f"{label} is not a regular directory")
-        return path.resolve()
-    except OSError as exc:
-        raise ApplicationInstallError(
-            ErrorCode.INTERNAL_ERROR,
-            "Application Runtime is invalid",
-        ) from exc
-
-
-def _regular_file(path: Path, label: str) -> Path:
-    if path.is_symlink() or not path.is_file():
-        raise ValueError(f"{label} is not a regular file")
-    return path.resolve()
 
 
 def _runtime_tree_sha256(root: Path) -> str:

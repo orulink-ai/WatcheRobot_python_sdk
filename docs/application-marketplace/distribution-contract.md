@@ -84,9 +84,14 @@ stdout 每行必须是一个完整 JSON 对象，事件类型只允许 `progress
 | Application 校验 | `app_manifest_missing`、`app_entrypoint_missing`、`app_manifest_invalid`、`app_sdk_incompatible`、`app_dependency_invalid`、`app_content_forbidden` |
 | OAuth 与凭据 | `auth_required`、`auth_denied`、`auth_expired`、`auth_invalid_response`、`auth_network_error`、`credential_store_error` |
 | Space 与官方名单 | `space_ownership_conflict`、`catalog_invalid`、`catalog_pr_conflict`、`remote_error` |
+| Application Runtime | `runtime_manifest_invalid`、`runtime_resources_missing`、`runtime_python_integrity_failed`、`runtime_uv_integrity_failed`、`runtime_sdk_wheel_integrity_failed` |
 | 生命周期 | `operation_cancelled`、`internal_error` |
 
-`auth_network_error` 属于远程错误并返回退出码 4；`operation_cancelled` 返回 130；未单独分类的 `internal_error` 返回 5。Desktop 应以稳定错误码选择 UI 状态，以退出码判断进程类别，不能匹配 `message` 文案。
+`auth_network_error` 属于远程错误并返回退出码 4；`operation_cancelled` 返回 130；
+Application Runtime 完整性错误与未单独分类的 `internal_error` 返回 5。Runtime 错误只区分
+清单、缺失资源和三个受锁定内容保护的组件，不在 JSONL 中包含本机路径、原始命令输出或
+traceback。Desktop 应以稳定错误码选择 UI 状态，以退出码判断进程类别，不能匹配
+`message` 文案。
 
 ## 发布、名单与固定快照
 
@@ -99,6 +104,11 @@ stdout 每行必须是一个完整 JSON 对象，事件类型只允许 `progress
 7. Space `main` 后续变化不影响已安装固定快照；名单删除只阻止新的官方安装，不应禁用已经安装的 App。
 
 ## Desktop 集成与验证证据
+
+Daemon 管理接口的版本握手、兼容矩阵和日志安全边界见
+[Daemon 控制协议](../contracts/daemon-control-protocol.md)。Application Runtime 缺少
+`runtime.json` 时返回 `runtime_resources_missing`；文件存在但无法解析、结构错误或路径声明非法时返回
+`runtime_manifest_invalid`。所有 Runtime 错误只公开稳定错误码和消息，不透传底层异常内容。
 
 - Desktop 当前实现说明：`WatcheRobot_client/Watcher Desktop App/docs/application-store-implementation.zh-CN.md`。
 - Desktop 当前发行检查：`npm run test:packaged-runtime`、`npm run test:application-marketplace-ui`、`npm run test:application-marketplace-s9-live`。

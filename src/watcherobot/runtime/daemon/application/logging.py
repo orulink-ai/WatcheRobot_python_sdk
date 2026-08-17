@@ -39,6 +39,7 @@ class ApplicationLogService:
         app_id: str,
         stream: str,
         message: str,
+        forward_to_desktop: bool = True,
     ) -> None:
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -60,6 +61,9 @@ class ApplicationLogService:
                 )
         except Exception as exc:
             self.last_write_error = str(exc)
+
+        if not forward_to_desktop:
+            return
 
         event = json.dumps(
             {

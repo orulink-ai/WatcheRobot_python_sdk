@@ -4,6 +4,7 @@ import asyncio
 import time
 
 import httpx
+from watcherobot import __version__
 from fastapi.testclient import TestClient
 
 from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchError
@@ -221,6 +222,10 @@ def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None
     client = TestClient(DaemonControlAPI(controller=controller).create_app())
 
     assert client.get("/daemon/status").json() == {
+        "runtime": {
+            "control_protocol": 2,
+            "sdk_version": __version__,
+        },
         "application": {
             "current_app": "watcher_default",
             "state": "not_running",
@@ -337,7 +342,11 @@ def test_control_rest_reports_occupied_and_start_failure() -> None:
     controller.start_error = ApplicationStartError("entrypoint failed")
     failed = client.post("/daemon/application/start")
     assert failed.status_code == 500
-    assert failed.json()["error"] == "application_start_failed"
+    assert failed.json() == {
+        "error": "application_start_failed",
+        "message": "entrypoint failed",
+    }
+    assert client.get("/daemon/application/logs").status_code == 404
 
 
 def test_control_rest_starts_creator_work_install() -> None:
@@ -553,6 +562,19 @@ def test_control_rest_selects_application_and_requests_runtime_shutdown() -> Non
     )
     assert stopped.status_code == 202
     assert controller.shutdown_requested is True
+
+
+def test_control_status_identifies_the_daemon_control_protocol() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    response = client.get("/daemon/status")
+
+    assert response.status_code == 200
+    assert response.json()["runtime"] == {
+        "control_protocol": 2,
+        "sdk_version": __version__,
+    }
 
 
 def test_control_rest_rejects_legacy_or_arbitrary_launcher_requests() -> None:

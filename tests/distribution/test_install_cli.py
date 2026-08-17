@@ -4,8 +4,12 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from watcherobot.cli import main
+from watcherobot.distribution.events import ErrorCode
 from watcherobot.distribution.install import (
+    ApplicationInstallError,
     ApplicationInstallResult,
     ApplicationUninstallResult,
     InstalledApplication,
@@ -78,6 +82,71 @@ def test_cli_install_jsonl_uses_sdk_store_service_without_daemon(
     assert calls[0]["runtime_root"] == runtime_root
     assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [
         {"type": "result", "ok": True, "data": result.to_dict()}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("error_code", "message"),
+    [
+        (ErrorCode.RUNTIME_MANIFEST_INVALID, "Application Runtime manifest is invalid"),
+        (ErrorCode.RUNTIME_RESOURCES_MISSING, "Application Runtime resources are missing"),
+        (
+            ErrorCode.RUNTIME_PYTHON_INTEGRITY_FAILED,
+            "Application Runtime Python integrity verification failed",
+        ),
+        (
+            ErrorCode.RUNTIME_UV_INTEGRITY_FAILED,
+            "Application Runtime uv integrity verification failed",
+        ),
+        (
+            ErrorCode.RUNTIME_SDK_WHEEL_INTEGRITY_FAILED,
+            "Application Runtime SDK wheel integrity verification failed",
+        ),
+    ],
+)
+def test_cli_install_jsonl_preserves_runtime_integrity_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    error_code: ErrorCode,
+    message: str,
+) -> None:
+    monkeypatch.setattr(
+        "watcherobot.distribution.cli._build_install_dependencies",
+        lambda: SimpleNamespace(hub=object()),
+    )
+    monkeypatch.setattr(
+        "watcherobot.distribution.cli.install_application",
+        lambda **_: (_ for _ in ()).throw(
+            ApplicationInstallError(
+                error_code,
+                message,
+            )
+        ),
+    )
+
+    assert main(
+        [
+            "app",
+            "install",
+            "--space-id",
+            SPACE_ID,
+            "--commit",
+            COMMIT,
+            "--store-root",
+            str(tmp_path / "store"),
+            "--runtime-root",
+            str(tmp_path / "runtime"),
+            "--jsonl",
+        ]
+    ) == 5
+    assert [json.loads(line) for line in capsys.readouterr().out.splitlines()] == [
+        {
+            "type": "error",
+            "ok": False,
+            "code": error_code.value,
+            "message": message,
+        }
     ]
 
 

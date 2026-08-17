@@ -7,7 +7,10 @@ from pathlib import Path
 
 from watcherobot.runtime.daemon.application.launcher import ApplicationLauncher
 from watcherobot.runtime.daemon.application.logging import ApplicationLogService
-from watcherobot.runtime.daemon.application.runtime import ApplicationRuntimeManager
+from watcherobot.runtime.daemon.application.runtime import (
+    ApplicationRuntimeManager,
+    ApplicationStartError,
+)
 
 
 LOGGING_APPLICATION = """
@@ -31,8 +34,10 @@ async def main():
 asyncio.run(main())
 """
 
+SILENT_EXIT_APPLICATION = "raise SystemExit(1)\n"
 
-def _write_application(root: Path) -> None:
+
+def _write_application(root: Path, source: str = LOGGING_APPLICATION) -> None:
     root.mkdir(parents=True, exist_ok=True)
     root.joinpath("app.json").write_text(
         json.dumps(
@@ -47,7 +52,7 @@ def _write_application(root: Path) -> None:
         ),
         encoding="utf-8",
     )
-    root.joinpath("app.py").write_text(LOGGING_APPLICATION, encoding="utf-8")
+    root.joinpath("app.py").write_text(source, encoding="utf-8")
 
 
 def test_log_service_saves_before_forwarding_and_ignores_desktop_failure(
@@ -131,6 +136,78 @@ def test_runtime_captures_application_stdout_and_stderr(tmp_path: Path) -> None:
         }
         assert len(forwarded) >= 2
         assert manager.process_id is None
+
+    asyncio.run(scenario())
+
+
+def test_log_service_can_persist_lifecycle_without_forwarding(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        forwarded: list[str] = []
+        service = ApplicationLogService(
+            log_dir=tmp_path / "logs",
+            desktop_forwarder=lambda frame: _append(forwarded, frame),
+        )
+
+        await service.record(
+            app_id="logging_app",
+            stream="lifecycle",
+            message="Application launch requested",
+            forward_to_desktop=False,
+        )
+
+        assert service.log_path("logging_app").is_file()
+        assert forwarded == []
+
+    asyncio.run(scenario())
+
+
+def test_runtime_writes_lifecycle_log_when_application_exits_silently(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        _write_application(app_dir, SILENT_EXIT_APPLICATION)
+        service = ApplicationLogService(
+            log_dir=tmp_path / "logs",
+            desktop_forwarder=lambda _frame: None,
+        )
+        manager = ApplicationRuntimeManager(
+            application_dir=app_dir,
+            current_app="logging_app",
+            application_launcher=ApplicationLauncher(
+                managed_app_root=Path(sys.executable).resolve().parent,
+                bundled_resource_root=tmp_path / "resources",
+            ),
+            startup_timeout=3,
+            stop_timeout=3,
+            log_service=service,
+        )
+        manager.select_application(
+            app_dir,
+            launcher_kind="python",
+            launcher_executable=Path(sys.executable).resolve(),
+        )
+
+        try:
+            await manager.start()
+        except ApplicationStartError:
+            pass
+
+        records = [
+            json.loads(line)
+            for line in service.log_path("logging_app")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        lifecycle_messages = [
+            record["message"]
+            for record in records
+            if record["stream"] == "lifecycle"
+        ]
+        assert lifecycle_messages[0] == "Application launch requested"
+        assert any(message.endswith("code=1") for message in lifecycle_messages)
 
     asyncio.run(scenario())
 
