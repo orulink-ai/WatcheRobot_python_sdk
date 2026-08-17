@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 import subprocess
 
+from watcherobot.distribution.source_files import collect_application_source_files
+
 
 ROOT = Path(__file__).parents[1]
 EXAMPLE_IDS = {
@@ -56,7 +58,8 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     assert "127.0.0.1" in entrypoint
     assert "ApplicationContext.from_environment()" in entrypoint
     assert "app.robot" in entrypoint
-    assert "SDK 测试台" in page
+    assert 'lang="en"' in page
+    assert "SDK Test Bench" in page
     assert "api/status" in script
     assert "api/actions/play-audio" in script
     assert "api/actions/capture-photo" in script
@@ -73,6 +76,50 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     assert "sdk_media_lab" in examples_guide
     assert "sdk_media_lab" in hardware_guide
     assert "127.0.0.1" in hardware_guide
+
+
+def test_media_lab_is_ready_for_marketplace_distribution() -> None:
+    root = ROOT / "examples" / "sdk_media_lab"
+    manifest = json.loads(root.joinpath("app.json").read_text(encoding="utf-8"))
+    entrypoint = root.joinpath("app.py").read_text(encoding="utf-8")
+
+    assert manifest["name"] == "SDK Test Bench"
+    assert manifest["version"] == "1.1.0"
+    assert manifest["author"] == "Orulink AI"
+    assert manifest["description"].startswith("Validate WatcheRobot")
+    assert manifest["icon"] == "icon.svg"
+    assert root.joinpath(manifest["icon"]).is_file()
+    assert root.joinpath("assets", "sample_speech.wav").is_file()
+    assert 'ROOT / "assets" / "sample_speech.wav"' in entrypoint
+    assert 'ROOT.parent / "assets"' not in entrypoint
+
+    published_files = {
+        path.as_posix() for path in collect_application_source_files(root)
+    }
+    assert "assets/sample_speech.wav" in published_files
+    assert "web/i18n.mjs" in published_files
+    assert "icon.svg" in published_files
+    assert not any(path.startswith("artifacts/") for path in published_files)
+    assert not any("__pycache__" in path for path in published_files)
+
+
+def test_media_lab_defaults_to_english_and_can_switch_to_chinese() -> None:
+    web_root = ROOT / "examples" / "sdk_media_lab" / "web"
+    page = web_root.joinpath("index.html").read_text(encoding="utf-8")
+    script = web_root.joinpath("app.js").read_text(encoding="utf-8")
+    i18n = web_root.joinpath("i18n.mjs").read_text(encoding="utf-8")
+
+    assert '<html lang="en" data-i18n-ready="false">' in page
+    assert 'id="localeEnglish"' in page
+    assert 'id="localeChinese"' in page
+    assert 'aria-label="Language"' in page
+    assert 'import { initializeI18n, translateText } from "./i18n.mjs";' in script
+    assert 'const i18n = initializeI18n({' in script
+    assert 'defaultLocale: "en-US"' in script
+    assert 'storageKey: "watcherobot.sdk-test-bench.locale"' in script
+    assert '"en-US"' in i18n
+    assert '"zh-CN"' in i18n
+    assert "MutationObserver" in i18n
 
 
 def test_runtime_artifacts_are_ignored(tmp_path: Path) -> None:

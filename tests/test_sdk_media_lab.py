@@ -1475,11 +1475,13 @@ def test_http_app_maps_validation_and_busy_failures_to_stable_errors(tmp_path: P
     }
 
 
-def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
+def test_local_ui_preserves_chinese_source_copy_behind_an_english_default() -> None:
     html = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
     javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+    i18n = LAB_ROOT.joinpath("web", "i18n.mjs").read_text(encoding="utf-8")
 
-    assert '<html lang="zh-CN">' in html
+    assert '<html lang="en" data-i18n-ready="false">' in html
+    assert 'defaultLocale: "en-US"' in javascript
     for copy in (
         "SDK 测试台",
         "连接机器人",
@@ -1531,16 +1533,19 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
     ):
         assert copy in javascript
 
-    for untranslated_copy in (
-        "RUN MEDIA CHECK",
-        "Speaker stream",
-        "Camera capture",
-        "Microphone record",
-        "Awaiting test",
-        "SYSTEM IDLE",
-        "SDK 媒体实验室",
+    for english_copy in (
+        "SDK Test Bench",
+        "Connect Robot",
+        "Run Basic Check",
+        "Speaker Stream",
+        "Camera Capture",
+        "Microphone Recording",
+        "Awaiting Test",
+        "System Idle",
     ):
-        assert untranslated_copy not in html + javascript
+        assert english_copy in html + i18n
+
+    assert "SDK 媒体实验室" not in html + javascript + i18n
 
     assert "localResources: new Set()" in javascript
     assert "actionResources.some((name) => state.localResources.has(name))" in javascript

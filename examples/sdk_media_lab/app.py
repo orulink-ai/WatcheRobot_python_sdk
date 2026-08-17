@@ -41,7 +41,7 @@ async def main() -> None:
                 robot=app.robot,
                 rtc=app.rtc,
                 artifacts_dir=ROOT / "artifacts",
-                sample_audio=ROOT.parent / "assets" / "sample_speech.wav",
+                sample_audio=ROOT / "assets" / "sample_speech.wav",
                 device_status_provider=device_manager,
                 device_pairer=device_manager.pair,
             )
@@ -63,7 +63,7 @@ async def main() -> None:
                 if server_task.done():
                     await server_task
                 await asyncio.sleep(0.02)
-            app.logger.info("SDK 测试网页：%s", url)
+            app.logger.info("SDK Test Bench: %s", url)
             if os.environ.get("WATCHER_MEDIA_LAB_NO_BROWSER") != "1":
                 await asyncio.to_thread(webbrowser.open, url)
             await server_task

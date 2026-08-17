@@ -18,6 +18,7 @@
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+html[data-i18n-ready="false"] body { visibility: hidden; }
 
 html {
   background: var(--ink);
@@ -59,6 +60,27 @@ button, a { -webkit-tap-highlight-color: transparent; }
   padding: 20px clamp(22px, 4vw, 64px);
   border-bottom: 1px solid var(--line);
   background: rgba(10, 13, 12, 0.9);
+}
+
+.masthead-actions { display: flex; align-items: center; gap: 12px; }
+.locale-switch {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.locale-switch button {
+  min-width: 42px;
+  padding: 8px 10px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font: 0.72rem var(--mono);
+  cursor: pointer;
+}
+.locale-switch button[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--signal);
 }
 
 .identity { display: flex; align-items: center; gap: 18px; }

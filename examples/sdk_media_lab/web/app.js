@@ -38,6 +38,14 @@ import {
   createMjpegChunkReassembler,
 } from "./mjpeg-chunk-reassembly.mjs";
 import { createRtcMicrophoneConstraints } from "./rtc-audio-capture.mjs";
+import { initializeI18n, translateText } from "./i18n.mjs";
+
+const i18n = initializeI18n({
+  defaultLocale: "en-US",
+  storageKey: "watcherobot.sdk-test-bench.locale",
+  englishButton: document.querySelector("#localeEnglish"),
+  chineseButton: document.querySelector("#localeChinese"),
+});
 
 const state = {
   status: null,
@@ -323,7 +331,7 @@ function localizeError(message, status, code = null, owner = null) {
   }
   if (pairingErrors[message]) return pairingErrors[message];
   if (rtcErrors[message]) return rtcErrors[message];
-  return message;
+  return translateText(message, i18n.locale);
 }
 
 function localizeEvent(event) {
