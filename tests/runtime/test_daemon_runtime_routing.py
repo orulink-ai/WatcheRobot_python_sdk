@@ -576,6 +576,10 @@ def test_device_session_end_releases_daemon_slot_without_stopping_application(
                 ]
                 == "ws://127.0.0.1:81/ws/face-track"
             )
+            assert (
+                runtime.device_status()["device"]["mjpeg_websocket_url"]
+                == "ws://127.0.0.1:82/ws/mjpeg"
+            )
             await runtime.start_application()
             application_pid = runtime.application.process_id
             request = runtime.device_pairing.current_request
@@ -604,6 +608,7 @@ def test_device_session_end_releases_daemon_slot_without_stopping_application(
                 ]
                 is None
             )
+            assert runtime.device_status()["device"]["mjpeg_websocket_url"] is None
             assert runtime.application.process_id == application_pid
         finally:
             await device.close()

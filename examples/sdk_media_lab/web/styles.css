@@ -224,8 +224,11 @@ main { width: min(1540px, 100%); margin: 0 auto; padding: 0 clamp(18px, 4vw, 64p
 .resource-verdict span, .resource-details span { display: block; color: var(--muted); font: 0.58rem var(--mono); letter-spacing: 0.12em; }
 .resource-verdict strong { display: block; margin-top: 7px; color: var(--resource-accent); font: 700 0.9rem var(--mono); }
 .resource-verdict small { display: block; margin-top: 5px; color: var(--muted); font: 0.6rem/1.45 var(--mono); }
-.resource-metrics { display: grid; grid-template-columns: repeat(4, 1fr); margin: 26px 0 0; border: 1px solid var(--line); }
-.resource-metrics div { padding: 15px 17px; border-right: 1px solid var(--line); }
+.resource-metrics { display: grid; grid-template-columns: repeat(12, 1fr); margin: 26px 0 0; border: 1px solid var(--line); }
+.resource-metrics div { grid-column: span 3; padding: 15px 17px; border-right: 1px solid var(--line); }
+.resource-metrics div:nth-child(-n+4) { border-bottom: 1px solid var(--line); }
+.resource-metrics div:nth-child(4) { border-right: 0; }
+.resource-metrics div:nth-child(n+5) { grid-column: span 4; }
 .resource-metrics div:last-child { border-right: 0; }
 .resource-metrics dt { color: var(--muted); font: 0.58rem var(--mono); letter-spacing: 0.1em; }
 .resource-metrics dd { margin: 8px 0 0; color: var(--paper); font: 700 1rem var(--mono); }
@@ -249,6 +252,9 @@ main { width: min(1540px, 100%); margin: 0 auto; padding: 0 clamp(18px, 4vw, 64p
   border-right: 1px solid var(--line);
 }
 .control-card:last-child { --accent: var(--signal); border-right: 0; }
+.animation-card { grid-column: 1 / -1; border-top: 1px solid var(--line); }
+.animation-card .control-fields { grid-template-columns: minmax(220px, 1.4fr) minmax(180px, 0.6fr); }
+.animation-catalog-summary { min-height: 0 !important; margin: 12px 0 18px !important; color: var(--accent) !important; font: 0.66rem/1.5 var(--mono) !important; }
 .control-card::before { content: ""; position: absolute; inset: 0 auto auto 0; width: 72px; height: 3px; background: var(--accent); }
 .control-card[data-available="false"] { filter: saturate(0.3); }
 .control-card[data-available="true"] .capability-state { color: var(--accent); }
@@ -269,6 +275,8 @@ main { width: min(1540px, 100%); margin: 0 auto; padding: 0 clamp(18px, 4vw, 64p
 .control-fields label, .light-fields label { display: grid; gap: 9px; color: var(--muted); font: 0.62rem var(--mono); letter-spacing: 0.08em; }
 .control-fields strong, .light-fields strong { color: var(--accent); }
 .control-fields input, .light-fields input[type="range"] { width: 100%; accent-color: var(--accent); }
+.control-fields input[type="text"], .control-fields input[type="number"] { height: 38px; padding: 0 11px; color: var(--paper); background: #090c0b; border: 1px solid var(--line); font: 0.72rem var(--mono); }
+.control-fields input[type="text"]:focus, .control-fields input[type="number"]:focus { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: 1px; }
 .preset-row { display: flex; gap: 8px; margin: 18px 0; }
 .preset-row button { flex: 1; min-height: 34px; color: var(--muted); background: transparent; border: 1px solid var(--line); cursor: pointer; font: 0.62rem var(--mono); }
 .preset-row button:hover { color: var(--cyan); border-color: var(--cyan); }
@@ -457,8 +465,11 @@ footer { position: relative; z-index: 11; display: flex; justify-content: space-
   .resource-heading { display: block; }
   .resource-verdict { min-width: 0; margin-top: 20px; }
   .resource-metrics { grid-template-columns: 1fr 1fr; }
-  .resource-metrics div:nth-child(2) { border-right: 0; }
-  .resource-metrics div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  .resource-metrics div, .resource-metrics div:nth-child(n+5) { grid-column: span 1; }
+  .resource-metrics div:nth-child(odd) { border-right: 1px solid var(--line); }
+  .resource-metrics div:nth-child(even) { border-right: 0; }
+  .resource-metrics div:not(:last-child) { border-bottom: 1px solid var(--line); }
+  .resource-metrics div:last-child { grid-column: 1 / -1; border-right: 0; border-bottom: 0; }
   .resource-details { grid-template-columns: 1fr; }
   .control-card { padding: 24px; }
   .control-fields, .light-fields { grid-template-columns: 1fr; }

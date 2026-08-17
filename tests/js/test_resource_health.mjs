@@ -9,7 +9,11 @@ import {
 
 const baseline = {
   stage: "baseline",
-  memory: { internal: { free_bytes: 50000, largest_free_block_bytes: 28000 } },
+  memory: {
+    internal: { free_bytes: 50000, largest_free_block_bytes: 28000 },
+    dma: { free_bytes: 42000, largest_free_block_bytes: 22000 },
+    psram: { free_bytes: 5_000_000, largest_free_block_bytes: 4_500_000 },
+  },
   release: { complete: true, failures: [] },
 };
 
@@ -20,6 +24,14 @@ function snapshot(stage, freeBytes, largestFreeBlockBytes) {
       internal: {
         free_bytes: freeBytes,
         largest_free_block_bytes: largestFreeBlockBytes,
+      },
+      dma: {
+        free_bytes: freeBytes,
+        largest_free_block_bytes: largestFreeBlockBytes,
+      },
+      psram: {
+        free_bytes: freeBytes * 100,
+        largest_free_block_bytes: largestFreeBlockBytes * 100,
       },
     },
     release: { complete: true, failures: [] },
@@ -55,6 +67,127 @@ test("large retained allocation is degraded after release", () => {
     release: { complete: true, failures: [] },
   };
   assert.equal(evaluateResourceLifecycle(current, baseline).state, "degraded");
+});
+
+test("animation started during RTC makes the release baseline incomparable instead of a false leak", () => {
+  const current = {
+    stage: "rtc_release_3000ms",
+    memory: {
+      internal: { free_bytes: 35000, largest_free_block_bytes: 12000 },
+      psram: { free_bytes: 4_200_000, largest_free_block_bytes: 3_700_000 },
+    },
+    resources: { animation: true },
+    release: { complete: true, failures: [] },
+  };
+  const beforeRtc = {
+    ...baseline,
+    resources: { animation: false },
+  };
+
+  const result = evaluateResourceLifecycle(current, beforeRtc);
+
+  assert.equal(result.state, "context_changed");
+  assert.deepEqual(result.contextChanges, ["animation"]);
+});
+
+test("animation runtime warmed during RTC is a lifecycle context change even without a visible frame", () => {
+  const current = {
+    ...baseline,
+    stage: "rtc_release_3000ms",
+    resources: { animation: false, animation_runtime: true },
+  };
+  const beforeRtc = {
+    ...baseline,
+    resources: { animation: false, animation_runtime: false },
+  };
+
+  const result = evaluateResourceLifecycle(current, beforeRtc);
+
+  assert.equal(result.state, "context_changed");
+  assert.deepEqual(result.contextChanges, ["animation_runtime"]);
+});
+
+test("matching animation context still detects a retained RTC allocation", () => {
+  const current = {
+    stage: "rtc_release_3000ms",
+    memory: { internal: { free_bytes: 35000, largest_free_block_bytes: 12000 } },
+    resources: { animation: true },
+    release: { complete: true, failures: [] },
+  };
+  const beforeRtc = {
+    ...baseline,
+    resources: { animation: true },
+  };
+
+  assert.equal(evaluateResourceLifecycle(current, beforeRtc).state, "degraded");
+});
+
+test("animation cache churn does not masquerade as an RTC PSRAM leak", () => {
+  const beforeRtc = {
+    ...baseline,
+    stage: "rtc_pre_start",
+    resources: { animation: true, animation_runtime: true },
+  };
+  const current = {
+    ...baseline,
+    stage: "rtc_release_3000ms",
+    memory: {
+      ...baseline.memory,
+      psram: { free_bytes: 4_600_000, largest_free_block_bytes: 3_900_000 },
+    },
+    resources: { animation: true, animation_runtime: true },
+  };
+
+  const result = evaluateResourceLifecycle(current, beforeRtc);
+
+  assert.equal(result.state, "context_changed");
+  assert.deepEqual(result.contextChanges, ["animation_memory"]);
+});
+
+test("DMA largest-block regression is degraded even when internal heap recovers", () => {
+  const current = {
+    ...baseline,
+    stage: "rtc_release_3000ms",
+    memory: {
+      ...baseline.memory,
+      dma: { free_bytes: 41000, largest_free_block_bytes: 9000 },
+    },
+  };
+
+  const result = evaluateResourceLifecycle(current, baseline);
+
+  assert.equal(result.state, "degraded");
+  assert.equal(result.deltas.dmaLargestBytes, -13000);
+});
+
+test("PSRAM largest-block regression is visible instead of hidden by free bytes", () => {
+  const current = {
+    ...baseline,
+    stage: "rtc_release_3000ms",
+    memory: {
+      ...baseline.memory,
+      psram: { free_bytes: 5_000_000, largest_free_block_bytes: 4_000_000 },
+    },
+  };
+
+  const result = evaluateResourceLifecycle(current, baseline);
+
+  assert.equal(result.state, "degraded");
+  assert.equal(result.deltas.psramLargestBytes, -500000);
+});
+
+test("monotonic post-release decline is flagged as a fragmentation trend", () => {
+  const history = [
+    snapshot("rtc_release_3000ms", 50000, 28000),
+    snapshot("rtc_release_3000ms", 49500, 27000),
+    snapshot("rtc_release_3000ms", 49000, 26000),
+    snapshot("rtc_release_3000ms", 48500, 25000),
+  ];
+
+  const result = evaluateResourceLifecycle(history.at(-1), baseline, history);
+
+  assert.equal(result.state, "degraded");
+  assert.equal(result.trend.monotonicDecline, true);
 });
 
 test("latest release sample remains the lifecycle verdict after periodic telemetry resumes", () => {

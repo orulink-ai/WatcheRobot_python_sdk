@@ -107,7 +107,10 @@
           <div><dt>内部可用</dt><dd id="resourceInternal">—</dd></div>
           <div><dt>最大连续块</dt><dd id="resourceLargest">—</dd></div>
           <div><dt>DMA 可用</dt><dd id="resourceDma">—</dd></div>
+          <div><dt>DMA 最大连续块</dt><dd id="resourceDmaLargest">—</dd></div>
           <div><dt>PSRAM 可用</dt><dd id="resourcePsram">—</dd></div>
+          <div><dt>PSRAM 最大连续块</dt><dd id="resourcePsramLargest">—</dd></div>
+          <div><dt>会话内最低内部 RAM</dt><dd id="resourceMinimum">—</dd></div>
         </dl>
         <div class="resource-details">
           <div><span>占用状态</span><strong id="resourceOwners">等待遥测</strong></div>
@@ -162,6 +165,32 @@
           </div>
           <output class="station-result" id="lightResult">等待控制</output>
         </article>
+
+        <article class="control-card animation-card" data-capability="animation">
+          <div class="station-head">
+            <p class="section-index">02.5 / 屏幕动画</p>
+            <span class="capability-state">检测中</span>
+          </div>
+          <h2>动画并发验证</h2>
+          <p>设备会动态上报 SD 卡中实际可播放的完整动画目录；音视频会话运行时仍可手动切换或自动随机轮播。</p>
+          <div class="control-fields">
+            <label>动画 ID
+              <input id="animationId" type="text" list="animationSuggestions" autocomplete="off" />
+            </label>
+            <label>随机切换间隔（秒）
+              <input id="animationRandomInterval" type="number" min="3" max="120" step="1" value="8" />
+            </label>
+            <datalist id="animationSuggestions"></datalist>
+          </div>
+          <p class="animation-catalog-summary" id="animationCatalogSummary">等待设备上报动画目录</p>
+          <div class="button-row">
+            <button class="station-action" id="playAnimationButton" type="button">播放动画</button>
+            <button class="quiet-action" id="stopAnimationButton" type="button">停止动画</button>
+            <button class="station-action" id="startRandomAnimationButton" type="button">开始随机播放</button>
+            <button class="quiet-action" id="stopRandomAnimationButton" type="button">停止随机播放</button>
+          </div>
+          <output class="station-result" id="animationResult">等待控制</output>
+        </article>
       </section>
 
       <section class="live-video-panel" id="liveVideoPanel" data-available="false" aria-labelledby="liveVideoTitle">
@@ -172,8 +201,8 @@
           </div>
           <h2 id="liveVideoTitle">相机实时画面</h2>
           <p>
-            浏览器与 Watcher 建立局域网 WebRTC 数据通道，直接接收 MJPEG 画面；
-            Python Application 仅负责信令，不转发视频帧。
+              浏览器通过独立局域网通道直接接收 Watcher 的 MJPEG 画面；
+              全双工音频继续使用 WebRTC，Python Application 不转发媒体帧。
           </p>
           <div class="live-video-controls">
             <button class="station-action" id="startLiveVideoButton" type="button">开启实时画面</button>
@@ -183,6 +212,10 @@
           <dl class="live-video-metrics">
             <div><dt>状态</dt><dd id="liveVideoState">IDLE</dd></div>
             <div><dt>显示帧率</dt><dd id="liveVideoFps">0.0 FPS</dd></div>
+            <div><dt>源 / 目标 / 发送</dt><dd id="liveVideoPipelineFps">—</dd></div>
+            <div><dt>平均帧大小 / 发送 P95</dt><dd id="liveVideoTransport">—</dd></div>
+            <div><dt>拥塞压力</dt><dd id="liveVideoCongestion">浏览器 0 / 动画 0</dd></div>
+            <div><dt>动画实测 / 目标</dt><dd id="liveVideoAnimation">未检测到活动动画</dd></div>
             <div><dt>画面尺寸</dt><dd id="liveVideoResolution">—</dd></div>
             <div><dt>本地丢帧</dt><dd id="liveVideoDrops">0</dd></div>
           </dl>
@@ -216,6 +249,7 @@
           </p>
           <div class="rtc-audio-controls">
             <button class="station-action" id="startRtcAudioButton" type="button">开启全双工通话</button>
+            <button class="station-action" id="startRtcAvButton" type="button">同时开启音视频</button>
             <button class="quiet-action" id="stopRtcAudioButton" type="button" disabled>结束通话</button>
           </div>
           <output class="station-result" id="rtcAudioResult">等待开启</output>
@@ -231,10 +265,11 @@
             <div><dt>机器人成功发送</dt><dd id="rtcAudioDeviceTx">0</dd></div>
             <div><dt>物理麦克风峰值 / 浏览器播放</dt><dd id="rtcAudioSignal">0 / 0.000</dd></div>
             <div><dt>设备回声消除</dt><dd id="rtcAudioAec">等待设备遥测</dd></div>
+            <div><dt>实时音频分段时延</dt><dd id="rtcAudioLatency">等待分段时延样本</dd></div>
             <div><dt>验收动作</dt><dd>请对机器人说话</dd></div>
           </dl>
           <audio id="rtcRemoteAudio" autoplay controls aria-label="Watcher 实时麦克风声音"></audio>
-          <small>建议佩戴耳机测试，避免设备与电脑扬声器形成声学回路。</small>
+          <small>默认使用原声麦克风采集；建议佩戴耳机，避免设备与电脑扬声器形成声学回路。</small>
         </div>
       </section>
 

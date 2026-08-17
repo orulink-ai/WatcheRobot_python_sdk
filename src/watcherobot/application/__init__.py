@@ -12,6 +12,7 @@ from .rtc import (
     RTC_AUDIO_CAPABILITY,
     RTC_PROTOCOL,
     RTC_VIDEO_CAPABILITY,
+    RtcSessionRejectedError,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "RTC_AUDIO_CAPABILITY",
     "RTC_PROTOCOL",
     "RTC_VIDEO_CAPABILITY",
+    "RtcSessionRejectedError",
 ]

@@ -58,10 +58,24 @@ class BehaviorDomain(_Domain):
 
 
 class AnimationDomain(_Domain):
+    @property
+    def available_ids(self) -> tuple[str, ...]:
+        """Return the playable animation IDs advertised by the connected device."""
+
+        return tuple(getattr(self._robot._transport, "animation_ids", ()))
+
     def play(self, animation_id: str) -> Job:
         if not animation_id:
             raise ValueError("animation_id is required")
         return self._robot._start_job("ctrl.animation.play", {"animation_id": animation_id})
+
+    def prefetch(self, animation_id: str) -> None:
+        """Prepare an installed animation in the device's decoded-frame cache."""
+
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,62}", animation_id or "") is None:
+            raise ValueError("animation_id must be a catalog-safe resource id")
+        self._robot._require_capability("animation.prefetch.v1")
+        self._robot._command("ctrl.animation.prefetch", {"animation_id": animation_id})
 
     def stop(self) -> None:
         self._robot._command("ctrl.animation.stop", {})

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import uuid
 from collections.abc import Callable, Coroutine
@@ -38,6 +39,23 @@ DesktopCallback = Callable[[str | bytes], None]
 AUDIO_DEVICE_SLOT_BYTES = 4096
 AUDIO_MAX_CREDIT_PACKETS = 8
 DEVICE_READY_SYNC_TIMEOUT_SECONDS = 1.0
+_ANIMATION_ID_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,62}")
+
+
+def _normalize_animation_ids(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    result: list[str] = []
+    seen: set[str] = set()
+    for animation_id in value:
+        if (
+            isinstance(animation_id, str)
+            and _ANIMATION_ID_PATTERN.fullmatch(animation_id)
+            and animation_id not in seen
+        ):
+            seen.add(animation_id)
+            result.append(animation_id)
+    return tuple(result)
 
 
 class DaemonApplicationTransport:
@@ -46,6 +64,7 @@ class DaemonApplicationTransport:
     def __init__(self, *, command_timeout: float = 5.0) -> None:
         self.command_timeout = command_timeout
         self.capabilities: tuple[str, ...] = ()
+        self.animation_ids: tuple[str, ...] = ()
         self.device_info: dict[str, Any] = {}
         self.resource_baseline: dict[str, Any] = {}
         self.resource_rtc_baseline: dict[str, Any] = {}
@@ -459,7 +478,10 @@ class DaemonApplicationTransport:
                 isinstance(item, str) and item for item in capabilities
             ):
                 self.capabilities = tuple(capabilities)
-            self.device_info.update(data)
+            self.animation_ids = _normalize_animation_ids(data.get("animations"))
+            device_info = dict(data)
+            device_info["animations"] = list(self.animation_ids)
+            self.device_info.update(device_info)
         if message_type == "evt.sdk.resource_snapshot":
             snapshot = dict(data)
             if snapshot.get("stage") == "baseline":
