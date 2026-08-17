@@ -58,19 +58,21 @@ watcherobot daemon stop
 
 ### 创建、校验与运行
 
-#### `watcherobot app init <目录>`
+#### `watcherobot app init [目录]`
 
-创建一个可发布的 Application 项目。交互式终端会询问 ID、显示名称、作者和简介；脚本环境必须显式提供四个字段。目标目录不能已经存在。
+创建一个可直接运行的 Hello World Application，且不会覆盖已有目标。省略目录时，交互式终端会询问项目目录；ID、显示名称、作者和简介会根据目录生成默认值，准备发布时可通过参数覆盖。
 
 ```powershell
-watcherobot app init .\my_app `
+watcherobot app init my_app
+
+watcherobot app init published_app `
   --id com.example.my_app `
   --name "My App" `
   --author "Example Team" `
   --description "An example WatcheRobot Application"
 ```
 
-会生成 `app.json`、`app.py`、`README.md`、`icon.svg` 和 `.gitignore`。
+会生成 `app.json`、`app.py`、`README.md`、`icon.svg` 和 `.gitignore`；其中默认 `app.py` 会播放一次 `happy` 行为并正常退出。
 
 #### `watcherobot app check <目录>`
 
@@ -81,12 +83,13 @@ watcherobot app check .\my_app
 watcherobot app check .\my_app --jsonl
 ```
 
-#### `watcherobot app run <目录>`
+#### `watcherobot app run [目录]`
 
-启动或复用当前用户 Runtime，选择给定的本地源码 Application，并以 Runtime 注入的 `WATCHER_APP_*` 环境变量启动它。Application 退出后 Runtime 会继续运行。
+启动或复用当前用户 Runtime，选择本地源码 Application，并以 Runtime 注入的 `WATCHER_APP_*` 环境变量启动它。目录默认是当前工作目录；Application 退出后 Runtime 会继续运行。
 
 ```powershell
-watcherobot app run .\examples\hello_robot
+cd my_app
+watcherobot app run
 ```
 
 #### `watcherobot app run-installed --store-root <路径> --app-id <ID>`

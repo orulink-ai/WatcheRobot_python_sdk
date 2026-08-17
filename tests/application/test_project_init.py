@@ -65,6 +65,9 @@ def test_init_creates_one_publish_ready_application_project(
         str(target / "app.py"),
         "exec",
     )
+    app_source = target.joinpath("app.py").read_text(encoding="utf-8")
+    assert 'app.robot.behavior.play,\n            "happy"' in app_source
+    assert "job.wait, 20.0" in app_source
     assert "watcherobot app check" in target.joinpath("README.md").read_text(
         encoding="utf-8"
     )

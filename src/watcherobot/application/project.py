@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from watcherobot.runtime.daemon.application.manifest import (
 
 _INITIAL_APPLICATION_VERSION = "0.1.0"
 _ICON_PATH = "icon.svg"
+_DEFAULT_PROJECT_SLUG = "hello_robot"
+_LOCAL_APPLICATION_ID_PREFIX = "local."
 _APP_TEMPLATE = '''"""WatcheRobot Application entrypoint."""
 
 import asyncio
@@ -29,8 +32,17 @@ from watcherobot.application import ApplicationContext
 
 async def main() -> None:
     async with ApplicationContext.from_environment() as app:
-        app.logger.info("Application started: %s", app.app_id)
-        await asyncio.Event().wait()
+        if not app.robot.supports("behavior"):
+            app.logger.warning("This robot does not support behavior playback.")
+            return
+
+        job = await asyncio.to_thread(
+            app.robot.behavior.play,
+            "happy",
+            repeat=1,
+        )
+        await asyncio.to_thread(job.wait, 20.0)
+        app.logger.info("Hello, WatcheRobot! Your first Application worked.")
 
 
 asyncio.run(main())
@@ -86,6 +98,36 @@ class ApplicationProjectInitResult:
             "requires_watcherobot": self.requires_watcherobot,
             "files": list(self.files),
         }
+
+
+@dataclass(frozen=True)
+class ApplicationProjectDefaults:
+    """Development-friendly metadata derived from a project directory."""
+
+    app_id: str
+    name: str
+    author: str
+    description: str
+
+
+def default_application_project_metadata(
+    directory: Path,
+) -> ApplicationProjectDefaults:
+    """Derive valid local metadata without asking publishing questions."""
+
+    project_name = Path(directory).name.strip() or _DEFAULT_PROJECT_SLUG
+    slug = re.sub(r"[^a-z0-9]+", "_", project_name.lower()).strip("_")
+    slug = slug[: 64 - len(_LOCAL_APPLICATION_ID_PREFIX)].rstrip("_")
+    if not slug:
+        slug = _DEFAULT_PROJECT_SLUG
+    display_name = re.sub(r"[-_]+", " ", project_name).strip()
+    display_name = display_name.title() or "Hello Robot"
+    return ApplicationProjectDefaults(
+        app_id=f"{_LOCAL_APPLICATION_ID_PREFIX}{slug}",
+        name=display_name,
+        author="Local Developer",
+        description=f"{display_name} WatcheRobot Application.",
+    )
 
 
 def init_application_project(
@@ -263,12 +305,13 @@ def _readme(
 ## Develop
 
 ```powershell
+watcherobot app run
 watcherobot app check .
-watcherobot app run .
 watcherobot app publish .
 ```
 
-Run the Application through the SDK Daemon. Do not execute `app.py` directly.
+The generated `app.py` plays the `happy` behavior once. Run it through the SDK
+Runtime; do not execute `app.py` directly.
 """
 
 

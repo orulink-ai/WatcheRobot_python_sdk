@@ -58,23 +58,26 @@ SDK 仓库只负责 Application API、Daemon、Runtime 控制面和分发工具�
 
 ## 快速开始
 
-### 1. 安装开发环境
+### 1. 安装 SDK
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[test]"
+python -m pip install watcherobot
 ```
 
-### 2. 运行完整示例
+只有参与 SDK 本身开发时，才需要克隆仓库并执行 `pip install -e ".[test]"`。
 
-每个示例都是包含 `app.json` 与固定 `app.py` 入口的受管 Application。请通过 Runtime 启动，而不要直接执行 `app.py`：
+### 2. 创建并运行第一个 Application
 
 ```powershell
-watcherobot app run .\examples\hello_robot
+watcherobot app init hello_robot
+cd hello_robot
+watcherobot app run
 ```
 
-首次脱离 Desktop 使用时，先启动 Runtime，用设备显示的六位码完成配对，再运行示例：
+生成的 Hello World Application 会播放一次 `happy` 行为，然后正常退出。`app run`
+会自动启动或复用 Runtime；如果机器人尚未连接，请先在 Watcher Desktop 中完成配对，再次运行即可。
+
+不使用 Watcher Desktop 做 SDK 独立测试时，可启动 Runtime，并使用设备显示的六位码配对：
 
 ```powershell
 $runtime = watcherobot daemon start | ConvertFrom-Json
@@ -84,12 +87,9 @@ Invoke-RestMethod `
   -Uri "$($runtime.control_url)/daemon/devices/pair" `
   -ContentType "application/json" `
   -Body $pairBody
-watcherobot app run .\examples\hello_robot
 ```
 
-将 `123456` 替换为设备显示的配对码。若当前 Runtime 已经连上设备，可跳过配对请求。
-
-本地控制 API 还提供 `GET /daemon/logs` 用于读取 Runtime 日志；完整 REST 边界见 [Runtime 合同](docs/contracts/runtime-profile-index.md)。
+请将 `123456` 替换为设备配对码。本地控制 API 还提供 `GET /daemon/logs`；完整独立运行与排障接口见 [Runtime 合同](docs/contracts/runtime-profile-index.md)。
 
 ### 3. 编写 Application
 
@@ -108,12 +108,10 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-也可以直接生成一个可发布的项目：
+初始化器已经把同样的代码生成到 `hello_robot/app.py`。准备发布时，仍可通过参数覆盖正式元数据：
 
 ```powershell
-watcherobot app init .\my_app
-watcherobot app check .\my_app
-watcherobot app run .\my_app
+watcherobot app init my_app --id com.example.my_app --author "Example Team"
 ```
 
 ## 常见目标与文档入口
@@ -139,12 +137,13 @@ watcherobot daemon status
 watcherobot daemon stop
 
 # Application 开发与分发
-watcherobot app init .\my_app
-watcherobot app check .\my_app
-watcherobot app run .\my_app
+watcherobot app init my_app
+cd my_app
+watcherobot app run
+watcherobot app check .
 watcherobot app login
-watcherobot app publish .\my_app
-watcherobot app submit .\my_app
+watcherobot app publish .
+watcherobot app submit .
 watcherobot app marketplace
 watcherobot app install <app-id>
 watcherobot app list
