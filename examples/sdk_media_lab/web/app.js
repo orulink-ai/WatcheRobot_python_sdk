@@ -1847,7 +1847,7 @@ async function playAudio() {
     pending: "正在传输 PCM 示例音频…",
     complete: (payload) => `播放完成 · ${formatBytes(payload.bytes)}`,
     station: document.querySelector(".station-audio"),
-    resource: "speaker",
+    resources: ["microphone", "speaker"],
   });
 }
 
@@ -1873,7 +1873,7 @@ async function recordMicrophone() {
     pending: `正在录制 ${duration} 秒…`,
     complete: (value) => `${value.duration_seconds.toFixed(3)} 秒 · 丢帧 ${value.dropped_frames} · 解码失败 ${value.decode_failures}`,
     station: document.querySelector(".station-microphone"),
-    resource: "microphone",
+    resources: ["microphone", "speaker"],
   });
   if (payload) await showRecording(payload.artifact_url);
   return payload;

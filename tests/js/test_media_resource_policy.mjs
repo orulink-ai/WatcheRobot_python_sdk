@@ -61,6 +61,28 @@ test("video RTC keeps standalone speaker and microphone actions available", () =
   assert.equal(availability.animation, true);
 });
 
+test("standalone speaker playback reserves both ordinary audio directions", () => {
+  const availability = controlAvailability({
+    ...connected,
+    resourceOwners: { speaker: "play_audio" },
+  });
+
+  assert.equal(availability.speaker, false);
+  assert.equal(availability.microphone, false);
+  assert.equal(availability.camera, true);
+});
+
+test("pending standalone microphone recording reserves both ordinary audio directions", () => {
+  const availability = controlAvailability({
+    ...connected,
+    localResources: new Set(["microphone"]),
+  });
+
+  assert.equal(availability.speaker, false);
+  assert.equal(availability.microphone, false);
+  assert.equal(availability.camera, true);
+});
+
 test("combined RTC owns camera, microphone, and speaker", () => {
   const availability = controlAvailability({
     ...connected,

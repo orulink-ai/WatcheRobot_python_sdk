@@ -42,9 +42,10 @@ export function controlAvailability({
   const cameraReady = resourceReady("camera") && !pendingRtc;
   const microphoneReady = resourceReady("microphone") && !pendingRtc;
   const speakerReady = resourceReady("speaker") && !pendingRtc;
+  const ordinaryAudioReady = microphoneReady && speakerReady;
   const cameraAvailable = cameraReady && !rtcModeHasVideo(rtcMode);
-  const microphoneAvailable = microphoneReady && !rtcModeHasAudio(rtcMode);
-  const speakerAvailable = speakerReady && !rtcModeHasAudio(rtcMode);
+  const microphoneAvailable = ordinaryAudioReady && !rtcModeHasAudio(rtcMode);
+  const speakerAvailable = ordinaryAudioReady && !rtcModeHasAudio(rtcMode);
   return {
     motion: resourceReady("motion") && capabilitySet.has("motion"),
     light: resourceReady("light") && capabilitySet.has("light"),

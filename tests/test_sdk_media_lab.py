@@ -845,7 +845,7 @@ def test_record_microphone_rejects_unsafe_durations(
         service.record_microphone(duration=duration)
 
 
-def test_same_media_resource_is_serialized_while_independent_camera_remains_available(
+def test_ordinary_audio_directions_are_serialized_while_independent_camera_remains_available(
     tmp_path: Path,
 ) -> None:
     module = _load_service_module()
@@ -863,8 +863,14 @@ def test_same_media_resource_is_serialized_while_independent_camera_remains_avai
     assert started.wait(timeout=1.0)
 
     assert service.status()["active_action"] == "play_audio"
+    assert service.status()["resource_owners"] == {
+        "microphone": "play_audio",
+        "speaker": "play_audio",
+    }
     with pytest.raises(module.MediaLabBusyError, match="play_audio"):
         service.play_audio()
+    with pytest.raises(module.MediaLabBusyError, match="play_audio"):
+        service.record_microphone(duration=1.0)
     assert service.capture_photo()["bytes"] > 0
 
     release.set()
@@ -1553,9 +1559,9 @@ def test_local_ui_preserves_chinese_source_copy_behind_an_english_default() -> N
     assert 'resource: "motion"' in javascript
     assert 'resource: "light"' in javascript
     assert 'resource: "animation"' in javascript
-    assert 'resource: "speaker"' in javascript
+    assert 'resources: ["microphone", "speaker"]' in javascript
     assert 'resources: ["camera", "animation"]' in javascript
-    assert 'resource: "microphone"' in javascript
+    assert javascript.count('resources: ["microphone", "speaker"]') == 2
     assert 'path: "/api/actions/stop-audio"' in javascript
     assert 'path: "/api/controls/motion/stop"' in javascript
     assert javascript.count("interrupt: true") >= 2

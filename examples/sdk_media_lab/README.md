@@ -59,14 +59,14 @@ before use and handle generated artifacts appropriately.
 Controls are arbitrated by hardware resource rather than by one page-wide busy
 flag. Motion, body lights, and animation each have an independent lease, so all
 three remain available during live video, full-duplex audio, or combined AV.
-Camera, microphone, and speaker also have separate leases. Audio-only RTC owns
-the microphone and speaker but leaves one-shot camera capture available.
-Video-only RTC owns the camera but leaves either standalone speaker playback or
-standalone microphone recording available. Combined AV owns all three media
-leases. A standalone speaker action still excludes another speaker action, and
-the same rule applies independently to camera and microphone. Combined AV is one
-firmware session (`mode=av`), not two peer connections competing for the same
-codec, camera, network, and teardown resources.
+Camera has an independent lease. The standalone 24 kHz speaker path and 16 kHz
+microphone path share one ordinary-audio lease because the firmware routes both
+through the same audio runtime; playback and recording therefore cannot overlap.
+Audio-only RTC owns the microphone and speaker but leaves one-shot camera capture
+available. Video-only RTC owns the camera but leaves one standalone audio
+direction available at a time. Combined AV owns all three media leases and is
+one firmware session (`mode=av`), not two peer connections competing for the
+same codec, camera, network, and teardown resources.
 
 The animation selector is populated from the connected device's
 `evt.sdk.ready.data.animations` catalog, so every animation actually installed
