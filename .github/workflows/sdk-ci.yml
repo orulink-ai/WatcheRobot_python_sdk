@@ -27,7 +27,8 @@ jobs:
       - name: Clean workspace before snapshot download
         run: |
           workspace=$(realpath -m "${GITHUB_WORKSPACE}")
-          [[ "${workspace}" == /opt/actions-runner-ci/_work/*/* ]] || {
+          runner_work=$(realpath -m "${RUNNER_TEMP}/..")
+          [[ "${workspace}" == "${runner_work}"/*/* ]] || {
             echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
             exit 1
           }
@@ -101,7 +102,8 @@ jobs:
       - name: Clean workspace before snapshot download
         run: |
           workspace=$(realpath -m "${GITHUB_WORKSPACE}")
-          [[ "${workspace}" == /opt/actions-runner-ci/_work/*/* ]] || {
+          runner_work=$(realpath -m "${RUNNER_TEMP}/..")
+          [[ "${workspace}" == "${runner_work}"/*/* ]] || {
             echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
             exit 1
           }
@@ -143,7 +145,8 @@ jobs:
       - name: Clean workspace before snapshot download
         run: |
           workspace=$(realpath -m "${GITHUB_WORKSPACE}")
-          [[ "${workspace}" == /opt/actions-runner-ci/_work/*/* ]] || {
+          runner_work=$(realpath -m "${RUNNER_TEMP}/..")
+          [[ "${workspace}" == "${runner_work}"/*/* ]] || {
             echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
             exit 1
           }
