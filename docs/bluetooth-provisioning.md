@@ -4,6 +4,16 @@
 service from Python on Windows and macOS. It does not require the Runtime or
 Daemon.
 
+For normal first-time use, prefer the guided command that combines Bluetooth
+Wi-Fi provisioning with Runtime pairing:
+
+```powershell
+watcherobot robot setup
+```
+
+The lower-level API and `watcherobot bluetooth ...` commands below are intended
+for diagnostics and custom automation.
+
 ## Asynchronous API
 
 ```python

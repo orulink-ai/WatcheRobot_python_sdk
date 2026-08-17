@@ -2,6 +2,7 @@ name: SDK CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
 
@@ -12,17 +13,13 @@ concurrency:
 permissions:
   contents: read
 
-# WARNING: snapshot jobs intentionally have no .git directory. Keep the three
-# identical download blocks aligned when changing headers, retries, or extraction.
 jobs:
-  test:
-    name: Python ${{ matrix.python-version }} / ${{ matrix.dependency-profile }}
+  development:
+    name: Development checks
+    if: >-
+      github.event_name != 'pull_request' ||
+      !contains(github.event.pull_request.labels.*.name, 'release:version')
     runs-on: [self-hosted, Linux, X64, sdk-ci]
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-        dependency-profile: ["lowest", "latest"]
     steps:
       - name: Clean workspace before snapshot download
         run: |
@@ -50,10 +47,89 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          # Development CI intentionally uses one representative runtime.
+          # mypy's python_version remains 3.10 to guard the minimum syntax/API contract.
+          python-version: "3.11"
           cache: pip
 
       - name: Create isolated virtual environment
+        run: |
+          python -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Install SDK, test, and packaging dependencies
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m pip install -e ".[test]"
+
+      - name: Validate development behavior
+        run: |
+          python -m pip check
+          python -m pytest
+          python -m mypy src/watcherobot
+
+      - name: Validate BLE fake backend contract
+        run: |
+          python -c "from watcherobot.provisioning.bleak_backend import BleakBackend; print(BleakBackend)"
+          python -m pytest tests/provisioning
+
+      - name: Build distributions
+        # Building is deliberately independent of Git history and tags.
+        run: |
+          python -m build
+          python -m twine check dist/*
+
+      - name: Verify wheel installation
+        run: |
+          python -m venv .venv-wheel-check
+          .venv-wheel-check/bin/python -m pip install --force-reinstall dist/*.whl
+          .venv-wheel-check/bin/python -m pip check
+          .venv-wheel-check/bin/python -c "import watcherobot; print(watcherobot.__version__)"
+          .venv-wheel-check/bin/watcherobot --help
+
+  release-compatibility:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.dependency-profile }}
+    if: >-
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'release:version')
+    runs-on: [self-hosted, Linux, X64, sdk-ci]
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+        dependency-profile: ["lowest", "latest"]
+    steps:
+      - name: Clean workspace before release snapshot download
+        run: |
+          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
+          runner_work=$(realpath -m "${RUNNER_TEMP}/..")
+          [[ "${workspace}" == "${runner_work}"/*/* ]] || {
+            echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
+            exit 1
+          }
+          shopt -s dotglob nullglob
+          rm -rf -- "${workspace}"/*
+
+      - name: Download immutable release candidate snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail --show-error --location \
+            --retry 5 --retry-connrefused \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}" \
+            --output "${RUNNER_TEMP}/source.tar.gz"
+          tar --extract --gzip --strip-components=1 \
+            --file "${RUNNER_TEMP}/source.tar.gz"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Create isolated compatibility environment
         run: |
           python -m venv .venv
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
@@ -89,95 +165,19 @@ jobs:
             "starlette>=0.51,<1" \
             "websockets>=14,<16"
 
-      - run: python -m pip check
-      - run: python -m pytest
-      - run: python -m mypy src/watcherobot
-
-  ble-provisioning:
-    name: BLE fake backend
-    # CI executes on company-owned runners by policy. This Linux contract test
-    # covers the fake backend without reintroducing GitHub-hosted runners.
-    runs-on: [self-hosted, Linux, X64, sdk-ci]
-    steps:
-      - name: Clean workspace before snapshot download
+      - name: Validate release compatibility
         run: |
-          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
-          runner_work=$(realpath -m "${RUNNER_TEMP}/..")
-          [[ "${workspace}" == "${runner_work}"/*/* ]] || {
-            echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
-            exit 1
-          }
-          shopt -s dotglob nullglob
-          rm -rf -- "${workspace}"/*
-
-      - name: Download immutable source snapshot
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          curl --fail --show-error --location \
-            --retry 5 --retry-connrefused \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}" \
-            --output "${RUNNER_TEMP}/source.tar.gz"
-          tar --extract --gzip --strip-components=1 \
-            --file "${RUNNER_TEMP}/source.tar.gz"
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Create isolated virtual environment
-        run: |
-          python -m venv .venv
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-      - run: python -m pip install -e ".[test]"
-      - run: python -m pip check
-      - run: python -c "from watcherobot.provisioning.bleak_backend import BleakBackend; print(BleakBackend)"
-      - run: python -m pytest tests/provisioning
-
-  build:
-    name: Build distributions
-    needs: [test, ble-provisioning]
-    runs-on: [self-hosted, Linux, X64, sdk-ci]
-    steps:
-      # The package uses Hatch's explicit src/watcherobot/__init__.py version
-      # source. Building is deliberately independent of Git history and tags.
-      - name: Clean workspace before snapshot download
-        run: |
-          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
-          runner_work=$(realpath -m "${RUNNER_TEMP}/..")
-          [[ "${workspace}" == "${runner_work}"/*/* ]] || {
-            echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
-            exit 1
-          }
-          shopt -s dotglob nullglob
-          rm -rf -- "${workspace}"/*
-
-      - name: Download immutable source snapshot
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          curl --fail --show-error --location \
-            --retry 5 --retry-connrefused \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}" \
-            --output "${RUNNER_TEMP}/source.tar.gz"
-          tar --extract --gzip --strip-components=1 \
-            --file "${RUNNER_TEMP}/source.tar.gz"
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Create isolated virtual environment
-        run: |
-          python -m venv .venv
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-      - run: python -m pip install --upgrade build twine
-      - run: python -m build
-      - run: python -m twine check dist/*
-      - name: Verify wheel installation
-        run: |
-          python -m pip install --force-reinstall dist/*.whl
           python -m pip check
-          python -c "import watcherobot; print(watcherobot.__version__)"
+          python -m pytest
+          python -m mypy src/watcherobot
+
+      - name: Build and install release candidate distributions once
+        if: matrix.python-version == '3.12' && matrix.dependency-profile == 'latest'
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+          python -m venv .venv-wheel-check
+          .venv-wheel-check/bin/python -m pip install --force-reinstall dist/*.whl
+          .venv-wheel-check/bin/python -m pip check
+          .venv-wheel-check/bin/watcherobot --help

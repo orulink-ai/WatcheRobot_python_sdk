@@ -52,8 +52,9 @@ SDK 仓库只负责 Application API、Daemon、Runtime 控制面和分发工具�
 | 机器人能力 | `app.robot` | 行为、动画、运动、音频、灯光、表情、作品、麦克风、相机、人脸跟踪和输入等高层能力。 |
 | 高级接入 | `ApplicationChannels` | 供拥有完整业务协议的 Application 使用，按来源接收原始 Desktop / Device 帧。 |
 | Runtime / Daemon | `watcherobot daemon ...` | 配对、设备与 Desktop 连接、通用帧路由、Application 生命周期、日志和本地控制 REST API。 |
+| 机器人新手引导 | `watcherobot robot ...` | 首次 Wi-Fi 配置、六位码配对和连接状态查询。 |
 | Application 分发 | `watcherobot app ...` | 创建、检查、发布、提交、浏览、下载、安装和运行经过审核的 Application 快照。 |
-| 蓝牙配网 | `watcherobot bluetooth ...` / `BluetoothProvisioner` | 扫描设备、写入 Wi-Fi 凭据、查询状态和清除凭据。 |
+| 高级蓝牙配网 | `watcherobot bluetooth ...` / `BluetoothProvisioner` | 底层扫描、Wi-Fi 凭据维护和 BLE 排障。 |
 | 设备维护 | Daemon maintenance REST API | 面向 Desktop 的固件、SD 资源和便携作品维护，详见[资源与作品说明](docs/resources.md)。 |
 
 ## 快速开始
@@ -66,7 +67,36 @@ python -m pip install watcherobot
 
 只有参与 SDK 本身开发时，才需要克隆仓库并执行 `pip install -e ".[test]"`。
 
-### 2. 创建并运行第一个 Application
+需要确认安装版本时执行：
+
+```powershell
+watcherobot --version
+```
+
+### 2. 配置第一台机器人
+
+打开机器人和蓝牙，然后执行：
+
+```powershell
+watcherobot robot setup
+```
+
+命令会扫描附近的 WatcheRobot，询问 Wi-Fi 名称和密码，再询问机器人屏幕上的
+六位配对码。密码只会私密读取，不允许通过命令行参数传入。随时可查询连接状态：
+
+```powershell
+watcherobot robot status
+```
+
+如果机器人已经连接到同一 Wi-Fi，可以跳过蓝牙配网，直接使用当前六位码配对：
+
+```powershell
+watcherobot robot pair 123456
+```
+
+请将 `123456` 替换为机器人当前显示的配对码。
+
+### 3. 创建并运行第一个 Application
 
 ```powershell
 watcherobot app init hello_robot
@@ -74,24 +104,15 @@ cd hello_robot
 watcherobot app run
 ```
 
-生成的 Hello World Application 会播放一次 `happy` 行为，然后正常退出。`app run`
-会自动启动或复用 Runtime；如果机器人尚未连接，请先在 Watcher Desktop 中完成配对，再次运行即可。
+生成的 Hello World Application 一定会输出成功问候；连接兼容机器人后，还会播放一次
+`happy` 行为。没有连接机器人时，`app run` 会明确提示执行
+`watcherobot robot setup`，同时继续以离线模式运行。配对和设备连接始终由 Runtime
+独占管理。
 
-不使用 Watcher Desktop 做 SDK 独立测试时，可启动 Runtime，并使用设备显示的六位码配对：
+本地控制 API 还提供 `GET /daemon/logs`；产品集成与排障接口见
+[Runtime 合同](docs/contracts/runtime-profile-index.md)。
 
-```powershell
-$runtime = watcherobot daemon start | ConvertFrom-Json
-$pairBody = '{"pairing_code":"123456","target_mode":"python_sdk"}'
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "$($runtime.control_url)/daemon/devices/pair" `
-  -ContentType "application/json" `
-  -Body $pairBody
-```
-
-请将 `123456` 替换为设备配对码。本地控制 API 还提供 `GET /daemon/logs`；完整独立运行与排障接口见 [Runtime 合同](docs/contracts/runtime-profile-index.md)。
-
-### 3. 编写 Application
+### 4. 编写 Application
 
 ```python
 import asyncio
@@ -136,6 +157,11 @@ watcherobot daemon start
 watcherobot daemon status
 watcherobot daemon stop
 
+# 首次配置与连接机器人
+watcherobot robot setup
+watcherobot robot status
+watcherobot robot pair 123456
+
 # Application 开发与分发
 watcherobot app init my_app
 cd my_app
@@ -149,7 +175,7 @@ watcherobot app install <app-id>
 watcherobot app list
 watcherobot app uninstall <app-id>
 
-# 蓝牙 Wi-Fi 配网
+# 高级蓝牙 Wi-Fi 排障
 watcherobot bluetooth scan
 watcherobot bluetooth provision --device <id> --ssid MyWiFi
 watcherobot bluetooth status --device <id>

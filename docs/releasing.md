@@ -35,30 +35,33 @@ Tag 门禁还会验证该 commit 属于 `main`、关联恰好一个合法版本 
 
 ## CI 与不可变制品
 
-PR 和 `main` push 由 `.github/workflows/sdk-ci.yml` 在自托管 `sdk-ci` Runner 上执行：
-
-- Python 3.10、3.11、3.12；
-- 最低和最新受支持依赖；
-- pytest、BLE fake backend、mypy；
-- wheel/sdist 构建、`twine check`、安装和 `pip check`。
+PR 和 `main` push 属于开发阶段，由 `.github/workflows/sdk-ci.yml` 在自托管 `sdk-ci` Runner 上使用一个
+Python 3.11 环境执行。一次任务内完成 pytest、BLE fake backend、mypy、wheel/sdist 构建、`twine check`、
+wheel 安装和 `pip check`。`mypy` 仍以 Python 3.10 为最低语言/API 合同，开发反馈不再重复启动所有 Python
+版本和依赖组合。
 
 BLE fake backend 按公司自托管 Runner 策略在 Linux 执行契约测试；不使用 GitHub 托管的 Windows/macOS Runner。
 这项门禁验证导入和 fake backend 行为，不替代 Windows/macOS 实机蓝牙验收。
 
-合法 Tag 由 `.github/workflows/release.yml` 在隔离的 `sdk-release` Runner 上执行。wheel 与 sdist 只构建一次，
-随后生成 `SHA256SUMS` 并上传为 GitHub Actions Artifact。TestPyPI 与 PyPI 下载并使用同一份 Artifact，正式发布前
-再次验证哈希，不重新构建。
+带 `release:version` 标签的版本 PR 才会切换到发布门禁，在自托管 `sdk-ci` Runner 上执行 Python 3.10、
+3.11、3.12 与最低/最新依赖的完整兼容矩阵，并在 Python 3.12 + 最新依赖组合中额外构建、安装候选制品。
+六个组合全部通过且版本 PR 合并后，才允许创建合法 Tag。`.github/workflows/release.yml` 随后在隔离的
+`sdk-release` Runner 构建一次正式 wheel 与 sdist，生成 `SHA256SUMS` 并上传为 GitHub Actions Artifact。
+TestPyPI 与 PyPI 下载并使用同一份 Artifact，正式发布前再次验证哈希，不重新构建。完整矩阵最多并行两个
+任务，避免短时间并发下载基础 Action 触发平台限流。
 
 ## 发布顺序
 
-1. 发布并验证 TestPyPI；
-2. 创建 Draft GitHub Release；
-3. 预发布版直接发布 GitHub prerelease，到此结束，不进入正式 PyPI；
-4. 只有稳定版才由飞书群收到正式发布待审批提醒；
-5. 负责人在 GitHub `pypi` Environment 批准；
-6. 使用原始 Artifact 发布 PyPI；
-7. 从正式 PyPI 安装验证；
-8. 将 Draft GitHub Release 转为已发布状态。
+1. 版本 PR 通过 Python 3.10–3.12 × 最低/最新依赖完整兼容矩阵并人工合并；
+2. 创建 Tag 后校验版本 PR、main 祖先关系及外部版本占用；
+3. 构建一次不可变制品并发布、验证 TestPyPI；
+4. 创建 Draft GitHub Release；
+5. 预发布版直接发布 GitHub prerelease，到此结束，不进入正式 PyPI；
+6. 只有稳定版才由飞书群收到正式发布待审批提醒；
+7. 负责人在 GitHub `pypi` Environment 批准；
+8. 使用原始 Artifact 发布 PyPI；
+9. 从正式 PyPI 安装验证；
+10. 将 Draft GitHub Release 转为已发布状态。
 
 正式审批默认等待七天。陆骁监视器会在超时后取消运行并标记为 `CANCELLED`，不会自动恢复。陆骁无权合并版本
 PR，也无权批准 `pypi` Environment。

@@ -13,6 +13,9 @@ def test_readmes_document_managed_application_and_runtime_cli() -> None:
         assert "app.logger" in readme
         assert "watcherobot app run" in readme
         assert "watcherobot daemon start" in readme
+        assert "watcherobot --version" in readme
+        assert "watcherobot robot setup" in readme
+        assert "watcherobot robot status" in readme
         assert "watcherobot app package" not in readme
         assert "WatcheRobot.connect" not in readme
         assert "BackgroundTransport" not in readme
@@ -67,8 +70,8 @@ def test_readmes_document_current_desktop_and_standalone_support() -> None:
 
     assert "desktop uses this same Runtime/Daemon implementation" in normalized_english
     assert "桌面端也使用同一份Runtime/Daemon实现" in normalized_chinese
-    assert "/daemon/devices/pair" in english
-    assert "/daemon/devices/pair" in chinese
+    assert "/daemon/devices/pair" not in english
+    assert "/daemon/devices/pair" not in chinese
     assert "GET /daemon/logs" in english
     assert "GET /daemon/logs" in chinese
 
@@ -78,9 +81,9 @@ def test_hardware_guide_contains_standalone_pairing_step() -> None:
         encoding="utf-8"
     )
 
-    assert "control_url" in guide
-    assert "/daemon/devices/pair" in guide
-    assert '"target_mode":"python_sdk"' in guide
+    assert "watcherobot robot pair 123456" in guide
+    assert "watcherobot robot status" in guide
+    assert "/daemon/devices/pair" not in guide
     assert "watcherobot app run" in guide
 
 
