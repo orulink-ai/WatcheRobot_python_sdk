@@ -14,19 +14,24 @@ For the JSONL event and error contract used by Desktop, see the
 ```text
 watcherobot
 ├─ daemon      start | status | stop
+├─ robot       setup | pair | status
 ├─ app         init | check | run | run-installed | start | stop
 │              login | logout | publish | submit | marketplace
 │              download | install | list | uninstall
 └─ bluetooth   scan | provision | status | clear
 ```
 
+Use `watcherobot --version` to print the installed SDK version without starting
+the Runtime or loading a project.
+
 ## Output and safety conventions
 
 - Commands print human-readable output by default. Application distribution
   commands also accept `--jsonl` for Desktop and other automation; it emits
   only JSON Lines on stdout.
-- `watcherobot app run`, `run-installed`, `start`, and `stop` start or reuse a
-  Runtime as needed. The distribution commands and Bluetooth commands do not.
+- `watcherobot app run`, `run-installed`, `start`, `stop`, and `robot pair`
+  start or reuse a Runtime as needed. Distribution and Bluetooth commands do
+  not.
 - A Runtime owns pairing and the only device connection. Do not make an
   Application open a second discovery socket or device WebSocket.
 - `app install`, `list`, and `uninstall` operate on an explicit SDK App Store.
@@ -65,6 +70,55 @@ Desktop is still using it; stop the Application or exit Desktop instead.
 watcherobot daemon stop
 ```
 
+## Robot onboarding commands
+
+These are the normal user-facing commands for connecting hardware. Use the
+lower-level `bluetooth` group only for provisioning diagnostics or custom
+automation.
+
+### `watcherobot robot setup [--device <id>] [--ssid <name>] [--pairing-code <code>] [--clear-existing]`
+
+Guides first-time setup end to end. It scans for nearby WatcheRobot devices,
+selects the only result or asks the user to choose, reads the Wi-Fi password
+privately, provisions the credentials, starts or reuses the Runtime, and waits
+for six-digit-code pairing to finish. Omitted values are prompted in an
+interactive terminal. The password is never accepted as an argument or
+printed.
+
+```powershell
+watcherobot robot setup
+```
+
+For automation, non-secret values may be supplied explicitly while the
+password remains interactive:
+
+```powershell
+watcherobot robot setup `
+  --device <bluetooth-id> `
+  --ssid MyWiFi `
+  --pairing-code 123456
+```
+
+### `watcherobot robot pair <six-digit-code>`
+
+Pairs a robot that is already on the same network. It starts or reuses the
+Runtime, initiates the `python_sdk` pairing mode, waits for the device
+connection, and reports common discovery or connection failures in user terms.
+
+```powershell
+watcherobot robot pair 123456
+```
+
+### `watcherobot robot status`
+
+Reports the actual Runtime-owned robot connection. It exits with code `0` when
+online and `1` when no robot is connected. A stopped Runtime is reported as a
+disconnected robot with the next setup command.
+
+```powershell
+watcherobot robot status
+```
+
 ## Application commands
 
 Every Application has a canonical `app.json` manifest and fixed `app.py`
@@ -91,7 +145,8 @@ watcherobot app init published_app `
 ```
 
 It creates `app.json`, `app.py`, `README.md`, `icon.svg`, and `.gitignore`.
-The generated `app.py` plays the `happy` behavior once and exits.
+The generated `app.py` always logs a Hello World success. When a compatible
+robot is connected, it also plays the `happy` behavior once.
 
 #### `watcherobot app check <directory>`
 
@@ -109,7 +164,9 @@ watcherobot app check .\my_app --jsonl
 Starts or reuses the current-user Runtime, selects the local source Application,
 and launches it with Runtime-injected `WATCHER_APP_*` variables. The directory
 defaults to the current working directory. The Runtime remains available after
-the Application exits.
+the Application exits. When no robot is connected, the CLI prints the exact
+`watcherobot robot setup` command and continues so offline Applications still
+work.
 
 ```powershell
 cd my_app
@@ -250,9 +307,10 @@ watcherobot app uninstall `
   --app-id <application-id>
 ```
 
-## Bluetooth Wi-Fi provisioning commands
+## Advanced Bluetooth Wi-Fi provisioning commands
 
-These commands use the device's existing `ESP_ROBOT` BLE GATT service. They
+Most developers should use `watcherobot robot setup`. These lower-level
+commands use the device's existing `ESP_ROBOT` BLE GATT service. They
 support Python 3.10–3.12 on Windows and macOS. The provisioning command reads
 the password interactively and never accepts it as a command-line argument.
 

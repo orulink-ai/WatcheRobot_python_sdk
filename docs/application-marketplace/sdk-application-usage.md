@@ -165,16 +165,33 @@ uses the separate machine form:
 
 Its JSONL result ends with a `result` event whose `ok` field is `true`.
 
+For a new or network-reset robot, complete the guided setup first:
+
+```powershell
+watcherobot robot setup
+```
+
+If the robot is already on the same Wi-Fi, pair with its current six-digit code
+and confirm the connection:
+
+```powershell
+watcherobot robot pair 123456
+watcherobot robot status
+```
+
 Run the Application; the command starts or reuses the Daemon automatically:
 
 ```powershell
 .\.venv\Scripts\watcherobot.exe app run .\my_sdk_test
 ```
 
-The Daemon selects and starts `app.py`, forwards Application logs, and retains the
-device connection after the Application exits. `Ctrl+C` requests an Application
-stop and returns exit code `130`. If Watcher Desktop owns the current Daemon, stop
-the Application from Desktop instead of stopping that Daemon from the CLI.
+The Daemon selects and starts `app.py`, forwards Application logs, and retains
+the device connection after the Application exits. When no robot is connected,
+the CLI prints the setup entry point and continues in offline mode. `Ctrl+C`
+requests an Application stop and returns exit code `130`. If Watcher Desktop
+owns the current Daemon, stop the Application from Desktop instead of stopping
+that Daemon from the CLI. Applications must not perform Discovery, pairing, or
+their own device connection.
 
 ## 5. Sign in to Hugging Face
 

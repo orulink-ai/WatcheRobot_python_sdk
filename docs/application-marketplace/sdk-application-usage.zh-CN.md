@@ -154,8 +154,21 @@ JSONL 最后一行是 `type=result`、`ok=true`。
 
 ### 4.2 连接设备
 
-`app run` 会自动启动或复用当前 Runtime。如果设备已经配对并在线，可直接运行 Application。全新独立会话的配对步骤见
-仓库根目录 `README.zh-CN.md`；不要让 Application 自己执行 Discovery 或连接设备。
+首次使用或机器人网络已重置时，先运行完整引导：
+
+```powershell
+watcherobot robot setup
+```
+
+如果机器人已经接入同一 Wi-Fi，只需使用屏幕上的当前六位码配对并确认状态：
+
+```powershell
+watcherobot robot pair 123456
+watcherobot robot status
+```
+
+`app run` 会自动启动或复用当前 Runtime。设备未连接时，它会打印上述设置入口并继续
+离线运行；不要让 Application 自己执行 Discovery、配对或连接设备。
 
 ### 4.3 运行 Application
 

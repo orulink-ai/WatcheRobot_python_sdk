@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -15,6 +16,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from watcherobot import __version__
 from watcherobot.application.project import (
     ApplicationProjectDefaults,
     ApplicationProjectInitError,
@@ -48,6 +50,8 @@ from watcherobot.runtime.daemon.instance import (
 
 
 APPLICATION_START_TIMEOUT_SECONDS = 90.0
+ROBOT_PAIR_TIMEOUT_SECONDS = 25.0
+_PAIRING_CODE = re.compile(r"^[0-9]{6}$")
 
 
 class CliError(RuntimeError):
@@ -58,6 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="watcherobot",
         description="WatcheRobot SDK command-line tools.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -179,6 +188,44 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--device", required=True)
     clear = bluetooth_commands.add_parser("clear")
     clear.add_argument("--device", required=True)
+
+    robot = commands.add_parser(
+        "robot",
+        help="Set up, pair, and inspect your WatcheRobot",
+        description=(
+            "User-friendly robot onboarding. Setup provisions Wi-Fi over "
+            "Bluetooth and then pairs the robot with the SDK Runtime."
+        ),
+    )
+    robot_commands = robot.add_subparsers(
+        dest="robot_command",
+        required=True,
+    )
+    setup = robot_commands.add_parser(
+        "setup",
+        help="Guide Wi-Fi provisioning and Runtime pairing",
+    )
+    setup.add_argument("--device", help="Bluetooth device ID")
+    setup.add_argument("--ssid", help="Wi-Fi network name")
+    setup.add_argument(
+        "--pairing-code",
+        type=_parse_pairing_code,
+        help="Six-digit code shown by the robot",
+    )
+    setup.add_argument("--clear-existing", action="store_true")
+    pair = robot_commands.add_parser(
+        "pair",
+        help="Pair an already networked robot with the SDK Runtime",
+    )
+    pair.add_argument(
+        "pairing_code",
+        type=_parse_pairing_code,
+        help="Six-digit code shown by the robot",
+    )
+    robot_commands.add_parser(
+        "status",
+        help="Show whether a robot is connected",
+    )
     return parser
 
 
@@ -251,6 +298,20 @@ def main(argv: list[str] | None = None) -> int:
                 return _print_bluetooth_cancelled()
             except ValueError as exc:
                 raise CliError(str(exc)) from exc
+        if args.command == "robot":
+            if args.robot_command == "status":
+                return robot_status()
+            if args.robot_command == "pair":
+                return pair_robot(args.pairing_code)
+            if args.robot_command == "setup":
+                try:
+                    return asyncio.run(_run_robot_setup(args))
+                except KeyboardInterrupt:
+                    return _print_robot_setup_cancelled()
+                except ProvisioningCancelledError:
+                    return _print_robot_setup_cancelled()
+                except ValueError as exc:
+                    raise CliError(str(exc)) from exc
     except (
         ApplicationProjectInitError,
         BluetoothProvisioningError,
@@ -325,6 +386,13 @@ def _is_interactive_terminal() -> bool:
     return sys.stdin.isatty()
 
 
+def _parse_pairing_code(value: str) -> str:
+    pairing_code = str(value).strip()
+    if _PAIRING_CODE.fullmatch(pairing_code) is None:
+        raise argparse.ArgumentTypeError("pairing code must contain six digits")
+    return pairing_code
+
+
 def _print_application_init_result(
     result: ApplicationProjectInitResult,
 ) -> None:
@@ -342,6 +410,7 @@ def _print_application_init_result(
         print(f"{label + ':':<{label_width}}  {value}")
     print()
     print("Next:")
+    print("  watcherobot robot setup  # first robot only")
     print(f'  cd "{result.directory}"')
     print("  watcherobot app run")
 
@@ -355,6 +424,211 @@ def _print_bluetooth_cancelled() -> int:
         file=sys.stderr,
     )
     return 130
+
+
+def _print_robot_setup_cancelled() -> int:
+    print("Robot setup cancelled.", file=sys.stderr)
+    return 130
+
+
+async def _run_robot_setup(args: argparse.Namespace) -> int:
+    print("Scanning for nearby WatcheRobot devices...")
+    provisioner = BluetoothProvisioner()
+    devices = [
+        device
+        for device in await provisioner.scan_devices()
+        if device.is_watcher
+    ]
+    device = _select_setup_device(devices, requested_id=args.device)
+    ssid = _setup_text_value(
+        args.ssid,
+        prompt="Wi-Fi name: ",
+        field_name="Wi-Fi name",
+    )
+    password = getpass("Wi-Fi password: ")
+    try:
+        await provisioner.provision_wifi(
+            device,
+            ssid=ssid,
+            password=password,
+            clear_existing=bool(args.clear_existing),
+        )
+    finally:
+        del password
+
+    print(f"Wi-Fi credentials saved for {device.name or device.id}.")
+    print("Waiting for the robot to join the same network...")
+    pairing_code = args.pairing_code
+    if pairing_code is None:
+        pairing_code = _setup_text_value(
+            None,
+            prompt="Enter the 6-digit code shown on the robot: ",
+            field_name="pairing code",
+        )
+        try:
+            pairing_code = _parse_pairing_code(pairing_code)
+        except argparse.ArgumentTypeError as exc:
+            raise CliError(str(exc)) from exc
+    return pair_robot(pairing_code)
+
+
+def _select_setup_device(
+    devices: list[BluetoothDevice],
+    *,
+    requested_id: str | None,
+) -> BluetoothDevice:
+    if not devices:
+        raise CliError(
+            "No WatcheRobot was found. Turn on the robot, enable Bluetooth, "
+            "and keep it nearby, then retry."
+        )
+    if requested_id:
+        matches = [device for device in devices if device.id == requested_id]
+        if not matches:
+            raise DeviceNotFoundError(
+                f"Bluetooth device {requested_id!r} was not found; scan again"
+            )
+        if len(matches) > 1:
+            raise DeviceAmbiguityError(
+                f"Bluetooth device identifier {requested_id!r} is ambiguous"
+            )
+        return matches[0]
+    if len(devices) == 1:
+        device = devices[0]
+        print(f"Found: {device.name or device.id}")
+        return device
+    if not _is_interactive_terminal():
+        raise CliError("Multiple robots were found; rerun with --device <ID>")
+    print("Found multiple robots:")
+    for index, device in enumerate(devices, start=1):
+        print(f"  {index}. {device.name or device.id} ({device.id})")
+    selection = _setup_text_value(
+        None,
+        prompt="Select robot [1]: ",
+        field_name="robot selection",
+        default="1",
+    )
+    try:
+        selected_index = int(selection)
+    except ValueError as exc:
+        raise CliError("robot selection must be a number") from exc
+    if selected_index < 1 or selected_index > len(devices):
+        raise CliError("robot selection is out of range")
+    return devices[selected_index - 1]
+
+
+def _setup_text_value(
+    value: object,
+    *,
+    prompt: str,
+    field_name: str,
+    default: str | None = None,
+) -> str:
+    if _has_text(value):
+        return str(value).strip()
+    if not _is_interactive_terminal():
+        raise CliError(f"{field_name} is required in non-interactive use")
+    try:
+        supplied = input(prompt).strip()
+    except (EOFError, KeyboardInterrupt) as exc:
+        raise CliError("Robot setup cancelled") from exc
+    resolved = supplied or default
+    if not resolved:
+        raise CliError(f"{field_name} is required")
+    return resolved
+
+
+def robot_status() -> int:
+    state = _live_runtime_state()
+    if state is None:
+        _print_robot_disconnected("Runtime is not running")
+        return 1
+    payload = _request_json(state.control_url, "/daemon/devices")
+    device = _device_from_payload(payload)
+    if bool(device.get("online")):
+        print("Robot connected")
+        print()
+        print(f"State:  {device.get('state', 'connected')}")
+        print(f"Mode:   {device.get('mode') or 'unknown'}")
+        return 0
+    _print_robot_disconnected(str(device.get("state") or "unknown"))
+    return 1
+
+
+def pair_robot(
+    pairing_code: str,
+    *,
+    timeout: float = ROBOT_PAIR_TIMEOUT_SECONDS,
+) -> int:
+    state, _reused = ensure_runtime()
+    device = _device_from_payload(
+        _request_json(state.control_url, "/daemon/devices")
+    )
+    if bool(device.get("online")):
+        print("Robot is already connected.")
+        return 0
+    if str(device.get("state") or "idle") != "idle":
+        raise CliError(
+            "Robot pairing is already in progress; run "
+            "'watcherobot robot status' and retry when it is idle"
+        )
+
+    _request_json(
+        state.control_url,
+        "/daemon/devices/pair",
+        method="POST",
+        payload={
+            "pairing_code": pairing_code,
+            "target_mode": "python_sdk",
+        },
+    )
+    print("Pairing with the robot...")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        device = _device_from_payload(
+            _request_json(state.control_url, "/daemon/devices")
+        )
+        if bool(device.get("online")):
+            print("Robot connected successfully.")
+            return 0
+        pairing_state = str(device.get("state") or "unknown")
+        last_error = device.get("last_error")
+        if pairing_state == "idle" and last_error:
+            raise CliError(_pairing_error_message(str(last_error)))
+        time.sleep(0.25)
+    raise CliError(
+        "Robot pairing timed out. Confirm that the robot and this computer "
+        "are on the same network, then run 'watcherobot robot pair' again."
+    )
+
+
+def _device_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    device = payload.get("device")
+    if not isinstance(device, dict):
+        raise CliError("Runtime returned an invalid robot status")
+    return device
+
+
+def _pairing_error_message(error: str) -> str:
+    messages = {
+        "pairing_not_found": (
+            "Robot was not found. Confirm that both devices are on the same "
+            "network and that the 6-digit code is still visible."
+        ),
+        "device_connect_timeout": (
+            "The robot was found but did not finish connecting. Retry with "
+            "the latest 6-digit code."
+        ),
+        "device_busy": "The robot is already paired with another Runtime.",
+    }
+    return messages.get(error, f"Robot pairing failed: {error}")
+
+
+def _print_robot_disconnected(state: str) -> None:
+    print("Robot is not connected")
+    print()
+    print(f"State:  {state}")
+    print("Next:   watcherobot robot setup")
 
 
 async def _run_bluetooth_command(args: argparse.Namespace) -> int:
@@ -557,6 +831,7 @@ def run_application(application: Path) -> int:
     print(f"Running Application: {application_path}")
     print("Press Ctrl+C to stop.")
     state, _reused = ensure_runtime()
+    _print_application_robot_guidance(state.control_url)
     _request_json(
         state.control_url,
         "/daemon/application/select",
@@ -602,6 +877,21 @@ def run_application(application: Path) -> int:
         )
         print("Application stopped by user.")
         return 130
+
+
+def _print_application_robot_guidance(control_url: str) -> None:
+    try:
+        device = _device_from_payload(
+            _request_json(control_url, "/daemon/devices")
+        )
+    except CliError:
+        return
+    if bool(device.get("online")):
+        return
+    print()
+    print("No robot is connected. This Application can still run offline.")
+    print("To connect one, run: watcherobot robot setup")
+    print()
 
 
 def _file_size(path: Path) -> int:

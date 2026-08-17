@@ -1,33 +1,24 @@
 # Hardware testing
 
-Hardware acceptance now uses a managed Application rather than a second SDK
-gateway. Start the Runtime, replace `123456` with the six-digit code shown by
-the device, and pair it through the Runtime control API:
+Hardware acceptance uses a managed Application rather than a second SDK
+gateway. For a new or reset robot, complete Wi-Fi provisioning and pairing in
+one guided command:
 
 ```powershell
-$runtime = watcherobot daemon start | ConvertFrom-Json
-$pairBody = '{"pairing_code":"123456","target_mode":"python_sdk"}'
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "$($runtime.control_url)/daemon/devices/pair" `
-  -ContentType "application/json" `
-  -Body $pairBody
-do {
-  $device = (Invoke-RestMethod `
-    -Uri "$($runtime.control_url)/daemon/devices").device
-  if ($device.state -eq "idle") {
-    throw "Pairing failed: $($device.last_error)"
-  }
-  if ($device.state -ne "connected") {
-    Start-Sleep -Milliseconds 250
-  }
-} while ($device.state -ne "connected")
+watcherobot robot setup
 ```
 
-`target_mode` identifies the embedded application that is currently waiting
-for pairing. Use `python_sdk` for `sdk.control.app` and `desktop_link` for
-`client.app`. The Daemon validates both connection modes but does not route
-business frames by message content.
+If Wi-Fi is already configured, replace `123456` with the current six-digit
+code shown by the device and pair directly:
+
+```powershell
+watcherobot robot pair 123456
+watcherobot robot status
+```
+
+The CLI selects the `python_sdk` target mode for SDK testing and waits until
+the Runtime reports a connected device. The Daemon validates connection modes
+but does not route business frames by message content.
 
 After the device state reaches `connected`, run managed Applications that
 exercise the required capabilities:

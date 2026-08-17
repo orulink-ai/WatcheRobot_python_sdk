@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from watcherobot import __version__
 from watcherobot.cli import build_parser, main
 from watcherobot.distribution.cli import build_parser as build_distribution_parser
 
@@ -17,6 +18,14 @@ def _help_for(parser, argv: list[str], capsys) -> str:
 
     assert captured.value.code == 0
     return capsys.readouterr().out
+
+
+def test_global_version_prints_installed_sdk_version(capsys) -> None:
+    with pytest.raises(SystemExit) as captured:
+        main(["--version"])
+
+    assert captured.value.code == 0
+    assert capsys.readouterr().out == f"watcherobot {__version__}\n"
 
 
 def test_app_help_describes_the_supported_developer_workflow(capsys) -> None:
@@ -131,8 +140,16 @@ def test_app_init_creates_project_without_starting_daemon(
     assert "watcherobot app run" in captured.out
     assert target.joinpath("app.json").is_file()
     app_source = target.joinpath("app.py").read_text(encoding="utf-8")
+    assert app_source.index("Hello, WatcheRobot!") < app_source.index(
+        'app.robot.supports("behavior")'
+    )
+    assert "Run 'watcherobot robot setup'" in app_source
     assert 'app.robot.behavior.play,\n            "happy"' in app_source
     assert "job.wait, 20.0" in app_source
+    assert "watcherobot robot setup" in captured.out
+    generated_readme = target.joinpath("README.md").read_text(encoding="utf-8")
+    assert "watcherobot robot setup" in generated_readme
+    assert "always logs a Hello World success" in generated_readme
 
 
 def test_app_init_derives_metadata_without_prompts(

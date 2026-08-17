@@ -32,8 +32,12 @@ from watcherobot.application import ApplicationContext
 
 async def main() -> None:
     async with ApplicationContext.from_environment() as app:
+        app.logger.info("Hello, WatcheRobot! Your first Application worked.")
         if not app.robot.supports("behavior"):
-            app.logger.warning("This robot does not support behavior playback.")
+            app.logger.info(
+                "No compatible robot is connected, so the happy behavior was "
+                "skipped. Run 'watcherobot robot setup' to connect one."
+            )
             return
 
         job = await asyncio.to_thread(
@@ -42,7 +46,7 @@ async def main() -> None:
             repeat=1,
         )
         await asyncio.to_thread(job.wait, 20.0)
-        app.logger.info("Hello, WatcheRobot! Your first Application worked.")
+        app.logger.info("The robot played the happy behavior.")
 
 
 asyncio.run(main())
@@ -305,13 +309,16 @@ def _readme(
 ## Develop
 
 ```powershell
+watcherobot robot setup  # first robot only
+watcherobot robot status
 watcherobot app run
 watcherobot app check .
 watcherobot app publish .
 ```
 
-The generated `app.py` plays the `happy` behavior once. Run it through the SDK
-Runtime; do not execute `app.py` directly.
+The generated `app.py` always logs a Hello World success. With a compatible
+robot connected, it also plays the `happy` behavior once. Run it through the
+SDK Runtime; do not execute `app.py` directly.
 """
 
 

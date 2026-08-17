@@ -13,16 +13,19 @@ Desktop 使用的 JSONL 事件和错误合同见
 ```text
 watcherobot
 ├─ daemon      start | status | stop
+├─ robot       setup | pair | status
 ├─ app         init | check | run | run-installed | start | stop
 │              login | logout | publish | submit | marketplace
 │              download | install | list | uninstall
 └─ bluetooth   scan | provision | status | clear
 ```
 
+使用 `watcherobot --version` 可直接查看已安装的 SDK 版本，不会启动 Runtime，也不读取项目。
+
 ## 输出与边界
 
 - 默认输出面向终端使用者；Application 分发命令支持 `--jsonl`，供 Desktop 或自动化调用，stdout 只输出 JSON Lines。
-- `app run`、`run-installed`、`start`、`stop` 会按需启动或复用 Runtime；分发命令和蓝牙命令不会启动 Runtime。
+- `app run`、`run-installed`、`start`、`stop` 和 `robot pair` 会按需启动或复用 Runtime；分发命令和蓝牙命令不会启动 Runtime。
 - Runtime 独占配对与设备连接，Application 不应另开 Discovery socket 或设备 WebSocket。
 - `app install`、`list`、`uninstall` 只操作显式指定的 SDK App Store；生产环境由 Desktop 传入其受管目录和锁定 Runtime。
 
@@ -52,6 +55,47 @@ watcherobot daemon status
 watcherobot daemon stop
 ```
 
+## 机器人新手引导命令
+
+这是连接硬件的常规用户入口。底层 `bluetooth` 命令只用于配网排障或定制自动化。
+
+### `watcherobot robot setup [--device <ID>] [--ssid <名称>] [--pairing-code <配对码>] [--clear-existing]`
+
+完成首次连接的完整引导：扫描附近的 WatcheRobot、自动选择唯一结果或让用户选择、
+私密读取 Wi-Fi 密码、写入网络凭据、启动或复用 Runtime，再等待六位码配对完成。
+交互式终端会询问省略的字段；密码永远不能作为命令行参数传入，也不会打印。
+
+```powershell
+watcherobot robot setup
+```
+
+自动化场景可显式提供非敏感字段，密码仍然交互读取：
+
+```powershell
+watcherobot robot setup `
+  --device <蓝牙设备ID> `
+  --ssid MyWiFi `
+  --pairing-code 123456
+```
+
+### `watcherobot robot pair <六位配对码>`
+
+用于机器人已经接入同一网络的情况。命令会启动或复用 Runtime，以 `python_sdk`
+模式发起配对，等待设备连接，并把常见发现或连接失败转换为用户可理解的提示。
+
+```powershell
+watcherobot robot pair 123456
+```
+
+### `watcherobot robot status`
+
+查询 Runtime 实际持有的机器人连接。在线时退出码为 `0`，未连接时为 `1`；Runtime
+未启动也会明确显示机器人未连接，并给出下一条 `robot setup` 命令。
+
+```powershell
+watcherobot robot status
+```
+
 ## Application 命令
 
 所有 Application 都使用唯一的 `app.json` Manifest 和固定 `app.py` 入口。`app run` 接收源码目录用于开发，并不等同于直接执行 `app.py`。
@@ -72,7 +116,8 @@ watcherobot app init published_app `
   --description "An example WatcheRobot Application"
 ```
 
-会生成 `app.json`、`app.py`、`README.md`、`icon.svg` 和 `.gitignore`；其中默认 `app.py` 会播放一次 `happy` 行为并正常退出。
+会生成 `app.json`、`app.py`、`README.md`、`icon.svg` 和 `.gitignore`；默认
+`app.py` 一定会输出 Hello World 成功日志，连接兼容机器人时还会播放一次 `happy` 行为。
 
 #### `watcherobot app check <目录>`
 
@@ -85,7 +130,10 @@ watcherobot app check .\my_app --jsonl
 
 #### `watcherobot app run [目录]`
 
-启动或复用当前用户 Runtime，选择本地源码 Application，并以 Runtime 注入的 `WATCHER_APP_*` 环境变量启动它。目录默认是当前工作目录；Application 退出后 Runtime 会继续运行。
+启动或复用当前用户 Runtime，选择本地源码 Application，并以 Runtime 注入的
+`WATCHER_APP_*` 环境变量启动它。目录默认是当前工作目录；Application 退出后
+Runtime 会继续运行。没有连接机器人时，CLI 会打印准确的
+`watcherobot robot setup` 命令并继续运行，避免阻断离线 Application。
 
 ```powershell
 cd my_app
@@ -200,9 +248,11 @@ watcherobot app uninstall `
   --app-id <application-id>
 ```
 
-## 蓝牙 Wi-Fi 配网命令
+## 高级蓝牙 Wi-Fi 配网命令
 
-这些命令使用设备现有的 `ESP_ROBOT` BLE GATT 服务，支持 Windows 和 macOS 上的 Python 3.10–3.12。配网命令会交互式读取密码，绝不接受把密码作为命令行参数传入。
+常规开发者应使用 `watcherobot robot setup`。以下底层命令使用设备现有的
+`ESP_ROBOT` BLE GATT 服务，支持 Windows 和 macOS 上的 Python 3.10–3.12。
+配网命令会交互式读取密码，绝不接受把密码作为命令行参数传入。
 
 ### `watcherobot bluetooth scan`
 

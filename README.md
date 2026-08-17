@@ -67,8 +67,9 @@ business logic.
 | Robot capabilities | `app.robot` | High-level domains for behavior, animation, motion, audio, lights, expressions, works, microphone, camera, face tracking, and input. |
 | Advanced integration | `ApplicationChannels` | Source-aware raw Desktop and Device channels for Applications that own a complete business protocol. |
 | Runtime and Daemon | `watcherobot daemon ...` | Pairing, device and Desktop connections, generic frame routing, Application lifecycle, logs, and local control REST API. |
+| Robot onboarding | `watcherobot robot ...` | Guided first-time Wi-Fi setup, six-digit-code pairing, and connection status. |
 | Application distribution | `watcherobot app ...` | Create, check, publish, submit, browse, download, install, and run reviewed Application snapshots. |
-| Bluetooth provisioning | `watcherobot bluetooth ...` / `BluetoothProvisioner` | Scan, provision Wi-Fi credentials, inspect status, and clear Wi-Fi credentials over the existing BLE GATT service. |
+| Advanced Bluetooth provisioning | `watcherobot bluetooth ...` / `BluetoothProvisioner` | Low-level scanning, Wi-Fi credential management, and diagnostics over the existing BLE GATT service. |
 | Device maintenance | Daemon maintenance REST API | Desktop-facing firmware, SD-resource, and portable-work maintenance; see [resources](docs/resources.md). |
 
 ## Quick start
@@ -82,7 +83,39 @@ python -m pip install watcherobot
 Cloning this repository and using `pip install -e ".[test]"` is only necessary
 when contributing to the SDK itself.
 
-### 2. Create and run your first Application
+Verify the installed command when needed:
+
+```powershell
+watcherobot --version
+```
+
+### 2. Set up your first robot
+
+Turn on the robot, enable Bluetooth, and run:
+
+```powershell
+watcherobot robot setup
+```
+
+The command scans for a nearby WatcheRobot, asks for the Wi-Fi name and
+password, then asks for the six-digit code shown by the robot. The password is
+read privately and is never accepted as a command-line argument. Confirm the
+connection at any time with:
+
+```powershell
+watcherobot robot status
+```
+
+If the robot is already on the same Wi-Fi, skip provisioning and pair it
+directly:
+
+```powershell
+watcherobot robot pair 123456
+```
+
+Replace `123456` with the current code shown by the robot.
+
+### 3. Create and run your first Application
 
 ```powershell
 watcherobot app init hello_robot
@@ -90,28 +123,17 @@ cd hello_robot
 watcherobot app run
 ```
 
-The generated Hello World Application plays the `happy` behavior once and
-exits. `app run` starts or reuses the Runtime automatically. If no robot is
-connected yet, pair it in Watcher Desktop and run the command again.
+The generated Hello World Application always logs a successful greeting. If a
+compatible robot is connected, it also plays the `happy` behavior once. If no
+robot is connected, `app run` explains how to start `watcherobot robot setup`
+and continues in offline mode. The Runtime remains the only owner of pairing
+and the device connection.
 
-For standalone SDK testing without Watcher Desktop, start the Runtime and pair
-with the six-digit code shown by the device:
+The local control API also exposes `GET /daemon/logs`; see the
+[Runtime contract](docs/contracts/runtime-profile-index.md) for product
+integration and diagnostics.
 
-```powershell
-$runtime = watcherobot daemon start | ConvertFrom-Json
-$pairBody = '{"pairing_code":"123456","target_mode":"python_sdk"}'
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "$($runtime.control_url)/daemon/devices/pair" `
-  -ContentType "application/json" `
-  -Body $pairBody
-```
-
-Replace `123456` with the device code. The local control API also exposes
-`GET /daemon/logs`; see the [Runtime contract](docs/contracts/runtime-profile-index.md)
-for the complete standalone and diagnostics interface.
-
-### 3. Write an Application
+### 4. Write an Application
 
 ```python
 import asyncio
@@ -157,6 +179,11 @@ watcherobot daemon start
 watcherobot daemon status
 watcherobot daemon stop
 
+# First-time robot setup and connection
+watcherobot robot setup
+watcherobot robot status
+watcherobot robot pair 123456
+
 # Application development and distribution
 watcherobot app init my_app
 cd my_app
@@ -170,7 +197,7 @@ watcherobot app install <app-id>
 watcherobot app list
 watcherobot app uninstall <app-id>
 
-# Bluetooth Wi-Fi provisioning
+# Advanced Bluetooth Wi-Fi diagnostics
 watcherobot bluetooth scan
 watcherobot bluetooth provision --device <id> --ssid MyWiFi
 watcherobot bluetooth status --device <id>
