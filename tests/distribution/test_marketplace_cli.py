@@ -29,7 +29,7 @@ def _marketplace() -> OfficialMarketplace:
                     "https://huggingface.co/spaces/alice/"
                     "WatcherRobot-com.example.alpha/tree/" + "a" * 40
                 ),
-                schema_version=1,
+                schema_version=2,
                 app_id="com.example.alpha",
                 name="Alpha Robot",
                 version="1.2.3",
@@ -39,6 +39,8 @@ def _marketplace() -> OfficialMarketplace:
                 author="Alice",
                 icon="",
                 compatible=True,
+                supported_host_platforms=("windows", "macos"),
+                host_compatible=True,
             ),
             MarketplaceApplication(
                 space_id="bob/WatcherRobot-com.example.beta",
@@ -47,7 +49,7 @@ def _marketplace() -> OfficialMarketplace:
                     "https://huggingface.co/spaces/bob/"
                     "WatcherRobot-com.example.beta/tree/" + "b" * 40
                 ),
-                schema_version=1,
+                schema_version=2,
                 app_id="com.example.beta",
                 name="Beta Robot",
                 version="2.0.0",
@@ -57,6 +59,8 @@ def _marketplace() -> OfficialMarketplace:
                 author="Bob",
                 icon="icon.png",
                 compatible=False,
+                supported_host_platforms=("windows",),
+                host_compatible=False,
             ),
         ),
     )
@@ -159,6 +163,8 @@ def test_cli_marketplace_details_shows_reviewed_source_metadata(
     assert "1. Alpha Robot" in captured.out
     assert "ID:               com.example.alpha" in captured.out
     assert "Compatibility:    Compatible" in captured.out
+    assert "Host platforms:" in captured.out
+    assert "Windows, macOS" in captured.out
     assert "Dependencies:     requests>=2.32,<3" in captured.out
     assert "Source:           https://huggingface.co/spaces/alice/" in captured.out
     assert "Commit:           " + "a" * 40 in captured.out

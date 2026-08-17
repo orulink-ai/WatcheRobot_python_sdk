@@ -87,6 +87,7 @@ class ApplicationProjectInitResult:
     name: str
     version: str
     requires_watcherobot: str
+    supported_host_platforms: tuple[str, ...]
     files: tuple[str, ...]
 
     def to_dict(self) -> dict[str, object]:
@@ -96,6 +97,7 @@ class ApplicationProjectInitResult:
             "name": self.name,
             "version": self.version,
             "requires_watcherobot": self.requires_watcherobot,
+            "supported_host_platforms": list(self.supported_host_platforms),
             "files": list(self.files),
         }
 
@@ -137,6 +139,7 @@ def init_application_project(
     name: str,
     author: str,
     description: str,
+    supported_host_platforms: list[str],
     watcherobot_version: str | None = None,
 ) -> ApplicationProjectInitResult:
     """Create one new publish-ready project without overwriting a target."""
@@ -160,6 +163,7 @@ def init_application_project(
         author=normalized_author,
         description=normalized_description,
         requires_watcherobot=requirement,
+        supported_host_platforms=supported_host_platforms,
     )
     try:
         metadata = parse_application_manifest(
@@ -219,6 +223,7 @@ def init_application_project(
         name=metadata.name,
         version=metadata.version,
         requires_watcherobot=metadata.requires_watcherobot,
+        supported_host_platforms=metadata.supported_host_platforms,
         files=files,
     )
 
@@ -244,14 +249,16 @@ def _manifest_document(
     author: str,
     description: str,
     requires_watcherobot: str,
+    supported_host_platforms: list[str],
 ) -> bytes:
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "id": app_id.strip(),
         "name": name.strip(),
         "version": _INITIAL_APPLICATION_VERSION,
         "requires_watcherobot": requires_watcherobot,
         "dependencies": [],
+        "supported_host_platforms": supported_host_platforms,
         "description": description,
         "author": author,
         "icon": _ICON_PATH,

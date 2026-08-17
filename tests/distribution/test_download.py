@@ -165,6 +165,7 @@ def test_download_validates_in_isolation_then_delivers_exact_source(
             "version": "1.2.3",
             "requires_watcherobot": ">=1.0,<2.0",
             "dependencies": [],
+            "supported_host_platforms": [],
             "description": "Download fixture",
             "author": "Developer",
             "icon": "",

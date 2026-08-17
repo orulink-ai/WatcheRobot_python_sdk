@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +18,7 @@ _VERSION_PATTERN = re.compile(
     r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
 )
 _APPLICATION_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-_REQUIRED_FIELDS = frozenset(
+_V1_REQUIRED_FIELDS = frozenset(
     {
         "schema_version",
         "id",
@@ -27,8 +28,12 @@ _REQUIRED_FIELDS = frozenset(
         "dependencies",
     }
 )
+_V2_REQUIRED_FIELDS = _V1_REQUIRED_FIELDS | frozenset(
+    {"supported_host_platforms"}
+)
 _OPTIONAL_FIELDS = frozenset({"description", "author", "icon"})
-_ALLOWED_FIELDS = _REQUIRED_FIELDS | _OPTIONAL_FIELDS
+_ALLOWED_FIELDS = _V2_REQUIRED_FIELDS | _OPTIONAL_FIELDS
+_SUPPORTED_HOST_PLATFORMS = frozenset({"windows", "macos"})
 
 
 class ApplicationManifestError(ValueError):
@@ -51,6 +56,15 @@ class ApplicationCompatibilityError(ApplicationManifestError):
         super().__init__(message, code="app_sdk_incompatible")
 
 
+def current_host_platform() -> str | None:
+    """Return the supported Marketplace host-platform identifier, if any."""
+
+    return {
+        "windows": "windows",
+        "darwin": "macos",
+    }.get(platform.system().strip().lower())
+
+
 @dataclass(frozen=True)
 class ApplicationManifestMetadata:
     """Validated fields shared by local and remote Application manifests."""
@@ -61,6 +75,7 @@ class ApplicationManifestMetadata:
     version: str
     requires_watcherobot: str
     dependencies: tuple[str, ...]
+    supported_host_platforms: tuple[str, ...] = ()
     description: str = ""
     author: str = ""
     icon: str = ""
@@ -73,6 +88,12 @@ class ApplicationManifestMetadata:
             version,
         )
 
+    def supports_current_host_platform(self) -> bool:
+        """Return whether this Application declares support for this host."""
+
+        host_platform = current_host_platform()
+        return host_platform is not None and host_platform in self.supported_host_platforms
+
     def to_dict(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
@@ -81,6 +102,7 @@ class ApplicationManifestMetadata:
             "version": self.version,
             "requires_watcherobot": self.requires_watcherobot,
             "dependencies": list(self.dependencies),
+            "supported_host_platforms": list(self.supported_host_platforms),
             "description": self.description,
             "author": self.author,
             "icon": self.icon,
@@ -96,6 +118,7 @@ class ApplicationManifest:
     requires_watcherobot: str
     dependencies: tuple[str, ...]
     entrypoint: Path
+    supported_host_platforms: tuple[str, ...] = ()
     description: str = ""
     author: str = ""
     icon: str = ""
@@ -154,6 +177,7 @@ class ApplicationManifest:
             requires_watcherobot=metadata.requires_watcherobot,
             dependencies=metadata.dependencies,
             entrypoint=entrypoint_path,
+            supported_host_platforms=metadata.supported_host_platforms,
             description=metadata.description,
             author=metadata.author,
             icon=icon,
@@ -187,7 +211,13 @@ def _metadata_from_payload(
     watcherobot_version: str | None,
 ) -> ApplicationManifestMetadata:
     unknown_fields = sorted(set(payload) - _ALLOWED_FIELDS)
-    missing_fields = sorted(_REQUIRED_FIELDS - set(payload))
+    schema_version = payload.get("schema_version")
+    if schema_version not in (1, 2):
+        raise ApplicationManifestError("schema_version must be 1 or 2")
+    required_fields = (
+        _V1_REQUIRED_FIELDS if schema_version == 1 else _V2_REQUIRED_FIELDS
+    )
+    missing_fields = sorted(required_fields - set(payload))
     if unknown_fields:
         raise ApplicationManifestError(
             f"unknown fields: {', '.join(unknown_fields)}"
@@ -197,7 +227,6 @@ def _metadata_from_payload(
             f"missing fields: {', '.join(missing_fields)}"
         )
 
-    schema_version = payload.get("schema_version")
     app_id = str(payload.get("id") or "").strip()
     name = str(payload.get("name") or "").strip()
     version = str(payload.get("version") or "").strip()
@@ -206,8 +235,6 @@ def _metadata_from_payload(
     ).strip()
     dependencies = payload.get("dependencies")
 
-    if schema_version != 1:
-        raise ApplicationManifestError("schema_version must be 1")
     if _APPLICATION_ID_PATTERN.fullmatch(app_id) is None:
         raise ApplicationManifestError(
             "id must use 1-64 lowercase letters, digits, dot, underscore, or dash"
@@ -254,6 +281,11 @@ def _metadata_from_payload(
             )
         normalized_dependencies.append(normalized)
 
+    supported_host_platforms = _parse_supported_host_platforms(
+        payload.get("supported_host_platforms"),
+        schema_version=schema_version,
+    )
+
     if watcherobot_version is not None and not _watcherobot_requirement_contains(
         requires_watcherobot,
         watcherobot_version,
@@ -264,16 +296,44 @@ def _metadata_from_payload(
         )
 
     return ApplicationManifestMetadata(
-        schema_version=1,
+        schema_version=schema_version,
         app_id=app_id,
         name=name,
         version=version,
         requires_watcherobot=requires_watcherobot,
         dependencies=tuple(normalized_dependencies),
+        supported_host_platforms=supported_host_platforms,
         description=str(payload.get("description") or "").strip(),
         author=str(payload.get("author") or "").strip(),
         icon=str(payload.get("icon") or "").strip(),
     )
+
+
+def _parse_supported_host_platforms(
+    value: object,
+    *,
+    schema_version: int,
+) -> tuple[str, ...]:
+    if schema_version == 1 and value is None:
+        return ()
+    if not isinstance(value, list) or not value:
+        raise ApplicationManifestError(
+            "supported_host_platforms must be a non-empty array"
+        )
+    if not all(isinstance(item, str) for item in value):
+        raise ApplicationManifestError(
+            "supported_host_platforms must contain only strings"
+        )
+    normalized = tuple(item.strip().lower() for item in value)
+    if any(item not in _SUPPORTED_HOST_PLATFORMS for item in normalized):
+        raise ApplicationManifestError(
+            "supported_host_platforms may contain only windows or macos"
+        )
+    if len(set(normalized)) != len(normalized):
+        raise ApplicationManifestError(
+            "supported_host_platforms must not contain duplicates"
+        )
+    return normalized
 
 
 def _watcherobot_requirement_contains(requirement: str, version: str) -> bool:

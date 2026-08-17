@@ -94,12 +94,13 @@ Publish-ready `app.json`:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "com.example.sdk_test",
   "name": "SDK Test",
   "version": "0.1.0",
   "requires_watcherobot": ">=0.1.0a4,<0.2",
   "dependencies": [],
+  "supported_host_platforms": ["windows", "macos"],
   "description": "Verify the current SDK Application flow",
   "author": "Your Hugging Face username",
   "icon": "icon.svg"
@@ -109,7 +110,7 @@ Publish-ready `app.json`:
 Rules:
 
 - Required fields are `schema_version`, `id`, `name`, `version`,
-  `requires_watcherobot`, and `dependencies`.
+  `requires_watcherobot`, `dependencies`, and `supported_host_platforms`.
 - `description` and `author` remain optional for local check, run, and source
   publication, but both must be non-empty before `app submit` accepts the
   Application. `icon` remains optional throughout. Unknown fields are rejected.
@@ -121,6 +122,9 @@ Rules:
   `requests>=2.32,<3`. It must not replace `watcherobot` with a URL or local path.
 - `icon`, when present, must identify a real regular file inside the Application
   root.
+- Marketplace submissions require `schema_version: 2`. Declare every supported
+  desktop host explicitly with `windows` and/or `macos`; do not infer macOS
+  compatibility solely from the use of Python.
 
 Minimal `app.py`:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import platform
 from dataclasses import dataclass, field
 
 import pytest
@@ -28,12 +29,13 @@ def _manifest(
     extra: dict[str, object] | None = None,
 ) -> bytes:
     payload: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "id": app_id,
         "name": name,
         "version": "1.2.3",
         "requires_watcherobot": requires_watcherobot,
         "dependencies": ["httpx>=0.28,<1"],
+        "supported_host_platforms": ["windows", "macos"],
         "description": f"{name} description",
         "author": "Developer",
         "icon": "",
@@ -147,16 +149,18 @@ def test_official_catalog_reads_each_manifest_at_its_fixed_commit() -> None:
         "source_url": (
             f"https://huggingface.co/spaces/{FIRST_SPACE}/tree/{FIRST_COMMIT}"
         ),
-        "schema_version": 1,
+        "schema_version": 2,
         "id": "com.example.first",
         "name": "First",
         "version": "1.2.3",
         "requires_watcherobot": ">=1.0,<2.0",
         "dependencies": ["httpx>=0.28,<1"],
+        "supported_host_platforms": ["windows", "macos"],
         "description": "First description",
         "author": "Developer",
         "icon": "",
         "compatible": True,
+        "host_compatible": platform.system() in {"Windows", "Darwin"},
     }
     assert hub.calls[1:] == [
         ("file", (FIRST_SPACE, FIRST_COMMIT, "app.json")),

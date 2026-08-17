@@ -361,6 +361,7 @@ def _run_application_check(args: argparse.Namespace) -> int:
                 ("Version", result.version),
                 ("SDK requirement", result.requires_watcherobot),
                 ("Dependencies", _format_dependencies(result.dependencies)),
+                ("Host platforms", _format_host_platforms(result.supported_host_platforms)),
                 ("Author", result.author or "Not specified"),
                 ("Description", result.description or "Not specified"),
             ),
@@ -743,6 +744,10 @@ def _print_marketplace_details(result: OfficialMarketplace) -> None:
                     "Dependencies",
                     _format_dependencies(application.dependencies),
                 ),
+                (
+                    "Host platforms",
+                    _format_host_platforms(application.supported_host_platforms),
+                ),
                 ("Author", application.author or "Not specified"),
                 ("Description", application.description or "Not specified"),
                 ("Source", application.source_url),
@@ -1050,6 +1055,11 @@ def _print_labeled_block(
 
 def _format_dependencies(dependencies: tuple[str, ...]) -> str:
     return ", ".join(dependencies) if dependencies else "None"
+
+
+def _format_host_platforms(platforms: tuple[str, ...]) -> str:
+    labels = {"windows": "Windows", "macos": "macOS"}
+    return ", ".join(labels.get(platform, platform) for platform in platforms) or "Not declared"
 
 
 def _format_catalog_status(status: str) -> str:

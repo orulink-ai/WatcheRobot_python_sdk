@@ -121,6 +121,13 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--name", help="Application display name")
     init.add_argument("--author", help="Developer or organization name")
     init.add_argument("--description", help="Short marketplace description")
+    init.add_argument(
+        "--platform",
+        dest="supported_host_platforms",
+        action="append",
+        choices=("windows", "macos"),
+        help="Supported host platform; repeat for Windows and macOS",
+    )
     run = app_commands.add_parser(
         "run",
         help="Run a source directory through the SDK Daemon",
@@ -273,6 +280,8 @@ def _run_application_init(args: argparse.Namespace) -> int:
         name=values["name"],
         author=values["author"],
         description=values["description"],
+        supported_host_platforms=args.supported_host_platforms
+        or ["windows", "macos"],
     )
     _print_application_init_result(result)
     return 0

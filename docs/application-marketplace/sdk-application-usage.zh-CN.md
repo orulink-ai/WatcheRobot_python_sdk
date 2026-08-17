@@ -83,12 +83,13 @@ SDK 自动计算。发布前应修改正式唯一 ID，并补齐应用广场信�
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "com.example.sdk_test",
   "name": "SDK Test",
   "version": "0.1.0",
   "requires_watcherobot": ">=0.1.0a4,<0.2",
   "dependencies": [],
+  "supported_host_platforms": ["windows", "macos"],
   "description": "Verify the current SDK Application flow",
   "author": "Your Hugging Face username",
   "icon": "icon.svg"
@@ -97,7 +98,7 @@ SDK 自动计算。发布前应修改正式唯一 ID，并补齐应用广场信�
 
 字段规则：
 
-- 必填：`schema_version`、`id`、`name`、`version`、`requires_watcherobot`、`dependencies`。
+- 必填：`schema_version`、`id`、`name`、`version`、`requires_watcherobot`、`dependencies`、`supported_host_platforms`。
 - `description`、`author` 在本地校验、运行和源码发布时仍可选，但执行 `app submit`
   前两项必须为非空；`icon` 在全部阶段均可选。不接受未知字段。
 - `id` 长度为 1～64，只能使用小写字母、数字、点、下划线和连字符。
@@ -105,6 +106,8 @@ SDK 自动计算。发布前应修改正式唯一 ID，并补齐应用广场信�
 - `dependencies` 使用标准 Python requirement 字符串，例如 `requests>=2.32,<3`。不要通过
   URL 或本地路径替换 `watcherobot`；Desktop 会安装与 Daemon 同版本的随包 SDK wheel。
 - `icon` 必须是 Application 根目录内真实存在的普通文件。
+- 应用广场上架必须使用 `schema_version: 2`。`supported_host_platforms` 只能填写
+  `windows` 和/或 `macos`，且必须基于实际验证结果，不能因为使用 Python 就推断 macOS 可用。
 
 最小 `app.py`：
 

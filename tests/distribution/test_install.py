@@ -116,6 +116,16 @@ def test_runtime_publication_retries_one_transient_filesystem_failure(
     assert runtime_copy_attempts == 2
 
 
+def test_install_rejects_an_application_for_another_host_platform() -> None:
+    with pytest.raises(ApplicationInstallError) as captured:
+        install_module._require_supported_host_platform(
+            ("windows",),
+            host_platform="macos",
+        )
+
+    assert captured.value.code is ErrorCode.APP_HOST_PLATFORM_INCOMPATIBLE
+
+
 def test_environment_runner_retries_one_transient_nonzero_exit(
     tmp_path: Path,
     monkeypatch,
@@ -345,12 +355,13 @@ def _write_source(root: Path) -> None:
     root.joinpath("app.json").write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "id": "com.example.demo",
                 "name": "Demo",
                 "version": "1.0.0",
                 "requires_watcherobot": ">=0.1.0a4,<0.2",
                 "dependencies": ["requests>=2.32,<3"],
+                "supported_host_platforms": ["windows", "macos"],
             }
         ),
         encoding="utf-8",
