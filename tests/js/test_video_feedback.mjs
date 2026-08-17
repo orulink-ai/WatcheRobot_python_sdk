@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createVideoCongestionFeedback,
+  deviceVideoCongestionLevel,
   updateVideoCongestionFeedback,
 } from "../../examples/sdk_media_lab/web/video-feedback.mjs";
 
@@ -25,6 +26,11 @@ test("one historical drop does not latch congestion forever", () => {
     });
   }
   assert.equal(feedback.level, 0);
+});
+
+test("device receives only current pressure instead of the browser clear latch", () => {
+  assert.equal(deviceVideoCongestionLevel({ level: 1, rawLevel: 0, clearWindows: 2 }), 0);
+  assert.equal(deviceVideoCongestionLevel({ level: 2, rawLevel: 2, clearWindows: 0 }), 2);
 });
 
 test("sustained drops become severe congestion", () => {

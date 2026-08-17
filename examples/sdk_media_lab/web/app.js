@@ -25,6 +25,7 @@ import {
 } from "./media-resource-policy.mjs";
 import {
   createVideoCongestionFeedback,
+  deviceVideoCongestionLevel,
   updateVideoCongestionFeedback,
 } from "./video-feedback.mjs";
 import {
@@ -1491,7 +1492,7 @@ function startRtcControlLoops(generation) {
         audio_packet_loss_x100: audio.packetLossX100,
         audio_jitter_us: audio.jitterUs,
         audio_concealed_frames: audio.concealedFrames,
-        congestion_level: rtcModeHasVideo(state.rtc.mode) ? videoCongestion.level : 0,
+        congestion_level: rtcModeHasVideo(state.rtc.mode) ? deviceVideoCongestionLevel(videoCongestion) : 0,
       }),
     }).catch(() => {});
   }, 1000);

@@ -4,6 +4,10 @@ export function createVideoCongestionFeedback() {
   return { level: 0, rawLevel: 0, clearWindows: 0 };
 }
 
+export function deviceVideoCongestionLevel(feedback) {
+  return Math.max(0, Math.min(2, Number(feedback?.rawLevel || 0)));
+}
+
 export function updateVideoCongestionFeedback(previous, metrics) {
   const droppedDelta = Number.isFinite(metrics?.droppedDelta)
     ? Math.max(0, Number(metrics.droppedDelta))
