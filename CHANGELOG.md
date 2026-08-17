@@ -1,5 +1,9 @@
 # 更新日志
 
+## [0.1.1a5] - 待发布
+
+- 用户在 Codex 中明确确认发布 SDK 0.1.1a5 预发布版
+
 ## [0.1.1a4] - 2026-08-13
 
 - SDK 测试台新增经 Application Device channel 的 RTC 真全双工音频验证，覆盖电脑麦克风到 Watcher 扬声器及 Watcher 麦克风到浏览器播放器。
