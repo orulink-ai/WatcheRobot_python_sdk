@@ -361,7 +361,7 @@ class MediaLabService:
         }
 
     def play_audio(self) -> dict[str, object]:
-        with self._operation("play_audio", resource="speaker"):
+        with self._operation("play_audio", resources=("microphone", "speaker")):
             if not self._sample_audio.is_file():
                 raise FileNotFoundError(f"sample audio is missing: {self._sample_audio}")
             playback = self._robot.audio.play_file(self._sample_audio)
@@ -490,7 +490,7 @@ class MediaLabService:
         ):
             raise ValueError("duration must be a finite number between 0 and 30 seconds")
         duration = float(duration)
-        with self._operation("record_microphone", resource="microphone"):
+        with self._operation("record_microphone", resources=("microphone", "speaker")):
             recording = self._robot.microphone.record_pcm(
                 duration=duration,
                 timeout=duration + 2.0,
