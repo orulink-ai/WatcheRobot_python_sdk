@@ -7,7 +7,7 @@ name = "watcherobot"
 dynamic = ["version"]
 description = "Python SDK for managed WatcheRobot Applications with a bundled Runtime/Daemon"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 license = {text = "Apache-2.0"}
 authors = [{name = "Orulink AI"}]
 dependencies = [

@@ -73,26 +73,29 @@ business logic.
 
 ## Quick start
 
-### 1. Install for development
+### 1. Install the SDK
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[test]"
+python -m pip install watcherobot
 ```
 
-### 2. Run a complete example
+Cloning this repository and using `pip install -e ".[test]"` is only necessary
+when contributing to the SDK itself.
 
-Every example is a managed Application with an `app.json` manifest and fixed
-`app.py` entrypoint. Start it through the Runtime, not by executing `app.py`
-directly:
+### 2. Create and run your first Application
 
 ```powershell
-watcherobot app run .\examples\hello_robot
+watcherobot app init hello_robot
+cd hello_robot
+watcherobot app run
 ```
 
-For a fresh standalone session, start the Runtime, pair the device using its
-six-digit code, and then run the example:
+The generated Hello World Application plays the `happy` behavior once and
+exits. `app run` starts or reuses the Runtime automatically. If no robot is
+connected yet, pair it in Watcher Desktop and run the command again.
+
+For standalone SDK testing without Watcher Desktop, start the Runtime and pair
+with the six-digit code shown by the device:
 
 ```powershell
 $runtime = watcherobot daemon start | ConvertFrom-Json
@@ -102,15 +105,11 @@ Invoke-RestMethod `
   -Uri "$($runtime.control_url)/daemon/devices/pair" `
   -ContentType "application/json" `
   -Body $pairBody
-watcherobot app run .\examples\hello_robot
 ```
 
-Replace `123456` with the code shown by the device. If the Runtime already has
-a connected device session, skip the pairing request.
-
-The local control API also exposes `GET /daemon/logs` for inspecting Runtime
-logs. See the [Runtime contract](docs/contracts/runtime-profile-index.md) for
-the full REST boundary.
+Replace `123456` with the device code. The local control API also exposes
+`GET /daemon/logs`; see the [Runtime contract](docs/contracts/runtime-profile-index.md)
+for the complete standalone and diagnostics interface.
 
 ### 3. Write an Application
 
@@ -129,12 +128,11 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Create a publish-ready project instead of starting from scratch:
+The initializer generated this same pattern in `hello_robot/app.py`. Metadata
+flags remain available when you are preparing a project for publication:
 
 ```powershell
-watcherobot app init .\my_app
-watcherobot app check .\my_app
-watcherobot app run .\my_app
+watcherobot app init my_app --id com.example.my_app --author "Example Team"
 ```
 
 ## Common workflows
@@ -160,12 +158,13 @@ watcherobot daemon status
 watcherobot daemon stop
 
 # Application development and distribution
-watcherobot app init .\my_app
-watcherobot app check .\my_app
-watcherobot app run .\my_app
+watcherobot app init my_app
+cd my_app
+watcherobot app run
+watcherobot app check .
 watcherobot app login
-watcherobot app publish .\my_app
-watcherobot app submit .\my_app
+watcherobot app publish .
+watcherobot app submit .
 watcherobot app marketplace
 watcherobot app install <app-id>
 watcherobot app list

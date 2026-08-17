@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Application 首次开发流程简化为 `pip install watcherobot`、`watcherobot app init` 和 `watcherobot app run`；初始化器会生成播放一次 `happy` 行为的 Hello World 项目，并自动补齐本地开发元数据。
 - SDK Test Bench 1.1.0 完成 Application Marketplace 发布准备：默认英文界面并支持中文切换，补齐应用图标、作者与英文简介。
 - 发布快照改为完全自包含，内置示例音频随 Application 分发，并明确排除照片、录音等运行产物。
 

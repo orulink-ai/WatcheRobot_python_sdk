@@ -55,7 +55,7 @@ editable 安装，保证控制台入口与当前源码一致。
 .\.venv\Scripts\watcherobot.exe app init .\my_sdk_test
 ```
 
-命令会询问唯一 Application ID、显示名称、作者和简短说明。非交互脚本必须一次性提供：
+本地开发只需要提供目录；初始化器会生成本地 ID、显示名称、作者和简短说明。验收发布流程时可通过参数覆盖：
 
 ```powershell
 .\.venv\Scripts\watcherobot.exe app init .\my_sdk_test `
@@ -65,7 +65,7 @@ editable 安装，保证控制台入口与当前源码一致。
   --description "Verify the current SDK Application flow"
 ```
 
-目标路径必须不存在。初始化不会启动 Daemon，也不会访问 Hugging Face，生成内容为：
+目标路径必须不存在。初始化不会启动 Daemon，也不会访问 Hugging Face；默认 `app.py` 会播放一次 `happy` 行为并正常退出。生成内容为：
 
 ```text
 my_sdk_test/
@@ -76,9 +76,8 @@ my_sdk_test/
 └─ .gitignore
 ```
 
-生成后可以直接执行 `app check`；初始版本为 `0.1.0`，`requires_watcherobot` 根据当前
-SDK 自动计算。需要示例行为时仍可复制 `examples` 中的项目，但发布前必须修改唯一 ID，
-并补齐应用广场信息。
+生成后可以直接执行 `app run`；初始版本为 `0.1.0`，`requires_watcherobot` 根据当前
+SDK 自动计算。发布前应修改正式唯一 ID，并补齐应用广场信息。
 
 可发布的 `app.json`：
 
@@ -153,14 +152,9 @@ Hugging Face。Desktop 的机器调用形式为：
 
 JSONL 最后一行是 `type=result`、`ok=true`。
 
-### 4.2 启动或检查 Daemon
+### 4.2 连接设备
 
-```powershell
-.\.venv\Scripts\watcherobot.exe daemon start
-.\.venv\Scripts\watcherobot.exe daemon status
-```
-
-如果设备已经由当前 Daemon 配对并在线，可直接运行 Application。全新独立会话的配对步骤见
+`app run` 会自动启动或复用当前 Runtime。如果设备已经配对并在线，可直接运行 Application。全新独立会话的配对步骤见
 仓库根目录 `README.zh-CN.md`；不要让 Application 自己执行 Discovery 或连接设备。
 
 ### 4.3 运行 Application

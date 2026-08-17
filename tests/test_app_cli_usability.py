@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -85,10 +86,10 @@ def test_distribution_sidecar_help_contains_only_distribution_commands(
 def test_app_init_help_describes_interactive_and_scripted_usage(capsys) -> None:
     output = _help_for(build_parser(), ["app", "init"], capsys)
 
-    assert "Create a publish-ready Application project" in output
+    assert "Create a runnable Application project" in output
     for option in ("--id", "--name", "--author", "--description"):
         assert option in output
-    assert "prompts for any metadata option" in output
+    assert "defaults from the project directory" in output
 
 
 def test_app_init_creates_project_without_starting_daemon(
@@ -126,47 +127,40 @@ def test_app_init_creates_project_without_starting_daemon(
     assert f"Directory:  {target.resolve()}" in captured.out
     assert "ID:         com.example.demo" in captured.out
     assert "Next:" in captured.out
-    assert f"watcherobot app check \"{target.resolve()}\"" in captured.out
+    assert f'cd "{target.resolve()}"' in captured.out
+    assert "watcherobot app run" in captured.out
     assert target.joinpath("app.json").is_file()
-    assert "await asyncio.Event().wait()" in target.joinpath("app.py").read_text(
-        encoding="utf-8"
-    )
+    app_source = target.joinpath("app.py").read_text(encoding="utf-8")
+    assert 'app.robot.behavior.play,\n            "happy"' in app_source
+    assert "job.wait, 20.0" in app_source
 
 
-def test_app_init_prompts_for_metadata_in_an_interactive_terminal(
+def test_app_init_derives_metadata_without_prompts(
     tmp_path,
     monkeypatch,
     capsys,
 ) -> None:
-    target = tmp_path / "prompted"
-    answers = iter(
-        [
-            "com.example.prompted",
-            "Prompted App",
-            "Example Team",
-            "Created from prompts",
-        ]
-    )
+    target = tmp_path / "hello_robot"
     monkeypatch.setattr(
-        "watcherobot.cli._is_interactive_terminal",
-        lambda: True,
-        raising=False,
+        "builtins.input",
+        lambda _prompt: (_ for _ in ()).throw(
+            AssertionError("explicit project directory must not prompt")
+        ),
     )
-    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
 
     assert main(["app", "init", str(target)]) == 0
 
     manifest = json.loads(
         target.joinpath("app.json").read_text(encoding="utf-8")
     )
-    assert manifest["id"] == "com.example.prompted"
-    assert manifest["name"] == "Prompted App"
-    assert manifest["author"] == "Example Team"
-    assert manifest["description"] == "Created from prompts"
+    assert manifest["id"] == "local.hello_robot"
+    assert manifest["name"] == "Hello Robot"
+    assert manifest["author"] == "Local Developer"
+    assert manifest["description"] == "Hello Robot WatcheRobot Application."
     assert capsys.readouterr().err == ""
 
 
-def test_app_init_requires_flags_when_input_is_not_interactive(
+def test_app_init_accepts_only_a_directory_in_non_interactive_use(
     tmp_path,
     monkeypatch,
     capsys,
@@ -178,12 +172,62 @@ def test_app_init_requires_flags_when_input_is_not_interactive(
         raising=False,
     )
 
-    assert main(["app", "init", str(target), "--name", "Demo"]) == 2
+    assert main(["app", "init", str(target)]) == 0
 
     captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "--id, --author, --description" in captured.err
-    assert not target.exists()
+    assert captured.err == ""
+    assert "Application project created" in captured.out
+    assert target.is_dir()
+
+
+def test_app_init_prompts_only_for_directory_when_omitted(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    target = tmp_path / "prompted-app"
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: True,
+        raising=False,
+    )
+
+    def answer(prompt: str) -> str:
+        prompts.append(prompt)
+        return str(target)
+
+    monkeypatch.setattr("builtins.input", answer)
+
+    assert main(["app", "init"]) == 0
+    assert prompts == ["Project directory [hello_robot]: "]
+    assert json.loads(target.joinpath("app.json").read_text(encoding="utf-8"))[
+        "name"
+    ] == "Prompted App"
+
+
+def test_app_init_requires_directory_in_non_interactive_use(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: False,
+        raising=False,
+    )
+
+    assert main(["app", "init"]) == 2
+    assert "project directory" in capsys.readouterr().err.lower()
+
+
+def test_app_run_defaults_to_current_directory(monkeypatch) -> None:
+    applications = []
+    monkeypatch.setattr(
+        "watcherobot.cli.run_application",
+        lambda application: applications.append(application) or 0,
+    )
+
+    assert main(["app", "run"]) == 0
+    assert applications == [Path(".")]
 
 
 @pytest.mark.parametrize(

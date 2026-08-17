@@ -61,8 +61,9 @@ Use the SDK initializer in a terminal:
 .\.venv\Scripts\watcherobot.exe app init .\my_sdk_test
 ```
 
-It prompts for the unique Application ID, display name, author, and short
-description. A non-interactive script must pass all four values:
+The directory is enough for local development: the initializer derives a local
+ID, display name, author, and short description. Override them when validating
+the publishing flow:
 
 ```powershell
 .\.venv\Scripts\watcherobot.exe app init .\my_sdk_test `
@@ -73,7 +74,7 @@ description. A non-interactive script must pass all four values:
 ```
 
 The target must not exist. Initialization does not start the Daemon or access
-Hugging Face. It creates:
+Hugging Face. The generated `app.py` plays `happy` once and exits. It creates:
 
 ```text
 my_sdk_test/
@@ -164,11 +165,9 @@ uses the separate machine form:
 
 Its JSONL result ends with a `result` event whose `ok` field is `true`.
 
-Start or inspect the Daemon, then run the Application:
+Run the Application; the command starts or reuses the Daemon automatically:
 
 ```powershell
-.\.venv\Scripts\watcherobot.exe daemon start
-.\.venv\Scripts\watcherobot.exe daemon status
 .\.venv\Scripts\watcherobot.exe app run .\my_sdk_test
 ```
 

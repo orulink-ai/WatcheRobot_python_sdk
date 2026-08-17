@@ -73,14 +73,17 @@ shortcut for directly executing `app.py`.
 
 ### Create, validate, and run
 
-#### `watcherobot app init <directory>`
+#### `watcherobot app init [directory]`
 
-Creates a new, publish-ready Application project. In an interactive terminal,
-it asks for the ID, display name, author, and description. In scripts, provide
-all four values explicitly. The target directory must not already exist.
+Creates a runnable Hello World Application without overwriting an existing
+target. When the directory is omitted, an interactive terminal prompts for it.
+The ID, display name, author, and description default from the directory and
+can be overridden for publishing.
 
 ```powershell
-watcherobot app init .\my_app `
+watcherobot app init my_app
+
+watcherobot app init published_app `
   --id com.example.my_app `
   --name "My App" `
   --author "Example Team" `
@@ -88,6 +91,7 @@ watcherobot app init .\my_app `
 ```
 
 It creates `app.json`, `app.py`, `README.md`, `icon.svg`, and `.gitignore`.
+The generated `app.py` plays the `happy` behavior once and exits.
 
 #### `watcherobot app check <directory>`
 
@@ -100,14 +104,16 @@ watcherobot app check .\my_app
 watcherobot app check .\my_app --jsonl
 ```
 
-#### `watcherobot app run <directory>`
+#### `watcherobot app run [directory]`
 
-Starts or reuses the current-user Runtime, selects the supplied local source
-Application, and launches it with Runtime-injected `WATCHER_APP_*` variables.
-The Runtime remains available after the Application exits.
+Starts or reuses the current-user Runtime, selects the local source Application,
+and launches it with Runtime-injected `WATCHER_APP_*` variables. The directory
+defaults to the current working directory. The Runtime remains available after
+the Application exits.
 
 ```powershell
-watcherobot app run .\examples\hello_robot
+cd my_app
+watcherobot app run
 ```
 
 #### `watcherobot app run-installed --store-root <path> --app-id <id>`

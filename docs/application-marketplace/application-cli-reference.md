@@ -24,11 +24,12 @@ the English `message` field as a business contract.
 
 ```powershell
 watcherobot app init .\my_app
-watcherobot app check .\my_app
-watcherobot app run .\my_app
+cd my_app
+watcherobot app run
+watcherobot app check .
 watcherobot app login
-watcherobot app publish .\my_app
-watcherobot app submit .\my_app
+watcherobot app publish .
+watcherobot app submit .
 watcherobot app marketplace
 watcherobot app marketplace --details
 ```
@@ -37,7 +38,7 @@ watcherobot app marketplace --details
 
 | Command | Purpose | Starts Daemon | Human output |
 | --- | --- | --- | --- |
-| `init` | Create a publish-ready project without overwriting an existing path | No | Directory, ID, version, SDK range, and next commands |
+| `init` | Create a runnable Hello World project without overwriting an existing path | No | Directory, ID, version, SDK range, and next commands |
 | `check` | Validate `app.json`, `app.py`, SDK compatibility, dependencies, and publishable files | No | Manifest summary |
 | `run` | Select and run a source directory through the SDK Daemon | Yes or reuses it | Start path and final state |
 | `login` | Authorize Hugging Face Device Flow; `--status` checks identity and `--force` replaces a valid login | No | Browser URL, code, expiry, and identity |
@@ -61,14 +62,14 @@ management action; the SDK does not expose `select`.
 
 ## Creating a project
 
-Run the interactive form in a terminal:
+Create a project with development-friendly metadata defaults:
 
 ```powershell
-watcherobot app init .\my_app
+watcherobot app init my_app
 ```
 
-It prompts for the Application ID, display name, author, and short description.
-For scripts or a non-interactive terminal, provide every metadata option:
+When the directory is omitted, an interactive terminal prompts only for the
+directory. Override metadata when preparing the project for publication:
 
 ```powershell
 watcherobot app init .\my_app `

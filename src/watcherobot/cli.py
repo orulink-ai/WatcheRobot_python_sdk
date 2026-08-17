@@ -16,8 +16,10 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from watcherobot.application.project import (
+    ApplicationProjectDefaults,
     ApplicationProjectInitError,
     ApplicationProjectInitResult,
+    default_application_project_metadata,
     init_application_project,
 )
 from watcherobot.distribution.cli import (
@@ -80,9 +82,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Typical workflow:\n"
-            "  watcherobot app init .\\my_app\n"
-            "  watcherobot app check .\\my_app\n"
-            "  watcherobot app run .\\my_app\n"
+            "  watcherobot app init hello_robot\n"
+            "  cd hello_robot\n"
+            "  watcherobot app run\n"
             "  watcherobot app login\n"
             "  watcherobot app publish .\\my_app\n"
             "  watcherobot app submit .\\my_app\n"
@@ -101,14 +103,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init = app_commands.add_parser(
         "init",
-        help="Create a publish-ready Application project",
+        help="Create a runnable Application project",
         description=(
-            "Create a publish-ready Application project. In an interactive "
-            "terminal, the command prompts for any metadata option that was "
-            "not provided."
+            "Create a runnable Application project that plays a Hello World "
+            "behavior. Metadata defaults from the project directory and can "
+            "be overridden for publishing. When DIRECTORY is omitted, an "
+            "interactive terminal prompts for it."
         ),
     )
-    init.add_argument("directory", type=Path, help="New project directory")
+    init.add_argument(
+        "directory",
+        type=Path,
+        nargs="?",
+        help="New project directory; prompted when omitted",
+    )
     init.add_argument("--id", dest="app_id", help="Unique Application ID")
     init.add_argument("--name", help="Application display name")
     init.add_argument("--author", help="Developer or organization name")
@@ -120,7 +128,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "application",
         type=Path,
-        help="Application source directory",
+        nargs="?",
+        default=Path("."),
+        help="Application source directory (default: current directory)",
     )
     run_installed = app_commands.add_parser(
         "run-installed",
@@ -255,9 +265,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_application_init(args: argparse.Namespace) -> int:
-    values = _application_init_metadata(args)
+    directory = _application_init_directory(args.directory)
+    values = _application_init_metadata(args, directory)
     result = init_application_project(
-        args.directory,
+        directory,
         app_id=values["app_id"],
         name=values["name"],
         author=values["author"],
@@ -267,34 +278,43 @@ def _run_application_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _application_init_metadata(args: argparse.Namespace) -> dict[str, str]:
-    fields = (
-        ("app_id", "--id", "Application ID"),
-        ("name", "--name", "Application name"),
-        ("author", "--author", "Author"),
-        ("description", "--description", "Short description"),
-    )
-    missing = [
-        option
-        for field, option, _label in fields
-        if not _has_text(getattr(args, field))
-    ]
-    if missing and not _is_interactive_terminal():
-        raise CliError(
-            "Missing Application metadata options for non-interactive use: "
-            + ", ".join(missing)
-        )
-
-    values: dict[str, str] = {}
+def _application_init_directory(directory: Path | None) -> Path:
+    if directory is not None:
+        return directory
+    if not _is_interactive_terminal():
+        raise CliError("Application project directory is required")
     try:
-        for field, _option, label in fields:
-            supplied = getattr(args, field)
-            values[field] = (
-                supplied if _has_text(supplied) else input(f"{label}: ")
-            )
+        supplied = input("Project directory [hello_robot]: ").strip()
     except (EOFError, KeyboardInterrupt) as exc:
         raise CliError("Application initialization cancelled") from exc
-    return values
+    return Path(supplied or "hello_robot")
+
+
+def _application_init_metadata(
+    args: argparse.Namespace,
+    directory: Path,
+) -> dict[str, str]:
+    defaults = default_application_project_metadata(directory)
+    return {
+        "app_id": _value_or_default(args.app_id, defaults, "app_id"),
+        "name": _value_or_default(args.name, defaults, "name"),
+        "author": _value_or_default(args.author, defaults, "author"),
+        "description": _value_or_default(
+            args.description,
+            defaults,
+            "description",
+        ),
+    }
+
+
+def _value_or_default(
+    value: object,
+    defaults: ApplicationProjectDefaults,
+    field: str,
+) -> str:
+    if _has_text(value):
+        return str(value).strip()
+    return str(getattr(defaults, field))
 
 
 def _has_text(value: object) -> bool:
@@ -322,9 +342,8 @@ def _print_application_init_result(
         print(f"{label + ':':<{label_width}}  {value}")
     print()
     print("Next:")
-    print(f'  watcherobot app check "{result.directory}"')
-    print(f'  watcherobot app run "{result.directory}"')
-    print(f'  watcherobot app publish "{result.directory}"')
+    print(f'  cd "{result.directory}"')
+    print("  watcherobot app run")
 
 
 def _print_bluetooth_cancelled() -> int:
