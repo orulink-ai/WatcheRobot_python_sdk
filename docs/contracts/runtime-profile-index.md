@@ -18,6 +18,23 @@
 
 `8766` 是当前默认 Application 的业务 HTTP 端口，不属于 Runtime 控制面。旧 SDK 的 `SDK_DISCOVER`、`service=watcher-sdk`、六位码 WebSocket hello/ready 和 `sdk_control` 不属于目标 Profile。
 
+### 控制面身份合同
+
+`GET /daemon/status` 必须同时返回 Runtime 身份和 Application 状态：
+
+```json
+{
+  "runtime": {
+    "control_protocol": 2,
+    "sdk_version": "<当前 SDK 版本>"
+  },
+  "application": {}
+}
+```
+
+`control_protocol` 是 Desktop 判断本机 `8767` 服务能否安全接管的稳定合同，不能因
+Application 是否选择或运行而省略。SDK 版本仅用于诊断，不替代控制协议版本判断。
+
 ## 2. 配对顺序
 
 ```text
