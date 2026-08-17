@@ -172,6 +172,34 @@ def test_source_default_launcher_configuration_must_be_complete(tmp_path: Path) 
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX virtualenvs use Python symlinks")
+def test_source_default_launcher_preserves_trusted_virtualenv_symlink(
+    tmp_path: Path,
+) -> None:
+    application_dir = _write_application(
+        tmp_path / "workspace" / "WatcheRobot_server",
+        app_id="watcher_default",
+    )
+    base_python = _write_executable(tmp_path / "homebrew" / "bin", "python3.14")
+    virtualenv_python = tmp_path / "workspace" / ".runtime" / "venv" / "bin" / "python"
+    virtualenv_python.parent.mkdir(parents=True)
+    virtualenv_python.symlink_to(base_python)
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+        source_default_application_root=application_dir,
+        source_default_launcher_executable=virtualenv_python,
+    )
+
+    spec = launcher.build_spec(
+        application_dir=application_dir,
+        kind="python",
+        executable=virtualenv_python,
+    )
+
+    assert spec.command == (virtualenv_python, application_dir / "app.py")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX virtualenvs use Python symlinks")
 def test_python_launcher_preserves_virtualenv_symlink_for_execution(
     tmp_path: Path,
 ) -> None:

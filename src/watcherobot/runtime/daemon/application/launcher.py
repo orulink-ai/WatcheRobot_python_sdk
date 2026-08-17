@@ -114,17 +114,16 @@ class ApplicationLauncher:
             raise ApplicationLaunchError(
                 "Source default Application must use its trusted source default launcher"
             )
+        requested_executable = Path(os.path.abspath(executable))
         controlled_root = (
             self._bundled_resource_root
             if launcher_kind is ApplicationLauncherKind.BUNDLED
             else (
-                self._source_default_launcher_executable.parent
+                _resolved_executable_parent(requested_executable)
                 if trusted_source_default
-                and self._source_default_launcher_executable is not None
                 else self._managed_app_root
             )
         )
-        requested_executable = Path(os.path.abspath(executable))
         _require_controlled_executable(
             executable,
             controlled_root=controlled_root,
@@ -154,6 +153,15 @@ class ApplicationLauncher:
             executable=requested_executable,
             command_executable=command_executable,
         )
+
+
+def _resolved_executable_parent(executable: Path) -> Path:
+    try:
+        return executable.resolve(strict=True).parent
+    except OSError as exc:
+        raise ApplicationLaunchError(
+            "Application launcher executable does not exist"
+        ) from exc
 
 
 def _require_absolute_directory(application_dir: Path) -> Path:
