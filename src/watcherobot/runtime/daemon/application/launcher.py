@@ -67,7 +67,8 @@ class ApplicationLauncher:
             source_default_launcher_executable is None
         ):
             raise ValueError(
-                "source default Application root and launcher must be configured together"
+                "source default Application root and launcher "
+                "must be configured together"
             )
         self._managed_app_root = Path(managed_app_root).resolve()
         self._bundled_resource_root = Path(bundled_resource_root).resolve()
@@ -106,42 +107,55 @@ class ApplicationLauncher:
             and manifest.app_id == self._default_app_id
             and self._source_default_application_root is not None
         )
-        if trusted_source_default and (
-            selected_dir != self._source_default_application_root
-            or Path(os.path.abspath(executable))
-            != self._source_default_launcher_executable
-        ):
-            raise ApplicationLaunchError(
-                "Source default Application must use its trusted source default launcher"
-            )
         requested_executable = Path(os.path.abspath(executable))
-        controlled_root = (
-            self._bundled_resource_root
-            if launcher_kind is ApplicationLauncherKind.BUNDLED
-            else (
-                _resolved_executable_parent(requested_executable)
-                if trusted_source_default
-                else self._managed_app_root
-            )
-        )
-        _require_controlled_executable(
-            executable,
-            controlled_root=controlled_root,
-            kind=launcher_kind,
-            is_windows=self._is_windows,
-        )
-        command_executable = (
-            _python_executable_for_application(
+        if trusted_source_default:
+            if selected_dir != self._source_default_application_root:
+                raise ApplicationLaunchError(
+                    "Source default Application root does not match its trusted root"
+                )
+            if requested_executable != self._source_default_launcher_executable:
+                raise ApplicationLaunchError(
+                    "Source default Application launcher does not match "
+                    "its trusted launcher"
+                )
+            _validate_trusted_source_default_executable(
                 requested_executable,
-                controlled_root=controlled_root,
                 is_windows=self._is_windows,
             )
-            if launcher_kind is ApplicationLauncherKind.PYTHON
-            else requested_executable.resolve(strict=True)
-        )
+            spec_executable = requested_executable
+            command_executable = _python_executable_for_trusted_source_default(
+                requested_executable,
+                is_windows=self._is_windows,
+            )
+        else:
+            controlled_root = (
+                self._bundled_resource_root
+                if launcher_kind is ApplicationLauncherKind.BUNDLED
+                else self._managed_app_root
+            )
+            resolved_executable = _require_controlled_executable(
+                requested_executable,
+                controlled_root=controlled_root,
+                kind=launcher_kind,
+                is_windows=self._is_windows,
+            )
+            spec_executable = (
+                requested_executable
+                if launcher_kind is ApplicationLauncherKind.PYTHON
+                else resolved_executable
+            )
+            command_executable = (
+                _python_executable_for_application(
+                    requested_executable,
+                    controlled_root=controlled_root,
+                    is_windows=self._is_windows,
+                )
+                if launcher_kind is ApplicationLauncherKind.PYTHON
+                else resolved_executable
+            )
         if (
             launcher_kind is ApplicationLauncherKind.BUNDLED
-            and not selected_dir.is_relative_to(controlled_root)
+            and not selected_dir.is_relative_to(self._bundled_resource_root)
         ):
             raise ApplicationLaunchError(
                 "Application directory must stay inside its controlled root"
@@ -150,18 +164,31 @@ class ApplicationLauncher:
             app_id=manifest.app_id,
             application_dir=selected_dir,
             kind=launcher_kind,
-            executable=requested_executable,
+            executable=spec_executable,
             command_executable=command_executable,
         )
 
 
-def _resolved_executable_parent(executable: Path) -> Path:
-    try:
-        return executable.resolve(strict=True).parent
-    except OSError as exc:
-        raise ApplicationLaunchError(
-            "Application launcher executable does not exist"
-        ) from exc
+def _validate_trusted_source_default_executable(
+    executable: Path,
+    *,
+    is_windows: bool,
+) -> None:
+    """Validate the explicitly authorized launcher while retaining its venv path."""
+
+    resolved = _require_executable_file(executable, is_windows=is_windows)
+    _require_platform_executable_name(
+        resolved,
+        kind=ApplicationLauncherKind.PYTHON,
+        is_windows=is_windows,
+    )
+    if is_windows:
+        trusted_launcher_directory = executable.parent.resolve(strict=True)
+        if resolved.parent != trusted_launcher_directory:
+            raise ApplicationLaunchError(
+                "Source default Application launcher must stay inside "
+                "its trusted directory"
+            )
 
 
 def _require_absolute_directory(application_dir: Path) -> Path:
@@ -217,7 +244,37 @@ def _require_controlled_executable(
             "Application launcher executable must be an absolute path"
         )
     try:
-        resolved = requested.resolve(strict=True)
+        normalized_requested = (
+            requested.parent.resolve(strict=True) / requested.name
+        )
+    except OSError as exc:
+        raise ApplicationLaunchError(
+            "Application launcher executable does not exist"
+        ) from exc
+    if not normalized_requested.is_relative_to(controlled_root):
+        raise ApplicationLaunchError(
+            "Application launcher executable path must stay inside "
+            "its controlled root"
+        )
+    resolved = _require_executable_file(requested, is_windows=is_windows)
+    if (
+        (kind is ApplicationLauncherKind.BUNDLED or is_windows)
+        and not resolved.is_relative_to(controlled_root)
+    ):
+        raise ApplicationLaunchError(
+            "Application launcher executable must stay inside its controlled root"
+        )
+    _require_platform_executable_name(
+        resolved,
+        kind=kind,
+        is_windows=is_windows,
+    )
+    return resolved
+
+
+def _require_executable_file(executable: Path, *, is_windows: bool) -> Path:
+    try:
+        resolved = executable.resolve(strict=True)
     except OSError as exc:
         raise ApplicationLaunchError(
             "Application launcher executable does not exist"
@@ -228,15 +285,6 @@ def _require_controlled_executable(
         raise ApplicationLaunchError(
             "Application launcher executable is not executable"
         )
-    if not resolved.is_relative_to(controlled_root):
-        raise ApplicationLaunchError(
-            "Application launcher executable must stay inside its controlled root"
-        )
-    _require_platform_executable_name(
-        resolved,
-        kind=kind,
-        is_windows=is_windows,
-    )
     return resolved
 
 
@@ -304,5 +352,45 @@ def _python_executable_for_application(
     if resolved.name.lower() != "pythonw.exe":
         raise ApplicationLaunchError(
             "Application launcher executable name is not allowed"
+        )
+    return resolved
+
+
+def _python_executable_for_trusted_source_default(
+    executable: Path,
+    *,
+    is_windows: bool,
+) -> Path:
+    """Retain trusted POSIX venv semantics and prefer adjacent Windows pythonw.
+
+    On POSIX, executing the original venv path is required for Python to find
+    ``pyvenv.cfg`` and load Workspace-only dependencies.  This exception is
+    limited to the exact launcher path supplied by the trusted Desktop / SDK
+    source-runtime orchestration; its parent directory must not be writable by
+    an installed third-party Application. Ordinary POSIX Applications preserve
+    the same venv path semantics only when that path is inside their managed
+    root; Windows launchers and bundled executables retain stricter resolved-
+    target containment.
+
+    A complete Windows venv normally includes ``pythonw.exe``. Falling back to
+    the already validated adjacent ``python.exe`` keeps source development
+    usable in minimal managed environments without expanding the trusted
+    launcher directory.
+    """
+
+    if not is_windows:
+        return executable
+    pythonw = executable.with_name("pythonw.exe")
+    if not pythonw.is_file():
+        return executable
+    resolved = _require_executable_file(pythonw, is_windows=True)
+    trusted_launcher_directory = executable.parent.resolve(strict=True)
+    if (
+        pythonw.parent != executable.parent
+        or not resolved.is_relative_to(trusted_launcher_directory)
+        or resolved.name.lower() != "pythonw.exe"
+    ):
+        raise ApplicationLaunchError(
+            "Source default Application pythonw launcher is not allowed"
         )
     return resolved

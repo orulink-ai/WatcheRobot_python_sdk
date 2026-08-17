@@ -94,7 +94,7 @@ def test_complete_daemon_application_vertical_flow(tmp_path: Path) -> None:
         runtime = DaemonRuntime(
             application_dir=application_dir,
             current_app="vertical_test_app",
-            managed_app_root=Path(sys.executable).resolve().parent,
+            managed_app_root=Path(sys.executable).parent,
             external_host="127.0.0.1",
             external_port=0,
             control_port=0,
@@ -104,7 +104,7 @@ def test_complete_daemon_application_vertical_flow(tmp_path: Path) -> None:
         runtime.select_application(
             str(application_dir.resolve()),
             "python",
-            str(Path(sys.executable).resolve()),
+            str(Path(sys.executable)),
         )
 
         await runtime.start()

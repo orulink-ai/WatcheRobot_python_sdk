@@ -183,7 +183,7 @@ def _build_selected_manager(
         application_dir=application_dir,
         current_app=app_id,
         application_launcher=ApplicationLauncher(
-            managed_app_root=python_executable.resolve().parent,
+            managed_app_root=python_executable.parent,
             bundled_resource_root=application_dir.parent / "resources",
         ),
         startup_timeout=startup_timeout,
@@ -452,7 +452,7 @@ def test_runtime_can_select_another_application_without_restarting_itself(
             application_dir=first_dir,
             current_app="first_app",
             application_launcher=ApplicationLauncher(
-                managed_app_root=python_executable.resolve().parent,
+                managed_app_root=python_executable.parent,
                 bundled_resource_root=tmp_path / "resources",
             ),
             startup_timeout=3,
@@ -525,7 +525,7 @@ def test_runtime_cleans_inherited_python_environment_for_selected_app(
         _write_application(app_dir, ENVIRONMENT_APP)
         python_executable = Path(sys.executable)
         launcher = ApplicationLauncher(
-            managed_app_root=python_executable.resolve().parent,
+            managed_app_root=python_executable.parent,
             bundled_resource_root=tmp_path / "resources",
         )
         manager = ApplicationRuntimeManager(
@@ -620,7 +620,7 @@ def test_running_application_cannot_switch_controlled_launcher(
         _write_application(second_dir, CONNECTED_APP, app_id="second_app")
         python_executable = Path(sys.executable)
         launcher = ApplicationLauncher(
-            managed_app_root=python_executable.resolve().parent,
+            managed_app_root=python_executable.parent,
             bundled_resource_root=tmp_path / "resources",
         )
         manager = ApplicationRuntimeManager(

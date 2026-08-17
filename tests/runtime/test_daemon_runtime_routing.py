@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import sys
-import venv
 from pathlib import Path
 
 import pytest
@@ -64,6 +64,7 @@ asyncio.run(main())
 
 PYTHON_IDENTITY_APPLICATION = """
 import asyncio
+import inspect
 import os
 from pathlib import Path
 import sys
@@ -76,9 +77,20 @@ async def main():
         sys.executable,
         encoding="utf-8",
     )
+    connect_options = (
+        {"proxy": None}
+        if "proxy" in inspect.signature(connect).parameters
+        else {}
+    )
     async with (
-        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"]),
-        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"]),
+        connect(
+            os.environ["WATCHER_APP_DESKTOP_WS_URL"],
+            **connect_options,
+        ),
+        connect(
+            os.environ["WATCHER_APP_DEVICE_WS_URL"],
+            **connect_options,
+        ),
     ):
         await asyncio.Event().wait()
 
@@ -117,12 +129,16 @@ def _select_python_application(
     runtime.select_application(
         str(application_dir.resolve()),
         "python",
-        str(Path(sys.executable).resolve()),
+        str(Path(sys.executable)),
     )
 
 
 def _create_test_python_environment(root: Path) -> Path:
-    venv.EnvBuilder(with_pip=False).create(root)
+    base_executable = Path(getattr(sys, "_base_executable", sys.executable))
+    subprocess.run(
+        [str(base_executable), "-m", "venv", "--without-pip", str(root)],
+        check=True,
+    )
     if sys.platform == "win32":
         executable = root / "Scripts" / "python.exe"
         site_packages = root / "Lib" / "site-packages"
@@ -138,7 +154,7 @@ def _create_test_python_environment(root: Path) -> Path:
         str(Path(websockets.__file__).resolve().parent.parent),
         encoding="utf-8",
     )
-    return executable.resolve()
+    return executable
 
 
 def _expected_application_python(executable: Path) -> Path:
@@ -218,7 +234,7 @@ def test_same_daemon_switches_between_two_real_python_environments(
                     str(python_b),
                 )
 
-            assert Path(identity_a.read_text(encoding="utf-8")).resolve() == (
+            assert Path(identity_a.read_text(encoding="utf-8")) == (
                 _expected_application_python(python_a)
             )
             await runtime.stop_application()
@@ -232,7 +248,7 @@ def test_same_daemon_switches_between_two_real_python_environments(
             await runtime.start_application()
             app_b_pid = runtime.application.process_id
 
-            assert Path(identity_b.read_text(encoding="utf-8")).resolve() == (
+            assert Path(identity_b.read_text(encoding="utf-8")) == (
                 _expected_application_python(python_b)
             )
             assert app_a_pid is not None
@@ -250,7 +266,7 @@ def test_daemon_selects_only_a_launcher_inside_its_fixed_root(
 ) -> None:
     app_dir = tmp_path / "application"
     _write_relay_application(app_dir)
-    python_executable = Path(sys.executable).resolve()
+    python_executable = Path(sys.executable)
     runtime = DaemonRuntime(
         application_dir=tmp_path / "unselected",
         current_app="unselected",
@@ -391,7 +407,7 @@ def test_active_application_owns_routing_then_desktop_control_recovers(
         runtime = DaemonRuntime(
             application_dir=app_dir,
             current_app="test_app",
-            managed_app_root=Path(sys.executable).resolve().parent,
+            managed_app_root=Path(sys.executable).parent,
             external_host="127.0.0.1",
             external_port=0,
             control_port=0,
@@ -483,7 +499,7 @@ def test_auto_start_runs_current_app_once_and_does_not_restart_after_exit(
         runtime = DaemonRuntime(
             application_dir=app_dir,
             current_app="test_app",
-            managed_app_root=Path(sys.executable).resolve().parent,
+            managed_app_root=Path(sys.executable).parent,
             external_host="127.0.0.1",
             external_port=0,
             control_port=0,
@@ -523,7 +539,7 @@ def test_daemon_pairing_control_does_not_stop_the_current_application(
         runtime = DaemonRuntime(
             application_dir=app_dir,
             current_app="test_app",
-            managed_app_root=Path(sys.executable).resolve().parent,
+            managed_app_root=Path(sys.executable).parent,
             external_host="127.0.0.1",
             external_port=0,
             control_port=0,
@@ -559,7 +575,7 @@ def test_device_session_end_releases_daemon_slot_without_stopping_application(
         runtime = DaemonRuntime(
             application_dir=app_dir,
             current_app="test_app",
-            managed_app_root=Path(sys.executable).resolve().parent,
+            managed_app_root=Path(sys.executable).parent,
             external_host="127.0.0.1",
             external_port=0,
             control_port=0,

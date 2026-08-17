@@ -181,6 +181,19 @@ Python 启动器。Daemon 只接受这两个规范化路径的精确组合；只
 Python Application 的可执行文件边界。广场安装的第三方 Application 仍只能使用各自受管
 目录中的独立环境，发行版默认 Application 仍只能使用受校验的包内资源。
 
+POSIX 源码联调会保留 Workspace venv 的 Python 符号链接身份，以维持虚拟环境依赖语义。
+这是一个显式的本机信任边界，而不是对符号链接不可变性的保证：Desktop 与 SDK 必须只把自己
+创建和管理、且第三方 Application 不可写的 Workspace venv 路径传入 Daemon。路径完成校验后
+到创建子进程前仍存在短暂的目标替换窗口；当前实现接受这个受信任同用户编排边界内的权衡，
+但该例外不得复用于 Application Store 之外的普通第三方 Application。普通 Python Application
+只有在 launcher 路径本身位于 Application Store 受管根目录内时才能保留 venv 路径语义；Daemon
+会在选择和实际启动前分别重新校验路径、目标文件及平台名称。该受管目录同样属于本机运行时信任
+边界，不能由其他 Application 写入。包内可执行文件则同时要求解析目标仍位于包内资源根目录。
+
+Windows 不继承该符号链接例外：授权的 `python.exe` 解析后必须仍位于其 `Scripts` 目录；
+同目录存在 `pythonw.exe` 时优先无控制台启动，不存在时允许回退到已经完成相同目录校验的
+`python.exe`。两种 Windows 入口都不得通过符号链接或重解析目标逃出授权目录。
+
 ## 8. 当前实现边界说明
 
 旧 Server 的 `daemon/discovery/`、`DISCOVER/ANNOUNCE`、UDP `37020` 和
