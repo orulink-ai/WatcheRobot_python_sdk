@@ -46,6 +46,19 @@ never receives pairing credentials. When an Application is running, Desktop
 and device business frames pass through that Application. Without one, the
 Runtime transparently forwards frames between Desktop and device.
 
+## Running in the official Workspace
+
+Use `yarn desktop:dev` at the `WatcheRobot-Workspace` root for full source
+integration. The root command installs the current SDK checkout into a
+workspace-managed virtual environment, treats it as the only Daemon source,
+and verifies runtime imports before Desktop starts. It does not consume a
+Conda interpreter, system SDK, or packaged Runtime inherited from the caller.
+
+This repository owns the Application API, Daemon, Runtime control plane, and
+distribution tooling. It does not own Desktop UI or packaging orchestration,
+and it does not implement the official default Application's ASR/LLM/TTS
+business logic.
+
 ## Modules
 
 | Area | Main entry points | What it is for |

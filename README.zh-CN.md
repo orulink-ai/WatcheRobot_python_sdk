@@ -34,6 +34,16 @@ SDK 还提供蓝牙 Wi-Fi 配网、Application 项目创建与校验、Marketpla
 
 Application 不会自行打开发现 socket 或设备 WebSocket，也拿不到配对凭据。Application 运行时，来自 Desktop 和设备的业务帧会先进入该 Application；未运行 Application 时，Runtime 在 Desktop 与设备之间透明转发。
 
+## 在官方 Workspace 中运行
+
+完整仓库联调统一从 `WatcheRobot-Workspace` 根目录执行 `yarn desktop:dev`。根脚本将当前
+SDK checkout 作为 Daemon 唯一源码，以 editable 方式安装到 workspace 自管 venv，并在
+桌面端启动前验证 Daemon 运行依赖。该入口不会使用调用者 shell 中遗留的 Conda Python、
+系统 SDK 或桌面安装包内 Runtime。
+
+SDK 仓库只负责 Application API、Daemon、Runtime 控制面和分发工具；它不负责桌面 UI、
+桌面安装包编排，也不实现官方默认 Application 的 ASR/LLM/TTS 业务。
+
 ## 模块划分
 
 | 模块 | 主要入口 | 职责 |

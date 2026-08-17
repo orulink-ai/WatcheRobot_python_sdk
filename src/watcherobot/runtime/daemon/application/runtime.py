@@ -293,6 +293,16 @@ class ApplicationRuntimeManager:
                 ),
             }
         )
+        for name in ("NO_PROXY", "no_proxy"):
+            entries = [
+                value.strip()
+                for value in environment.get(name, "").split(",")
+                if value.strip()
+            ]
+            for loopback in ("127.0.0.1", "localhost", "::1"):
+                if loopback not in entries:
+                    entries.append(loopback)
+            environment[name] = ",".join(entries)
         if self._device_status_url is not None:
             environment["WATCHER_APP_DEVICE_STATUS_URL"] = self._device_status_url
         return environment

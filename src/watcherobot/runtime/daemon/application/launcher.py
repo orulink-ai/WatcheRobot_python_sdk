@@ -58,11 +58,29 @@ class ApplicationLauncher:
         *,
         managed_app_root: Path,
         bundled_resource_root: Path,
+        source_default_application_root: Path | None = None,
+        source_default_launcher_executable: Path | None = None,
         default_app_id: str = DEFAULT_APPLICATION_ID,
         is_windows: bool | None = None,
     ) -> None:
+        if (source_default_application_root is None) != (
+            source_default_launcher_executable is None
+        ):
+            raise ValueError(
+                "source default Application root and launcher must be configured together"
+            )
         self._managed_app_root = Path(managed_app_root).resolve()
         self._bundled_resource_root = Path(bundled_resource_root).resolve()
+        self._source_default_application_root = (
+            Path(source_default_application_root).resolve()
+            if source_default_application_root is not None
+            else None
+        )
+        self._source_default_launcher_executable = (
+            Path(os.path.abspath(source_default_launcher_executable))
+            if source_default_launcher_executable is not None
+            else None
+        )
         self._default_app_id = default_app_id
         self._is_windows = os.name == "nt" if is_windows is None else is_windows
 
@@ -83,12 +101,30 @@ class ApplicationLauncher:
             app_id=manifest.app_id,
             default_app_id=self._default_app_id,
         )
+        trusted_source_default = (
+            launcher_kind is ApplicationLauncherKind.PYTHON
+            and manifest.app_id == self._default_app_id
+            and self._source_default_application_root is not None
+        )
+        if trusted_source_default and (
+            selected_dir != self._source_default_application_root
+            or Path(os.path.abspath(executable))
+            != self._source_default_launcher_executable
+        ):
+            raise ApplicationLaunchError(
+                "Source default Application must use its trusted source default launcher"
+            )
+        requested_executable = Path(os.path.abspath(executable))
         controlled_root = (
             self._bundled_resource_root
             if launcher_kind is ApplicationLauncherKind.BUNDLED
-            else self._managed_app_root
+            else (
+                _resolved_executable_parent(requested_executable)
+                if trusted_source_default
+                else self._managed_app_root
+            )
         )
-        resolved_executable = _require_controlled_executable(
+        _require_controlled_executable(
             executable,
             controlled_root=controlled_root,
             kind=launcher_kind,
@@ -96,12 +132,12 @@ class ApplicationLauncher:
         )
         command_executable = (
             _python_executable_for_application(
-                resolved_executable,
+                requested_executable,
                 controlled_root=controlled_root,
                 is_windows=self._is_windows,
             )
             if launcher_kind is ApplicationLauncherKind.PYTHON
-            else resolved_executable
+            else requested_executable.resolve(strict=True)
         )
         if (
             launcher_kind is ApplicationLauncherKind.BUNDLED
@@ -114,9 +150,18 @@ class ApplicationLauncher:
             app_id=manifest.app_id,
             application_dir=selected_dir,
             kind=launcher_kind,
-            executable=resolved_executable,
+            executable=requested_executable,
             command_executable=command_executable,
         )
+
+
+def _resolved_executable_parent(executable: Path) -> Path:
+    try:
+        return executable.resolve(strict=True).parent
+    except OSError as exc:
+        raise ApplicationLaunchError(
+            "Application launcher executable does not exist"
+        ) from exc
 
 
 def _require_absolute_directory(application_dir: Path) -> Path:

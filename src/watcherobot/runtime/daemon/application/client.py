@@ -63,8 +63,8 @@ class ApplicationCommunicators:
 
     async def run(self) -> None:
         async with (
-            connect(self._desktop_url, max_size=None) as desktop,
-            connect(self._device_url, max_size=None) as device,
+            connect(self._desktop_url, max_size=None, proxy=None) as desktop,
+            connect(self._device_url, max_size=None, proxy=None) as device,
         ):
             self._connections = {
                 ApplicationChannel.DESKTOP: desktop,
