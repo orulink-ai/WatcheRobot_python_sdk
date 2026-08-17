@@ -201,8 +201,8 @@
           </div>
           <h2 id="liveVideoTitle">相机实时画面</h2>
           <p>
-            浏览器与 Watcher 建立局域网 WebRTC 数据通道，直接接收 MJPEG 画面；
-            Python Application 仅负责信令，不转发视频帧。
+              浏览器通过独立局域网通道直接接收 Watcher 的 MJPEG 画面；
+              全双工音频继续使用 WebRTC，Python Application 不转发媒体帧。
           </p>
           <div class="live-video-controls">
             <button class="station-action" id="startLiveVideoButton" type="button">开启实时画面</button>
@@ -269,7 +269,7 @@
             <div><dt>验收动作</dt><dd>请对机器人说话</dd></div>
           </dl>
           <audio id="rtcRemoteAudio" autoplay controls aria-label="Watcher 实时麦克风声音"></audio>
-          <small>建议佩戴耳机测试，避免设备与电脑扬声器形成声学回路。</small>
+          <small>默认使用原声麦克风采集；建议佩戴耳机，避免设备与电脑扬声器形成声学回路。</small>
         </div>
       </section>
 

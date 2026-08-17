@@ -13,18 +13,30 @@ export function updateVideoCongestionFeedback(previous, metrics) {
     : Math.max(0, Number(metrics?.receivedFrames || 0) - Number(metrics?.previousReceivedFrames || 0));
   const displayFps = Math.max(0, Number(metrics?.displayFps || 0));
   const targetFps = Math.max(0, Number(metrics?.targetFps || 0));
+  const sentFps = Math.max(0, Number(metrics?.sentFps || 0));
   const frameAgeMs = Math.max(0, Number(metrics?.frameAgeMs || 0));
   const attempted = receivedDelta + droppedDelta;
   const dropRatio = attempted > 0 ? droppedDelta / attempted : 0;
-  const displayRatio = targetFps > 0 ? displayFps / targetFps : 1;
+  // Browser congestion describes loss after the device has sent a frame. A
+  // CPU-limited camera source must not be fed back as browser/network
+  // congestion, otherwise the firmware governor forms a self-reinforcing
+  // downshift loop. The requested target remains useful until sent telemetry
+  // is available; afterwards compare display throughput with actual egress.
+  const browserExpectedFps = sentFps > 0 && targetFps > 0
+    ? Math.min(sentFps, targetFps)
+    : (sentFps || targetFps);
+  const displayRatio = browserExpectedFps > 0 ? displayFps / browserExpectedFps : 1;
+  const expectedFrameIntervalMs = browserExpectedFps > 0 ? 1000 / browserExpectedFps : 0;
+  const moderateFrameAgeMs = Math.max(120, expectedFrameIntervalMs * 1.5);
+  const severeFrameAgeMs = Math.max(200, expectedFrameIntervalMs * 2.5);
   const hasVideoEvidence = receivedDelta > 0 || droppedDelta > 0 || frameAgeMs > 0;
 
   let rawLevel = 0;
   if (droppedDelta >= 4 || (attempted >= 8 && dropRatio >= 0.25)
-      || (hasVideoEvidence && displayRatio < 0.7 && frameAgeMs >= 200)) {
+      || (hasVideoEvidence && displayRatio < 0.7 && frameAgeMs >= severeFrameAgeMs)) {
     rawLevel = 2;
   } else if (droppedDelta > 0 || dropRatio >= 0.1
-      || (hasVideoEvidence && displayRatio < 0.85) || frameAgeMs >= 120) {
+      || (hasVideoEvidence && displayRatio < 0.85) || frameAgeMs >= moderateFrameAgeMs) {
     rawLevel = 1;
   }
 

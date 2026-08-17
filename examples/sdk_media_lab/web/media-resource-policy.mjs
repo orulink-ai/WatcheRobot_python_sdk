@@ -26,6 +26,7 @@ export function controlAvailability({
   resourceOwners = {},
   localResources = new Set(),
   rtcActive = false,
+  rtcMode = null,
 }) {
   const capabilitySet = new Set(capabilities || []);
   const localSet = localResources instanceof Set ? localResources : new Set(localResources || []);
@@ -33,13 +34,27 @@ export function controlAvailability({
     && !resourceOwners?.[resource]
     && !localSet.has(resource);
 
-  const mediaReady = resourceReady("media");
+  // The browser keeps the media marker for the whole local peer lifetime so
+  // stop/cleanup stays idempotent. It is an exclusive reservation only while
+  // the RTC start is pending; after the server confirms an active mode, the
+  // per-resource owners below become the source of truth.
+  const pendingRtc = localSet.has("media") && !rtcActive;
+  const cameraReady = resourceReady("camera") && !pendingRtc;
+  const microphoneReady = resourceReady("microphone") && !pendingRtc;
+  const speakerReady = resourceReady("speaker") && !pendingRtc;
+  const cameraAvailable = cameraReady && !rtcModeHasVideo(rtcMode);
+  const microphoneAvailable = microphoneReady && !rtcModeHasAudio(rtcMode);
+  const speakerAvailable = speakerReady && !rtcModeHasAudio(rtcMode);
   return {
     motion: resourceReady("motion") && capabilitySet.has("motion"),
     light: resourceReady("light") && capabilitySet.has("light"),
     animation: resourceReady("animation") && capabilitySet.has("animation"),
-    standaloneMedia: mediaReady && !rtcActive,
-    startRtc: mediaReady && !rtcActive,
+    camera: cameraAvailable,
+    microphone: microphoneAvailable,
+    speaker: speakerAvailable,
+    startRtcAudio: !rtcActive && microphoneReady && speakerReady,
+    startRtcVideo: !rtcActive && cameraReady,
+    startRtcAv: !rtcActive && cameraReady && microphoneReady && speakerReady,
     stopRtc: Boolean(connected) && Boolean(rtcActive),
   };
 }

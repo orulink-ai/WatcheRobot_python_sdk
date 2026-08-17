@@ -734,11 +734,38 @@ def test_rtc_media_lease_allows_motion_lights_and_animation(tmp_path: Path) -> N
     assert service.move_motion(pan_deg=90, tilt_deg=115, duration_ms=600)["completed"] is True
     assert service.set_light_color(color="#D9FF57", brightness=0.7, zone="all") == {"applied": True}
     assert service.play_animation(animation_id="thinking")["started"] is True
-    assert service.status()["resource_owners"] == {"media": "rtc_av"}
+    assert service.status()["resource_owners"] == {
+        "camera": "rtc_av",
+        "microphone": "rtc_av",
+        "speaker": "rtc_av",
+    }
+
+
+def test_audio_rtc_allows_photo_but_rejects_standalone_audio_actions(tmp_path: Path) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    service.start_live_video(mode="audio")
+
+    assert service.capture_photo()["content_type"] == "image/jpeg"
+    with pytest.raises(module.MediaLabBusyError, match="rtc_audio"):
+        service.play_audio()
+    with pytest.raises(module.MediaLabBusyError, match="rtc_audio"):
+        service.record_microphone(duration=1.0)
+
+
+def test_video_rtc_allows_one_standalone_audio_direction_at_a_time(tmp_path: Path) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    service.start_live_video(mode="video")
+
+    assert service.play_audio()["bytes"] > 0
+    assert service.record_microphone(duration=0.1)["content_type"] == "audio/wav"
+    with pytest.raises(module.MediaLabBusyError, match="live_video"):
+        service.capture_photo()
 
 
 @pytest.mark.parametrize("action", ["play_audio", "capture_photo", "record_microphone"])
-def test_rtc_media_lease_rejects_standalone_media_actions(tmp_path: Path, action: str) -> None:
+def test_combined_rtc_rejects_every_standalone_media_action(tmp_path: Path, action: str) -> None:
     module = _load_service_module()
     service = _service(module, tmp_path)
     service.start_live_video(mode="av")
@@ -767,8 +794,7 @@ def test_resource_locks_only_serialize_actions_that_share_the_same_hardware(tmp_
 
     assert service.move_motion(pan_deg=90, tilt_deg=115, duration_ms=600)["completed"] is True
     assert service.play_animation(animation_id="thinking")["started"] is True
-    with pytest.raises(module.MediaLabBusyError, match="play_audio"):
-        service.capture_photo()
+    assert service.capture_photo()["content_type"] == "image/jpeg"
 
     release.set()
     thread.join(timeout=1.0)
@@ -819,7 +845,9 @@ def test_record_microphone_rejects_unsafe_durations(
         service.record_microphone(duration=duration)
 
 
-def test_media_actions_are_serialized_and_report_the_active_action(tmp_path: Path) -> None:
+def test_same_media_resource_is_serialized_while_independent_camera_remains_available(
+    tmp_path: Path,
+) -> None:
     module = _load_service_module()
     release = threading.Event()
     started = threading.Event()
@@ -836,7 +864,8 @@ def test_media_actions_are_serialized_and_report_the_active_action(tmp_path: Pat
 
     assert service.status()["active_action"] == "play_audio"
     with pytest.raises(module.MediaLabBusyError, match="play_audio"):
-        service.capture_photo()
+        service.play_audio()
+    assert service.capture_photo()["bytes"] > 0
 
     release.set()
     thread.join(timeout=1.0)
@@ -1026,7 +1055,11 @@ def test_combined_rtc_http_contract_uses_one_audio_video_session(tmp_path: Path)
 
     assert started.status_code == 200
     assert started.json()["session"]["mode"] == "av"
-    assert status.json()["resource_owners"] == {"media": "rtc_av"}
+    assert status.json()["resource_owners"] == {
+        "camera": "rtc_av",
+        "microphone": "rtc_av",
+        "speaker": "rtc_av",
+    }
     assert stopped.json() == {"stopped": True}
     assert rtc.calls == [("start", "av"), ("stop", None)]
 
@@ -1113,7 +1146,7 @@ def test_live_video_requires_explicit_firmware_capability(tmp_path: Path) -> Non
     assert response.json()["error"] == "rtc_unavailable"
 
 
-def test_live_video_stop_failure_keeps_media_operation_exclusive(tmp_path: Path) -> None:
+def test_live_video_stop_failure_keeps_camera_exclusive_but_not_speaker(tmp_path: Path) -> None:
     module = _load_service_module()
     rtc = FakeRtc()
     service = _service(module, tmp_path, rtc=rtc)
@@ -1128,10 +1161,11 @@ def test_live_video_stop_failure_keeps_media_operation_exclusive(tmp_path: Path)
         service.stop_live_video()
 
     with pytest.raises(module.MediaLabBusyError, match="live_video"):
-        service.play_audio()
+        service.capture_photo()
+    assert service.play_audio()["bytes"] > 0
 
 
-def test_rtc_failure_event_keeps_media_exclusive_until_device_reports_stopped(
+def test_rtc_failure_event_keeps_camera_exclusive_until_device_reports_stopped(
     tmp_path: Path,
 ) -> None:
     module = _load_service_module()
@@ -1146,9 +1180,10 @@ def test_rtc_failure_event_keeps_media_exclusive_until_device_reports_stopped(
     )
     service.maintain()
 
-    assert service.status()["resource_owners"] == {"media": "live_video"}
+    assert service.status()["resource_owners"] == {"camera": "live_video"}
     with pytest.raises(module.MediaLabBusyError, match="live_video"):
-        service.play_audio()
+        service.capture_photo()
+    assert service.play_audio()["bytes"] > 0
 
     rtc._state.update(active=False, state="stopped")  # noqa: SLF001
     service.maintain()
@@ -1187,7 +1222,7 @@ def test_live_video_offline_cleanup_resets_rtc_before_releasing_media_lock(tmp_p
     assert restarted["session"]["active"] is True
 
 
-def test_maintenance_does_not_release_media_lock_while_live_video_is_starting(
+def test_maintenance_does_not_release_camera_lock_while_live_video_is_starting(
     tmp_path: Path,
 ) -> None:
     module = _load_service_module()
@@ -1219,7 +1254,8 @@ def test_maintenance_does_not_release_media_lock_while_live_video_is_starting(
     assert not start_thread.is_alive()
     assert not maintenance_thread.is_alive()
     with pytest.raises(module.MediaLabBusyError, match="live_video"):
-        service.play_audio()
+        service.capture_photo()
+    assert service.play_audio()["bytes"] > 0
 
 
 def test_web_app_lifespan_runs_media_lab_maintenance(tmp_path: Path) -> None:
@@ -1336,6 +1372,23 @@ def test_media_lab_stop_closes_browser_media_before_waiting_for_device_release()
     assert "elements.stopRtcAudioButton.disabled = !hadAudio || !state.rtc.peer" not in stop_body
 
 
+def test_media_lab_keeps_rtc_start_controls_disabled_until_teardown_finishes() -> None:
+    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
+    render_body = javascript.split("function renderStatus(status)", 1)[1].split(
+        "function renderCapabilities", 1
+    )[0]
+    cleanup_body = javascript.split("function cleanupRtcSession()", 1)[1].split(
+        "async function enqueueMjpegPacket", 1
+    )[0]
+
+    assert "!availability.startRtcVideo || !liveAvailable || state.rtc.teardownInProgress" in render_body
+    assert "!availability.startRtcAudio || !rtcAudioAvailable || state.rtc.teardownInProgress" in render_body
+    assert "!availability.startRtcAv || !liveAvailable || !rtcAudioAvailable\n    || state.rtc.teardownInProgress" in render_body
+    assert "elements.startLiveVideoButton.disabled = state.rtc.teardownInProgress" in cleanup_body
+    assert "elements.startRtcAudioButton.disabled = state.rtc.teardownInProgress" in cleanup_body
+    assert "elements.startRtcAvButton.disabled = state.rtc.teardownInProgress" in cleanup_body
+
+
 def test_media_lab_ui_explains_rtc_audio_playback_conflicts() -> None:
     javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
 
@@ -1406,13 +1459,15 @@ def test_http_app_maps_validation_and_busy_failures_to_stable_errors(tmp_path: P
     assert invalid.status_code == 422
     assert invalid.json()["error"] == "invalid_request"
 
-    service._operation_lock.acquire()
-    service._active_action = "capture_photo"
+    service._resource_locks["speaker"].acquire()
+    service._active_actions["speaker"] = "capture_photo"
+    service._refresh_active_action_locked()
     try:
         busy = client.post("/api/actions/play-audio")
     finally:
-        service._active_action = None
-        service._operation_lock.release()
+        service._active_actions.pop("speaker")
+        service._refresh_active_action_locked()
+        service._resource_locks["speaker"].release()
     assert busy.status_code == 409
     assert busy.json() == {
         "error": "busy",
@@ -1453,10 +1508,15 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         "正在发现设备",
         "系统空闲",
         "正在传输 PCM 示例音频",
-        "mjpeg-data",
+        "rtc-control",
+        "mjpeg_websocket_url",
+        "new WebSocket(url)",
+        'socket.send("ready")',
         "parseWjpgPacket",
         'api("/api/video/session/start"',
         "navigator.mediaDevices.getUserMedia",
+        "createRtcMicrophoneConstraints",
+        "rtc_audio_processing",
         'window.location.hostname === "127.0.0.1"',
         'params.get("rtc_hil") === "1"',
         "createMediaStreamDestination",
@@ -1483,11 +1543,14 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
         assert untranslated_copy not in html + javascript
 
     assert "localResources: new Set()" in javascript
-    assert "if (state.localResources.has(resource) && !interrupt) return null;" in javascript
+    assert "actionResources.some((name) => state.localResources.has(name))" in javascript
     assert "const ownsResource = !interrupt;" in javascript
     assert 'resource: "motion"' in javascript
     assert 'resource: "light"' in javascript
     assert 'resource: "animation"' in javascript
+    assert 'resource: "speaker"' in javascript
+    assert 'resources: ["camera", "animation"]' in javascript
+    assert 'resource: "microphone"' in javascript
     assert 'path: "/api/actions/stop-audio"' in javascript
     assert 'path: "/api/controls/motion/stop"' in javascript
     assert javascript.count("interrupt: true") >= 2
@@ -1496,3 +1559,15 @@ def test_local_ui_presents_complete_simplified_chinese_copy() -> None:
     assert 'autocomplete="one-time-code"' in html
     assert 'name="device_ip"' in html
     assert "device_ip: deviceIp || null" in javascript
+
+
+def test_media_lab_csp_allows_direct_device_websocket(tmp_path: Path) -> None:
+    module = _load_service_module()
+    client = TestClient(
+        module.create_web_app(_service(module, tmp_path), web_root=LAB_ROOT / "web")
+    )
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "connect-src 'self' ws:" in response.headers["content-security-policy"]

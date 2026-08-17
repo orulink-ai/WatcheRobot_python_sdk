@@ -452,6 +452,11 @@ class DaemonRuntime:
             if device["online"] and peer_ip is not None
             else None
         )
+        device["mjpeg_websocket_url"] = (
+            f"ws://{peer_ip}:82/ws/mjpeg"
+            if device["online"] and peer_ip is not None
+            else None
+        )
         device["preview_transport"] = self.preview_udp.snapshot()
         return {"device": device}
 

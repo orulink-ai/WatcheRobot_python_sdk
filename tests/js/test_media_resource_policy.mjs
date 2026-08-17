@@ -24,33 +24,82 @@ const connected = {
   resourceOwners: {},
   localResources: new Set(),
   rtcActive: false,
+  rtcMode: null,
 };
 
-test("RTC media ownership only disables other media actions", () => {
+test("audio RTC keeps camera capture available but owns both audio directions", () => {
   const availability = controlAvailability({
     ...connected,
-    resourceOwners: { media: "rtc_av" },
+    resourceOwners: { microphone: "rtc_audio", speaker: "rtc_audio" },
     rtcActive: true,
+    rtcMode: "audio",
   });
 
   assert.equal(availability.motion, true);
   assert.equal(availability.light, true);
   assert.equal(availability.animation, true);
-  assert.equal(availability.standaloneMedia, false);
-  assert.equal(availability.startRtc, false);
+  assert.equal(availability.camera, true);
+  assert.equal(availability.speaker, false);
+  assert.equal(availability.microphone, false);
+  assert.equal(availability.startRtcAudio, false);
+  assert.equal(availability.startRtcVideo, false);
+  assert.equal(availability.startRtcAv, false);
   assert.equal(availability.stopRtc, true);
+});
+
+test("video RTC keeps standalone speaker and microphone actions available", () => {
+  const availability = controlAvailability({
+    ...connected,
+    resourceOwners: { camera: "live_video" },
+    rtcActive: true,
+    rtcMode: "video",
+  });
+
+  assert.equal(availability.camera, false);
+  assert.equal(availability.speaker, true);
+  assert.equal(availability.microphone, true);
+  assert.equal(availability.animation, true);
+});
+
+test("combined RTC owns camera, microphone, and speaker", () => {
+  const availability = controlAvailability({
+    ...connected,
+    resourceOwners: { camera: "rtc_av", microphone: "rtc_av", speaker: "rtc_av" },
+    rtcActive: true,
+    rtcMode: "av",
+  });
+
+  assert.equal(availability.camera, false);
+  assert.equal(availability.speaker, false);
+  assert.equal(availability.microphone, false);
 });
 
 test("a pending local RTC start reserves media without blocking actuators", () => {
   const availability = controlAvailability({
     ...connected,
-    rtcActive: true,
+    localResources: new Set(["media"]),
   });
 
-  assert.equal(availability.standaloneMedia, false);
+  assert.equal(availability.camera, false);
+  assert.equal(availability.speaker, false);
+  assert.equal(availability.microphone, false);
   assert.equal(availability.motion, true);
   assert.equal(availability.light, true);
   assert.equal(availability.animation, true);
+});
+
+test("an established audio RTC ignores its start marker and keeps camera available", () => {
+  const availability = controlAvailability({
+    ...connected,
+    resourceOwners: { microphone: "rtc_audio", speaker: "rtc_audio" },
+    localResources: new Set(["media"]),
+    rtcActive: true,
+    rtcMode: "audio",
+  });
+
+  assert.equal(availability.camera, true);
+  assert.equal(availability.speaker, false);
+  assert.equal(availability.microphone, false);
 });
 
 test("a local motion request does not disable lights or media", () => {
@@ -62,7 +111,9 @@ test("a local motion request does not disable lights or media", () => {
   assert.equal(availability.motion, false);
   assert.equal(availability.light, true);
   assert.equal(availability.animation, true);
-  assert.equal(availability.standaloneMedia, true);
+  assert.equal(availability.camera, true);
+  assert.equal(availability.speaker, true);
+  assert.equal(availability.microphone, true);
 });
 
 test("offline state disables starts but preserves interrupt buttons", () => {
@@ -75,7 +126,9 @@ test("offline state disables starts but preserves interrupt buttons", () => {
   assert.equal(availability.motion, false);
   assert.equal(availability.light, false);
   assert.equal(availability.animation, false);
-  assert.equal(availability.standaloneMedia, false);
+  assert.equal(availability.camera, false);
+  assert.equal(availability.speaker, false);
+  assert.equal(availability.microphone, false);
   assert.equal(availability.stopRtc, false);
 });
 
@@ -104,8 +157,12 @@ test("a stopped server snapshot cannot keep the browser media controls locked", 
   });
 
   assert.equal(mode, null);
-  assert.equal(availability.startRtc, true);
-  assert.equal(availability.standaloneMedia, true);
+  assert.equal(availability.startRtcAudio, true);
+  assert.equal(availability.startRtcVideo, true);
+  assert.equal(availability.startRtcAv, true);
+  assert.equal(availability.camera, true);
+  assert.equal(availability.speaker, true);
+  assert.equal(availability.microphone, true);
   assert.equal(availability.motion, true);
   assert.equal(availability.light, true);
   assert.equal(availability.animation, true);

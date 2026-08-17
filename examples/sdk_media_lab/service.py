@@ -230,14 +230,15 @@ class MediaLabService:
         self._sample_audio = Path(sample_audio)
         self._device_status_provider = device_status_provider
         self._device_pairer = device_pairer
-        # RTC lifecycle transitions remain atomic while independent hardware
-        # domains use separate non-blocking resource leases. Media actions still
-        # share one lock because RTC, speaker, camera capture, and microphone all
-        # own at least one member of the audio/video hardware bundle.
+        # RTC lifecycle transitions remain atomic while camera, microphone, and
+        # speaker ownership are tracked independently. This permits the verified
+        # audio-RTC + photo and video-RTC + standalone-audio combinations without
+        # weakening same-hardware exclusion.
         self._live_video_lifecycle_lock = threading.Lock()
-        self._operation_lock = threading.Lock()
         self._resource_locks = {
-            "media": self._operation_lock,
+            "camera": threading.Lock(),
+            "microphone": threading.Lock(),
+            "speaker": threading.Lock(),
             "motion": threading.Lock(),
             "light": threading.Lock(),
             "animation": threading.Lock(),
@@ -250,6 +251,7 @@ class MediaLabService:
         self._device_refresh_lock = threading.Lock()
         self._refreshed_connection_token: str | None = None
         self._live_video_lock_held = False
+        self._rtc_resources_held: tuple[str, ...] = ()
         self._browser_host_ipv4: str | None = None
         self._append_event("system", "SDK Test Bench ready", "ok")
 
@@ -359,7 +361,7 @@ class MediaLabService:
         }
 
     def play_audio(self) -> dict[str, object]:
-        with self._operation("play_audio"):
+        with self._operation("play_audio", resource="speaker"):
             if not self._sample_audio.is_file():
                 raise FileNotFoundError(f"sample audio is missing: {self._sample_audio}")
             playback = self._robot.audio.play_file(self._sample_audio)
@@ -464,7 +466,7 @@ class MediaLabService:
             raise ValueError("animation_id must be a catalog-safe resource id")
 
     def capture_photo(self) -> dict[str, object]:
-        with self._operation("capture_photo"):
+        with self._operation("capture_photo", resources=("camera", "animation")):
             image = self._robot.camera.capture(
                 width=0,
                 height=0,
@@ -488,7 +490,7 @@ class MediaLabService:
         ):
             raise ValueError("duration must be a finite number between 0 and 30 seconds")
         duration = float(duration)
-        with self._operation("record_microphone"):
+        with self._operation("record_microphone", resource="microphone"):
             recording = self._robot.microphone.record_pcm(
                 duration=duration,
                 timeout=duration + 2.0,
@@ -529,17 +531,13 @@ class MediaLabService:
             "video": "live_video",
             "av": "rtc_av",
         }[mode]
+        rtc_resources = {
+            "audio": ("microphone", "speaker"),
+            "video": ("camera",),
+            "av": ("camera", "microphone", "speaker"),
+        }[mode]
         with self._live_video_lifecycle_lock:
-            if not self._operation_lock.acquire(blocking=False):
-                with self._state_lock:
-                    active_action = self._active_action or "another action"
-                raise MediaLabBusyError(f"media lab is busy with {active_action}")
-            # Live video owns the media-operation lock for the whole RTC session. The
-            # stop, terminal-event and device-offline paths all release it explicitly.
-            with self._state_lock:
-                self._live_video_lock_held = True
-                self._active_actions["media"] = action
-                self._refresh_active_action_locked()
+            self._acquire_rtc_resources(action, rtc_resources)
             try:
                 self._ensure_device_online()
                 self._browser_host_ipv4 = self._resolve_browser_host_ipv4()
@@ -641,11 +639,10 @@ class MediaLabService:
     def _ensure_live_video_active(self) -> None:
         self._ensure_device_online()
         with self._state_lock:
-            active = self._live_video_lock_held and self._active_actions.get("media") in {
-                "live_video",
-                "rtc_audio",
-                "rtc_av",
-            }
+            active = self._live_video_lock_held and any(
+                self._active_actions.get(resource) in {"live_video", "rtc_audio", "rtc_av"}
+                for resource in self._rtc_resources_held
+            )
         if not active:
             raise MediaLabRtcError("rtc_not_active", "RTC session is not active")
 
@@ -687,9 +684,32 @@ class MediaLabService:
             if not self._live_video_lock_held:
                 return
             self._live_video_lock_held = False
-            self._active_actions.pop("media", None)
+            resources = self._rtc_resources_held
+            self._rtc_resources_held = ()
+            for resource in resources:
+                if self._active_actions.get(resource) in {"live_video", "rtc_audio", "rtc_av"}:
+                    self._active_actions.pop(resource, None)
             self._refresh_active_action_locked()
-        self._operation_lock.release()
+        for resource in reversed(resources):
+            self._resource_locks[resource].release()
+
+    def _acquire_rtc_resources(self, action: str, resources: tuple[str, ...]) -> None:
+        acquired: list[str] = []
+        for resource in sorted(resources):
+            if self._resource_locks[resource].acquire(blocking=False):
+                acquired.append(resource)
+                continue
+            for acquired_resource in reversed(acquired):
+                self._resource_locks[acquired_resource].release()
+            with self._state_lock:
+                active_action = self._active_actions.get(resource) or self._active_action or "another action"
+            raise MediaLabBusyError(f"media lab is busy with {active_action}")
+        with self._state_lock:
+            self._live_video_lock_held = True
+            self._rtc_resources_held = tuple(sorted(resources))
+            for resource in self._rtc_resources_held:
+                self._active_actions[resource] = action
+            self._refresh_active_action_locked()
 
     def _refresh_device_snapshot(self, connection: Mapping[str, object]) -> None:
         if connection.get("online") is not True:
@@ -714,19 +734,37 @@ class MediaLabService:
             self._refreshed_connection_token = connection_token
 
     @contextmanager
-    def _operation(self, action: str, *, resource: str = "media") -> Iterator[None]:
-        resource_lock = self._resource_locks[resource]
-        if not resource_lock.acquire(blocking=False):
+    def _operation(
+        self,
+        action: str,
+        *,
+        resource: str | None = None,
+        resources: tuple[str, ...] | None = None,
+    ) -> Iterator[None]:
+        selected_resources = tuple(sorted(set(resources or ((resource or "speaker"),))))
+        acquired: list[str] = []
+        for selected_resource in selected_resources:
+            if self._resource_locks[selected_resource].acquire(blocking=False):
+                acquired.append(selected_resource)
+                continue
+            for acquired_resource in reversed(acquired):
+                self._resource_locks[acquired_resource].release()
             with self._state_lock:
-                active_action = self._active_actions.get(resource) or self._active_action or "another action"
+                active_action = (
+                    self._active_actions.get(selected_resource)
+                    or self._active_action
+                    or "another action"
+                )
             raise MediaLabBusyError(f"media lab is busy with {active_action}")
         try:
             self._ensure_device_online()
         except Exception:
-            resource_lock.release()
+            for acquired_resource in reversed(acquired):
+                self._resource_locks[acquired_resource].release()
             raise
         with self._state_lock:
-            self._active_actions[resource] = action
+            for selected_resource in selected_resources:
+                self._active_actions[selected_resource] = action
             self._refresh_active_action_locked()
         self._append_event(action, f"{_action_label(action)} started", "running")
         try:
@@ -738,15 +776,15 @@ class MediaLabService:
             self._append_event(action, f"{_action_label(action)} completed", "ok")
         finally:
             with self._state_lock:
-                if self._active_actions.get(resource) == action:
-                    self._active_actions.pop(resource, None)
+                for selected_resource in selected_resources:
+                    if self._active_actions.get(selected_resource) == action:
+                        self._active_actions.pop(selected_resource, None)
                 self._refresh_active_action_locked()
-            resource_lock.release()
+            for acquired_resource in reversed(acquired):
+                self._resource_locks[acquired_resource].release()
 
     def _refresh_active_action_locked(self) -> None:
-        self._active_action = self._active_actions.get("media")
-        if self._active_action is None and self._active_actions:
-            self._active_action = next(iter(self._active_actions.values()))
+        self._active_action = next(iter(self._active_actions.values()), None)
 
     def _append_event(self, action: str, message: str, tone: str) -> None:
         with self._state_lock:
@@ -806,7 +844,7 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
-            "script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'"
+            "script-src 'self'; style-src 'self'; connect-src 'self' ws:; frame-ancestors 'none'"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"

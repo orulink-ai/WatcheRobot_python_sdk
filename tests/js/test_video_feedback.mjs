@@ -61,3 +61,16 @@ test("session startup without a first frame is not reported as congestion", () =
 
   assert.equal(feedback.level, 0);
 });
+
+test("a slow device source is not mistaken for browser congestion", () => {
+  const feedback = updateVideoCongestionFeedback(createVideoCongestionFeedback(), {
+    receivedDelta: 5,
+    droppedDelta: 0,
+    displayFps: 5,
+    sentFps: 5,
+    targetFps: 12,
+    frameAgeMs: 200,
+  });
+
+  assert.equal(feedback.level, 0);
+});
