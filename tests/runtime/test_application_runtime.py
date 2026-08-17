@@ -233,8 +233,10 @@ def test_runtime_bypasses_system_proxy_for_local_application_channels(
         app_dir = tmp_path / "application"
         _write_application(app_dir, CONNECTED_APP)
         manager = _build_selected_manager(app_dir, app_id="test_app")
+        # Windows treats environment-variable names case-insensitively, so
+        # NO_PROXY and no_proxy cannot hold different values there.
         monkeypatch.setenv("NO_PROXY", "internal.example")
-        monkeypatch.setenv("no_proxy", "")
+        monkeypatch.setenv("no_proxy", "internal.example")
         run = manager.registry.begin_start()
         await manager.bridge.start()
         try:
@@ -246,7 +248,9 @@ def test_runtime_bypasses_system_proxy_for_local_application_channels(
         assert environment["NO_PROXY"] == (
             "internal.example,127.0.0.1,localhost,::1"
         )
-        assert environment["no_proxy"] == "127.0.0.1,localhost,::1"
+        assert environment["no_proxy"] == (
+            "internal.example,127.0.0.1,localhost,::1"
+        )
 
     asyncio.run(scenario())
 
