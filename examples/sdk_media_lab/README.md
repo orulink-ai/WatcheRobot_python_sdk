@@ -5,6 +5,13 @@ acceptance. It serves a loopback-only browser dashboard, exercises only public
 Python SDK domains, and never opens a device connection of its own. The
 `sdk_media_lab` directory and Application id remain stable for compatibility.
 
+Version 1.1.0 is ready for distribution through the Watcher Desktop
+Application Marketplace. The dashboard starts in English and provides an
+**EN / 中文** switch in the header. Its icon, web assets, and PCM sample are all
+contained inside this directory; generated photos and recordings stay under
+the ignored `artifacts/` directory and are never included in a published
+source snapshot.
+
 Start the Runtime, then run:
 
 ```powershell

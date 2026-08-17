@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">WatcheRobot SDK Test Bench</title>
+  <rect width="256" height="256" rx="52" fill="#0a0d0c"/>
+  <rect x="35" y="35" width="186" height="186" rx="38" fill="#111614" stroke="#56645d" stroke-width="6"/>
+  <path d="M74 93h108M74 128h108M74 163h108" stroke="#303a35" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="92" cy="93" r="13" fill="#d9ff57"/>
+  <circle cx="139" cy="128" r="13" fill="#62e7d7"/>
+  <circle cx="169" cy="163" r="13" fill="#ffb650"/>
+</svg>

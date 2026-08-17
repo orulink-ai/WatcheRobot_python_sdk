@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en" data-i18n-ready="false">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <title>WatcheRobot SDK 测试台</title>
+    <title>WatcheRobot SDK Test Bench</title>
     <link rel="stylesheet" href="/assets/styles.css" />
     <script src="/assets/app.js" type="module"></script>
   </head>
@@ -18,11 +18,17 @@
           <h1>SDK 测试台</h1>
         </div>
       </div>
-      <div class="connection" id="connectionBadge" data-state="waiting">
-        <span class="status-lamp" aria-hidden="true"></span>
-        <div>
-          <small>设备连接</small>
-          <strong id="connectionText">正在校准</strong>
+      <div class="masthead-actions">
+        <div class="locale-switch" role="group" aria-label="Language">
+          <button id="localeEnglish" type="button" data-locale="en-US" aria-pressed="true">EN</button>
+          <button id="localeChinese" type="button" data-locale="zh-CN" data-i18n-ignore aria-pressed="false">中文</button>
+        </div>
+        <div class="connection" id="connectionBadge" data-state="waiting">
+          <span class="status-lamp" aria-hidden="true"></span>
+          <div>
+            <small>设备连接</small>
+            <strong id="connectionText">正在校准</strong>
+          </div>
         </div>
       </div>
     </header>
