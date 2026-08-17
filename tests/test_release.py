@@ -81,45 +81,45 @@ def test_production_publish_requires_a_release_and_version_check() -> None:
     assert "environment:\n      name: pypi" in workflow
 
 
-def test_publish_workflow_tests_supported_dependency_profiles_before_one_build() -> None:
+def test_development_ci_uses_one_representative_python_environment() -> None:
     workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+    development = workflow.split("  development:", maxsplit=1)[1].split(
+        "  release-compatibility:", maxsplit=1
+    )[0]
 
     assert "pull_request:" in workflow
+    assert "types: [opened, synchronize, reopened, labeled, unlabeled]" in workflow
     assert "push:\n    branches: [main]" in workflow
-    assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in workflow
-    assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
-    assert 'dependency-profile: ["lowest", "latest"]' in workflow
-    assert "python-version: ${{ matrix.python-version }}" in workflow
-    assert '"fastapi==0.129.*"' in workflow
-    assert '"huggingface-hub==1.26.*"' in workflow
-    assert '"packaging==24.*"' in workflow
-    assert '"uvicorn==0.30.*"' in workflow
-    assert '"starlette==0.51.*"' in workflow
-    assert '"websockets==14.*"' in workflow
-    assert '"fastapi>=0.129,<1"' in workflow
-    assert '"starlette>=0.51,<1"' in workflow
-    assert '"websockets>=14,<16"' in workflow
-    assert "python -m mypy src/watcherobot" in workflow
+    assert "!contains(github.event.pull_request.labels.*.name, 'release:version')" in development
+    assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in development
+    assert 'python-version: "3.11"' in development
+    assert "matrix:" not in development
+    assert "dependency-profile" not in development
+    assert development.count("actions/setup-python@v6") == 1
+    assert "python -m pytest" in development
+    assert "python -m mypy src/watcherobot" in development
+    assert "python -m pytest tests/provisioning" in development
+    assert "from watcherobot.provisioning.bleak_backend import BleakBackend" in development
     assert "id-token: write" not in workflow
     assert "environment:" not in workflow
-    assert "name: Build distributions" in workflow
-    assert "needs: [test, ble-provisioning]" in workflow
-    assert "python -m pip install --force-reinstall dist/*.whl" in workflow
+    assert "python -m build" in workflow
+    assert "python -m twine check dist/*" in workflow
+    assert ".venv-wheel-check/bin/python -m pip install --force-reinstall dist/*.whl" in workflow
     assert "python -m pip check" in workflow
-    assert workflow.count("name: Create isolated virtual environment") == 3
-    assert 'echo "$PWD/.venv/bin" >> "$GITHUB_PATH"' in workflow
-    assert workflow.count("api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}") == 3
-    assert workflow.count("tar --extract --gzip --strip-components=1") == 3
-    assert workflow.count("name: Clean workspace before snapshot download") == 3
-    assert workflow.count('workspace=$(realpath -m "${GITHUB_WORKSPACE}")') == 3
-    assert workflow.count('runner_work=$(realpath -m "${RUNNER_TEMP}/..")') == 3
-    assert workflow.count('[[ "${workspace}" == "${runner_work}"/*/* ]]') == 3
-    assert "/opt/actions-runner-ci/_work" not in workflow
-    assert workflow.count('rm -rf -- "${workspace}"/*') == 3
-    assert "actions/checkout" not in workflow
-    assert workflow.count("--retry 5 --retry-connrefused") == 3
-    assert "--retry-all-errors" not in workflow
-    assert "Building is deliberately independent of Git history and tags" in workflow
+    assert development.count("name: Create isolated virtual environment") == 1
+    assert 'echo "$PWD/.venv/bin" >> "$GITHUB_PATH"' in development
+    assert development.count("api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}") == 1
+    assert development.count("tar --extract --gzip --strip-components=1") == 1
+    assert development.count("name: Clean workspace before snapshot download") == 1
+    assert development.count('workspace=$(realpath -m "${GITHUB_WORKSPACE}")') == 1
+    assert development.count('runner_work=$(realpath -m "${RUNNER_TEMP}/..")') == 1
+    assert development.count('[[ "${workspace}" == "${runner_work}"/*/* ]]') == 1
+    assert "/opt/actions-runner-ci/_work" not in development
+    assert development.count('rm -rf -- "${workspace}"/*') == 1
+    assert "actions/checkout" not in development
+    assert development.count("--retry 5 --retry-connrefused") == 1
+    assert "--retry-all-errors" not in development
+    assert "Building is deliberately independent of Git history and tags" in development
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'build-backend = "hatchling.build"' in pyproject
     assert '[tool.hatch.version]\npath = "src/watcherobot/__init__.py"' in pyproject
@@ -127,10 +127,35 @@ def test_publish_workflow_tests_supported_dependency_profiles_before_one_build()
     assert "versioneer" not in pyproject.lower()
 
 
-def test_fake_ble_tests_run_on_self_hosted_linux() -> None:
+def test_release_version_pr_runs_the_full_supported_compatibility_matrix() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+    release = workflow.split("  release-compatibility:", maxsplit=1)[1]
+
+    assert "contains(github.event.pull_request.labels.*.name, 'release:version')" in release
+    assert 'python-version: ["3.10", "3.11", "3.12"]' in release
+    assert 'dependency-profile: ["lowest", "latest"]' in release
+    assert "max-parallel: 2" in release
+    assert "python-version: ${{ matrix.python-version }}" in release
+    assert '"fastapi==0.129.*"' in release
+    assert '"huggingface-hub==1.26.*"' in release
+    assert '"packaging==24.*"' in release
+    assert '"uvicorn==0.30.*"' in release
+    assert '"starlette==0.51.*"' in release
+    assert '"websockets==14.*"' in release
+    assert '"fastapi>=0.129,<1"' in release
+    assert '"starlette>=0.51,<1"' in release
+    assert '"websockets>=14,<16"' in release
+    assert "python -m pytest" in release
+    assert "python -m mypy src/watcherobot" in release
+    assert "matrix.python-version == '3.12'" in release
+    assert "matrix.dependency-profile == 'latest'" in release
+    assert "python -m build" in release
+    assert "python -m twine check dist/*" in release
+
+
+def test_fake_ble_tests_run_in_development_ci_on_self_hosted_linux() -> None:
     workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
 
-    assert "ble-provisioning:" in workflow
     assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in workflow
     assert "python -m pytest tests/provisioning" in workflow
     assert "from watcherobot.provisioning.bleak_backend import BleakBackend" in workflow
