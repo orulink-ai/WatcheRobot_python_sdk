@@ -345,6 +345,18 @@ def _catalog_pull_request_description(
         ("Author", _markdown_table_text(application.author)),
         ("Description", _markdown_table_text(application.description)),
         ("SDK requirement", f"`{application.requires_watcherobot}`"),
+        (
+            "Host platforms",
+            _markdown_table_text(
+                ", ".join(
+                    {"windows": "Windows", "macos": "macOS"}.get(
+                        platform,
+                        platform,
+                    )
+                    for platform in application.supported_host_platforms
+                )
+            ),
+        ),
         ("Dependencies", dependencies),
         ("Icon", icon_value),
     )

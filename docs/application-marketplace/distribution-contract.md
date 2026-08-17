@@ -51,6 +51,11 @@ V1 的 Space 名称固定为 `<hf_username>/WatcherRobot-<app_id>`。发布工�
 `application_directory` 和 `launcher.kind/executable`。这些是 Desktop 向 Daemon
 提交受控启动规格的唯一安装信息来源；Desktop 不读取或定义 SDK 的 `install.json` 格式。
 
+`marketplace` 的每个 Application 必须包含 `supported_host_platforms` 和
+`host_compatible`。前者是应用作者基于实际验证声明的 `windows`/`macos` 支持范围，
+后者是 SDK 对当前宿主的提示结果；两者均不阻断安装。Desktop 负责在宿主不适用时取得
+用户明确确认后再继续安装。
+
 ## JSONL 事件
 
 stdout 每行必须是一个完整 JSON 对象，事件类型只允许 `progress`、`result`、`error`。JSONL 使用 ASCII 安全的 Unicode 转义，确保 Windows 打包进程不受活动控制台代码页影响且每行始终是有效 UTF-8。`message` 统一使用英文，但仍然只是辅助文案；人类进度和第三方库进度只能进入 stderr。事件不包含 Token、Device Code、时间戳或 traceback。
@@ -81,7 +86,7 @@ stdout 每行必须是一个完整 JSON 对象，事件类型只允许 `progress
 
 | 类别 | 错误码 |
 | --- | --- |
-| Application 校验 | `app_manifest_missing`、`app_entrypoint_missing`、`app_manifest_invalid`、`app_sdk_incompatible`、`app_host_platform_incompatible`、`app_dependency_invalid`、`app_content_forbidden` |
+| Application 校验 | `app_manifest_missing`、`app_entrypoint_missing`、`app_manifest_invalid`、`app_sdk_incompatible`、`app_dependency_invalid`、`app_content_forbidden` |
 | OAuth 与凭据 | `auth_required`、`auth_denied`、`auth_expired`、`auth_invalid_response`、`auth_network_error`、`credential_store_error` |
 | Space 与官方名单 | `space_ownership_conflict`、`catalog_invalid`、`catalog_pr_conflict`、`remote_error` |
 | Application Runtime | `runtime_manifest_invalid`、`runtime_resources_missing`、`runtime_python_integrity_failed`、`runtime_uv_integrity_failed`、`runtime_sdk_wheel_integrity_failed` |

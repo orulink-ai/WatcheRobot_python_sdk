@@ -15,7 +15,6 @@ class ErrorCode(str, Enum):
     APP_ENTRYPOINT_MISSING = "app_entrypoint_missing"
     APP_MANIFEST_INVALID = "app_manifest_invalid"
     APP_SDK_INCOMPATIBLE = "app_sdk_incompatible"
-    APP_HOST_PLATFORM_INCOMPATIBLE = "app_host_platform_incompatible"
     APP_DEPENDENCY_INVALID = "app_dependency_invalid"
     APP_CONTENT_FORBIDDEN = "app_content_forbidden"
     AUTH_REQUIRED = "auth_required"
@@ -135,7 +134,6 @@ _VALIDATION_ERROR_CODES = frozenset(
         ErrorCode.APP_ENTRYPOINT_MISSING,
         ErrorCode.APP_MANIFEST_INVALID,
         ErrorCode.APP_SDK_INCOMPATIBLE,
-        ErrorCode.APP_HOST_PLATFORM_INCOMPATIBLE,
         ErrorCode.APP_DEPENDENCY_INVALID,
         ErrorCode.APP_CONTENT_FORBIDDEN,
     }

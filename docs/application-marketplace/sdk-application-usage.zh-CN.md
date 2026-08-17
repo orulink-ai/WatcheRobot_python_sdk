@@ -108,6 +108,7 @@ SDK 自动计算。发布前应修改正式唯一 ID，并补齐应用广场信�
 - `icon` 必须是 Application 根目录内真实存在的普通文件。
 - 应用广场上架必须使用 `schema_version: 2`。`supported_host_platforms` 只能填写
   `windows` 和/或 `macos`，且必须基于实际验证结果，不能因为使用 Python 就推断 macOS 可用。
+- 平台声明是兼容性元数据。Desktop 在安装与当前宿主不匹配的 Application 前会提示风险；用户明确确认后仍可继续安装。
 
 最小 `app.py`：
 

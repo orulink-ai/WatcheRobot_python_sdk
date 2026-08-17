@@ -29,9 +29,6 @@ from .download import (
 )
 from .events import ErrorCode, EventSink, ProgressEvent
 from .ports import MarketplaceHubClient
-from watcherobot.runtime.daemon.application.manifest import current_host_platform
-
-
 _RUNTIME_MANIFEST = "runtime.json"
 _RUNTIME_TREE_PREFIX = b"watcher-application-runtime-tree-sha256-v1\0"
 _MAX_OUTPUT_BYTES = 1024 * 1024
@@ -261,7 +258,6 @@ def install_application(
     hub: MarketplaceHubClient,
     events: EventSink | None = None,
     environment_runner: ApplicationEnvironmentRunner | None = None,
-    host_platform: str | None = None,
 ) -> ApplicationInstallResult:
     """Install one immutable remote Application into a single managed root."""
 
@@ -284,10 +280,6 @@ def install_application(
         )
         application_id = snapshot.application.app_id
         _require_application_id(application_id)
-        _require_supported_host_platform(
-            snapshot.application.supported_host_platforms,
-            host_platform=host_platform,
-        )
         environment = candidate / ".venv"
         runner = environment_runner or SystemApplicationEnvironmentRunner()
         resolved_dependencies = _create_environment(
@@ -330,22 +322,6 @@ def install_application(
             ErrorCode.INTERNAL_ERROR,
             "Application installation failed",
         ) from exc
-
-
-def _require_supported_host_platform(
-    supported_host_platforms: tuple[str, ...],
-    *,
-    host_platform: str | None,
-) -> None:
-    current = host_platform or current_host_platform()
-    if current is not None and current in supported_host_platforms:
-        return
-    declared = ", ".join(supported_host_platforms) or "none"
-    raise ApplicationInstallError(
-        ErrorCode.APP_HOST_PLATFORM_INCOMPATIBLE,
-        "Application does not support this host platform "
-        f"(declared: {declared})",
-    )
 
 
 def list_installed_applications(store_root: Path) -> tuple[InstalledApplication, ...]:

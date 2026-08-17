@@ -125,6 +125,9 @@ Rules:
 - Marketplace submissions require `schema_version: 2`. Declare every supported
   desktop host explicitly with `windows` and/or `macos`; do not infer macOS
   compatibility solely from the use of Python.
+- The declaration is compatibility metadata. Desktop warns before installing an
+  Application that does not match the current host, and a user who explicitly
+  confirms the warning may still install it.
 
 Minimal `app.py`:
 
