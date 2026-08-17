@@ -110,6 +110,67 @@ def test_python_launcher_can_start_the_default_application_from_source(
     assert spec.command == (executable, application_dir / "app.py")
 
 
+def test_source_default_launcher_accepts_only_the_explicit_trusted_pair(
+    tmp_path: Path,
+) -> None:
+    managed_root = tmp_path / "application-store"
+    application_dir = _write_application(
+        tmp_path / "workspace" / "WatcheRobot_server",
+        app_id="watcher_default",
+    )
+    executable = _write_executable(
+        tmp_path / "workspace" / ".runtime" / "venv" / "bin",
+        _python_name(),
+    )
+    launcher = ApplicationLauncher(
+        managed_app_root=managed_root,
+        bundled_resource_root=tmp_path / "resources",
+        source_default_application_root=application_dir,
+        source_default_launcher_executable=executable,
+    )
+
+    spec = launcher.build_spec(
+        application_dir=application_dir,
+        kind="python",
+        executable=executable,
+    )
+
+    assert spec.app_id == "watcher_default"
+    assert spec.executable == executable
+    assert spec.command == (executable, application_dir / "app.py")
+
+    other_python = _write_executable(
+        tmp_path / "workspace" / ".runtime" / "other" / "bin",
+        _python_name(),
+    )
+    with pytest.raises(ApplicationLaunchError, match="trusted source default"):
+        launcher.build_spec(
+            application_dir=application_dir,
+            kind="python",
+            executable=other_python,
+        )
+
+    other_application_dir = _write_application(
+        tmp_path / "workspace" / "other-server",
+        app_id="watcher_default",
+    )
+    with pytest.raises(ApplicationLaunchError, match="trusted source default"):
+        launcher.build_spec(
+            application_dir=other_application_dir,
+            kind="python",
+            executable=executable,
+        )
+
+
+def test_source_default_launcher_configuration_must_be_complete(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must be configured together"):
+        ApplicationLauncher(
+            managed_app_root=tmp_path / "application-store",
+            bundled_resource_root=tmp_path / "resources",
+            source_default_application_root=tmp_path / "server",
+        )
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX virtualenvs use Python symlinks")
 def test_python_launcher_preserves_virtualenv_symlink_for_execution(
     tmp_path: Path,

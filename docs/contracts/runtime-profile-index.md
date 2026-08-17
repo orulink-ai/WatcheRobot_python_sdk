@@ -188,6 +188,16 @@ magic(4) + type(1) + flags(1) + stream_id(2) + sequence(4) + payload_len(4)
 - Application 正常停止：运行凭证失效，两个本地通道关闭；设备连接继续由 Runtime 持有。
 - Runtime 停止：先停止控制面和 Application，再停止配对 UDP 与外部 WebSocket。
 
+### Workspace 默认 Application 启动授权
+
+源码联调时，Desktop 必须在启动 Daemon 时成对声明默认 Application 的源码根目录和
+Python 启动器。Daemon 只接受这两个规范化路径的精确组合；只声明其中一个、替换 Python、
+切换到其他源码目录，或尝试把该授权用于第三方 Application 都必须失败。
+
+该授权只解决 Workspace 自管虚拟环境位于 Application Store 之外的问题，不扩大普通
+Python Application 的可执行文件边界。广场安装的第三方 Application 仍只能使用各自受管
+目录中的独立环境，发行版默认 Application 仍只能使用受校验的包内资源。
+
 ## 8. 当前实现边界说明
 
 旧 Server 的 `daemon/discovery/`、`DISCOVER/ANNOUNCE`、UDP `37020` 和
