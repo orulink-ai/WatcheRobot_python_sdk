@@ -86,7 +86,7 @@ def test_publish_workflow_tests_supported_dependency_profiles_before_one_build()
 
     assert "pull_request:" in workflow
     assert "push:\n    branches: [main]" in workflow
-    assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in workflow
+    assert "labels: [self-hosted, Linux, X64, sdk-ci]" in workflow
     assert 'python-version: ["3.10", "3.11", "3.12"]' in workflow
     assert 'dependency-profile: ["lowest", "latest"]' in workflow
     assert "python-version: ${{ matrix.python-version }}" in workflow
@@ -127,11 +127,28 @@ def test_publish_workflow_tests_supported_dependency_profiles_before_one_build()
     assert "versioneer" not in pyproject.lower()
 
 
+def test_ci_jobs_target_the_general_ci_runner_group() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+    grouped_sdk_runner = (
+        "runs-on:\n"
+        "      group: general-ci\n"
+        "      labels: [self-hosted, Linux, X64, sdk-ci]"
+    )
+    assert workflow.count(grouped_sdk_runner) == 3
+
+    review = (ROOT / ".github" / "workflows" / "pr-review.yml").read_text(encoding="utf-8")
+    assert (
+        "runs-on:\n"
+        "      group: general-ci\n"
+        "      labels: [self-hosted, Linux, X64, sdk-ci, pr-review]"
+    ) in review
+
+
 def test_fake_ble_tests_run_on_self_hosted_linux() -> None:
     workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
 
     assert "ble-provisioning:" in workflow
-    assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in workflow
+    assert "labels: [self-hosted, Linux, X64, sdk-ci]" in workflow
     assert "python -m pytest tests/provisioning" in workflow
     assert "from watcherobot.provisioning.bleak_backend import BleakBackend" in workflow
 
@@ -159,7 +176,7 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     assert "LUXIAO_HERMES_HOST: ${{ vars.LUXIAO_HERMES_HOST }}" in workflow
     assert 'HERMES_HOST = "hermesadmin@192.168.1.116"' not in bridge
     assert "审查结论必须注明未覆盖范围" in bridge
-    assert "runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review]" in workflow
+    assert "labels: [self-hosted, Linux, X64, sdk-ci, pr-review]" in workflow
     assert "gh pr comment ${{ github.event.pull_request.number }} \\" in workflow
     assert "-R ${{ github.repository }} \\" in workflow
 

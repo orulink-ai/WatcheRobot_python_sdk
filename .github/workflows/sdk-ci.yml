@@ -17,7 +17,9 @@ permissions:
 jobs:
   test:
     name: Python ${{ matrix.python-version }} / ${{ matrix.dependency-profile }}
-    runs-on: [self-hosted, Linux, X64, sdk-ci]
+    runs-on:
+      group: general-ci
+      labels: [self-hosted, Linux, X64, sdk-ci]
     strategy:
       fail-fast: false
       matrix:
@@ -97,7 +99,9 @@ jobs:
     name: BLE fake backend
     # CI executes on company-owned runners by policy. This Linux contract test
     # covers the fake backend without reintroducing GitHub-hosted runners.
-    runs-on: [self-hosted, Linux, X64, sdk-ci]
+    runs-on:
+      group: general-ci
+      labels: [self-hosted, Linux, X64, sdk-ci]
     steps:
       - name: Clean workspace before snapshot download
         run: |
@@ -138,7 +142,9 @@ jobs:
   build:
     name: Build distributions
     needs: [test, ble-provisioning]
-    runs-on: [self-hosted, Linux, X64, sdk-ci]
+    runs-on:
+      group: general-ci
+      labels: [self-hosted, Linux, X64, sdk-ci]
     steps:
       # The package uses Hatch's explicit src/watcherobot/__init__.py version
       # source. Building is deliberately independent of Git history and tags.
