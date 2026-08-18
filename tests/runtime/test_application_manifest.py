@@ -61,6 +61,41 @@ def test_manifest_rejects_missing_watcherobot_requirement(tmp_path) -> None:
         ApplicationManifest.load(tmp_path, watcherobot_version="1.5.0")
 
 
+def test_schema_v2_requires_and_preserves_supported_host_platforms(tmp_path) -> None:
+    write_application(
+        tmp_path,
+        extra={
+            "schema_version": 2,
+            "supported_host_platforms": ["windows", "macos"],
+        },
+    )
+
+    manifest = ApplicationManifest.load(
+        tmp_path,
+        watcherobot_version="1.5.0",
+    )
+
+    assert manifest.schema_version == 2
+    assert manifest.supported_host_platforms == ("windows", "macos")
+
+
+def test_schema_v2_rejects_missing_or_invalid_supported_host_platforms(tmp_path) -> None:
+    write_application(tmp_path, extra={"schema_version": 2})
+
+    with pytest.raises(ApplicationManifestError, match="supported_host_platforms"):
+        ApplicationManifest.load(tmp_path, watcherobot_version="1.5.0")
+
+    write_application(
+        tmp_path,
+        extra={
+            "schema_version": 2,
+            "supported_host_platforms": ["windows", "linux"],
+        },
+    )
+    with pytest.raises(ApplicationManifestError, match="windows or macos"):
+        ApplicationManifest.load(tmp_path, watcherobot_version="1.5.0")
+
+
 def test_manifest_rejects_incompatible_watcherobot_version(tmp_path) -> None:
     write_application(tmp_path, requires_watcherobot=">=2.0,<3.0")
 

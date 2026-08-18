@@ -96,7 +96,7 @@ def test_app_init_help_describes_interactive_and_scripted_usage(capsys) -> None:
     output = _help_for(build_parser(), ["app", "init"], capsys)
 
     assert "Create a runnable Application project" in output
-    for option in ("--id", "--name", "--author", "--description"):
+    for option in ("--id", "--name", "--author", "--description", "--platform"):
         assert option in output
     assert "defaults from the project directory" in output
 
@@ -126,6 +126,8 @@ def test_app_init_creates_project_without_starting_daemon(
             "Example Team",
             "--description",
             "Example Application",
+            "--platform",
+            "windows",
         ]
     )
 
@@ -174,6 +176,7 @@ def test_app_init_derives_metadata_without_prompts(
     assert manifest["name"] == "Hello Robot"
     assert manifest["author"] == "Local Developer"
     assert manifest["description"] == "Hello Robot WatcheRobot Application."
+    assert manifest["supported_host_platforms"] == ["windows", "macos"]
     assert capsys.readouterr().err == ""
 
 

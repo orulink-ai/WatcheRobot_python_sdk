@@ -104,6 +104,7 @@ def test_submit_uses_published_snapshot_and_never_uploads_source(
     assert isinstance(description, str)
     assert "| Name | Demo |" in description
     assert "| Author | Developer |" in description
+    assert "| Host platforms | Windows, macOS |" in description
     assert "| Icon | `icon.png` |" in description
     assert (
         "![Application icon](https://huggingface.co/spaces/"

@@ -53,6 +53,8 @@ class MarketplaceApplication:
     author: str
     icon: str
     compatible: bool
+    supported_host_platforms: tuple[str, ...] = ()
+    host_compatible: bool = False
 
     @classmethod
     def from_metadata(
@@ -75,10 +77,12 @@ class MarketplaceApplication:
             version=metadata.version,
             requires_watcherobot=metadata.requires_watcherobot,
             dependencies=metadata.dependencies,
+            supported_host_platforms=metadata.supported_host_platforms,
             description=metadata.description,
             author=metadata.author,
             icon=metadata.icon,
             compatible=metadata.supports_watcherobot(watcherobot_version),
+            host_compatible=metadata.supports_current_host_platform(),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -92,10 +96,12 @@ class MarketplaceApplication:
             "version": self.version,
             "requires_watcherobot": self.requires_watcherobot,
             "dependencies": list(self.dependencies),
+            "supported_host_platforms": list(self.supported_host_platforms),
             "description": self.description,
             "author": self.author,
             "icon": self.icon,
             "compatible": self.compatible,
+            "host_compatible": self.host_compatible,
         }
 
 
@@ -187,6 +193,12 @@ def load_official_marketplace(
                 "An Application manifest in the official marketplace is invalid",
                 details=source_details,
             ) from exc
+        if metadata.schema_version != 2:
+            raise MarketplaceError(
+                ErrorCode.CATALOG_INVALID,
+                "An Application manifest in the official marketplace must use schema_version 2",
+                details=source_details,
+            )
         expected_space_id = f"WatcherRobot-{metadata.app_id}"
         if entry.space_id.split("/", 1)[1] != expected_space_id:
             raise MarketplaceError(

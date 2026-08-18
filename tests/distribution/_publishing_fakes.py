@@ -28,12 +28,13 @@ CATALOG_REPO = "Orulink/watcherobot-app-store"
 
 def manifest_document(**overrides: object) -> bytes:
     payload: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "id": "com.orulink.demo",
         "name": "Demo",
         "version": "1.2.3",
         "requires_watcherobot": ">=0.1,<0.2",
         "dependencies": [],
+        "supported_host_platforms": ["windows", "macos"],
         "description": "A demo",
         "author": "Developer",
         "icon": "icon.png",

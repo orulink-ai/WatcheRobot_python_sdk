@@ -46,6 +46,7 @@ def test_check_application_reuses_manifest_and_returns_structured_data(
         "version": "1.2.3",
         "requires_watcherobot": ">=0.1.0a1,<0.2",
         "dependencies": ["httpx>=0.28,<1"],
+        "supported_host_platforms": [],
         "description": "A demo Application",
         "author": "Orulink",
         "icon": "",
@@ -81,6 +82,7 @@ def test_cli_app_check_jsonl_does_not_start_daemon(
             "version": "1.2.3",
             "requires_watcherobot": ">=0.1.0a1,<0.2",
             "dependencies": ["httpx>=0.28,<1"],
+            "supported_host_platforms": [],
             "description": "A demo Application",
             "author": "Orulink",
             "icon": "",
@@ -107,6 +109,7 @@ def test_cli_app_check_human_output_uses_same_check_result(
         "Version:          1.2.3\n"
         "SDK requirement:  >=0.1.0a1,<0.2\n"
         "Dependencies:     httpx>=0.28,<1\n"
+        "Host platforms:   Not declared\n"
         "Author:           Orulink\n"
         "Description:      A demo Application\n"
     )

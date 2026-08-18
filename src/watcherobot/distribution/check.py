@@ -23,6 +23,7 @@ class ApplicationCheckResult:
     description: str
     author: str
     icon: str
+    supported_host_platforms: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -32,6 +33,7 @@ class ApplicationCheckResult:
             "version": self.version,
             "requires_watcherobot": self.requires_watcherobot,
             "dependencies": list(self.dependencies),
+            "supported_host_platforms": list(self.supported_host_platforms),
             "description": self.description,
             "author": self.author,
             "icon": self.icon,
@@ -57,6 +59,7 @@ def check_application(
         version=manifest.version,
         requires_watcherobot=manifest.requires_watcherobot,
         dependencies=manifest.dependencies,
+        supported_host_platforms=manifest.supported_host_platforms,
         description=manifest.description,
         author=manifest.author,
         icon=manifest.icon,

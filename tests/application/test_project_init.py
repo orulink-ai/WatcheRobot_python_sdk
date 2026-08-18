@@ -23,6 +23,7 @@ def test_init_creates_one_publish_ready_application_project(
         name="Robot Demo",
         author="Example Team",
         description="A generated WatcheRobot Application.",
+        supported_host_platforms=["windows", "macos"],
         watcherobot_version="0.1.1a3",
     )
 
@@ -32,6 +33,7 @@ def test_init_creates_one_publish_ready_application_project(
         "name": "Robot Demo",
         "version": "0.1.0",
         "requires_watcherobot": ">=0.1.1a3,<0.2",
+        "supported_host_platforms": ["windows", "macos"],
         "files": [
             ".gitignore",
             "README.md",
@@ -45,12 +47,13 @@ def test_init_creates_one_publish_ready_application_project(
         target.joinpath("app.json").read_text(encoding="utf-8")
     )
     assert manifest_document == {
-        "schema_version": 1,
+        "schema_version": 2,
         "id": "com.example.robot_demo",
         "name": "Robot Demo",
         "version": "0.1.0",
         "requires_watcherobot": ">=0.1.1a3,<0.2",
         "dependencies": [],
+        "supported_host_platforms": ["windows", "macos"],
         "description": "A generated WatcheRobot Application.",
         "author": "Example Team",
         "icon": "icon.svg",
@@ -95,6 +98,7 @@ def test_init_never_overwrites_an_existing_target(
             name="Demo",
             author="Example",
             description="Example Application",
+            supported_host_platforms=["windows"],
             watcherobot_version="0.1.1a3",
         )
 
@@ -125,6 +129,7 @@ def test_init_rejects_invalid_metadata_without_leaving_a_project(
         "name": "Demo",
         "author": "Example",
         "description": "Example Application",
+        "supported_host_platforms": ["windows"],
     }
     values[field] = value
 
@@ -158,7 +163,8 @@ def test_init_derives_a_bounded_sdk_requirement(
         app_id="com.example.demo",
         name="Demo",
         author="Example",
-        description="Example Application",
+            description="Example Application",
+            supported_host_platforms=["windows"],
         watcherobot_version=sdk_version,
     )
 

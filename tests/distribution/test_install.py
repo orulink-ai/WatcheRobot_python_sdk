@@ -116,6 +116,36 @@ def test_runtime_publication_retries_one_transient_filesystem_failure(
     assert runtime_copy_attempts == 2
 
 
+def test_install_allows_an_application_for_another_host_platform(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = tmp_path / "published-source"
+    _write_source(source, supported_host_platforms=["windows"])
+    runtime = tmp_path / "runtime-source"
+    _write_runtime(runtime)
+    # The former host-platform gate consulted this symbol. Installation must
+    # remain possible after Desktop has shown and received confirmation for
+    # this mismatch.
+    monkeypatch.setattr(
+        install_module,
+        "current_host_platform",
+        lambda: "macos",
+        raising=False,
+    )
+
+    installed = install_application(
+        space_id=SPACE_ID,
+        commit=COMMIT,
+        store_root=tmp_path / "application-store",
+        runtime_root=runtime,
+        hub=FakeHub(source),
+        environment_runner=FakeEnvironmentRunner(),
+    )
+
+    assert installed.application_id == "com.example.demo"
+
+
 def test_environment_runner_retries_one_transient_nonzero_exit(
     tmp_path: Path,
     monkeypatch,
@@ -340,17 +370,23 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
     assert list_installed_applications(store_root) == ()
 
 
-def _write_source(root: Path) -> None:
+def _write_source(
+    root: Path,
+    *,
+    supported_host_platforms: list[str] | None = None,
+) -> None:
     root.mkdir(parents=True)
     root.joinpath("app.json").write_text(
         json.dumps(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "id": "com.example.demo",
                 "name": "Demo",
                 "version": "1.0.0",
                 "requires_watcherobot": ">=0.1.0a4,<0.2",
                 "dependencies": ["requests>=2.32,<3"],
+                "supported_host_platforms": supported_host_platforms
+                or ["windows", "macos"],
             }
         ),
         encoding="utf-8",

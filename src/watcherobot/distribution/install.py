@@ -29,8 +29,6 @@ from .download import (
 )
 from .events import ErrorCode, EventSink, ProgressEvent
 from .ports import MarketplaceHubClient
-
-
 _RUNTIME_MANIFEST = "runtime.json"
 _RUNTIME_TREE_PREFIX = b"watcher-application-runtime-tree-sha256-v1\0"
 _MAX_OUTPUT_BYTES = 1024 * 1024

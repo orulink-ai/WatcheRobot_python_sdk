@@ -34,7 +34,11 @@ from .ports import (
 from .publish import PublishError, _load_verified_identity
 
 
-_SUBMIT_REQUIRED_METADATA = ("description", "author")
+_SUBMIT_REQUIRED_METADATA = (
+    "description",
+    "author",
+    "supported_host_platforms",
+)
 
 
 class SubmitError(RuntimeError):
@@ -298,6 +302,10 @@ def submit_application(
 def _validate_submission_metadata(
     application: ApplicationCheckResult | ApplicationManifestMetadata,
 ) -> None:
+    if application.schema_version != 2:
+        raise ApplicationManifestError(
+            "Catalog submission requires app.json schema_version 2"
+        )
     missing = [
         field
         for field in _SUBMIT_REQUIRED_METADATA
@@ -337,6 +345,18 @@ def _catalog_pull_request_description(
         ("Author", _markdown_table_text(application.author)),
         ("Description", _markdown_table_text(application.description)),
         ("SDK requirement", f"`{application.requires_watcherobot}`"),
+        (
+            "Host platforms",
+            _markdown_table_text(
+                ", ".join(
+                    {"windows": "Windows", "macos": "macOS"}.get(
+                        platform,
+                        platform,
+                    )
+                    for platform in application.supported_host_platforms
+                )
+            ),
+        ),
         ("Dependencies", dependencies),
         ("Icon", icon_value),
     )
