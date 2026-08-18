@@ -26,13 +26,81 @@ _LOCAL_APPLICATION_ID_PREFIX = "local."
 _APP_TEMPLATE = '''"""WatcheRobot Application entrypoint."""
 
 import asyncio
+import random
 
 from watcherobot.application import ApplicationContext
 
 
+# Firmware behavior-state IDs, not raw expression or animation resource IDs.
+DEMO_BEHAVIORS = (
+    "smile",
+    "shock",
+    "sunglasses",
+    "speechless",
+    "concentration",
+    "get",
+    "query",
+    "fondle_love",
+)
+DEMO_BEHAVIOR_SECONDS = 4.0
+
+
+def _shuffled_demo_behaviors(previous_behavior: str | None) -> list[str]:
+    behaviors = list(DEMO_BEHAVIORS)
+    random.shuffle(behaviors)
+    if (
+        previous_behavior is not None
+        and len(behaviors) > 1
+        and behaviors[0] == previous_behavior
+    ):
+        behaviors[0], behaviors[1] = behaviors[1], behaviors[0]
+    return behaviors
+
+
+async def _flash_success(app: ApplicationContext) -> None:
+    if not app.robot.supports("light"):
+        return
+    try:
+        job = await asyncio.to_thread(
+            app.robot.lights.play_effect,
+            "blink",
+            color="#4DA3FF",
+            brightness=0.6,
+            period_ms=250,
+            repeat=2,
+        )
+        await asyncio.to_thread(job.wait, 5.0)
+    except Exception as exc:
+        app.logger.warning("The success light was skipped: %s", exc)
+
+
+async def _showcase_behaviors(app: ApplicationContext) -> None:
+    previous_behavior = None
+    app.logger.info("Press Ctrl+C to stop the behavior showcase.")
+    while True:
+        for behavior_id in _shuffled_demo_behaviors(previous_behavior):
+            try:
+                await asyncio.to_thread(
+                    app.robot.behavior.play,
+                    behavior_id,
+                    repeat=1,
+                )
+            except Exception as exc:
+                app.logger.warning(
+                    "Behavior %s is unavailable and was skipped: %s",
+                    behavior_id,
+                    exc,
+                )
+                await asyncio.sleep(1.0)
+                continue
+            app.logger.info("Playing demo behavior: %s", behavior_id)
+            previous_behavior = behavior_id
+            await asyncio.sleep(DEMO_BEHAVIOR_SECONDS)
+
+
 async def main() -> None:
     async with ApplicationContext.from_environment() as app:
-        app.logger.info("Hello, WatcheRobot! Your first Application worked.")
+        app.logger.info("Hello, WatcheRobot! Starting your first Application.")
         if not app.robot.supports("behavior"):
             app.logger.info(
                 "No compatible robot is connected, so the happy behavior was "
@@ -46,10 +114,16 @@ async def main() -> None:
             repeat=1,
         )
         await asyncio.to_thread(job.wait, 20.0)
-        app.logger.info("The robot played the happy behavior.")
+        app.logger.info("✓ The robot played the happy behavior.")
+        await _flash_success(app)
+        app.logger.info(
+            "✓ Your first WatcheRobot Application is running successfully!"
+        )
+        await _showcase_behaviors(app)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 '''
 _ICON_TEMPLATE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <rect width="512" height="512" rx="112" fill="#121826"/>
@@ -324,8 +398,9 @@ watcherobot app publish .
 ```
 
 The generated `app.py` always logs a Hello World success. With a compatible
-robot connected, it also plays the `happy` behavior once. Run it through the
-SDK Runtime; do not execute `app.py` directly.
+robot connected, it plays the `happy` behavior once, flashes the light when
+supported, and then randomly cycles through demo behaviors until you press
+Ctrl+C. Run it through the SDK Runtime; do not execute `app.py` directly.
 """
 
 

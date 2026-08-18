@@ -210,7 +210,10 @@ team-owned namespace such as `com.example.my_app`.
 
 It creates `app.json`, `app.py`, `README.md`, `icon.svg`, and `.gitignore`.
 The generated `app.py` always logs a Hello World success. When a compatible
-robot is connected, it also plays the `happy` behavior once.
+robot is connected, it plays `happy` once, flashes the light when supported,
+and then continuously cycles through a shuffled set of safe demo behaviors.
+Each shuffle avoids repeating the previous behavior first. Press `Ctrl+C` to
+stop the showcase.
 
 #### `watcherobot app check <directory>`
 
@@ -228,7 +231,10 @@ watcherobot app check .\my_app --jsonl
 Starts or reuses the current-user Runtime, selects the local source Application,
 and launches it with Runtime-injected `WATCHER_APP_*` variables. The directory
 defaults to the current working directory. The Runtime remains available after
-the Application exits. When no robot is connected, the CLI prints the exact
+the Application exits. Human-readable output confirms the real Runtime,
+robot-connection, and Application states with green check marks; it does not
+claim that a robot is connected when the Application is running offline. When
+no robot is connected, the CLI prints the exact
 first-time `watcherobot robot setup` command and the already-networked
 `watcherobot robot pair <code>` shortcut, then continues so offline
 Applications still work.

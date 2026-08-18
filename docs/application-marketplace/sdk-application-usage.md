@@ -74,7 +74,9 @@ the publishing flow:
 ```
 
 The target must not exist. Initialization does not start the Daemon or access
-Hugging Face. The generated `app.py` plays `happy` once and exits. It creates:
+Hugging Face. The generated `app.py` plays `happy` once, flashes the light when
+supported, and then continuously cycles through shuffled demo behaviors until
+the user presses `Ctrl+C`. It creates:
 
 ```text
 my_sdk_test/

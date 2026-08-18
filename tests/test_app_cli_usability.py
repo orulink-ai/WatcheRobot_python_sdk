@@ -148,10 +148,15 @@ def test_app_init_creates_project_without_starting_daemon(
     assert "Run 'watcherobot robot setup'" in app_source
     assert 'app.robot.behavior.play,\n            "happy"' in app_source
     assert "job.wait, 20.0" in app_source
+    assert "DEMO_BEHAVIORS = (" in app_source
+    assert "_shuffled_demo_behaviors" in app_source
+    assert "app.robot.lights.play_effect" in app_source
+    assert "while True:" in app_source
     assert "watcherobot robot setup" in captured.out
     generated_readme = target.joinpath("README.md").read_text(encoding="utf-8")
     assert "watcherobot robot setup" in generated_readme
     assert "always logs a Hello World success" in generated_readme
+    assert "randomly cycles through demo behaviors" in generated_readme
 
 
 def test_app_init_derives_metadata_without_prompts(

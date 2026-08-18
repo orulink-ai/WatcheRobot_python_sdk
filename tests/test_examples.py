@@ -39,6 +39,18 @@ def test_quickstart_demonstrates_domain_apis_through_context_robot() -> None:
     assert "app.robot.motion.move_to" in source
 
 
+def test_hello_robot_keeps_running_with_random_non_repeating_behaviors() -> None:
+    source = (ROOT / "examples" / "hello_robot" / "app.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'app.robot.behavior.play("happy", repeat=1)' in source
+    assert "DEMO_BEHAVIORS = (" in source
+    assert "random.shuffle(behaviors)" in source
+    assert "while True:" in source
+    assert "behaviors[0] == previous_behavior" in source
+
+
 def test_microphone_example_records_decoded_pcm() -> None:
     source = (
         ROOT / "examples" / "record_microphone" / "app.py"

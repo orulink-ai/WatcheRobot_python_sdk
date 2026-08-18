@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import runpy
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 
 def test_init_creates_one_publish_ready_application_project(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target = tmp_path / "nested" / "robot-demo"
 
@@ -71,12 +73,36 @@ def test_init_creates_one_publish_ready_application_project(
     app_source = target.joinpath("app.py").read_text(encoding="utf-8")
     assert 'app.robot.behavior.play,\n            "happy"' in app_source
     assert "job.wait, 20.0" in app_source
+    assert "DEMO_BEHAVIORS = (" in app_source
+    assert "random.shuffle(behaviors)" in app_source
+    assert "while True:" in app_source
+    assert "app.robot.lights.play_effect" in app_source
+    assert "Press Ctrl+C to stop the behavior showcase." in app_source
     assert "watcherobot app check" in target.joinpath("README.md").read_text(
         encoding="utf-8"
     )
     assert target.joinpath("icon.svg").read_text(encoding="utf-8").startswith(
         "<svg"
     )
+
+    namespace = runpy.run_path(
+        str(target / "app.py"),
+        run_name="generated_application_test",
+    )
+    monkeypatch.setattr(namespace["random"], "shuffle", lambda _items: None)
+    behaviors = namespace["_shuffled_demo_behaviors"]("smile")
+    assert behaviors[0] != "smile"
+    assert tuple(namespace["DEMO_BEHAVIORS"]) == (
+        "smile",
+        "shock",
+        "sunglasses",
+        "speechless",
+        "concentration",
+        "get",
+        "query",
+        "fondle_love",
+    )
+    assert set(behaviors) == set(namespace["DEMO_BEHAVIORS"])
 
 
 @pytest.mark.parametrize("existing_kind", ["file", "directory"])

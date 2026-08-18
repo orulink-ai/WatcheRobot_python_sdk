@@ -166,7 +166,9 @@ CLI。先激活安装源码的虚拟环境，再在 Windows 使用 `where.exe wa
 变成不同应用。正式发布应使用团队持有的稳定命名空间，例如 `com.example.my_app`。
 
 会生成 `app.json`、`app.py`、`README.md`、`icon.svg` 和 `.gitignore`；默认
-`app.py` 一定会输出 Hello World 成功日志，连接兼容机器人时还会播放一次 `happy` 行为。
+`app.py` 一定会输出 Hello World 成功日志。连接兼容机器人后，它会先播放一次 `happy`
+行为，支持灯光时闪烁成功提示，随后以洗牌方式持续随机轮播一组安全演示行为；每轮开头不会
+和上一轮末尾重复。按 `Ctrl+C` 停止演示。
 
 #### `watcherobot app check <目录>`
 
@@ -181,7 +183,8 @@ watcherobot app check .\my_app --jsonl
 
 启动或复用当前用户 Runtime，选择本地源码 Application，并以 Runtime 注入的
 `WATCHER_APP_*` 环境变量启动它。目录默认是当前工作目录；Application 退出后
-Runtime 会继续运行。没有连接机器人时，CLI 会同时打印首次连接使用的
+Runtime 会继续运行。面向用户的输出会用绿色勾号确认真实的 Runtime、机器人连接和
+Application 运行状态；离线时不会误报机器人已连接。没有连接机器人时，CLI 会同时打印首次连接使用的
 `watcherobot robot setup` 和已联网设备使用的 `watcherobot robot pair <code>`，
 然后继续运行，避免阻断离线 Application。
 

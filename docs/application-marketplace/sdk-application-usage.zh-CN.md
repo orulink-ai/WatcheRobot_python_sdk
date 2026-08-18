@@ -65,7 +65,9 @@ editable 安装，保证控制台入口与当前源码一致。
   --description "Verify the current SDK Application flow"
 ```
 
-目标路径必须不存在。初始化不会启动 Daemon，也不会访问 Hugging Face；默认 `app.py` 会播放一次 `happy` 行为并正常退出。生成内容为：
+目标路径必须不存在。初始化不会启动 Daemon，也不会访问 Hugging Face；默认 `app.py`
+会先播放一次 `happy`，支持灯光时闪烁成功提示，随后持续随机轮播安全演示行为，直到用户按
+`Ctrl+C` 停止。生成内容为：
 
 ```text
 my_sdk_test/

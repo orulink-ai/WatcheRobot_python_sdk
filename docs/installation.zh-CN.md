@@ -159,5 +159,8 @@ cd hello_robot
 watcherobot app run
 ```
 
+生成的 Hello World 会先播放 `happy`，支持灯光时闪烁成功提示，随后持续随机轮播演示行为；
+按 `Ctrl+C` 停止。
+
 机器人已经接入同一 Wi-Fi 时，不要重置网络；打开机器人上的 `"Python SDK"` 应用，
 改用 `watcherobot robot pair <code>`。

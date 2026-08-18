@@ -1273,6 +1273,57 @@ def test_app_run_without_robot_prints_an_actionable_setup_command(
     assert main(["app", "run", str(application)]) == 0
 
     output = capsys.readouterr().out
+    assert "✓ Runtime is ready." in output
+    assert "✓ Application is running." in output
     assert "No robot is connected" in output
     assert "watcherobot robot setup" in output
     assert "watcherobot robot pair <code>" in output
+
+
+def test_app_run_reports_connected_robot_before_starting_application(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    application = tmp_path / "connected-application"
+    application.mkdir()
+    application.joinpath("app.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "id": "local.connected_demo",
+                "name": "Connected Demo",
+                "version": "0.1.0",
+                "requires_watcherobot": ">=0.1.1a6,<0.2",
+                "dependencies": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    application.joinpath("app.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        "watcherobot.cli.ensure_runtime",
+        lambda: (_runtime_state(), True),
+    )
+
+    def request_json(_base_url, path, **_kwargs) -> dict[str, object]:
+        if path == "/daemon/devices":
+            return {
+                "device": {
+                    "state": "connected",
+                    "online": True,
+                    "device_id": "WR-DEMO",
+                }
+            }
+        if path == "/daemon/status":
+            return {"application": {"state": "ended"}}
+        return {}
+
+    monkeypatch.setattr("watcherobot.cli._request_json", request_json)
+
+    assert main(["app", "run", str(application)]) == 0
+
+    output = capsys.readouterr().out
+    assert "✓ Runtime is ready." in output
+    assert "✓ WatcheRobot is connected." in output
+    assert "✓ Application is running." in output

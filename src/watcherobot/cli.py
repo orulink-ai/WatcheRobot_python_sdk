@@ -1261,6 +1261,7 @@ def run_application(application: Path) -> int:
     print(f"Running Application: {application_path}")
     print("Press Ctrl+C to stop.")
     state, _reused = ensure_runtime()
+    print(_styled("✓ Runtime is ready.", "green"))
     _print_application_robot_guidance(state.control_url)
     _request_json(
         state.control_url,
@@ -1282,6 +1283,7 @@ def run_application(application: Path) -> int:
         method="POST",
         timeout=APPLICATION_START_TIMEOUT_SECONDS,
     )
+    print(_styled("✓ Application is running.", "green"))
     try:
         while True:
             application_log_offset = _print_application_logs(
@@ -1309,15 +1311,16 @@ def run_application(application: Path) -> int:
         return 130
 
 
-def _print_application_robot_guidance(control_url: str) -> None:
+def _print_application_robot_guidance(control_url: str) -> bool:
     try:
         device = _device_from_payload(
             _request_json(control_url, "/daemon/devices")
         )
     except CliError:
-        return
+        return False
     if bool(device.get("online")):
-        return
+        print(_styled("✓ WatcheRobot is connected.", "green"))
+        return True
     print()
     print("No robot is connected. This Application can still run offline.")
     print("First-time setup: watcherobot robot setup")
@@ -1326,6 +1329,7 @@ def _print_application_robot_guidance(control_url: str) -> None:
         "watcherobot robot pair <code>"
     )
     print()
+    return False
 
 
 def _file_size(path: Path) -> int:

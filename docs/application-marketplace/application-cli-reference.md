@@ -81,7 +81,9 @@ watcherobot app init .\my_app `
 
 The command creates `app.json`, `app.py`, `README.md`, `icon.svg`, and
 `.gitignore`. It derives `requires_watcherobot` from the installed SDK and
-refuses to modify any existing target path.
+refuses to modify any existing target path. The generated Hello World plays
+`happy`, flashes the light when supported, and then keeps a shuffled demo
+behavior showcase running until `Ctrl+C`.
 
 ## Marketplace output
 
