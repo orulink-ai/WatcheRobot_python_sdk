@@ -84,9 +84,11 @@ Draft Release 中由原始 `SHA256SUMS` 约束的 wheel/sdist。恢复只能从�
 必须已经结束或取消，不能仍在等待审批。工作流会拒绝额外文件、缺少 wheel/sdist、版本不匹配、哈希不匹配，
 并要求全部制品与已发布且不可覆盖的 TestPyPI 文件完全一致。
 
-`uv` 会对照 PyPI 索引中的文件哈希，因此恢复任务可在部分上传后安全重试；失败后仍应重跑同一恢复入口，
-不得重新构建、替换 Draft Release 制品或移动 Tag。只有正式 PyPI 安装验证通过，Draft Release 才会转为公开
-Release。该入口仍需 GitHub `pypi` Environment 人工批准，且只接受稳定版本。
+`uv` 会对照 PyPI 索引中的文件哈希，因此恢复任务可在部分上传后安全重试。恢复 Artifact 以稳定的 workflow
+run ID 命名，支持在同一次运行中执行 **Re-run failed jobs**；也可以从 `main` 重新触发一次新的 recovery
+workflow。不得重新构建、替换 Draft Release 制品或移动 Tag。只有正式 PyPI 的完整文件集合与哈希再次通过校验，
+并在全新隔离环境中强制重新安装成功，Draft Release 才会转为公开 Release。该入口仍需 GitHub `pypi`
+Environment 人工批准，且只接受稳定版本。
 
 ## 一次性平台配置
 

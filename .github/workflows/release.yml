@@ -342,7 +342,7 @@ jobs:
       - name: Check out the immutable release tag
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.recover_tag }}
+          ref: refs/tags/${{ inputs.recover_tag }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@v6
@@ -394,7 +394,7 @@ jobs:
       - name: Preserve verified distributions for the approved publish job
         uses: actions/upload-artifact@v7
         with:
-          name: watcherobot-recovery-${{ steps.gate.outputs.version }}-${{ github.run_attempt }}
+          name: watcherobot-recovery-${{ steps.gate.outputs.version }}-${{ github.run_id }}
           path: |
             ${{ steps.assets.outputs.root }}/dist/
             ${{ steps.assets.outputs.root }}/SHA256SUMS
@@ -445,7 +445,7 @@ jobs:
       - name: Download only the verified recovery artifact
         uses: actions/download-artifact@v8
         with:
-          name: watcherobot-recovery-${{ needs.recover-gate.outputs.version }}-${{ github.run_attempt }}
+          name: watcherobot-recovery-${{ needs.recover-gate.outputs.version }}-${{ github.run_id }}
           path: ${{ steps.prepare.outputs.root }}/artifact
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
       - name: Publish only the original distributions to PyPI with OIDC
@@ -476,31 +476,81 @@ jobs:
     name: Verify recovered PyPI release and publish GitHub Release
     needs: [recover-gate, recover-publish-pypi]
     runs-on: [self-hosted, Linux, X64, sdk-release]
+    env:
+      RECOVERY_DIR_NAME: watcherobot-recovery-${{ github.run_id }}-${{ github.run_attempt }}-verify
     permissions:
       contents: write
     steps:
+      - id: prepare
+        name: Require a clean run-specific verification directory
+        shell: bash
+        run: |
+          recovery_root="${RUNNER_TEMP}/${RECOVERY_DIR_NAME}"
+          [[ "${recovery_root}" == "${RUNNER_TEMP}"/watcherobot-recovery-* ]] || exit 1
+          [[ ! -e "${recovery_root}" ]] || {
+            echo "Refusing to reuse recovery directory: ${recovery_root}" >&2
+            exit 1
+          }
+          mkdir -p "${recovery_root}/artifact"
+          echo "root=${recovery_root}" >> "${GITHUB_OUTPUT}"
+      - name: Check out the approved production verifier
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install the exact recovered release from PyPI
+      - run: python -m pip install --upgrade packaging
+      - name: Download the verified recovery artifact for production comparison
+        uses: actions/download-artifact@v8
+        with:
+          name: watcherobot-recovery-${{ needs.recover-gate.outputs.version }}-${{ github.run_id }}
+          path: ${{ steps.prepare.outputs.root }}/artifact
+      - name: Verify the complete PyPI distribution set and hashes
+        env:
+          RECOVERY_ROOT: ${{ steps.prepare.outputs.root }}
+          VERSION: ${{ needs.recover-gate.outputs.version }}
         run: |
-          python -m venv .venv-pypi-recovery
           for attempt in {1..12}; do
-            if .venv-pypi-recovery/bin/python -m pip install \
-              --no-cache-dir \
-              --index-url https://pypi.org/simple/ \
-              "watcherobot==${{ needs.recover-gate.outputs.version }}"; then break; fi
+            if python tools/verify_release_artifacts.py \
+              --root "${RECOVERY_ROOT}/artifact" \
+              --version "${VERSION}" \
+              --registry-json-url "https://pypi.org/pypi/watcherobot/${VERSION}/json" \
+              --registry-name PyPI; then break; fi
             if [[ "${attempt}" == "12" ]]; then exit 1; fi
             sleep 10
           done
-          .venv-pypi-recovery/bin/python -m pip check
-          .venv-pypi-recovery/bin/python -c "import watcherobot; assert watcherobot.__version__ == '${{ needs.recover-gate.outputs.version }}'"
-          .venv-pypi-recovery/bin/watcherobot --help
+      - name: Force a clean installation of the exact recovered release from PyPI
+        env:
+          RECOVERY_ROOT: ${{ steps.prepare.outputs.root }}
+          VERSION: ${{ needs.recover-gate.outputs.version }}
+        run: |
+          python -m venv "${RECOVERY_ROOT}/venv"
+          for attempt in {1..12}; do
+            if "${RECOVERY_ROOT}/venv/bin/python" -m pip install \
+              --force-reinstall \
+              --no-cache-dir \
+              --index-url https://pypi.org/simple/ \
+              "watcherobot==${VERSION}"; then break; fi
+            if [[ "${attempt}" == "12" ]]; then exit 1; fi
+            sleep 10
+          done
+          "${RECOVERY_ROOT}/venv/bin/python" -m pip check
+          "${RECOVERY_ROOT}/venv/bin/python" -c "import watcherobot; assert watcherobot.__version__ == '${VERSION}'"
+          "${RECOVERY_ROOT}/venv/bin/watcherobot" --help
       - name: Publish the verified GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RECOVER_TAG: ${{ inputs.recover_tag }}
         run: gh release edit "${RECOVER_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+      - name: Remove production verification directory
+        if: always()
+        shell: bash
+        env:
+          RECOVERY_ROOT: ${{ steps.prepare.outputs.root }}
+        run: |
+          [[ "${RECOVERY_ROOT}" == "${RUNNER_TEMP}"/watcherobot-recovery-* ]] || exit 1
+          rm -rf -- "${RECOVERY_ROOT}"
 
   recover-finish-clean:
     name: Clean recovery workspace after use

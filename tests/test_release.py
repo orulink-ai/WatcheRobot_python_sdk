@@ -83,6 +83,9 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     recovery_publish_job = workflow.split("  recover-publish-pypi:", maxsplit=1)[1].split(
         "  recover-verify-pypi:", maxsplit=1
     )[0]
+    recovery_verify_job = workflow.split("  recover-verify-pypi:", maxsplit=1)[1].split(
+        "  recover-finish-clean:", maxsplit=1
+    )[0]
 
     assert "recover-gate:" in workflow
     assert "recover-publish-pypi:" in workflow
@@ -92,12 +95,19 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     assert "inputs.recover_tag || github.ref_name" in workflow
     assert "github.ref == 'refs/heads/main'" in workflow
     assert '[[ "${GITHUB_REF}" == "refs/heads/main" ]]' in workflow
+    assert "ref: refs/tags/${{ inputs.recover_tag }}" in recovery_gate_job
     assert "--version-file \"${GITHUB_WORKSPACE}/src/watcherobot/__init__.py\"" in workflow
     assert "gh release download \"${RECOVER_TAG}\"" in workflow
     assert "tools/verify_release_artifacts.py" in workflow
     assert "https://test.pypi.org/pypi/watcherobot/${VERSION}/json" in workflow
     assert "actions/upload-artifact@v7" in recovery_gate_job
     assert "actions/download-artifact@v8" in recovery_publish_job
+    assert "actions/download-artifact@v8" in recovery_verify_job
+    assert "github.run_id" in recovery_gate_job
+    assert "github.run_id" in recovery_publish_job
+    assert "github.run_id" in recovery_verify_job
+    assert "watcherobot-recovery-${{ steps.gate.outputs.version }}-${{ github.run_attempt }}" not in workflow
+    assert "watcherobot-recovery-${{ needs.recover-gate.outputs.version }}-${{ github.run_attempt }}" not in workflow
     assert 'mapfile -t distributions < <(python "${RECOVERY_VALIDATOR}"' in workflow
     assert 'uv publish --trusted-publishing always "${distributions[@]}"' in workflow
     assert "UV_PUBLISH_CHECK_URL: https://pypi.org/simple/" in workflow
@@ -109,6 +119,10 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     assert "id-token: write" in recovery_publish_job
     assert "--no-cache-dir" in workflow
     assert "--index-url https://pypi.org/simple/" in workflow
+    assert "--force-reinstall" in recovery_verify_job
+    assert "https://pypi.org/pypi/watcherobot/${VERSION}/json" in recovery_verify_job
+    assert "--registry-name PyPI" in recovery_verify_job
+    assert "RECOVERY_DIR_NAME:" in recovery_verify_job
 
 
 def test_production_publish_requires_a_release_and_version_check() -> None:
