@@ -64,6 +64,14 @@ class CliError(RuntimeError):
     pass
 
 
+class RobotSetupError(CliError):
+    """An expected input or interaction failure in guided robot setup."""
+
+
+class RobotPairingError(CliError):
+    """An expected Runtime pairing failure in guided robot setup."""
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="watcherobot",
@@ -328,10 +336,14 @@ def main(argv: list[str] | None = None) -> int:
                     return _print_robot_setup_cancelled()
                 except BluetoothProvisioningError as exc:
                     return _print_robot_setup_failure(exc)
-                except CliError as exc:
-                    return _print_robot_setup_cli_failure(exc)
+                except RobotPairingError as exc:
+                    return _print_robot_pairing_failure(exc)
+                except RobotSetupError as exc:
+                    return _print_robot_setup_input_failure(exc)
                 except ValueError as exc:
-                    raise CliError(str(exc)) from exc
+                    return _print_robot_setup_input_failure(
+                        RobotSetupError(str(exc))
+                    )
     except (
         ApplicationProjectInitError,
         BluetoothProvisioningError,
@@ -485,19 +497,26 @@ def _print_robot_setup_failure(exc: BluetoothProvisioningError) -> int:
             "  2. Close other apps that may be connected to the robot.",
             "  3. Run watcherobot robot setup again.",
         )
-    elif isinstance(
-        exc,
-        (
-            ProvisioningProtocolError,
-            ProvisioningRejectedError,
-            ProvisioningResponseTimeoutError,
-        ),
-    ):
+    elif isinstance(exc, ProvisioningRejectedError):
         lines = (
-            "The robot did not accept the Wi-Fi setup.",
+            "Robot rejected the Wi-Fi settings.",
             "  1. Keep the robot on Settings > Wi-Fi and nearby.",
             "  2. Check the Wi-Fi name and password.",
             "  3. Run watcherobot robot setup again.",
+        )
+    elif isinstance(exc, ProvisioningResponseTimeoutError):
+        lines = (
+            "Robot did not respond in time.",
+            "  1. Keep the robot on Settings > Wi-Fi and nearby.",
+            "  2. Close other apps that may be connected to the robot.",
+            "  3. Run watcherobot robot setup again.",
+        )
+    elif isinstance(exc, ProvisioningProtocolError):
+        lines = (
+            "Robot firmware returned an incompatible Bluetooth response.",
+            "  1. Update the robot firmware and WatcheRobot SDK.",
+            "  2. Keep the robot on Settings > Wi-Fi and retry setup.",
+            "  3. If it persists, report the firmware and SDK versions.",
         )
     else:
         lines = (
@@ -509,9 +528,18 @@ def _print_robot_setup_failure(exc: BluetoothProvisioningError) -> int:
     return 2
 
 
-def _print_robot_setup_cli_failure(exc: CliError) -> int:
+def _print_robot_setup_input_failure(exc: RobotSetupError) -> int:
     print("Robot setup could not be completed.", file=sys.stderr)
     print(str(exc), file=sys.stderr)
+    return 2
+
+
+def _print_robot_pairing_failure(exc: RobotPairingError) -> int:
+    print("Robot pairing could not be completed.", file=sys.stderr)
+    print(str(exc), file=sys.stderr)
+    print('  1. Keep the robot\'s "Python SDK" app open.', file=sys.stderr)
+    print("  2. Confirm both devices use the same network.", file=sys.stderr)
+    print("  3. Enter the latest 6-digit code and retry.", file=sys.stderr)
     return 2
 
 
@@ -561,8 +589,11 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
         try:
             pairing_code = _parse_pairing_code(pairing_code)
         except argparse.ArgumentTypeError as exc:
-            raise CliError(str(exc)) from exc
-    return pair_robot(pairing_code)
+            raise RobotSetupError(str(exc)) from exc
+    try:
+        return pair_robot(pairing_code)
+    except CliError as exc:
+        raise RobotPairingError(str(exc)) from exc
 
 
 def _prepare_robot_for_setup(*, wait_for_confirmation: bool) -> None:
@@ -580,7 +611,7 @@ def _prepare_robot_for_setup(*, wait_for_confirmation: bool) -> None:
     try:
         input("Press Enter after opening Settings > Wi-Fi on the robot: ")
     except EOFError as exc:
-        raise CliError("Robot setup cancelled") from exc
+        raise RobotSetupError("Robot setup cancelled") from exc
 
 
 def _select_setup_device(
@@ -615,7 +646,7 @@ def _select_setup_device(
         print(_setup_device_identity(device))
         return device
     if not _is_interactive_terminal():
-        raise CliError(
+        raise RobotSetupError(
             "Multiple robots were found; rerun with "
             "--device <Device ID or legacy Bluetooth ID>"
         )
@@ -731,14 +762,16 @@ def _setup_text_value(
     if _has_text(value):
         return str(value).strip()
     if not _is_interactive_terminal():
-        raise CliError(f"{field_name} is required in non-interactive use")
+        raise RobotSetupError(
+            f"{field_name} is required in non-interactive use"
+        )
     try:
         supplied = input(prompt).strip()
     except EOFError as exc:
-        raise CliError("Robot setup cancelled") from exc
+        raise RobotSetupError("Robot setup cancelled") from exc
     resolved = supplied or default
     if not resolved:
-        raise CliError(f"{field_name} is required")
+        raise RobotSetupError(f"{field_name} is required")
     return resolved
 
 

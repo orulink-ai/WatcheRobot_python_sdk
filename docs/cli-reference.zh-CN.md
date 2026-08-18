@@ -76,8 +76,14 @@ watcherobot daemon stop
 | 未发现机器人 | 没有发现配网广播 | 保持 **Settings > Wi-Fi** 页面打开并靠近电脑；已联网机器人改用 `robot pair` |
 | 发现一台或多台新版机器人 | 展示稳定 Device ID | 用 **Up/Down** 选择机器人屏幕上可核对的 Device ID |
 | 旧固件没有广播 Device ID | 明确提示 Device ID 不可用，可能需要升级固件 | Bluetooth ID 仅作为兼容信息保留 |
-| 连接或固件响应超时 | 蓝牙通信没有完成 | 保持机器人靠近、关闭可能占用连接的应用，然后重试 |
+| 蓝牙连接或响应超时 | 蓝牙通信没有完成 | 保持机器人靠近、关闭可能占用连接的应用，然后重试 |
+| 机器人拒绝 Wi-Fi 配置 | 网络名称或密码没有被接受 | 检查 Wi-Fi 名称和密码后重试 |
+| 固件返回不兼容响应 | 机器人与 SDK 的配网协议不匹配 | 升级固件和 SDK；持续出现时反馈两端版本 |
+| Runtime 配对失败 | 六位码配对阶段没有完成 | 保持 **"Python SDK"** 应用打开、确认处于同一网络并输入最新配对码 |
 | 用户取消 | 明确显示 setup 已取消 | 不打印 Wi-Fi 密码或配对码 |
+
+`robot setup` 是面向人的引导命令，默认错误采用可执行的普通文本。需要紧凑 JSON 的自动化
+应使用底层 `watcherobot bluetooth ...` 命令，其结构化输出合同保持不变。
 
 随后命令私密读取 Wi-Fi 密码并写入网络凭据。配网后回到机器人启动器，打开
 **"Python SDK"** 应用，读取屏幕顶部的六位配对码，并继续在同一个 setup 流程中
@@ -138,7 +144,8 @@ watcherobot app init published_app `
 ```
 
 如果提供了目录后仍然出现 `Application ID:`、`Application name:` 等逐项提问，说明当前终端调用的是旧版
-CLI。先激活安装源码的虚拟环境，再用 `where.exe watcherobot` 确认命令来源。Application ID 是升级与覆盖
+CLI。先激活安装源码的虚拟环境，再在 Windows 使用 `where.exe watcherobot`，或在 macOS/Linux 使用
+`command -v watcherobot` 确认命令来源。Application ID 是升级与覆盖
 安装的稳定身份，不使用用户名、时间戳或随机数自动拼接；这些值会泄露本机信息或导致同一项目每次初始化都
 变成不同应用。正式发布应使用团队持有的稳定命名空间，例如 `com.example.my_app`。
 

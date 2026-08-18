@@ -48,11 +48,16 @@ def test_cli_references_cover_robot_setup_recovery_states() -> None:
 
     for path in references:
         content = path.read_text(encoding="utf-8")
-        assert "Bluetooth" in content
         assert "Device ID" in content
+        assert "Bluetooth ID" in content
+        assert "Bluetooth connection" in content or "蓝牙连接" in content
         assert "permission" in content or "权限" in content
-        assert "timeout" in content or "超时" in content
+        assert "reject" in content or "拒绝" in content
+        assert "incompatible response" in content or "不兼容响应" in content
+        assert "Runtime pairing" in content or "Runtime 配对" in content
         assert "cancel" in content or "取消" in content
+        assert "watcherobot bluetooth ..." in content
+        assert "JSON" in content
 
 
 def test_cli_references_explain_automatic_stable_application_ids() -> None:
@@ -66,6 +71,7 @@ def test_cli_references_explain_automatic_stable_application_ids() -> None:
         assert "local.my_app" in content
         assert "Application ID:" in content
         assert "where.exe watcherobot" in content
+        assert "command -v watcherobot" in content
         assert "timestamp" in content or "时间戳" in content
 
 

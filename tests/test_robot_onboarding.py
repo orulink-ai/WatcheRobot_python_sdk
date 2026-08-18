@@ -10,7 +10,11 @@ from watcherobot.provisioning import (
     BluetoothConnectionTimeoutError,
     BluetoothDevice,
     BluetoothPermissionError,
+    BluetoothProvisioningError,
     BluetoothUnavailableError,
+    ProvisioningProtocolError,
+    ProvisioningRejectedError,
+    ProvisioningResponseTimeoutError,
     ProvisioningResult,
     ProtocolMessage,
 )
@@ -540,6 +544,107 @@ def test_robot_setup_explains_how_to_recover_from_connection_timeout(
     assert "secret" not in output
 
 
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            ProvisioningRejectedError(
+                "cfg.wifi.set",
+                reason="invalid_wifi_payload",
+                code=1,
+            ),
+            "Robot rejected the Wi-Fi settings",
+        ),
+        (
+            ProvisioningResponseTimeoutError("cfg.wifi.set", 3.0),
+            "Robot did not respond in time",
+        ),
+        (
+            ProvisioningProtocolError("invalid response"),
+            "Robot firmware returned an incompatible Bluetooth response",
+        ),
+        (
+            BluetoothProvisioningError("unexpected failure"),
+            "Robot setup could not be completed",
+        ),
+    ],
+)
+def test_robot_setup_gives_distinct_recovery_for_provisioning_failures(
+    error: Exception,
+    expected: str,
+    monkeypatch,
+    capsys,
+) -> None:
+    class FailingProvisioner(FakeProvisioner):
+        async def provision_wifi(
+            self,
+            device: BluetoothDevice,
+            *,
+            ssid: str,
+            password: str,
+            clear_existing: bool = False,
+        ) -> ProvisioningResult:
+            raise error
+
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FailingProvisioner,
+    )
+    monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 2
+    )
+
+    output = capsys.readouterr().err
+    assert expected in output
+    assert "secret" not in output
+    assert '"error"' not in output
+
+
+def test_robot_setup_value_error_uses_guided_output_instead_of_json(
+    monkeypatch,
+    capsys,
+) -> None:
+    class FailingProvisioner(FakeProvisioner):
+        async def scan_devices(self) -> list[BluetoothDevice]:
+            raise ValueError("invalid setup value")
+
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FailingProvisioner,
+    )
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 2
+    )
+
+    output = capsys.readouterr().err
+    assert "Robot setup could not be completed" in output
+    assert "invalid setup value" in output
+    assert '"error"' not in output
+
+
 def test_robot_setup_keeps_pairing_failure_in_the_guided_flow(
     monkeypatch,
     capsys,
@@ -573,8 +678,9 @@ def test_robot_setup_keeps_pairing_failure_in_the_guided_flow(
     )
 
     output = capsys.readouterr().err
-    assert "Robot setup could not be completed" in output
+    assert "Robot pairing could not be completed" in output
     assert "Robot pairing timed out" in output
+    assert '"Python SDK" app' in output
     assert '"error"' not in output
 
 

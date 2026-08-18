@@ -20,6 +20,10 @@ watcherobot app list
 | `Bluetooth is unavailable on this computer` | Bluetooth is off, no adapter is available, or the operating system reports it unavailable | Turn on Bluetooth, confirm the adapter is available, then rerun `watcherobot robot setup` |
 | `Bluetooth access was denied` | The terminal or Python lacks operating-system Bluetooth permission | Allow Bluetooth access in system privacy settings, then rerun setup |
 | `Device ID unavailable` | The robot advertises for provisioning but its firmware does not include the stable Device ID Service Data | Update robot firmware when available; Bluetooth ID is retained only for compatibility |
+| `Robot rejected the Wi-Fi settings` | The firmware rejected the supplied network configuration | Check the Wi-Fi name and password, then rerun setup |
+| `Robot did not respond in time` | The BLE connection was interrupted or the firmware did not answer | Keep the robot nearby on **Settings > Wi-Fi**, close competing Bluetooth apps, and retry |
+| `incompatible Bluetooth response` | The SDK and robot firmware provisioning protocols do not match | Update both the SDK and firmware; report both versions if the error persists |
+| `Robot pairing could not be completed` | Runtime pairing did not finish after Wi-Fi setup | Keep the robot's **"Python SDK"** app open, confirm both devices use the same network, and enter the latest code |
 | `pairing_not_found` | The computer and robot are not on the same network, or the displayed code expired | Confirm both devices use the same network and retry `watcherobot robot pair` with the current code |
 | Command timeout | The device is offline or did not acknowledge the frame | Check `/daemon/devices`, pairing state, firmware logs, and the Runtime log |
 | `CommandError: ... not_found` | The requested resource is not installed in firmware | Use a resource ID supported by the current firmware |

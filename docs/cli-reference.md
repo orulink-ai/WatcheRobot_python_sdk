@@ -98,8 +98,16 @@ logs:
 | No robot is found | No provisioning advertisement was discovered | Keep **Settings > Wi-Fi** open and the robot nearby; already-networked robots use `robot pair` |
 | One or several current robots are found | Stable Device IDs are displayed | Select the Device ID shown on the robot with **Up/Down** |
 | Older firmware does not advertise a Device ID | Device ID is unavailable and a firmware update may be required | Bluetooth ID remains only as a compatibility fallback |
-| Connection or firmware response times out | Bluetooth communication did not complete | Keep the robot nearby, close competing Bluetooth apps, and retry |
+| Bluetooth connection or response times out | Bluetooth communication did not complete | Keep the robot nearby, close competing Bluetooth apps, and retry |
+| Robot rejects the Wi-Fi settings | The supplied network settings were rejected | Check the Wi-Fi name and password, then retry |
+| Firmware returns an incompatible response | The robot and SDK provisioning protocols do not match | Update the firmware and SDK; report both versions if it persists |
+| Runtime pairing fails | The six-digit pairing stage did not complete | Keep the **"Python SDK"** app open, confirm the same network, and use the latest code |
 | The operation is cancelled | Setup was cancelled | No credentials or pairing code are printed |
+
+`robot setup` is intentionally a human-guided command and its default errors
+are plain recovery instructions. Automation that requires compact JSON should
+use the lower-level `watcherobot bluetooth ...` commands, whose structured
+output contract is unchanged.
 
 The command then reads the Wi-Fi password privately and provisions the
 credentials. To finish, return to the robot launcher, open the **"Python SDK"**
@@ -170,7 +178,8 @@ watcherobot app init published_app `
 
 If an explicit directory is followed by `Application ID:` or other metadata
 prompts, the terminal is running an older CLI. Activate the intended virtual
-environment and check the command source with `where.exe watcherobot`. An
+environment and check the command source with `where.exe watcherobot` on
+Windows or `command -v watcherobot` on macOS/Linux. An
 Application ID is a stable upgrade identity, so the initializer does not append
 a username, timestamp, or random value. Published apps should use a stable
 team-owned namespace such as `com.example.my_app`.
