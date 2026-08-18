@@ -124,3 +124,59 @@ def test_nonmatching_or_published_release_is_rejected(release: dict[str, object]
 
     with pytest.raises(ValueError, match="conflicting GitHub Release"):
         module.validate_existing_release(tag="v0.1.1a3", sha="abc123", release=release)
+
+
+def test_recovery_gate_can_read_version_from_checked_out_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_module()
+    version_file = tmp_path / "__init__.py"
+    version_file.write_text('__version__ = "0.1.1"\n', encoding="utf-8")
+
+    def fake_run(*args: str) -> str:
+        if args[:3] == ("git", "cat-file", "-t"):
+            return "tag"
+        if args[:3] == ("git", "rev-list", "-n"):
+            return "abc123"
+        if args[:2] in (("git", "fetch"), ("git", "merge-base")):
+            return ""
+        raise AssertionError(f"unexpected command: {args!r}")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+    monkeypatch.setattr(
+        module,
+        "_associated_pull_requests",
+        lambda _repository, _sha: [
+            {
+                "merged_at": "2026-08-18T00:00:00Z",
+                "base": {"ref": "main"},
+                "head": {"ref": "release/watcherobot-0.1.1"},
+                "labels": [{"name": "release:version"}],
+                "merge_commit_sha": "abc123",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("draft access must be deferred")
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_http_status",
+        lambda _url: 200,
+    )
+
+    result = module.validate_gate(
+        repository="orulink-ai/WatcheRobot_python_sdk",
+        tag="v0.1.1",
+        sha="abc123",
+        version_file=version_file,
+        allow_existing_pypi=True,
+        defer_draft_validation=True,
+    )
+
+    assert result.version == "0.1.1"
+    assert result.reuse_artifact is False
