@@ -62,9 +62,10 @@ watcherobot daemon stop
 ### `watcherobot robot setup [--device <ID>] [--ssid <名称>] [--pairing-code <配对码>] [--clear-existing]`
 
 完成首次连接的完整引导。命令先提示用户在机器人上打开 **Settings > Wi-Fi**，确认
-页面已经打开后才开始扫描。只找到一台时显示平台对应的 **Bluetooth ID**；附近有
-多台机器人时，使用 **Up/Down** 和回车键按 Bluetooth ID 选择，不以设备名作为
-配网身份。
+页面已经打开后才开始扫描。扫描结果显示机器人广播的稳定 **Device ID**；附近有
+多台机器人时，使用 **Up/Down** 和回车键按 Device ID 选择，不以设备名作为配网
+身份。旧固件未广播 Device ID 时会明确标记为不可用，仅把 Bluetooth ID 作为兼容
+信息展示。`--device` 接受 Device ID，同时继续兼容旧固件的 Bluetooth ID。
 
 随后命令私密读取 Wi-Fi 密码并写入网络凭据。配网后回到机器人启动器，打开
 **"Python SDK"** 应用，读取屏幕顶部的六位配对码，并继续在同一个 setup 流程中

@@ -19,6 +19,7 @@ class FakeProvisioner:
         name="WatcheRobot A1",
         rssi=-38,
         is_watcher=True,
+        device_id="WR-A1B2-C3D4-E5F6-0708",
         _native=object(),
     )
     provision_calls: list[dict[str, object]] = []
@@ -181,7 +182,7 @@ def test_robot_setup_provisions_wifi_then_pairs_without_exposing_password(
                 "robot",
                 "setup",
                 "--device",
-                "robot-1",
+                "WR-A1B2-C3D4-E5F6-0708",
                 "--ssid",
                 "Office",
                 "--pairing-code",
@@ -201,7 +202,8 @@ def test_robot_setup_provisions_wifi_then_pairs_without_exposing_password(
     ]
     assert requests[-1][0] == "/daemon/devices"
     output = capsys.readouterr()
-    assert "Bluetooth ID: robot-1" in output.out
+    assert "Device ID: WR-A1B2-C3D4-E5F6-0708" in output.out
+    assert "Bluetooth ID" not in output.out
     assert "WatcheRobot A1" not in output.out
     assert "Wi-Fi credentials saved" in output.out
     assert "Robot connected successfully" in output.out
@@ -267,7 +269,8 @@ def test_robot_setup_without_arguments_guides_the_complete_interactive_flow(
     assert output.index("Settings > Wi-Fi") < output.index(
         "Scanning for nearby WatcheRobot devices"
     )
-    assert "Bluetooth ID: robot-1" in output
+    assert "Device ID: WR-A1B2-C3D4-E5F6-0708" in output
+    assert "Bluetooth ID" not in output
     assert "WatcheRobot A1" not in output
     assert 'Open the "Python SDK" app' in output
     assert "top of the screen" in output
@@ -275,7 +278,7 @@ def test_robot_setup_without_arguments_guides_the_complete_interactive_flow(
     assert "Robot connected successfully" in output
 
 
-def test_robot_setup_uses_arrow_keys_to_choose_a_bluetooth_identifier(
+def test_robot_setup_uses_arrow_keys_to_choose_a_device_id(
     monkeypatch,
     capsys,
 ) -> None:
@@ -285,6 +288,7 @@ def test_robot_setup_uses_arrow_keys_to_choose_a_bluetooth_identifier(
             name="WatcheRobot Alpha",
             rssi=-30,
             is_watcher=True,
+            device_id="WR-AAAA-BBBB-CCCC-DDDD",
             _native=object(),
         ),
         BluetoothDevice(
@@ -292,6 +296,7 @@ def test_robot_setup_uses_arrow_keys_to_choose_a_bluetooth_identifier(
             name="WatcheRobot Beta",
             rssi=-40,
             is_watcher=True,
+            device_id="WR-1111-2222-3333-4444",
             _native=object(),
         ),
     ]
@@ -310,10 +315,80 @@ def test_robot_setup_uses_arrow_keys_to_choose_a_bluetooth_identifier(
     assert selected.id == "bluetooth-b"
     output = capsys.readouterr().out
     assert "Up/Down" in output
-    assert "bluetooth-a" in output
-    assert "bluetooth-b" in output
+    assert "Device ID" in output
+    assert "WR-AAAA-BBBB-CCCC-DDDD" in output
+    assert "WR-1111-2222-3333-4444" in output
+    assert "bluetooth-a" not in output
+    assert "bluetooth-b" not in output
     assert "WatcheRobot Alpha" not in output
     assert "WatcheRobot Beta" not in output
+
+
+def test_robot_setup_labels_missing_device_id_without_misrepresenting_bluetooth_id(
+    monkeypatch,
+    capsys,
+) -> None:
+    device = BluetoothDevice(
+        id="legacy-bluetooth-id",
+        name="ESP_ROBOT",
+        rssi=-45,
+        is_watcher=True,
+        _native=object(),
+    )
+
+    selected = _select_setup_device([device], requested_id=None)
+
+    assert selected is device
+    output = capsys.readouterr().out
+    assert "Device ID unavailable" in output
+    assert "Bluetooth ID: legacy-bluetooth-id" in output
+
+
+def test_robot_setup_accepts_legacy_bluetooth_id_as_device_argument(
+    capsys,
+) -> None:
+    device = BluetoothDevice(
+        id="legacy-bluetooth-id",
+        name="ESP_ROBOT",
+        rssi=-45,
+        is_watcher=True,
+        _native=object(),
+    )
+
+    selected = _select_setup_device(
+        [device],
+        requested_id="LEGACY-BLUETOOTH-ID",
+    )
+
+    assert selected is device
+    assert "Device ID unavailable" in capsys.readouterr().out
+
+
+def test_robot_setup_matches_device_id_without_case_sensitivity() -> None:
+    device = BluetoothDevice(
+        id="bluetooth-id",
+        name="ESP_ROBOT",
+        rssi=-45,
+        is_watcher=True,
+        device_id="WR-A1B2-C3D4-E5F6-0708",
+        _native=object(),
+    )
+
+    selected = _select_setup_device(
+        [device],
+        requested_id="wr-a1b2-c3d4-e5f6-0708",
+    )
+
+    assert selected is device
+
+
+def test_bluetooth_device_preserves_legacy_native_positional_argument() -> None:
+    native = object()
+
+    device = BluetoothDevice("bluetooth-id", "ESP_ROBOT", -45, True, native)
+
+    assert device._native is native
+    assert device.device_id is None
 
 
 def test_robot_setup_ctrl_c_at_guidance_exits_as_a_cancellation(

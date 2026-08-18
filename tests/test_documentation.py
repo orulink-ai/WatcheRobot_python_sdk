@@ -33,6 +33,7 @@ def test_onboarding_docs_explain_the_guided_robot_setup_flow() -> None:
     for path in documents:
         content = path.read_text(encoding="utf-8")
         assert "Settings > Wi-Fi" in content
+        assert "Device ID" in content
         assert "Bluetooth ID" in content
         assert "Up/Down" in content
         assert '"Python SDK"' in content

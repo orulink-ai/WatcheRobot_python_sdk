@@ -79,10 +79,13 @@ automation.
 ### `watcherobot robot setup [--device <id>] [--ssid <name>] [--pairing-code <code>] [--clear-existing]`
 
 Guides first-time setup end to end. It first asks the user to open
-**Settings > Wi-Fi** on the robot and starts scanning only after confirmation. A single
-result is shown by its platform-specific **Bluetooth ID**. With multiple
-results, use **Up/Down** and Enter to choose the intended Bluetooth ID; device
-names are not used as the selection identity.
+**Settings > Wi-Fi** on the robot and starts scanning only after confirmation.
+Results are shown by the stable **Device ID** advertised by the robot. With
+multiple results, use **Up/Down** and Enter to choose the intended Device ID;
+device names are not used as the selection identity. Older firmware without an
+advertised Device ID is marked as unavailable and exposes the Bluetooth ID only
+as a compatibility fallback. `--device` accepts the Device ID and continues to
+accept that fallback Bluetooth ID for older firmware.
 
 The command then reads the Wi-Fi password privately and provisions the
 credentials. To finish, return to the robot launcher, open the **"Python SDK"**
