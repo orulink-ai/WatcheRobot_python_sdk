@@ -12,9 +12,9 @@
 - 修复普通扬声器播放与麦克风录音争用共享音频运行时的问题，冲突操作会被安全串行化。
 - 完善 Daemon 控制协议、Application Runtime 完整性诊断及 Windows/macOS 源码联调边界，并保持既有 Device channel 路由合同。
 
-## [0.1.1a6] - 待发布
+## [0.1.1a6] - 2026-08-17
 
-- 用户明确要求基于最新合入分支发布 SDK 0.1.1a6 预发布版
+- 完善 Application Runtime 完整性错误分类、Daemon 控制协议兼容握手及跨机器默认 Application 启动诊断。
 
 ## [0.1.1a4] - 2026-08-13
 
