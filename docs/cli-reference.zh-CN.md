@@ -96,7 +96,8 @@ watcherobot daemon stop
 当前固件必须先释放蓝牙资源，随后才能尝试连接 Wi-Fi，因此 CLI 无法从同一个 BLE 会话直接得到最终认证
 结果。交互流程会明确显示这项边界，并暂停在 Wi-Fi 确认步骤：只有机器人 **Settings > Wi-Fi** 显示
 **Connected** 后才继续配对。如果显示 **Offline** 或 **Wi-Fi failed**，网络名称或密码可能错误；在机器人上
-断开/忘记该网络，重新打开 **Settings > Wi-Fi**，再运行 `watcherobot robot setup`。
+断开/忘记该网络，重新打开 **Settings > Wi-Fi**，再运行 `watcherobot robot setup`。显式提供
+`--pairing-code` 时仍显示这项说明，但不会新增 Enter 确认，以保持显式参数调用的可预测性。
 
 ```powershell
 watcherobot robot setup

@@ -127,7 +127,9 @@ interactive flow states this boundary and pauses for confirmation: continue
 only after **Settings > Wi-Fi** on the robot shows **Connected**. If it shows
 **Offline** or **Wi-Fi failed**, the network name or password may be wrong;
 disconnect/forget that network on the robot, reopen **Settings > Wi-Fi**, and
-rerun `watcherobot robot setup`.
+rerun `watcherobot robot setup`. When `--pairing-code` is supplied explicitly,
+the warning remains visible but the additional Enter confirmation is skipped,
+keeping explicit-argument calls predictable.
 
 ```powershell
 watcherobot robot setup

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
 import pytest
 
-from watcherobot.cli import CliError, _select_setup_device, build_parser, main
+from watcherobot.cli import (
+    CliError,
+    _scan_setup_devices,
+    _select_setup_device,
+    build_parser,
+    main,
+)
 from watcherobot.provisioning import (
     BluetoothConnectionTimeoutError,
     BluetoothDevice,
@@ -32,7 +39,12 @@ class FakeProvisioner:
     )
     provision_calls: list[dict[str, object]] = []
 
-    async def scan_devices(self) -> list[BluetoothDevice]:
+    async def scan_devices(
+        self,
+        *,
+        timeout: float | None = None,
+        name_filter: str | None = None,
+    ) -> list[BluetoothDevice]:
         return [self.device]
 
     async def provision_wifi(
@@ -304,9 +316,14 @@ def test_robot_setup_shows_progress_during_a_slow_scan(
     capsys,
 ) -> None:
     class SlowProvisioner(FakeProvisioner):
-        async def scan_devices(self) -> list[BluetoothDevice]:
-            import asyncio
-
+        async def scan_devices(
+            self,
+            *,
+            timeout: float | None = None,
+            name_filter: str | None = None,
+        ) -> list[BluetoothDevice]:
+            assert timeout == 10.0
+            assert name_filter is None
             await asyncio.sleep(0.01)
             return [self.device]
 
@@ -322,7 +339,12 @@ def test_robot_setup_shows_progress_during_a_slow_scan(
         "watcherobot.cli._is_interactive_terminal",
         lambda: True,
     )
-    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _prompt: (_ for _ in ()).throw(
+            AssertionError("explicit pairing code must not add a prompt")
+        ),
+    )
     monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
     monkeypatch.setattr("watcherobot.cli.pair_robot", lambda _code: 0)
 
@@ -346,6 +368,40 @@ def test_robot_setup_shows_progress_during_a_slow_scan(
     scan_line = output[output.index("Scanning") : output.index("Scan complete")]
     assert "up to 10 seconds" in scan_line
     assert "." in scan_line
+
+
+def test_robot_setup_cancels_and_reaps_an_interrupted_scan(
+    monkeypatch,
+) -> None:
+    class BlockingProvisioner(FakeProvisioner):
+        cancelled = False
+
+        async def scan_devices(
+            self,
+            *,
+            timeout: float | None = None,
+            name_filter: str | None = None,
+        ) -> list[BluetoothDevice]:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled = True
+
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: True,
+    )
+
+    async def scenario() -> None:
+        provisioner = BlockingProvisioner()
+        scan = asyncio.create_task(_scan_setup_devices(provisioner))
+        await asyncio.sleep(0)
+        scan.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await scan
+        assert provisioner.cancelled
+
+    asyncio.run(scenario())
 
 
 def test_robot_setup_can_cancel_while_confirming_wifi_connection(
@@ -375,8 +431,6 @@ def test_robot_setup_can_cancel_while_confirming_wifi_connection(
                 FakeProvisioner.device.device_id or "",
                 "--ssid",
                 "Office",
-                "--pairing-code",
-                "123456",
             ]
         )
         == 130
@@ -525,7 +579,12 @@ def test_robot_setup_reports_when_no_robot_is_discoverable(
     capsys,
 ) -> None:
     class EmptyProvisioner(FakeProvisioner):
-        async def scan_devices(self) -> list[BluetoothDevice]:
+        async def scan_devices(
+            self,
+            *,
+            timeout: float | None = None,
+            name_filter: str | None = None,
+        ) -> list[BluetoothDevice]:
             return []
 
     monkeypatch.setattr(
@@ -579,7 +638,12 @@ def test_robot_setup_explains_how_to_recover_from_bluetooth_preflight_errors(
     capsys,
 ) -> None:
     class FailingProvisioner(FakeProvisioner):
-        async def scan_devices(self) -> list[BluetoothDevice]:
+        async def scan_devices(
+            self,
+            *,
+            timeout: float | None = None,
+            name_filter: str | None = None,
+        ) -> list[BluetoothDevice]:
             raise error
 
     monkeypatch.setattr(
@@ -724,7 +788,12 @@ def test_robot_setup_does_not_mask_an_unexpected_value_error(
     monkeypatch,
 ) -> None:
     class FailingProvisioner(FakeProvisioner):
-        async def scan_devices(self) -> list[BluetoothDevice]:
+        async def scan_devices(
+            self,
+            *,
+            timeout: float | None = None,
+            name_filter: str | None = None,
+        ) -> list[BluetoothDevice]:
             raise ValueError("internal setup bug")
 
     monkeypatch.setattr(
@@ -793,7 +862,12 @@ def test_robot_setup_non_interactive_failure_keeps_json_contract(
     capsys,
 ) -> None:
     class FailingProvisioner(FakeProvisioner):
-        async def scan_devices(self) -> list[BluetoothDevice]:
+        async def scan_devices(
+            self,
+            *,
+            timeout: float | None = None,
+            name_filter: str | None = None,
+        ) -> list[BluetoothDevice]:
             raise BluetoothUnavailableError("Bluetooth is unavailable")
 
     monkeypatch.setattr(
@@ -952,7 +1026,12 @@ def test_robot_setup_reports_ambiguous_device_with_recovery(
     capsys,
 ) -> None:
     class AmbiguousProvisioner(FakeProvisioner):
-        async def scan_devices(self) -> list[BluetoothDevice]:
+        async def scan_devices(
+            self,
+            *,
+            timeout: float | None = None,
+            name_filter: str | None = None,
+        ) -> list[BluetoothDevice]:
             return [
                 self.device,
                 BluetoothDevice(

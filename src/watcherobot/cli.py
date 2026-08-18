@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from getpass import getpass
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,7 @@ from watcherobot.runtime.daemon.instance import (
 
 APPLICATION_START_TIMEOUT_SECONDS = 90.0
 ROBOT_PAIR_TIMEOUT_SECONDS = 25.0
+_SETUP_SCAN_TIMEOUT_SECONDS = 10.0
 _SETUP_SCAN_PROGRESS_INTERVAL_SECONDS = 1.0
 _PAIRING_CODE = re.compile(r"^[0-9]{6}$")
 _PAIRING_CODE_IN_TEXT = re.compile(r"(?<![0-9])[0-9]{6}(?![0-9])")
@@ -606,7 +608,11 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
         "Wi-Fi credentials stored for "
         f"{_setup_device_identity(device)}; connection not verified."
     )
-    _confirm_robot_wifi_connected()
+    _confirm_robot_wifi_connected(
+        wait_for_confirmation=(
+            args.pairing_code is None and _is_interactive_terminal()
+        )
+    )
     print()
     print("Next, complete pairing on the robot:")
     print("  1. Return to the robot launcher.")
@@ -643,11 +649,13 @@ async def _scan_setup_devices(
 ) -> list[BluetoothDevice]:
     print(
         "Scanning for nearby WatcheRobot devices "
-        "(up to 10 seconds)",
+        f"(up to {_SETUP_SCAN_TIMEOUT_SECONDS:g} seconds)",
         end="",
         flush=True,
     )
-    scan_task = asyncio.create_task(provisioner.scan_devices())
+    scan_task = asyncio.create_task(
+        provisioner.scan_devices(timeout=_SETUP_SCAN_TIMEOUT_SECONDS)
+    )
     try:
         if not _is_interactive_terminal():
             return await scan_task
@@ -660,11 +668,17 @@ async def _scan_setup_devices(
                 break
             print(".", end="", flush=True)
         return await scan_task
+    except BaseException:
+        if not scan_task.done():
+            scan_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await scan_task
+        raise
     finally:
         print()
 
 
-def _confirm_robot_wifi_connected() -> None:
+def _confirm_robot_wifi_connected(*, wait_for_confirmation: bool) -> None:
     print()
     print("This does not confirm that the password is correct yet.")
     print("The robot will disconnect Bluetooth and try the Wi-Fi network.")
@@ -679,7 +693,7 @@ def _confirm_robot_wifi_connected() -> None:
         "    Disconnect/forget that network on the robot, reopen "
         "Settings > Wi-Fi, then rerun watcherobot robot setup."
     )
-    if not _is_interactive_terminal():
+    if not wait_for_confirmation:
         return
     try:
         input("Press Enter after the robot shows Wi-Fi Connected: ")
@@ -688,6 +702,8 @@ def _confirm_robot_wifi_connected() -> None:
 
 
 def _redact_pairing_codes(message: str) -> str:
+    """Conservatively hide every standalone six-digit sequence."""
+
     return _PAIRING_CODE_IN_TEXT.sub("<pairing-code>", message)
 
 
