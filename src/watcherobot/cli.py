@@ -577,9 +577,10 @@ def _read_setup_menu_key() -> str:
 def _read_windows_setup_menu_key() -> str:
     import msvcrt
 
-    key = msvcrt.getwch()
+    getwch = getattr(msvcrt, "getwch")
+    key = getwch()
     if key in {"\x00", "\xe0"}:
-        extended_key = msvcrt.getwch()
+        extended_key = getwch()
         return {"H": "up", "P": "down"}.get(extended_key, "other")
     if key == "\r":
         return "select"
