@@ -173,3 +173,22 @@ then continuously showcases shuffled demo behaviors. Press `Ctrl+C` to stop it.
 
 If the robot is already on the same Wi-Fi, do not reset its network. Open the
 robot's `"Python SDK"` app and use `watcherobot robot pair <code>` instead.
+
+## Runtime version after an upgrade
+
+Before starting or reusing the Runtime, the CLI verifies both the control
+protocol and SDK version. After a source or package upgrade, it automatically
+stops an older SDK-owned Daemon and starts the matching one from the active
+environment. This prevents old/new Application manifest errors such as
+`unknown fields: supported_host_platforms`.
+
+Confirm the foreground and background versions with:
+
+```powershell
+watcherobot --version
+watcherobot daemon status
+```
+
+The `runtime.sdk_version` in `daemon status` should match the current CLI. If a
+release from before automatic recovery already shows this error, run
+`watcherobot daemon stop` once and then run the Application again.

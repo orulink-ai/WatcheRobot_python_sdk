@@ -239,6 +239,10 @@ first-time `watcherobot robot setup` command and the already-networked
 `watcherobot robot pair <code>` shortcut, then continues so offline
 Applications still work.
 
+Before reuse, the CLI verifies the Runtime control protocol and SDK version.
+It automatically replaces an older SDK-owned Daemon with the version from the
+active environment so an old Daemon cannot reject a newer manifest.
+
 ```powershell
 cd my_app
 watcherobot app run

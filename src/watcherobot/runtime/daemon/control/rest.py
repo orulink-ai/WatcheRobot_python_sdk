@@ -23,11 +23,11 @@ from watcherobot.runtime.daemon.application.session import (
     ApplicationNotSelectedError,
     SessionOccupiedError,
 )
-from watcherobot.runtime.daemon.pairing.session import PairingSessionError
+from watcherobot.runtime.daemon.control.protocol import (
+    DAEMON_CONTROL_PROTOCOL_VERSION,
+)
 from watcherobot.runtime.daemon.maintenance import MaintenanceError
-
-
-DAEMON_CONTROL_PROTOCOL_VERSION = 2
+from watcherobot.runtime.daemon.pairing.session import PairingSessionError
 
 
 class PairDeviceRequest(BaseModel):

@@ -54,6 +54,9 @@ from watcherobot.provisioning import (
     WifiStatus,
 )
 from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
+from watcherobot.runtime.daemon.control.protocol import (
+    DAEMON_CONTROL_PROTOCOL_VERSION,
+)
 from watcherobot.runtime.daemon.instance import (
     RuntimeProcessState,
     RuntimeStateStore,
@@ -1137,7 +1140,14 @@ def ensure_runtime(
     resolved_state_root = (state_root or default_runtime_state_root()).resolve()
     existing = _live_runtime_state(resolved_state_root)
     if existing is not None:
-        return existing, True
+        status = _request_json(
+            existing.control_url,
+            "/daemon/status",
+            timeout=0.5,
+        )
+        if _runtime_matches_current_sdk(status):
+            return existing, True
+        stop_runtime(state_root=resolved_state_root)
 
     resolved_state_root.mkdir(parents=True, exist_ok=True)
     log_path = resolved_state_root / "runtime.log"
@@ -1185,6 +1195,7 @@ def ensure_runtime(
             stdin=subprocess.DEVNULL,
             stdout=log_file,
             stderr=log_file,
+            env=_daemon_subprocess_environment(),
             close_fds=True,
             creationflags=creation_flags,
             **process_options,
@@ -1221,6 +1232,28 @@ def _background_python_executable(
     return launcher
 
 
+def _daemon_subprocess_environment() -> dict[str, str]:
+    """Make the Daemon import the exact SDK package used by this CLI."""
+
+    environment = os.environ.copy()
+    sdk_import_root = str(Path(__file__).resolve().parent.parent)
+    inherited_python_path = environment.get("PYTHONPATH")
+    python_paths = (
+        inherited_python_path.split(os.pathsep)
+        if inherited_python_path
+        else []
+    )
+    normalized_sdk_root = os.path.normcase(os.path.abspath(sdk_import_root))
+    if all(
+        os.path.normcase(os.path.abspath(path)) != normalized_sdk_root
+        for path in python_paths
+        if path
+    ):
+        python_paths.insert(0, sdk_import_root)
+    environment["PYTHONPATH"] = os.pathsep.join(python_paths)
+    return environment
+
+
 def _canonical_launcher_path(executable: Path) -> Path:
     """Canonicalize the parent without losing a virtualenv launcher identity."""
 
@@ -1230,15 +1263,18 @@ def _canonical_launcher_path(executable: Path) -> Path:
     return requested.parent.resolve(strict=True) / requested.name
 
 
-def stop_runtime() -> None:
-    state = _live_runtime_state()
+def stop_runtime(*, state_root: Path | None = None) -> None:
+    resolved_state_root = (
+        state_root or default_runtime_state_root()
+    ).resolve()
+    state = _live_runtime_state(resolved_state_root)
     if state is None:
-        RuntimeStateStore(default_runtime_state_root()).remove()
+        RuntimeStateStore(resolved_state_root).remove()
         return
     _request_json(state.control_url, "/daemon/stop", method="POST")
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
-        if _live_runtime_state() is None:
+        if _live_runtime_state(resolved_state_root) is None:
             return
         time.sleep(0.05)
     raise CliError("Runtime did not stop within 10 seconds")
@@ -1458,6 +1494,17 @@ def _live_runtime_state(
     except CliError:
         return None
     return state
+
+
+def _runtime_matches_current_sdk(status: dict[str, Any]) -> bool:
+    runtime = status.get("runtime")
+    if not isinstance(runtime, dict):
+        return False
+    return (
+        runtime.get("control_protocol")
+        == DAEMON_CONTROL_PROTOCOL_VERSION
+        and runtime.get("sdk_version") == __version__
+    )
 
 
 def _request_json(

@@ -17,9 +17,13 @@
 ```
 
 - `control_protocol` 是管理接口合同版本，不是业务路由版本。
-- `sdk_version` 来自 `watcherobot.__version__`，仅用于诊断随包 SDK 身份。
+- `sdk_version` 来自 `watcherobot.__version__`，用于确认命令行与后台 Daemon
+  来自同一 SDK 版本。
 - 两个字段均为固定、非敏感元数据，不包含本机路径、环境变量、命令输出或 traceback。
-- Desktop 复用已运行的 Daemon 前必须验证 `control_protocol`；缺失或不匹配时，不得把该进程当作当前随包 Runtime 使用。
+- Desktop 或 SDK CLI 复用已运行的 Daemon 前必须同时验证 `control_protocol` 和
+  `sdk_version`；任一字段缺失或不匹配时，不得把该进程当作当前随包 Runtime 使用。
+  SDK CLI 会停止旧的 SDK-owned Daemon，再由当前环境启动匹配版本，避免新旧
+  Application 清单合同混用。
 
 协议版本 2 的唯一升级原因是增加上述显式身份握手。它不改变 Application 分发命令，不改变业务帧路由，也不新增 Application 日志读取接口。
 
@@ -30,6 +34,9 @@
 | 旧版 Desktop | 协议 2 | `runtime` 是附加字段；按既有 JSON 宽松解析继续工作 |
 | 协议 2 Desktop | 协议 2 Daemon | 身份校验通过，可以复用 Daemon |
 | 协议 2 Desktop | 未声明或其他版本 Daemon | 身份校验失败；停止复用并按 Desktop 生命周期策略启动随包 Daemon |
+
+即使 `control_protocol` 相同，`sdk_version` 不同也必须按身份不匹配处理。这一约束
+覆盖 Application 清单等随 SDK 演进、但不属于业务帧路由的本地运行时合同。
 
 ## 启动失败与日志安全边界
 

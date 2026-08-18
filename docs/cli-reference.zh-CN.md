@@ -188,6 +188,9 @@ Application 运行状态；离线时不会误报机器人已连接。没有连�
 `watcherobot robot setup` 和已联网设备使用的 `watcherobot robot pair <code>`，
 然后继续运行，避免阻断离线 Application。
 
+复用 Runtime 前，CLI 会校验后台的控制协议和 SDK 版本；后台仍是旧版 SDK-owned
+Daemon 时会自动重启为当前环境版本，避免新清单被旧 Daemon 拒绝。
+
 ```powershell
 cd my_app
 watcherobot app run

@@ -164,3 +164,19 @@ watcherobot app run
 
 机器人已经接入同一 Wi-Fi 时，不要重置网络；打开机器人上的 `"Python SDK"` 应用，
 改用 `watcherobot robot pair <code>`。
+
+## 升级后的 Runtime 版本
+
+CLI 启动或复用 Runtime 时会核对控制协议和 SDK 版本。源码或安装包升级后，如果后台仍是
+旧版 SDK-owned Daemon，CLI 会自动停止旧进程并从当前环境启动匹配版本，避免出现
+`unknown fields: supported_host_platforms` 之类的新旧 Application 清单不兼容错误。
+
+可以用下面的命令确认前台与后台版本：
+
+```powershell
+watcherobot --version
+watcherobot daemon status
+```
+
+`daemon status` 输出中的 `runtime.sdk_version` 应与当前 CLI 版本一致。自动恢复前发布的
+旧版本若已遇到该错误，可先执行一次 `watcherobot daemon stop`，再重新运行 Application。

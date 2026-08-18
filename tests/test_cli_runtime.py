@@ -80,6 +80,100 @@ def test_cli_status_reports_not_running_for_empty_user_state(
     assert payload == {"running": False}
 
 
+def test_ensure_runtime_reuses_daemon_from_the_same_sdk_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = watcherobot_cli.RuntimeProcessState(
+        pid=101,
+        control_url="http://127.0.0.1:5101",
+        external_url="ws://127.0.0.1:6101",
+        started_at=1.0,
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_live_runtime_state",
+        lambda _state_root=None: existing,
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "runtime": {
+                "control_protocol": (
+                    watcherobot_cli.DAEMON_CONTROL_PROTOCOL_VERSION
+                ),
+                "sdk_version": watcherobot_cli.__version__,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        watcherobot_cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("matching Runtime was restarted")
+        ),
+    )
+
+    state, reused = watcherobot_cli.ensure_runtime(state_root=tmp_path)
+
+    assert state is existing
+    assert reused is True
+
+
+def test_ensure_runtime_restarts_daemon_from_an_older_sdk_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = watcherobot_cli.RuntimeProcessState(
+        pid=101,
+        control_url="http://127.0.0.1:5101",
+        external_url="ws://127.0.0.1:6101",
+        started_at=1.0,
+    )
+    replacement = watcherobot_cli.RuntimeProcessState(
+        pid=202,
+        control_url="http://127.0.0.1:5202",
+        external_url="ws://127.0.0.1:6202",
+        started_at=2.0,
+    )
+    runtime_states = iter((existing, replacement))
+    stop_calls: list[Path | None] = []
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_live_runtime_state",
+        lambda _state_root=None: next(runtime_states),
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "runtime": {
+                "control_protocol": (
+                    watcherobot_cli.DAEMON_CONTROL_PROTOCOL_VERSION
+                ),
+                "sdk_version": "0.1.1a6",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "stop_runtime",
+        lambda *, state_root=None: stop_calls.append(state_root),
+    )
+    monkeypatch.setattr(
+        watcherobot_cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: object(),
+    )
+
+    state, reused = watcherobot_cli.ensure_runtime(state_root=tmp_path)
+
+    assert state is replacement
+    assert reused is False
+    assert stop_calls == [tmp_path.resolve()]
+
+
 def test_windows_background_daemon_uses_pythonw_redirector(
     tmp_path: Path,
 ) -> None:
@@ -117,6 +211,21 @@ def test_posix_background_daemon_preserves_virtualenv_launcher(
 
     assert selected == python
     assert selected.resolve() == runtime
+
+
+def test_daemon_subprocess_imports_the_same_sdk_as_the_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inherited = str(Path("custom-python-path").resolve())
+    monkeypatch.setenv("PYTHONPATH", inherited)
+
+    environment = watcherobot_cli._daemon_subprocess_environment()
+
+    python_paths = environment["PYTHONPATH"].split(os.pathsep)
+    assert python_paths[0] == str(
+        Path(watcherobot_cli.__file__).resolve().parent.parent
+    )
+    assert inherited in python_paths
 
 
 def test_cli_starts_reuses_and_stops_the_unique_runtime(
