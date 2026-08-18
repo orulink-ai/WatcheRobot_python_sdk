@@ -17,6 +17,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from colorama import just_fix_windows_console  # type: ignore[import-untyped]
+
 from watcherobot import __version__
 from watcherobot.application.project import (
     ApplicationProjectDefaults,
@@ -63,6 +65,13 @@ _SETUP_SCAN_TIMEOUT_SECONDS = 10.0
 _SETUP_SCAN_PROGRESS_INTERVAL_SECONDS = 1.0
 _PAIRING_CODE = re.compile(r"^[0-9]{6}$")
 _PAIRING_CODE_IN_TEXT = re.compile(r"(?<![0-9])[0-9]{6}(?![0-9])")
+_ANSI_COLORS = {
+    "blue": "34",
+    "green": "32",
+    "yellow": "33",
+    "red": "31",
+    "cyan": "36",
+}
 
 
 class CliError(RuntimeError):
@@ -259,6 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    just_fix_windows_console()
     arguments = list(sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(arguments)
     try:
@@ -427,6 +437,29 @@ def _is_interactive_terminal() -> bool:
     return sys.stdin.isatty()
 
 
+def _styled(
+    text: str,
+    color: str,
+    *,
+    stream: Any | None = None,
+) -> str:
+    target = sys.stdout if stream is None else stream
+    if "NO_COLOR" in os.environ:
+        return text
+    force_color = os.environ.get("FORCE_COLOR")
+    if force_color not in {None, "", "0"}:
+        enabled = True
+    else:
+        enabled = bool(
+            getattr(target, "isatty", lambda: False)()
+            and os.environ.get("TERM", "") != "dumb"
+        )
+    code = _ANSI_COLORS.get(color)
+    if not enabled or code is None:
+        return text
+    return f"\x1b[{code}m{text}\x1b[0m"
+
+
 def _parse_pairing_code(value: str) -> str:
     pairing_code = str(value).strip()
     if _PAIRING_CODE.fullmatch(pairing_code) is None:
@@ -468,7 +501,10 @@ def _print_bluetooth_cancelled() -> int:
 
 
 def _print_robot_setup_cancelled() -> int:
-    print("Robot setup cancelled.", file=sys.stderr)
+    print(
+        _styled("Robot setup cancelled.", "yellow", stream=sys.stderr),
+        file=sys.stderr,
+    )
     return 130
 
 
@@ -545,18 +581,34 @@ def _print_robot_setup_failure(exc: BluetoothProvisioningError) -> int:
             "  1. Keep the robot on Settings > Wi-Fi and nearby.",
             "  2. Run watcherobot robot setup again.",
         )
-    print("\n".join(lines), file=sys.stderr)
+    print(_styled(lines[0], "red", stream=sys.stderr), file=sys.stderr)
+    for line in lines[1:]:
+        print(_styled(line, "yellow", stream=sys.stderr), file=sys.stderr)
     return 2
 
 
 def _print_robot_setup_input_failure(exc: RobotSetupError) -> int:
-    print("Robot setup could not be completed.", file=sys.stderr)
+    print(
+        _styled(
+            "Robot setup could not be completed.",
+            "red",
+            stream=sys.stderr,
+        ),
+        file=sys.stderr,
+    )
     print(str(exc), file=sys.stderr)
     return 2
 
 
 def _print_robot_pairing_failure(exc: RobotPairingError) -> int:
-    print("Robot pairing could not be completed.", file=sys.stderr)
+    print(
+        _styled(
+            "Robot pairing could not be completed.",
+            "red",
+            stream=sys.stderr,
+        ),
+        file=sys.stderr,
+    )
     print(str(exc), file=sys.stderr)
     print(
         "  1. Confirm Settings > Wi-Fi shows Connected on the robot.",
@@ -586,14 +638,20 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
     ]
     robot_count = len(devices)
     robot_label = "robot" if robot_count == 1 else "robots"
-    print(f"Scan complete: {robot_count} {robot_label} found.")
+    scan_color = "green" if robot_count else "yellow"
+    print(
+        _styled(
+            f"Scan complete: {robot_count} {robot_label} found.",
+            scan_color,
+        )
+    )
     device = _select_setup_device(devices, requested_id=args.device)
     ssid = _setup_text_value(
         args.ssid,
         prompt="Wi-Fi name: ",
         field_name="Wi-Fi name",
     )
-    password = getpass("Wi-Fi password: ")
+    password = getpass(_styled("Wi-Fi password: ", "yellow"))
     try:
         await provisioner.provision_wifi(
             device,
@@ -605,8 +663,11 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
         del password
 
     print(
-        "Wi-Fi credentials stored for "
-        f"{_setup_device_identity(device)}; connection not verified."
+        _styled(
+            "Wi-Fi credentials stored for "
+            f"{_setup_device_identity(device)}; connection not verified.",
+            "yellow",
+        )
     )
     _confirm_robot_wifi_connected(
         wait_for_confirmation=(
@@ -614,7 +675,7 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
         )
     )
     print()
-    print("Next, complete pairing on the robot:")
+    print(_styled("Next, complete pairing on the robot:", "blue"))
     print("  1. Return to the robot launcher.")
     print('  2. Open the "Python SDK" app.')
     print("  3. Read the 6-digit pairing code at the top of the screen.")
@@ -648,8 +709,11 @@ async def _scan_setup_devices(
     provisioner: BluetoothProvisioner,
 ) -> list[BluetoothDevice]:
     print(
-        "Scanning for nearby WatcheRobot devices "
-        f"(up to {_SETUP_SCAN_TIMEOUT_SECONDS:g} seconds)",
+        _styled(
+            "Scanning for nearby WatcheRobot devices "
+            f"(up to {_SETUP_SCAN_TIMEOUT_SECONDS:g} seconds)",
+            "blue",
+        ),
         end="",
         flush=True,
     )
@@ -666,7 +730,7 @@ async def _scan_setup_devices(
             )
             if scan_task in done:
                 break
-            print(".", end="", flush=True)
+            print(_styled(".", "blue"), end="", flush=True)
         return await scan_task
     except BaseException:
         if not scan_task.done():
@@ -684,10 +748,13 @@ def _confirm_robot_wifi_connected(*, wait_for_confirmation: bool) -> None:
     print("The robot will disconnect Bluetooth and try the Wi-Fi network.")
     print()
     print("Check Settings > Wi-Fi on the robot:")
-    print("  - Connected: continue to the pairing step.")
+    print(_styled("  - Connected: continue to the pairing step.", "green"))
     print(
-        "  - Offline or Wi-Fi failed: the Wi-Fi name or password may be "
-        "incorrect."
+        _styled(
+            "  - Offline or Wi-Fi failed: the Wi-Fi name or password may be "
+            "incorrect.",
+            "red",
+        )
     )
     print(
         "    Disconnect/forget that network on the robot, reopen "
@@ -696,7 +763,12 @@ def _confirm_robot_wifi_connected(*, wait_for_confirmation: bool) -> None:
     if not wait_for_confirmation:
         return
     try:
-        input("Press Enter after the robot shows Wi-Fi Connected: ")
+        input(
+            _styled(
+                "Press Enter after the robot shows Wi-Fi Connected: ",
+                "yellow",
+            )
+        )
     except (EOFError, KeyboardInterrupt) as exc:
         raise ProvisioningCancelledError() from exc
 
@@ -708,7 +780,7 @@ def _redact_pairing_codes(message: str) -> str:
 
 
 def _prepare_robot_for_setup(*, wait_for_confirmation: bool) -> None:
-    print("Prepare the robot for first-time setup:")
+    print(_styled("Prepare the robot for first-time setup:", "blue"))
     print("  1. Turn on Bluetooth on this computer.")
     print("  2. Turn on the robot and open Settings > Wi-Fi.")
     print("  3. Keep that page open so the robot can advertise over Bluetooth.")
@@ -720,7 +792,12 @@ def _prepare_robot_for_setup(*, wait_for_confirmation: bool) -> None:
     if not wait_for_confirmation:
         return
     try:
-        input("Press Enter after opening Settings > Wi-Fi on the robot: ")
+        input(
+            _styled(
+                "Press Enter after opening Settings > Wi-Fi on the robot: ",
+                "yellow",
+            )
+        )
     except EOFError as exc:
         raise ProvisioningCancelledError() from exc
 
@@ -795,10 +872,13 @@ def _select_setup_device_with_arrows(
 
 def _setup_device_identity(device: BluetoothDevice) -> str:
     if device.device_id is not None:
-        return f"Device ID: {device.device_id}"
-    return (
-        "Device ID unavailable - firmware update may be required "
-        f"(Bluetooth ID: {device.id})"
+        return _styled(f"Device ID: {device.device_id}", "cyan")
+    return _styled(
+        (
+            "Device ID unavailable - firmware update may be required "
+            f"(Bluetooth ID: {device.id})"
+        ),
+        "yellow",
     )
 
 
@@ -877,7 +957,7 @@ def _setup_text_value(
             f"{field_name} is required in non-interactive use"
         )
     try:
-        supplied = input(prompt).strip()
+        supplied = input(_styled(prompt, "yellow")).strip()
     except EOFError as exc:
         raise ProvisioningCancelledError() from exc
     resolved = supplied or default
@@ -913,7 +993,7 @@ def pair_robot(
         _request_json(state.control_url, "/daemon/devices")
     )
     if bool(device.get("online")):
-        print("Robot is already connected.")
+        print(_styled("Robot is already connected.", "green"))
         return 0
     if str(device.get("state") or "idle") != "idle":
         raise CliError(
@@ -937,7 +1017,7 @@ def pair_robot(
             _request_json(state.control_url, "/daemon/devices")
         )
         if bool(device.get("online")):
-            print("Robot connected successfully.")
+            print(_styled("Robot connected successfully.", "green"))
             return 0
         pairing_state = str(device.get("state") or "unknown")
         last_error = device.get("last_error")

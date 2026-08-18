@@ -62,6 +62,8 @@ def test_cli_references_cover_robot_setup_recovery_states() -> None:
         assert "up to 10 seconds" in content or "最长约 10 秒" in content
         assert "Wi-Fi credentials saved" in content
         assert "Offline" in content
+        assert "NO_COLOR=1" in content
+        assert "FORCE_COLOR=1" in content
 
 
 def test_cli_references_explain_automatic_stable_application_ids() -> None:

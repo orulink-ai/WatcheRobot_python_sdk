@@ -113,6 +113,14 @@ are plain recovery instructions. Automation that requires compact JSON should
 use the lower-level `watcherobot bluetooth ...` commands, whose structured
 output contract is unchanged.
 
+Interactive terminals use color as a secondary state cue: blue for progress,
+green for success, yellow for confirmation, red for failure, and cyan for
+Device IDs. Text and exit codes always carry the same meaning, so color is
+never the only signal. Redirected and non-interactive output disables color
+automatically. Set `NO_COLOR=1` to disable it explicitly or `FORCE_COLOR=1`
+for a compatible special terminal. The SDK enables Windows PowerShell console
+compatibility automatically.
+
 The command then reads the Wi-Fi password privately and provisions the
 credentials. To finish, return to the robot launcher, open the **"Python SDK"**
 app, read the six-digit code at the top of its screen, and enter it into the

@@ -370,6 +370,107 @@ def test_robot_setup_shows_progress_during_a_slow_scan(
     assert "." in scan_line
 
 
+def test_robot_setup_uses_semantic_colors_when_forced(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FakeProvisioner,
+    )
+    monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+    monkeypatch.setattr("watcherobot.cli.pair_robot", lambda _code: 0)
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--device",
+                FakeProvisioner.device.device_id or "",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert "\x1b[34mScanning" in output
+    assert "\x1b[32mScan complete" in output
+    assert "\x1b[33mWi-Fi credentials stored" in output
+    assert "\x1b[36mDevice ID:" in output
+
+
+def test_no_color_overrides_forced_setup_colors(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FakeProvisioner,
+    )
+    monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+    monkeypatch.setattr("watcherobot.cli.pair_robot", lambda _code: 0)
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--device",
+                FakeProvisioner.device.device_id or "",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert "\x1b[" not in output
+
+
+def test_robot_setup_colors_failure_and_recovery_differently(
+    monkeypatch,
+    capsys,
+) -> None:
+    class FailingProvisioner(FakeProvisioner):
+        async def scan_devices(
+            self,
+            *,
+            timeout: float | None = None,
+            name_filter: str | None = None,
+        ) -> list[BluetoothDevice]:
+            raise BluetoothUnavailableError("Bluetooth is unavailable")
+
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FailingProvisioner,
+    )
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: True,
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+
+    assert main(["robot", "setup"]) == 2
+
+    error = capsys.readouterr().err
+    assert "\x1b[31mBluetooth is unavailable" in error
+    assert "\x1b[33m  1. Turn on Bluetooth" in error
+
+
 def test_robot_setup_cancels_and_reaps_an_interrupted_scan(
     monkeypatch,
 ) -> None:
