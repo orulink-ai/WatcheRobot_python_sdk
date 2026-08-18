@@ -78,14 +78,28 @@ automation.
 
 ### `watcherobot robot setup [--device <id>] [--ssid <name>] [--pairing-code <code>] [--clear-existing]`
 
-Guides first-time setup end to end. It first asks the user to open
-**Settings > Wi-Fi** on the robot and starts scanning only after confirmation.
+Guides first-time setup end to end. It first asks the user to turn on computer
+Bluetooth and open **Settings > Wi-Fi** on the robot, then starts scanning only
+after confirmation.
 Results are shown by the stable **Device ID** advertised by the robot. With
 multiple results, use **Up/Down** and Enter to choose the intended Device ID;
 device names are not used as the selection identity. Older firmware without an
 advertised Device ID is marked as unavailable and exposes the Bluetooth ID only
 as a compatibility fallback. `--device` accepts the Device ID and continues to
 accept that fallback Bluetooth ID for older firmware.
+
+The guided flow separates recoverable states instead of returning raw scan
+logs:
+
+| State | What the command explains | Recovery |
+|---|---|---|
+| Computer Bluetooth is off or unavailable | Bluetooth cannot be used | Turn on Bluetooth or check the adapter, then rerun setup |
+| Operating-system permission is denied | Bluetooth access was denied | Allow the terminal or Python to use Bluetooth, then rerun setup |
+| No robot is found | No provisioning advertisement was discovered | Keep **Settings > Wi-Fi** open and the robot nearby; already-networked robots use `robot pair` |
+| One or several current robots are found | Stable Device IDs are displayed | Select the Device ID shown on the robot with **Up/Down** |
+| Older firmware does not advertise a Device ID | Device ID is unavailable and a firmware update may be required | Bluetooth ID remains only as a compatibility fallback |
+| Connection or firmware response times out | Bluetooth communication did not complete | Keep the robot nearby, close competing Bluetooth apps, and retry |
+| The operation is cancelled | Setup was cancelled | No credentials or pairing code are printed |
 
 The command then reads the Wi-Fi password privately and provisions the
 credentials. To finish, return to the robot launcher, open the **"Python SDK"**
@@ -140,8 +154,9 @@ shortcut for directly executing `app.py`.
 
 Creates a runnable Hello World Application without overwriting an existing
 target. When the directory is omitted, an interactive terminal prompts for it.
-The ID, display name, author, and description default from the directory and
-can be overridden for publishing.
+That directory is the only interactive question: ID, display name, author, and
+description are generated automatically. For example, `my_app` receives the
+stable, readable ID `local.my_app`. Publishing metadata can be overridden later.
 
 ```powershell
 watcherobot app init my_app
@@ -152,6 +167,13 @@ watcherobot app init published_app `
   --author "Example Team" `
   --description "An example WatcheRobot Application"
 ```
+
+If an explicit directory is followed by `Application ID:` or other metadata
+prompts, the terminal is running an older CLI. Activate the intended virtual
+environment and check the command source with `where.exe watcherobot`. An
+Application ID is a stable upgrade identity, so the initializer does not append
+a username, timestamp, or random value. Published apps should use a stable
+team-owned namespace such as `com.example.my_app`.
 
 It creates `app.json`, `app.py`, `README.md`, `icon.svg`, and `.gitignore`.
 The generated `app.py` always logs a Hello World success. When a compatible

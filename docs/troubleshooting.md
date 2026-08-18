@@ -17,6 +17,9 @@ watcherobot app list
 | `application_occupied` | Another Application process is starting or running | Stop it before selecting, installing, or starting another one |
 | `Application startup timed out` during a cold default-Application launch | Older Runtime builds allowed only 30 seconds, while a first Windows launch can need more time to initialize | Update the packaged SDK Runtime. Current builds allow 90 seconds in the Daemon and 120 seconds in Desktop before declaring failure |
 | `No robot is connected` | The robot has not completed Wi-Fi setup and Runtime pairing, or it is offline | Run `watcherobot robot setup`; if Wi-Fi is already configured, use `watcherobot robot pair <six-digit-code>` |
+| `Bluetooth is unavailable on this computer` | Bluetooth is off, no adapter is available, or the operating system reports it unavailable | Turn on Bluetooth, confirm the adapter is available, then rerun `watcherobot robot setup` |
+| `Bluetooth access was denied` | The terminal or Python lacks operating-system Bluetooth permission | Allow Bluetooth access in system privacy settings, then rerun setup |
+| `Device ID unavailable` | The robot advertises for provisioning but its firmware does not include the stable Device ID Service Data | Update robot firmware when available; Bluetooth ID is retained only for compatibility |
 | `pairing_not_found` | The computer and robot are not on the same network, or the displayed code expired | Confirm both devices use the same network and retry `watcherobot robot pair` with the current code |
 | Command timeout | The device is offline or did not acknowledge the frame | Check `/daemon/devices`, pairing state, firmware logs, and the Runtime log |
 | `CommandError: ... not_found` | The requested resource is not installed in firmware | Use a resource ID supported by the current firmware |

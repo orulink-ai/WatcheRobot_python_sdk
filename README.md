@@ -109,8 +109,9 @@ Run the guided setup:
 watcherobot robot setup
 ```
 
-The command first asks you to open **Settings > Wi-Fi** on the robot. Scanning
-starts only after you confirm that the page is open. Results are identified by
+The command first asks you to turn on computer Bluetooth and open
+**Settings > Wi-Fi** on the robot. Scanning starts only after you confirm that
+the page is open. Results are identified by
 the stable **Device ID** shown on the robot; when several robots are nearby,
 use **Up/Down** and Enter to select the intended Device ID. Older firmware that
 does not advertise a Device ID is explicitly marked as unavailable and shows

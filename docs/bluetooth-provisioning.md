@@ -11,12 +11,14 @@ Wi-Fi provisioning with Runtime pairing:
 watcherobot robot setup
 ```
 
-The guided command asks the user to keep **Settings > Wi-Fi** open before it
-scans. It identifies results by `BluetoothDevice.id`, offers an **Up/Down**
-selector when several robots are nearby, and never treats the advertised name
-as the pairing identity. After Wi-Fi provisioning, it guides the user to the
-robot's **"Python SDK"** app and completes six-digit Runtime pairing in the same
-setup flow.
+The guided command asks the user to turn on computer Bluetooth and keep
+**Settings > Wi-Fi** open before it scans. It identifies results by the stable
+`BluetoothDevice.device_id`, offers an **Up/Down** selector when several robots
+are nearby, and never treats the advertised name as the pairing identity.
+Older firmware that does not advertise a Device ID is marked explicitly and
+retains the platform Bluetooth ID only as a compatibility fallback. After
+Wi-Fi provisioning, the command guides the user to the robot's **"Python SDK"**
+app and completes six-digit Runtime pairing in the same setup flow.
 
 The lower-level API and `watcherobot bluetooth ...` commands below are intended
 for diagnostics and custom automation.

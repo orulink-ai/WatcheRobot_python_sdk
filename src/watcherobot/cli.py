@@ -34,12 +34,18 @@ from watcherobot.distribution.install import (
     list_installed_applications,
 )
 from watcherobot.provisioning import (
+    BluetoothConnectionTimeoutError,
     BluetoothDevice,
+    BluetoothPermissionError,
     BluetoothProvisioner,
     BluetoothProvisioningError,
+    BluetoothUnavailableError,
     DeviceAmbiguityError,
     DeviceNotFoundError,
     ProvisioningCancelledError,
+    ProvisioningProtocolError,
+    ProvisioningRejectedError,
+    ProvisioningResponseTimeoutError,
 )
 from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 from watcherobot.runtime.daemon.instance import (
@@ -320,6 +326,10 @@ def main(argv: list[str] | None = None) -> int:
                     return _print_robot_setup_cancelled()
                 except ProvisioningCancelledError:
                     return _print_robot_setup_cancelled()
+                except BluetoothProvisioningError as exc:
+                    return _print_robot_setup_failure(exc)
+                except CliError as exc:
+                    return _print_robot_setup_cli_failure(exc)
                 except ValueError as exc:
                     raise CliError(str(exc)) from exc
     except (
@@ -443,6 +453,68 @@ def _print_robot_setup_cancelled() -> int:
     return 130
 
 
+def _print_robot_setup_failure(exc: BluetoothProvisioningError) -> int:
+    lines: tuple[str, ...]
+    if isinstance(exc, BluetoothUnavailableError):
+        lines = (
+            "Bluetooth is unavailable on this computer.",
+            "  1. Turn on Bluetooth on this computer.",
+            "  2. Confirm that a Bluetooth adapter is available.",
+            "  3. Run watcherobot robot setup again.",
+        )
+    elif isinstance(exc, BluetoothPermissionError):
+        lines = (
+            "Bluetooth access was denied.",
+            "  1. Open this computer's system privacy settings.",
+            "  2. Allow Bluetooth access for this terminal or Python.",
+            "  3. Run watcherobot robot setup again.",
+        )
+    elif isinstance(exc, DeviceNotFoundError):
+        lines = (
+            "No WatcheRobot was found.",
+            "  1. Keep the robot on Settings > Wi-Fi.",
+            "  2. Keep the robot near this computer.",
+            "  3. Run watcherobot robot setup again.",
+            "Already on Wi-Fi? Open the robot's \"Python SDK\" app and run "
+            "watcherobot robot pair <code> instead.",
+        )
+    elif isinstance(exc, BluetoothConnectionTimeoutError):
+        lines = (
+            "Bluetooth connection timed out.",
+            "  1. Keep the robot on Settings > Wi-Fi and nearby.",
+            "  2. Close other apps that may be connected to the robot.",
+            "  3. Run watcherobot robot setup again.",
+        )
+    elif isinstance(
+        exc,
+        (
+            ProvisioningProtocolError,
+            ProvisioningRejectedError,
+            ProvisioningResponseTimeoutError,
+        ),
+    ):
+        lines = (
+            "The robot did not accept the Wi-Fi setup.",
+            "  1. Keep the robot on Settings > Wi-Fi and nearby.",
+            "  2. Check the Wi-Fi name and password.",
+            "  3. Run watcherobot robot setup again.",
+        )
+    else:
+        lines = (
+            "Robot setup could not be completed.",
+            "  1. Keep the robot on Settings > Wi-Fi and nearby.",
+            "  2. Run watcherobot robot setup again.",
+        )
+    print("\n".join(lines), file=sys.stderr)
+    return 2
+
+
+def _print_robot_setup_cli_failure(exc: CliError) -> int:
+    print("Robot setup could not be completed.", file=sys.stderr)
+    print(str(exc), file=sys.stderr)
+    return 2
+
+
 async def _run_robot_setup(args: argparse.Namespace) -> int:
     _prepare_robot_for_setup(
         wait_for_confirmation=(
@@ -495,10 +567,11 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
 
 def _prepare_robot_for_setup(*, wait_for_confirmation: bool) -> None:
     print("Prepare the robot for first-time setup:")
-    print("  1. Turn on the robot and open Settings > Wi-Fi.")
-    print("  2. Keep that page open so the robot can advertise over Bluetooth.")
+    print("  1. Turn on Bluetooth on this computer.")
+    print("  2. Turn on the robot and open Settings > Wi-Fi.")
+    print("  3. Keep that page open so the robot can advertise over Bluetooth.")
     print(
-        "  3. Already on Wi-Fi? Press Ctrl+C, open the robot's "
+        "  4. Already on Wi-Fi? Press Ctrl+C, open the robot's "
         '"Python SDK" app, and run watcherobot robot pair <code>.'
     )
     print()
@@ -516,7 +589,7 @@ def _select_setup_device(
     requested_id: str | None,
 ) -> BluetoothDevice:
     if not devices:
-        raise CliError(
+        raise DeviceNotFoundError(
             "No WatcheRobot was found. Keep the robot on Settings > Wi-Fi "
             "so Bluetooth advertising is enabled, keep it nearby, and retry."
         )
@@ -581,7 +654,10 @@ def _select_setup_device_with_arrows(
 def _setup_device_identity(device: BluetoothDevice) -> str:
     if device.device_id is not None:
         return f"Device ID: {device.device_id}"
-    return f"Device ID unavailable (Bluetooth ID: {device.id})"
+    return (
+        "Device ID unavailable - firmware update may be required "
+        f"(Bluetooth ID: {device.id})"
+    )
 
 
 def _setup_device_matches_identifier(

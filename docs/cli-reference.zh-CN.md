@@ -61,11 +61,23 @@ watcherobot daemon stop
 
 ### `watcherobot robot setup [--device <ID>] [--ssid <名称>] [--pairing-code <配对码>] [--clear-existing]`
 
-完成首次连接的完整引导。命令先提示用户在机器人上打开 **Settings > Wi-Fi**，确认
-页面已经打开后才开始扫描。扫描结果显示机器人广播的稳定 **Device ID**；附近有
+完成首次连接的完整引导。命令先提示用户打开电脑蓝牙，并在机器人上打开
+**Settings > Wi-Fi**，确认页面已经打开后才开始扫描。扫描结果显示机器人广播的稳定 **Device ID**；附近有
 多台机器人时，使用 **Up/Down** 和回车键按 Device ID 选择，不以设备名作为配网
 身份。旧固件未广播 Device ID 时会明确标记为不可用，仅把 Bluetooth ID 作为兼容
 信息展示。`--device` 接受 Device ID，同时继续兼容旧固件的 Bluetooth ID。
+
+引导流程会区分可恢复状态，不直接向普通用户输出扫描日志：
+
+| 场景 | 命令说明 | 用户下一步 |
+|---|---|---|
+| 电脑蓝牙关闭、不可用或没有适配器 | 当前电脑无法使用蓝牙 | 打开蓝牙或检查适配器，再重新运行 setup |
+| 系统拒绝蓝牙权限 | 当前终端或 Python 没有蓝牙访问权限 | 在系统隐私设置中授权，再重新运行 setup |
+| 未发现机器人 | 没有发现配网广播 | 保持 **Settings > Wi-Fi** 页面打开并靠近电脑；已联网机器人改用 `robot pair` |
+| 发现一台或多台新版机器人 | 展示稳定 Device ID | 用 **Up/Down** 选择机器人屏幕上可核对的 Device ID |
+| 旧固件没有广播 Device ID | 明确提示 Device ID 不可用，可能需要升级固件 | Bluetooth ID 仅作为兼容信息保留 |
+| 连接或固件响应超时 | 蓝牙通信没有完成 | 保持机器人靠近、关闭可能占用连接的应用，然后重试 |
+| 用户取消 | 明确显示 setup 已取消 | 不打印 Wi-Fi 密码或配对码 |
 
 随后命令私密读取 Wi-Fi 密码并写入网络凭据。配网后回到机器人启动器，打开
 **"Python SDK"** 应用，读取屏幕顶部的六位配对码，并继续在同一个 setup 流程中
@@ -111,7 +123,9 @@ watcherobot robot status
 
 #### `watcherobot app init [目录]`
 
-创建一个可直接运行的 Hello World Application，且不会覆盖已有目标。省略目录时，交互式终端会询问项目目录；ID、显示名称、作者和简介会根据目录生成默认值，准备发布时可通过参数覆盖。
+创建一个可直接运行的 Hello World Application，且不会覆盖已有目标。省略目录时，交互式终端只会询问项目目录；
+ID、显示名称、作者和简介都会自动生成，不要求开发者手工填写。例如 `my_app` 默认得到稳定、可读的
+`local.my_app`。准备发布时再通过参数覆盖正式元数据。
 
 ```powershell
 watcherobot app init my_app
@@ -122,6 +136,11 @@ watcherobot app init published_app `
   --author "Example Team" `
   --description "An example WatcheRobot Application"
 ```
+
+如果提供了目录后仍然出现 `Application ID:`、`Application name:` 等逐项提问，说明当前终端调用的是旧版
+CLI。先激活安装源码的虚拟环境，再用 `where.exe watcherobot` 确认命令来源。Application ID 是升级与覆盖
+安装的稳定身份，不使用用户名、时间戳或随机数自动拼接；这些值会泄露本机信息或导致同一项目每次初始化都
+变成不同应用。正式发布应使用团队持有的稳定命名空间，例如 `com.example.my_app`。
 
 会生成 `app.json`、`app.py`、`README.md`、`icon.svg` 和 `.gitignore`；默认
 `app.py` 一定会输出 Hello World 成功日志，连接兼容机器人时还会播放一次 `happy` 行为。

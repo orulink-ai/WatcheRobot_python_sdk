@@ -40,6 +40,35 @@ def test_onboarding_docs_explain_the_guided_robot_setup_flow() -> None:
         assert "watcherobot robot pair" in content
 
 
+def test_cli_references_cover_robot_setup_recovery_states() -> None:
+    references = (
+        ROOT / "docs" / "cli-reference.md",
+        ROOT / "docs" / "cli-reference.zh-CN.md",
+    )
+
+    for path in references:
+        content = path.read_text(encoding="utf-8")
+        assert "Bluetooth" in content
+        assert "Device ID" in content
+        assert "permission" in content or "权限" in content
+        assert "timeout" in content or "超时" in content
+        assert "cancel" in content or "取消" in content
+
+
+def test_cli_references_explain_automatic_stable_application_ids() -> None:
+    references = (
+        ROOT / "docs" / "cli-reference.md",
+        ROOT / "docs" / "cli-reference.zh-CN.md",
+    )
+
+    for path in references:
+        content = path.read_text(encoding="utf-8")
+        assert "local.my_app" in content
+        assert "Application ID:" in content
+        assert "where.exe watcherobot" in content
+        assert "timestamp" in content or "时间戳" in content
+
+
 def test_installation_guides_separate_source_and_release_installation() -> None:
     guides = (
         ROOT / "docs" / "installation.md",

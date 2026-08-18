@@ -5,9 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from watcherobot.cli import _select_setup_device, build_parser, main
+from watcherobot.cli import CliError, _select_setup_device, build_parser, main
 from watcherobot.provisioning import (
+    BluetoothConnectionTimeoutError,
     BluetoothDevice,
+    BluetoothPermissionError,
+    BluetoothUnavailableError,
     ProvisioningResult,
     ProtocolMessage,
 )
@@ -266,6 +269,7 @@ def test_robot_setup_without_arguments_guides_the_complete_interactive_flow(
         "Enter the 6-digit pairing code: ",
     ]
     output = capsys.readouterr().out
+    assert "Turn on Bluetooth on this computer" in output
     assert output.index("Settings > Wi-Fi") < output.index(
         "Scanning for nearby WatcheRobot devices"
     )
@@ -341,6 +345,7 @@ def test_robot_setup_labels_missing_device_id_without_misrepresenting_bluetooth_
     assert selected is device
     output = capsys.readouterr().out
     assert "Device ID unavailable" in output
+    assert "firmware update may be required" in output
     assert "Bluetooth ID: legacy-bluetooth-id" in output
 
 
@@ -438,9 +443,139 @@ def test_robot_setup_reports_when_no_robot_is_discoverable(
         == 2
     )
 
-    error = json.loads(capsys.readouterr().err)["error"]
+    error = capsys.readouterr().err
+    assert "No WatcheRobot was found" in error
     assert "Settings > Wi-Fi" in error
-    assert "Bluetooth" in error
+    assert "watcherobot robot setup" in error
+    assert '"error"' not in error
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (
+            BluetoothUnavailableError("Bluetooth is unavailable during scan"),
+            "Turn on Bluetooth on this computer",
+        ),
+        (
+            BluetoothPermissionError("Bluetooth permission was denied"),
+            "Allow Bluetooth access",
+        ),
+    ],
+)
+def test_robot_setup_explains_how_to_recover_from_bluetooth_preflight_errors(
+    error: Exception,
+    expected: str,
+    monkeypatch,
+    capsys,
+) -> None:
+    class FailingProvisioner(FakeProvisioner):
+        async def scan_devices(self) -> list[BluetoothDevice]:
+            raise error
+
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FailingProvisioner,
+    )
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 2
+    )
+
+    output = capsys.readouterr().err
+    assert expected in output
+    assert "watcherobot robot setup" in output
+    assert '"error"' not in output
+
+
+def test_robot_setup_explains_how_to_recover_from_connection_timeout(
+    monkeypatch,
+    capsys,
+) -> None:
+    class FailingProvisioner(FakeProvisioner):
+        async def provision_wifi(
+            self,
+            device: BluetoothDevice,
+            *,
+            ssid: str,
+            password: str,
+            clear_existing: bool = False,
+        ) -> ProvisioningResult:
+            raise BluetoothConnectionTimeoutError("connection timed out")
+
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FailingProvisioner,
+    )
+    monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 2
+    )
+
+    output = capsys.readouterr().err
+    assert "Bluetooth connection timed out" in output
+    assert "Settings > Wi-Fi" in output
+    assert "watcherobot robot setup" in output
+    assert "secret" not in output
+
+
+def test_robot_setup_keeps_pairing_failure_in_the_guided_flow(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FakeProvisioner,
+    )
+    monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+
+    def fail_pairing(_pairing_code: str) -> int:
+        raise CliError(
+            "Robot pairing timed out. Confirm that both devices use the "
+            "same network and retry."
+        )
+
+    monkeypatch.setattr("watcherobot.cli.pair_robot", fail_pairing)
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 2
+    )
+
+    output = capsys.readouterr().err
+    assert "Robot setup could not be completed" in output
+    assert "Robot pairing timed out" in output
+    assert '"error"' not in output
 
 
 def test_app_run_without_robot_prints_an_actionable_setup_command(
