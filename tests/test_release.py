@@ -101,6 +101,8 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     assert '[[ "${GITHUB_REF}" == "refs/heads/main" ]]' in workflow
     assert "ref: refs/tags/${{ inputs.recover_tag }}" in recovery_gate_job
     assert "--defer-draft-validation" in recovery_gate_job
+    assert 'sys.exit("Production recovery requires a stable version")' in recovery_gate_job
+    assert 'raise SystemExit("Production recovery requires a stable version")' not in workflow
     assert "--version-file \"${GITHUB_WORKSPACE}/src/watcherobot/__init__.py\"" in workflow
     assert "gh release download \"${RECOVER_TAG}\"" in workflow
     assert "tools/verify_release_artifacts.py" in workflow
