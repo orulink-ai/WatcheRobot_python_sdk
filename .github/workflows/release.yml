@@ -363,7 +363,7 @@ jobs:
             --allow-existing-pypi \
             --defer-draft-validation)
           version=$(python -c 'import json,sys; print(json.load(sys.stdin)["version"])' <<< "${gate_json}")
-          python -c 'from packaging.version import Version; import sys; raise SystemExit("Production recovery requires a stable version") if Version(sys.argv[1]).is_prerelease else None' "${version}"
+          python -c 'from packaging.version import Version; import sys; sys.exit("Production recovery requires a stable version") if Version(sys.argv[1]).is_prerelease else None' "${version}"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "commit=${tag_commit}" >> "${GITHUB_OUTPUT}"
       - name: Remove gate recovery directory
