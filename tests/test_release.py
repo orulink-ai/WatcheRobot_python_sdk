@@ -77,6 +77,9 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     build_job = workflow.split("  build:", maxsplit=1)[1].split(
         "  draft-release:", maxsplit=1
     )[0]
+    recovery_gate_job = workflow.split("  recover-gate:", maxsplit=1)[1].split(
+        "  recover-publish-pypi:", maxsplit=1
+    )[0]
     recovery_publish_job = workflow.split("  recover-publish-pypi:", maxsplit=1)[1].split(
         "  recover-verify-pypi:", maxsplit=1
     )[0]
@@ -86,15 +89,26 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     assert "recover-verify-pypi:" in workflow
     assert "github.event_name == 'workflow_dispatch'" in workflow
     assert "github.event_name == 'push'" in workflow
+    assert "inputs.recover_tag || github.ref_name" in workflow
+    assert "github.ref == 'refs/heads/main'" in workflow
+    assert '[[ "${GITHUB_REF}" == "refs/heads/main" ]]' in workflow
     assert "--version-file \"${GITHUB_WORKSPACE}/src/watcherobot/__init__.py\"" in workflow
     assert "gh release download \"${RECOVER_TAG}\"" in workflow
-    assert "sha256sum --check SHA256SUMS" in workflow
+    assert "tools/verify_release_artifacts.py" in workflow
+    assert "https://test.pypi.org/pypi/watcherobot/${VERSION}/json" in workflow
+    assert "actions/upload-artifact@v7" in recovery_gate_job
+    assert "actions/download-artifact@v8" in recovery_publish_job
+    assert 'mapfile -t distributions < <(python "${RECOVERY_VALIDATOR}"' in workflow
+    assert 'uv publish --trusted-publishing always "${distributions[@]}"' in workflow
     assert "UV_PUBLISH_CHECK_URL: https://pypi.org/simple/" in workflow
     assert "environment:\n      name: pypi" in workflow
     assert 'gh release edit "${RECOVER_TAG}"' in workflow
     assert "contents: write" in gate_job
     assert "contents: write" in build_job
-    assert "contents: write" in recovery_publish_job
+    assert "contents: write" not in recovery_publish_job
+    assert "id-token: write" in recovery_publish_job
+    assert "--no-cache-dir" in workflow
+    assert "--index-url https://pypi.org/simple/" in workflow
 
 
 def test_production_publish_requires_a_release_and_version_check() -> None:
