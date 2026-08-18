@@ -145,7 +145,8 @@ watcherobot app run
 ```
 
 The generated Hello World Application always logs a successful greeting. If a
-compatible robot is connected, it also plays the `happy` behavior once. If no
+compatible robot is connected, it plays the `happy` behavior once, waits for
+it to finish, and exits. If no
 robot is connected, `app run` explains how to start `watcherobot robot setup`
 and continues in offline mode. The Runtime remains the only owner of pairing
 and the device connection.

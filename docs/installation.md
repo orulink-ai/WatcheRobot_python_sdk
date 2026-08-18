@@ -69,6 +69,7 @@ metadata or dependencies change.
 
 ```powershell
 python -c "import sys, watcherobot; print(sys.executable); print(watcherobot.__file__)"
+python -m pip show watcherobot
 where.exe watcherobot
 watcherobot --version
 watcherobot --help
@@ -84,6 +85,9 @@ Python and the CLI should come from `watcherobot-source`, while the module path
 should point to the selected checkout. Before a dedicated version change is
 made, an unpublished checkout may still report the previous release version;
 verify the fixed commit, module path, and new behavior instead.
+`pip show` must report the same checkout as `Editable project location`. If
+multiple checkouts exist, running `pip install -e .` from an older one will
+silently repoint the environment back to that source tree.
 
 ### 5. Validate an SDK contribution
 
@@ -168,9 +172,19 @@ cd hello_robot
 watcherobot app run
 ```
 
-The generated Hello World plays `happy`, flashes the light when supported, and
-then randomly plays silent one-shot expressions, waiting for each one to
-finish. It stays awake until you press `Ctrl+C`.
+The generated Hello World plays the `happy` behavior once, waits for its
+completion event, and exits normally.
+
+`app init` copies the template into the new project. Updating the SDK source
+does not rewrite an existing project's `app.py`. Test a changed template with
+a directory that does not already exist, then verify it on Windows with:
+
+```powershell
+Select-String -Path .\app.py -Pattern "behavior.play|animation.play|SILENT_EXPRESSIONS"
+```
+
+The new template should match only `behavior.play`, not `animation.play` or
+`SILENT_EXPRESSIONS`.
 
 If the robot is already on the same Wi-Fi, do not reset its network. Open the
 robot's `"Python SDK"` app and use `watcherobot robot pair <code>` instead.

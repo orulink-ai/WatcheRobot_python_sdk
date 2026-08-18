@@ -81,11 +81,8 @@ watcherobot app init .\my_app `
 
 The command creates `app.json`, `app.py`, `README.md`, `icon.svg`, and
 `.gitignore`. It derives `requires_watcherobot` from the installed SDK and
-refuses to modify any existing target path. The generated Hello World plays
-`happy`, flashes the light when supported, and then randomly plays compatible
-silent expressions. It waits for each expression's completion event instead
-of using a fixed display time, and keeps an awake idle expression when no demo
-expression is available. The showcase runs until `Ctrl+C`.
+refuses to modify any existing target path. The generated Hello World plays the
+`happy` behavior once, waits for its completion event, and exits normally.
 
 ## Marketplace output
 

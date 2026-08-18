@@ -148,25 +148,16 @@ def test_app_init_creates_project_without_starting_daemon(
     assert "Run 'watcherobot robot setup'" in app_source
     assert 'app.robot.behavior.play,\n            "happy"' in app_source
     assert "job.wait, 20.0" in app_source
-    assert "SILENT_EXPRESSIONS = (" in app_source
-    assert "_shuffled_silent_expressions" in app_source
-    assert "app.robot.animation.available_ids" in app_source
-    assert "app.robot.animation.play" in app_source
-    assert (
-        "job.wait,\n                    SILENT_EXPRESSION_TIMEOUT_SECONDS"
-        in app_source
-    )
-    assert "DEMO_BEHAVIOR_SECONDS" not in app_source
-    assert "app.robot.lights.play_effect" in app_source
-    assert "while True:" in app_source
+    assert "repeat=1" in app_source
+    assert "random" not in app_source
+    assert "app.robot.animation.play" not in app_source
+    assert "app.robot.lights.play_effect" not in app_source
+    assert "while True:" not in app_source
     assert "watcherobot robot setup" in captured.out
     generated_readme = target.joinpath("README.md").read_text(encoding="utf-8")
     assert "watcherobot robot setup" in generated_readme
     assert "always logs a Hello World success" in generated_readme
-    assert (
-        "waits for each randomly selected silent expression to"
-        in generated_readme
-    )
+    assert "plays the `happy` behavior once" in generated_readme
 
 
 def test_app_init_derives_metadata_without_prompts(

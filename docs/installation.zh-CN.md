@@ -64,6 +64,7 @@ editable 安装会直接引用当前 checkout。切换分支或修改 Python 源
 
 ```powershell
 python -c "import sys, watcherobot; print(sys.executable); print(watcherobot.__file__)"
+python -m pip show watcherobot
 where.exe watcherobot
 watcherobot --version
 watcherobot --help
@@ -78,6 +79,8 @@ which watcherobot
 Python 路径和 `watcherobot` 命令都应来自 `watcherobot-source` 环境，模块路径应指向
 当前源码 checkout。源码尚未进入版本发布流程时，`watcherobot --version` 仍可能显示
 上一已发布版本；此时以固定 commit、模块路径和待验收的新行为为准。
+`pip show` 的 `Editable project location` 必须是同一个源码目录；电脑上存在多个 checkout
+时，不要在另一份旧源码中再次执行 `pip install -e .`，否则 editable 安装会被重新指向旧目录。
 
 ### 5. SDK 贡献者验证
 
@@ -159,8 +162,16 @@ cd hello_robot
 watcherobot app run
 ```
 
-生成的 Hello World 会先完整播放 `happy`，支持灯光时闪烁成功提示，随后随机播放静默的一次性
-表情，并等待当前表情真实播放完成后再开始下一个；机器人会保持清醒，按 `Ctrl+C` 停止。
+生成的 Hello World 只播放一次 `happy` 行为，等待行为真实播放完成后正常退出。
+
+`app init` 会把当时的模板复制到项目中，SDK 源码更新不会反向改写已经生成的 `app.py`。
+验收新模板时请使用一个尚不存在的新目录，并通过以下命令自检：
+
+```powershell
+Select-String -Path .\app.py -Pattern "behavior.play|animation.play|SILENT_EXPRESSIONS"
+```
+
+新模板应只命中 `behavior.play`，不应命中 `animation.play` 或 `SILENT_EXPRESSIONS`。
 
 机器人已经接入同一 Wi-Fi 时，不要重置网络；打开机器人上的 `"Python SDK"` 应用，
 改用 `watcherobot robot pair <code>`。

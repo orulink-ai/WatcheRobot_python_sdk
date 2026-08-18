@@ -210,11 +210,9 @@ team-owned namespace such as `com.example.my_app`.
 
 It creates `app.json`, `app.py`, `README.md`, `icon.svg`, and `.gitignore`.
 The generated `app.py` always logs a Hello World success. When a compatible
-robot is connected, it plays `happy` once, flashes the light when supported,
-and then randomly plays silent one-shot expressions advertised by that robot.
-It waits for each expression's completion event instead of using a fixed
-display duration, avoids immediate repeats between shuffles, and falls back to
-an awake idle expression when none are available. Press `Ctrl+C` to stop it.
+robot is connected, it plays the `happy` behavior once, waits for its
+completion event, and exits. It contains no random showcase, light effect, or
+idle behavior.
 
 #### `watcherobot app check <directory>`
 

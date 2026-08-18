@@ -166,10 +166,8 @@ CLI。先激活安装源码的虚拟环境，再在 Windows 使用 `where.exe wa
 变成不同应用。正式发布应使用团队持有的稳定命名空间，例如 `com.example.my_app`。
 
 会生成 `app.json`、`app.py`、`README.md`、`icon.svg` 和 `.gitignore`；默认
-`app.py` 一定会输出 Hello World 成功日志。连接兼容机器人后，它会先完整播放一次
-`happy` 行为，支持灯光时闪烁成功提示，随后从机器人实际公布的资源中随机播放静默的一次性
-表情。每个表情都等待真实完成事件，不用固定时长强制切换；洗牌边界避免立即重复，没有兼容
-表情时保持清醒待机。按 `Ctrl+C` 停止演示。
+`app.py` 一定会输出 Hello World 成功日志。连接兼容机器人后，它只播放一次 `happy`
+行为，等待行为真实播放完成后正常退出，不包含随机轮播、灯光或待机逻辑。
 
 #### `watcherobot app check <目录>`
 
