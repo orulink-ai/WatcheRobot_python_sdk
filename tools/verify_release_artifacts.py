@@ -23,6 +23,14 @@ class VerifiedManifest:
     hashes: dict[str, str]
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _read_manifest(root: Path) -> dict[str, str]:
     sums_path = root / "SHA256SUMS"
     lines = sums_path.read_text(encoding="utf-8").splitlines()
@@ -70,7 +78,7 @@ def verify_release_artifacts(root: Path, expected_version: str) -> VerifiedManif
         raise ValueError("release must contain exactly one wheel and one sdist")
 
     for filename, expected_hash in hashes.items():
-        actual_hash = hashlib.sha256(actual[filename].read_bytes()).hexdigest()
+        actual_hash = _sha256_file(actual[filename])
         if actual_hash != expected_hash:
             raise ValueError(f"checksum mismatch for {filename}")
     return VerifiedManifest(
@@ -96,6 +104,8 @@ def verify_registry_artifacts(
         digest = digests.get("sha256")
         if not isinstance(digest, str):
             raise ValueError(f"{registry_name} did not provide SHA-256 digests")
+        if filename in registry_hashes:
+            raise ValueError(f"{registry_name} returned duplicate file {filename}")
         registry_hashes[filename] = digest
     if registry_hashes != manifest.hashes:
         raise ValueError(

@@ -113,8 +113,11 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     assert "UV_PUBLISH_CHECK_URL: https://pypi.org/simple/" in workflow
     assert "environment:\n      name: pypi" in workflow
     assert 'gh release edit "${RECOVER_TAG}"' in workflow
-    assert "contents: write" in gate_job
-    assert "contents: write" in build_job
+    assert "contents: read" in gate_job
+    assert "contents: write" not in gate_job
+    assert "contents: read" in build_job
+    assert "contents: write" not in build_job
+    assert "contents: write" in recovery_gate_job
     assert "contents: write" not in recovery_publish_job
     assert "id-token: write" in recovery_publish_job
     assert "--no-cache-dir" in workflow
@@ -123,6 +126,7 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     assert "https://pypi.org/pypi/watcherobot/${VERSION}/json" in recovery_verify_job
     assert "--registry-name PyPI" in recovery_verify_job
     assert "RECOVERY_DIR_NAME:" in recovery_verify_job
+    assert workflow.count("python -m pip install packaging==26.0") == 4
 
 
 def test_production_publish_requires_a_release_and_version_check() -> None:

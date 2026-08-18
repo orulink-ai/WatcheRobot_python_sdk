@@ -116,3 +116,19 @@ def test_registry_must_contain_the_exact_same_distributions(
     matching["urls"][0]["digests"]["sha256"] = "0" * 64
     with pytest.raises(ValueError, match="do not match immutable release artifacts"):
         module.verify_registry_artifacts(matching, manifest, registry_name)
+
+
+def test_registry_duplicate_filename_is_rejected(tmp_path: Path) -> None:
+    module = _load_module()
+    hashes = _write_release(tmp_path)
+    manifest = module.verify_release_artifacts(tmp_path, "0.1.1")
+    filename, digest = next(iter(hashes.items()))
+    duplicate = {
+        "urls": [
+            {"filename": filename, "digests": {"sha256": digest}},
+            {"filename": filename, "digests": {"sha256": digest}},
+        ]
+    }
+
+    with pytest.raises(ValueError, match="duplicate file"):
+        module.verify_registry_artifacts(duplicate, manifest, "PyPI")
