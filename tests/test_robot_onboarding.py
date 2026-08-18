@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from watcherobot.cli import build_parser, main
+from watcherobot.cli import _select_setup_device, build_parser, main
 from watcherobot.provisioning import (
     BluetoothDevice,
     ProvisioningResult,
@@ -201,6 +201,8 @@ def test_robot_setup_provisions_wifi_then_pairs_without_exposing_password(
     ]
     assert requests[-1][0] == "/daemon/devices"
     output = capsys.readouterr()
+    assert "Bluetooth ID: robot-1" in output.out
+    assert "WatcheRobot A1" not in output.out
     assert "Wi-Fi credentials saved" in output.out
     assert "Robot connected successfully" in output.out
     assert "secret" not in output.out
@@ -212,7 +214,7 @@ def test_robot_setup_without_arguments_guides_the_complete_interactive_flow(
     capsys,
 ) -> None:
     FakeProvisioner.provision_calls.clear()
-    answers = iter(["Office", "123456"])
+    answers = iter(["", "Office", "123456"])
     prompts: list[str] = []
     device_states = iter(
         [
@@ -256,13 +258,82 @@ def test_robot_setup_without_arguments_guides_the_complete_interactive_flow(
     assert main(["robot", "setup"]) == 0
 
     assert prompts == [
+        "Press Enter after opening Settings > Wi-Fi on the robot: ",
         "Wi-Fi name: ",
         "Wi-Fi password: ",
-        "Enter the 6-digit code shown on the robot: ",
+        "Enter the 6-digit pairing code: ",
     ]
     output = capsys.readouterr().out
-    assert "Found: WatcheRobot A1" in output
+    assert output.index("Settings > Wi-Fi") < output.index(
+        "Scanning for nearby WatcheRobot devices"
+    )
+    assert "Bluetooth ID: robot-1" in output
+    assert "WatcheRobot A1" not in output
+    assert 'Open the "Python SDK" app' in output
+    assert "top of the screen" in output
+    assert "watcherobot robot pair <code>" in output
     assert "Robot connected successfully" in output
+
+
+def test_robot_setup_uses_arrow_keys_to_choose_a_bluetooth_identifier(
+    monkeypatch,
+    capsys,
+) -> None:
+    devices = [
+        BluetoothDevice(
+            id="bluetooth-a",
+            name="WatcheRobot Alpha",
+            rssi=-30,
+            is_watcher=True,
+            _native=object(),
+        ),
+        BluetoothDevice(
+            id="bluetooth-b",
+            name="WatcheRobot Beta",
+            rssi=-40,
+            is_watcher=True,
+            _native=object(),
+        ),
+    ]
+    keys = iter(["down", "select"])
+    monkeypatch.setattr(
+        "watcherobot.cli._read_setup_menu_key",
+        lambda: next(keys),
+    )
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: True,
+    )
+
+    selected = _select_setup_device(devices, requested_id=None)
+
+    assert selected.id == "bluetooth-b"
+    output = capsys.readouterr().out
+    assert "Up/Down" in output
+    assert "bluetooth-a" in output
+    assert "bluetooth-b" in output
+    assert "WatcheRobot Alpha" not in output
+    assert "WatcheRobot Beta" not in output
+
+
+def test_robot_setup_ctrl_c_at_guidance_exits_as_a_cancellation(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _prompt: (_ for _ in ()).throw(KeyboardInterrupt),
+    )
+
+    assert main(["robot", "setup"]) == 130
+
+    output = capsys.readouterr()
+    assert "Robot setup cancelled." in output.err
+    assert '"error"' not in output.err
 
 
 def test_robot_setup_reports_when_no_robot_is_discoverable(
@@ -293,7 +364,7 @@ def test_robot_setup_reports_when_no_robot_is_discoverable(
     )
 
     error = json.loads(capsys.readouterr().err)["error"]
-    assert "Turn on the robot" in error
+    assert "Settings > Wi-Fi" in error
     assert "Bluetooth" in error
 
 
@@ -339,3 +410,4 @@ def test_app_run_without_robot_prints_an_actionable_setup_command(
     output = capsys.readouterr().out
     assert "No robot is connected" in output
     assert "watcherobot robot setup" in output
+    assert "watcherobot robot pair <code>" in output

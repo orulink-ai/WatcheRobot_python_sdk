@@ -441,7 +441,12 @@ def _print_robot_setup_cancelled() -> int:
 
 
 async def _run_robot_setup(args: argparse.Namespace) -> int:
-    print("Scanning for nearby WatcheRobot devices...")
+    _prepare_robot_for_setup(
+        wait_for_confirmation=(
+            args.device is None and _is_interactive_terminal()
+        )
+    )
+    print("Scanning for nearby WatcheRobot devices...", flush=True)
     provisioner = BluetoothProvisioner()
     devices = [
         device
@@ -465,13 +470,17 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
     finally:
         del password
 
-    print(f"Wi-Fi credentials saved for {device.name or device.id}.")
-    print("Waiting for the robot to join the same network...")
+    print(f"Wi-Fi credentials saved for Bluetooth ID: {device.id}.")
+    print()
+    print("Next, complete pairing on the robot:")
+    print("  1. Return to the robot launcher.")
+    print('  2. Open the "Python SDK" app.')
+    print("  3. Read the 6-digit pairing code at the top of the screen.")
     pairing_code = args.pairing_code
     if pairing_code is None:
         pairing_code = _setup_text_value(
             None,
-            prompt="Enter the 6-digit code shown on the robot: ",
+            prompt="Enter the 6-digit pairing code: ",
             field_name="pairing code",
         )
         try:
@@ -481,6 +490,23 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
     return pair_robot(pairing_code)
 
 
+def _prepare_robot_for_setup(*, wait_for_confirmation: bool) -> None:
+    print("Prepare the robot for first-time setup:")
+    print("  1. Turn on the robot and open Settings > Wi-Fi.")
+    print("  2. Keep that page open so the robot can advertise over Bluetooth.")
+    print(
+        "  3. Already on Wi-Fi? Press Ctrl+C, open the robot's "
+        '"Python SDK" app, and run watcherobot robot pair <code>.'
+    )
+    print()
+    if not wait_for_confirmation:
+        return
+    try:
+        input("Press Enter after opening Settings > Wi-Fi on the robot: ")
+    except EOFError as exc:
+        raise CliError("Robot setup cancelled") from exc
+
+
 def _select_setup_device(
     devices: list[BluetoothDevice],
     *,
@@ -488,8 +514,8 @@ def _select_setup_device(
 ) -> BluetoothDevice:
     if not devices:
         raise CliError(
-            "No WatcheRobot was found. Turn on the robot, enable Bluetooth, "
-            "and keep it nearby, then retry."
+            "No WatcheRobot was found. Keep the robot on Settings > Wi-Fi "
+            "so Bluetooth advertising is enabled, keep it nearby, and retry."
         )
     if requested_id:
         matches = [device for device in devices if device.id == requested_id]
@@ -501,29 +527,95 @@ def _select_setup_device(
             raise DeviceAmbiguityError(
                 f"Bluetooth device identifier {requested_id!r} is ambiguous"
             )
+        print(f"Selected Bluetooth ID: {matches[0].id}")
         return matches[0]
     if len(devices) == 1:
         device = devices[0]
-        print(f"Found: {device.name or device.id}")
+        print("Found one robot.")
+        print(f"Bluetooth ID: {device.id}")
         return device
     if not _is_interactive_terminal():
-        raise CliError("Multiple robots were found; rerun with --device <ID>")
-    print("Found multiple robots:")
-    for index, device in enumerate(devices, start=1):
-        print(f"  {index}. {device.name or device.id} ({device.id})")
-    selection = _setup_text_value(
-        None,
-        prompt="Select robot [1]: ",
-        field_name="robot selection",
-        default="1",
-    )
+        raise CliError(
+            "Multiple robots were found; rerun with "
+            "--device <Bluetooth ID>"
+        )
+    return _select_setup_device_with_arrows(devices)
+
+
+def _select_setup_device_with_arrows(
+    devices: list[BluetoothDevice],
+) -> BluetoothDevice:
+    selected_index = 0
+    first_render = True
+    print("Found multiple robots.")
+    print("Select a Bluetooth ID with Up/Down, then press Enter:")
+    while True:
+        if not first_render:
+            print(f"\x1b[{len(devices)}A", end="")
+        for index, device in enumerate(devices):
+            marker = ">" if index == selected_index else " "
+            print(f"\r\x1b[2K {marker} {device.id}")
+        first_render = False
+        key = _read_setup_menu_key()
+        if key == "up":
+            selected_index = (selected_index - 1) % len(devices)
+        elif key == "down":
+            selected_index = (selected_index + 1) % len(devices)
+        elif key == "select":
+            print(f"Selected Bluetooth ID: {devices[selected_index].id}")
+            return devices[selected_index]
+        elif key == "cancel":
+            raise KeyboardInterrupt
+
+
+def _read_setup_menu_key() -> str:
+    if os.name == "nt":
+        return _read_windows_setup_menu_key()
+    return _read_posix_setup_menu_key()
+
+
+def _read_windows_setup_menu_key() -> str:
+    import msvcrt
+
+    getwch = getattr(msvcrt, "getwch")
+    key = getwch()
+    if key in {"\x00", "\xe0"}:
+        extended_key = getwch()
+        return {"H": "up", "P": "down"}.get(extended_key, "other")
+    if key == "\r":
+        return "select"
+    if key == "\x03":
+        return "cancel"
+    return "other"
+
+
+def _read_posix_setup_menu_key() -> str:
+    import termios
+    import tty
+
+    file_descriptor = sys.stdin.fileno()
+    tcgetattr = getattr(termios, "tcgetattr")
+    tcsetattr = getattr(termios, "tcsetattr")
+    setraw = getattr(tty, "setraw")
+    drain_mode = getattr(termios, "TCSADRAIN")
+    previous_settings = tcgetattr(file_descriptor)
     try:
-        selected_index = int(selection)
-    except ValueError as exc:
-        raise CliError("robot selection must be a number") from exc
-    if selected_index < 1 or selected_index > len(devices):
-        raise CliError("robot selection is out of range")
-    return devices[selected_index - 1]
+        setraw(file_descriptor)
+        key = sys.stdin.read(1)
+        if key == "\x1b":
+            sequence = sys.stdin.read(2)
+            return {"[A": "up", "[B": "down"}.get(sequence, "other")
+        if key in {"\r", "\n"}:
+            return "select"
+        if key == "\x03":
+            return "cancel"
+        return "other"
+    finally:
+        tcsetattr(
+            file_descriptor,
+            drain_mode,
+            previous_settings,
+        )
 
 
 def _setup_text_value(
@@ -539,7 +631,7 @@ def _setup_text_value(
         raise CliError(f"{field_name} is required in non-interactive use")
     try:
         supplied = input(prompt).strip()
-    except (EOFError, KeyboardInterrupt) as exc:
+    except EOFError as exc:
         raise CliError("Robot setup cancelled") from exc
     resolved = supplied or default
     if not resolved:
@@ -899,7 +991,11 @@ def _print_application_robot_guidance(control_url: str) -> None:
         return
     print()
     print("No robot is connected. This Application can still run offline.")
-    print("To connect one, run: watcherobot robot setup")
+    print("First-time setup: watcherobot robot setup")
+    print(
+        'Already on Wi-Fi: open the robot\'s "Python SDK" app, then run '
+        "watcherobot robot pair <code>"
+    )
     print()
 
 

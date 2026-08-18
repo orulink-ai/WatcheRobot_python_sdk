@@ -61,9 +61,14 @@ watcherobot daemon stop
 
 ### `watcherobot robot setup [--device <ID>] [--ssid <名称>] [--pairing-code <配对码>] [--clear-existing]`
 
-完成首次连接的完整引导：扫描附近的 WatcheRobot、自动选择唯一结果或让用户选择、
-私密读取 Wi-Fi 密码、写入网络凭据、启动或复用 Runtime，再等待六位码配对完成。
-交互式终端会询问省略的字段；密码永远不能作为命令行参数传入，也不会打印。
+完成首次连接的完整引导。命令先提示用户在机器人上打开 **Settings > Wi-Fi**，确认
+页面已经打开后才开始扫描。只找到一台时显示平台对应的 **Bluetooth ID**；附近有
+多台机器人时，使用 **Up/Down** 和回车键按 Bluetooth ID 选择，不以设备名作为
+配网身份。
+
+随后命令私密读取 Wi-Fi 密码并写入网络凭据。配网后回到机器人启动器，打开
+**"Python SDK"** 应用，读取屏幕顶部的六位配对码，并继续在同一个 setup 流程中
+输入。交互式终端会询问省略的字段；密码永远不能作为命令行参数传入，也不会打印。
 
 ```powershell
 watcherobot robot setup
@@ -80,8 +85,9 @@ watcherobot robot setup `
 
 ### `watcherobot robot pair <六位配对码>`
 
-用于机器人已经接入同一网络的情况。命令会启动或复用 Runtime，以 `python_sdk`
-模式发起配对，等待设备连接，并把常见发现或连接失败转换为用户可理解的提示。
+用于机器人已经接入同一网络的情况。先在机器人上打开 **"Python SDK"** 应用并读取
+当前配对码；命令会启动或复用 Runtime，以 `python_sdk` 模式发起配对，等待设备
+连接，并把常见发现或连接失败转换为用户可理解的提示。
 
 ```powershell
 watcherobot robot pair 123456
@@ -132,8 +138,9 @@ watcherobot app check .\my_app --jsonl
 
 启动或复用当前用户 Runtime，选择本地源码 Application，并以 Runtime 注入的
 `WATCHER_APP_*` 环境变量启动它。目录默认是当前工作目录；Application 退出后
-Runtime 会继续运行。没有连接机器人时，CLI 会打印准确的
-`watcherobot robot setup` 命令并继续运行，避免阻断离线 Application。
+Runtime 会继续运行。没有连接机器人时，CLI 会同时打印首次连接使用的
+`watcherobot robot setup` 和已联网设备使用的 `watcherobot robot pair <code>`，
+然后继续运行，避免阻断离线 Application。
 
 ```powershell
 cd my_app

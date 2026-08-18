@@ -22,6 +22,47 @@ def test_readmes_document_managed_application_and_runtime_cli() -> None:
         assert "SDK_DISCOVER" not in readme
 
 
+def test_onboarding_docs_explain_the_guided_robot_setup_flow() -> None:
+    documents = (
+        ROOT / "README.md",
+        ROOT / "README.zh-CN.md",
+        ROOT / "docs" / "cli-reference.md",
+        ROOT / "docs" / "cli-reference.zh-CN.md",
+    )
+
+    for path in documents:
+        content = path.read_text(encoding="utf-8")
+        assert "Settings > Wi-Fi" in content
+        assert "Bluetooth ID" in content
+        assert "Up/Down" in content
+        assert '"Python SDK"' in content
+        assert "watcherobot robot pair" in content
+
+
+def test_installation_guides_separate_source_and_release_installation() -> None:
+    guides = (
+        ROOT / "docs" / "installation.md",
+        ROOT / "docs" / "installation.zh-CN.md",
+    )
+
+    for path in guides:
+        content = path.read_text(encoding="utf-8")
+        assert "conda create -n watcherobot python=3.11" in content
+        assert "conda create -n watcherobot-source python=3.11" in content
+        assert "python -m pip install watcherobot" in content
+        assert "python -m pip install -e ." in content
+        assert 'python -m pip install -e ".[test]"' in content
+        assert "git switch --detach COMMIT_SHA" in content
+        assert "--extra-index-url https://pypi.org/simple/" in content
+        assert "where.exe watcherobot" in content
+        assert "which watcherobot" in content
+
+    english_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    chinese_readme = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+    assert "docs/installation.md" in english_readme
+    assert "docs/installation.zh-CN.md" in chinese_readme
+
+
 def test_resource_and_troubleshooting_guides_match_runtime_ownership() -> None:
     resources = (ROOT / "docs" / "resources.md").read_text(encoding="utf-8")
     troubleshooting = (

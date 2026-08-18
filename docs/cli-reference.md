@@ -78,12 +78,17 @@ automation.
 
 ### `watcherobot robot setup [--device <id>] [--ssid <name>] [--pairing-code <code>] [--clear-existing]`
 
-Guides first-time setup end to end. It scans for nearby WatcheRobot devices,
-selects the only result or asks the user to choose, reads the Wi-Fi password
-privately, provisions the credentials, starts or reuses the Runtime, and waits
-for six-digit-code pairing to finish. Omitted values are prompted in an
-interactive terminal. The password is never accepted as an argument or
-printed.
+Guides first-time setup end to end. It first asks the user to open
+**Settings > Wi-Fi** on the robot and starts scanning only after confirmation. A single
+result is shown by its platform-specific **Bluetooth ID**. With multiple
+results, use **Up/Down** and Enter to choose the intended Bluetooth ID; device
+names are not used as the selection identity.
+
+The command then reads the Wi-Fi password privately and provisions the
+credentials. To finish, return to the robot launcher, open the **"Python SDK"**
+app, read the six-digit code at the top of its screen, and enter it into the
+same setup flow. Omitted values are prompted in an interactive terminal. The
+password is never accepted as an argument or printed.
 
 ```powershell
 watcherobot robot setup
@@ -101,7 +106,8 @@ watcherobot robot setup `
 
 ### `watcherobot robot pair <six-digit-code>`
 
-Pairs a robot that is already on the same network. It starts or reuses the
+Pairs a robot that is already on the same network. Open the robot's **"Python
+SDK"** app first and use its current code. The command starts or reuses the
 Runtime, initiates the `python_sdk` pairing mode, waits for the device
 connection, and reports common discovery or connection failures in user terms.
 
@@ -165,8 +171,9 @@ Starts or reuses the current-user Runtime, selects the local source Application,
 and launches it with Runtime-injected `WATCHER_APP_*` variables. The directory
 defaults to the current working directory. The Runtime remains available after
 the Application exits. When no robot is connected, the CLI prints the exact
-`watcherobot robot setup` command and continues so offline Applications still
-work.
+first-time `watcherobot robot setup` command and the already-networked
+`watcherobot robot pair <code>` shortcut, then continues so offline
+Applications still work.
 
 ```powershell
 cd my_app
