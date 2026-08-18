@@ -211,9 +211,10 @@ team-owned namespace such as `com.example.my_app`.
 It creates `app.json`, `app.py`, `README.md`, `icon.svg`, and `.gitignore`.
 The generated `app.py` always logs a Hello World success. When a compatible
 robot is connected, it plays `happy` once, flashes the light when supported,
-and then continuously cycles through a shuffled set of safe demo behaviors.
-Each shuffle avoids repeating the previous behavior first. Press `Ctrl+C` to
-stop the showcase.
+and then randomly plays silent one-shot expressions advertised by that robot.
+It waits for each expression's completion event instead of using a fixed
+display duration, avoids immediate repeats between shuffles, and falls back to
+an awake idle expression when none are available. Press `Ctrl+C` to stop it.
 
 #### `watcherobot app check <directory>`
 

@@ -75,8 +75,10 @@ the publishing flow:
 
 The target must not exist. Initialization does not start the Daemon or access
 Hugging Face. The generated `app.py` plays `happy` once, flashes the light when
-supported, and then continuously cycles through shuffled demo behaviors until
-the user presses `Ctrl+C`. It creates:
+supported, and then randomly plays silent one-shot expressions advertised by
+the robot. It waits for each expression to finish instead of switching on a
+fixed timer. If no compatible expression is available, it keeps the robot in
+an awake idle expression until the user presses `Ctrl+C`. It creates:
 
 ```text
 my_sdk_test/

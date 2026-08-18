@@ -31,30 +31,35 @@ import random
 from watcherobot.application import ApplicationContext
 
 
-# Firmware behavior-state IDs, not raw expression or animation resource IDs.
-DEMO_BEHAVIORS = (
-    "smile",
-    "shock",
-    "sunglasses",
-    "speechless",
-    "concentration",
-    "get",
-    "query",
+# Friendly one-shot animation IDs. Playing them directly keeps this showcase
+# silent: no behavior sound or body motion is triggered after the welcome.
+SILENT_EXPRESSIONS = (
     "fondle_love",
+    "speaking_blink",
+    "speaking_eye",
+    "click_eye",
+    "query",
 )
-DEMO_BEHAVIOR_SECONDS = 4.0
+SILENT_EXPRESSION_TIMEOUT_SECONDS = 20.0
 
 
-def _shuffled_demo_behaviors(previous_behavior: str | None) -> list[str]:
-    behaviors = list(DEMO_BEHAVIORS)
-    random.shuffle(behaviors)
+def _shuffled_silent_expressions(
+    available_ids: set[str],
+    previous_expression: str | None,
+) -> list[str]:
+    expressions = [
+        expression_id
+        for expression_id in SILENT_EXPRESSIONS
+        if expression_id in available_ids
+    ]
+    random.shuffle(expressions)
     if (
-        previous_behavior is not None
-        and len(behaviors) > 1
-        and behaviors[0] == previous_behavior
+        previous_expression is not None
+        and len(expressions) > 1
+        and expressions[0] == previous_expression
     ):
-        behaviors[0], behaviors[1] = behaviors[1], behaviors[0]
-    return behaviors
+        expressions[0], expressions[1] = expressions[1], expressions[0]
+    return expressions
 
 
 async def _flash_success(app: ApplicationContext) -> None:
@@ -74,28 +79,94 @@ async def _flash_success(app: ApplicationContext) -> None:
         app.logger.warning("The success light was skipped: %s", exc)
 
 
-async def _showcase_behaviors(app: ApplicationContext) -> None:
-    previous_behavior = None
-    app.logger.info("Press Ctrl+C to stop the behavior showcase.")
+async def _keep_awake_without_showcase(app: ApplicationContext) -> None:
+    app.logger.warning(
+        "No compatible silent expressions were advertised; keeping the "
+        "robot in its awake idle expression."
+    )
+    try:
+        await asyncio.to_thread(
+            app.robot.behavior.play,
+            "awake_idle",
+            repeat=1,
+        )
+    except Exception as exc:
+        app.logger.warning("The awake idle fallback was unavailable: %s", exc)
+    await asyncio.Event().wait()
+
+
+async def _prefetch_expression(
+    app: ApplicationContext,
+    expression_id: str,
+) -> None:
+    try:
+        await asyncio.to_thread(app.robot.animation.prefetch, expression_id)
+    except Exception as exc:
+        app.logger.warning(
+            "Expression %s could not be prefetched: %s",
+            expression_id,
+            exc,
+        )
+
+
+async def _showcase_silent_expressions(app: ApplicationContext) -> None:
+    if not app.robot.supports("animation"):
+        await _keep_awake_without_showcase(app)
+        return
+
+    available_ids = set(app.robot.animation.available_ids)
+    previous_expression = None
+    app.logger.info("Press Ctrl+C to stop the silent expression showcase.")
     while True:
-        for behavior_id in _shuffled_demo_behaviors(previous_behavior):
+        expressions = _shuffled_silent_expressions(
+            available_ids,
+            previous_expression,
+        )
+        if not expressions:
+            await _keep_awake_without_showcase(app)
+            return
+        for index, expression_id in enumerate(expressions):
+            if index == 0:
+                await _prefetch_expression(app, expression_id)
+            job = None
             try:
-                await asyncio.to_thread(
-                    app.robot.behavior.play,
-                    behavior_id,
-                    repeat=1,
+                job = await asyncio.to_thread(
+                    app.robot.animation.play,
+                    expression_id,
                 )
+                if index + 1 < len(expressions):
+                    await _prefetch_expression(app, expressions[index + 1])
+                app.logger.info(
+                    "Playing silent expression: %s",
+                    expression_id,
+                )
+                await asyncio.to_thread(
+                    job.wait,
+                    SILENT_EXPRESSION_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                app.logger.warning(
+                    "Expression %s did not finish in time and was skipped.",
+                    expression_id,
+                )
+                if job is not None:
+                    try:
+                        await asyncio.to_thread(job.cancel)
+                    except Exception as exc:
+                        app.logger.warning(
+                            "Expression %s could not be cancelled: %s",
+                            expression_id,
+                            exc,
+                        )
+                continue
             except Exception as exc:
                 app.logger.warning(
-                    "Behavior %s is unavailable and was skipped: %s",
-                    behavior_id,
+                    "Expression %s was unavailable and was skipped: %s",
+                    expression_id,
                     exc,
                 )
-                await asyncio.sleep(1.0)
                 continue
-            app.logger.info("Playing demo behavior: %s", behavior_id)
-            previous_behavior = behavior_id
-            await asyncio.sleep(DEMO_BEHAVIOR_SECONDS)
+            previous_expression = expression_id
 
 
 async def main() -> None:
@@ -119,7 +190,7 @@ async def main() -> None:
         app.logger.info(
             "✓ Your first WatcheRobot Application is running successfully!"
         )
-        await _showcase_behaviors(app)
+        await _showcase_silent_expressions(app)
 
 
 if __name__ == "__main__":
@@ -399,7 +470,8 @@ watcherobot app publish .
 
 The generated `app.py` always logs a Hello World success. With a compatible
 robot connected, it plays the `happy` behavior once, flashes the light when
-supported, and then randomly cycles through demo behaviors until you press
+supported, and then waits for each randomly selected silent expression to
+finish before starting the next one. It keeps the robot awake until you press
 Ctrl+C. Run it through the SDK Runtime; do not execute `app.py` directly.
 """
 

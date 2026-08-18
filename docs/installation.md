@@ -169,7 +169,8 @@ watcherobot app run
 ```
 
 The generated Hello World plays `happy`, flashes the light when supported, and
-then continuously showcases shuffled demo behaviors. Press `Ctrl+C` to stop it.
+then randomly plays silent one-shot expressions, waiting for each one to
+finish. It stays awake until you press `Ctrl+C`.
 
 If the robot is already on the same Wi-Fi, do not reset its network. Open the
 robot's `"Python SDK"` app and use `watcherobot robot pair <code>` instead.

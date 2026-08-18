@@ -73,11 +73,20 @@ def test_init_creates_one_publish_ready_application_project(
     app_source = target.joinpath("app.py").read_text(encoding="utf-8")
     assert 'app.robot.behavior.play,\n            "happy"' in app_source
     assert "job.wait, 20.0" in app_source
-    assert "DEMO_BEHAVIORS = (" in app_source
-    assert "random.shuffle(behaviors)" in app_source
+    assert "SILENT_EXPRESSIONS = (" in app_source
+    assert "random.shuffle(expressions)" in app_source
     assert "while True:" in app_source
     assert "app.robot.lights.play_effect" in app_source
-    assert "Press Ctrl+C to stop the behavior showcase." in app_source
+    assert "app.robot.animation.available_ids" in app_source
+    assert "app.robot.animation.prefetch" in app_source
+    assert "app.robot.animation.play" in app_source
+    assert (
+        "job.wait,\n                    SILENT_EXPRESSION_TIMEOUT_SECONDS"
+        in app_source
+    )
+    assert 'app.robot.behavior.play,\n            "awake_idle"' in app_source
+    assert "DEMO_BEHAVIOR_SECONDS" not in app_source
+    assert "Press Ctrl+C to stop the silent expression showcase." in app_source
     assert "watcherobot app check" in target.joinpath("README.md").read_text(
         encoding="utf-8"
     )
@@ -90,19 +99,19 @@ def test_init_creates_one_publish_ready_application_project(
         run_name="generated_application_test",
     )
     monkeypatch.setattr(namespace["random"], "shuffle", lambda _items: None)
-    behaviors = namespace["_shuffled_demo_behaviors"]("smile")
-    assert behaviors[0] != "smile"
-    assert tuple(namespace["DEMO_BEHAVIORS"]) == (
-        "smile",
-        "shock",
-        "sunglasses",
-        "speechless",
-        "concentration",
-        "get",
-        "query",
+    expressions = namespace["_shuffled_silent_expressions"](
+        {"query", "fondle_love", "click_eye"},
         "fondle_love",
     )
-    assert set(behaviors) == set(namespace["DEMO_BEHAVIORS"])
+    assert expressions[0] != "fondle_love"
+    assert tuple(namespace["SILENT_EXPRESSIONS"]) == (
+        "fondle_love",
+        "speaking_blink",
+        "speaking_eye",
+        "click_eye",
+        "query",
+    )
+    assert set(expressions) == {"query", "fondle_love", "click_eye"}
 
 
 @pytest.mark.parametrize("existing_kind", ["file", "directory"])
