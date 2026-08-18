@@ -76,12 +76,24 @@ business logic.
 
 ### 1. Install the SDK
 
+Use a dedicated Conda environment instead of `base`. The SDK supports Python
+3.10–3.12; Python 3.11 is recommended:
+
 ```powershell
+conda create -n watcherobot python=3.11 -y
+conda activate watcherobot
+python -m pip install --upgrade pip
 python -m pip install watcherobot
 ```
 
-Cloning this repository and using `pip install -e ".[test]"` is only necessary
-when contributing to the SDK itself.
+The command above is the normal path after a release is published to PyPI. To
+test an unpublished PR or commit, create a separate `watcherobot-source`
+environment and run `python -m pip install -e .` from the selected checkout.
+Install `.[test]` only when contributing to the SDK.
+
+See the [installation guide](docs/installation.md) for both complete paths,
+TestPyPI dependency resolution, and command ownership checks. Do not use the
+PyPI command to validate unpublished source.
 
 Verify the installed command when needed:
 

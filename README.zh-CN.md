@@ -61,11 +61,22 @@ SDK 仓库只负责 Application API、Daemon、Runtime 控制面和分发工具�
 
 ### 1. 安装 SDK
 
+建议使用独立 Conda 环境，不要安装到 `base`。SDK 支持 Python 3.10–3.12，推荐
+Python 3.11：
+
 ```powershell
+conda create -n watcherobot python=3.11 -y
+conda activate watcherobot
+python -m pip install --upgrade pip
 python -m pip install watcherobot
 ```
 
-只有参与 SDK 本身开发时，才需要克隆仓库并执行 `pip install -e ".[test]"`。
+上面是正式版本发布到 PyPI 后的普通安装方式。需要验收尚未发布的 PR/commit 时，应
+另外创建 `watcherobot-source` 环境并从目标 checkout 执行
+`python -m pip install -e .`；参与 SDK 开发时才安装 `.[test]`。
+
+两条完整路径、TestPyPI 依赖解析和命令来源检查见
+[安装指南](docs/installation.zh-CN.md)。不要用 PyPI 安装命令验收尚未发布的源码。
 
 需要确认安装版本时执行：
 
