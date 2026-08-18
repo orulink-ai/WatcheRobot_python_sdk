@@ -80,7 +80,9 @@ watcherobot daemon stop
 | 旧固件没有广播 Device ID | 明确提示 Device ID 不可用，可能需要升级固件 | Bluetooth ID 仅作为兼容信息保留 |
 | 蓝牙连接或响应超时 | 蓝牙通信没有完成 | 保持机器人靠近、关闭可能占用连接的应用，然后重试 |
 | 机器人拒绝 Wi-Fi 配置 | 网络名称或密码没有被接受 | 检查 Wi-Fi 名称和密码后重试 |
-| 凭据已保存但机器人显示 Offline / Wi-Fi failed | 凭据写入成功，但联网尚未验证或失败 | 在机器人上断开/忘记该网络，重新打开设置并输入正确凭据 |
+| Wi-Fi 认证失败 | 固件在当前 BLE 会话上报 `auth_failed` | 检查密码后重新运行 setup |
+| 找不到兼容网络 | 固件上报 `network_not_found` | 检查网络名称、距离和安全模式 |
+| Wi-Fi 验证超时 | 固件上报 `timeout`，或 SDK 的有界等待到期 | 靠近路由器，检查凭据后重试 |
 | 固件返回不兼容响应 | 机器人与 SDK 的配网协议不匹配 | 升级固件和 SDK；持续出现时反馈两端版本 |
 | Runtime 配对失败 | 六位码配对阶段没有完成 | 保持 **"Python SDK"** 应用打开、确认处于同一网络并输入最新配对码 |
 | 用户取消 | 明确显示 setup 已取消 | 不打印 Wi-Fi 密码或配对码 |
@@ -93,16 +95,15 @@ watcherobot daemon stop
 关闭颜色；设置 `NO_COLOR=1` 可显式禁用，`FORCE_COLOR=1` 可用于支持 ANSI 的特殊终端。Windows
 PowerShell 的控制台兼容由 SDK 自动处理。
 
-随后命令私密读取 Wi-Fi 密码并写入网络凭据。配网后回到机器人启动器，打开
+随后命令私密读取 Wi-Fi 密码并写入网络凭据，同时保持 BLE 会话，实时接收固件上报的
+`connecting`、`connected`、`auth_failed`、`network_not_found` 或 `timeout`。只有收到
+`connected` 才会进入配对。配网后回到机器人启动器，打开
 **"Python SDK"** 应用，读取屏幕顶部的六位配对码，并继续在同一个 setup 流程中
 输入。交互式终端会询问省略的字段；密码永远不能作为命令行参数传入，也不会打印。
 
-`Wi-Fi credentials saved` 只表示机器人保存了 SSID 和密码，不表示密码已经验证正确。
-当前固件必须先释放蓝牙资源，随后才能尝试连接 Wi-Fi，因此 CLI 无法从同一个 BLE 会话直接得到最终认证
-结果。交互流程会明确显示这项边界，并暂停在 Wi-Fi 确认步骤：只有机器人 **Settings > Wi-Fi** 显示
-**Connected** 后才继续配对。如果显示 **Offline** 或 **Wi-Fi failed**，网络名称或密码可能错误；在机器人上
-断开/忘记该网络，重新打开 **Settings > Wi-Fi**，再运行 `watcherobot robot setup`。显式提供
-`--pairing-code` 时仍显示这项说明，但不会新增 Enter 确认，以保持显式参数调用的可预测性。
+流程不再要求用户观察屏幕后手工按回车确认。固件负责限定连接尝试时长并通过 BLE 返回终态；SDK 还设置了
+略长的主机侧截止时间，避免终态通知丢失后命令无限等待。认证失败、找不到网络或超时都会在 Runtime 配对前
+停止，并给出对应恢复步骤，且不会打印密码。
 
 ```powershell
 watcherobot robot setup
@@ -313,7 +314,7 @@ watcherobot bluetooth scan
 
 ### `watcherobot bluetooth provision --device <ID> --ssid <名称> [--clear-existing]`
 
-提示输入 Wi-Fi 密码，并把凭据发送给所选设备。`--clear-existing` 会先请求设备清除已有凭据。`credentials_saved` 只表示固件确认保存，不代表设备已经成功连上网络。
+提示输入 Wi-Fi 密码，并把凭据发送给所选设备。`--clear-existing` 会先请求设备清除已有凭据。只有固件上报 Wi-Fi 已连接才返回 `connected`；认证失败、找不到网络或超时会直接返回错误。
 
 ```powershell
 watcherobot bluetooth provision --device <id> --ssid MyWiFi

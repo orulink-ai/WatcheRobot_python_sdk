@@ -50,6 +50,8 @@ from watcherobot.provisioning import (
     ProvisioningProtocolError,
     ProvisioningRejectedError,
     ProvisioningResponseTimeoutError,
+    WifiConnectionFailedError,
+    WifiStatus,
 )
 from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 from watcherobot.runtime.daemon.instance import (
@@ -554,6 +556,28 @@ def _print_robot_setup_failure(exc: BluetoothProvisioningError) -> int:
             "  2. Close other apps that may be connected to the robot.",
             "  3. Run watcherobot robot setup again.",
         )
+    elif isinstance(exc, WifiConnectionFailedError):
+        if exc.reason == "auth_failed":
+            lines = (
+                "The robot could not authenticate with this Wi-Fi network.",
+                "  1. Check the Wi-Fi password carefully.",
+                "  2. Keep the robot on Settings > Wi-Fi.",
+                "  3. Run watcherobot robot setup again.",
+            )
+        elif exc.reason == "network_not_found":
+            lines = (
+                "The robot could not find a compatible Wi-Fi network.",
+                "  1. Check the Wi-Fi name and confirm the network is nearby.",
+                "  2. Confirm the network uses a robot-compatible security mode.",
+                "  3. Run watcherobot robot setup again.",
+            )
+        else:
+            lines = (
+                "The robot timed out while connecting to Wi-Fi.",
+                "  1. Move the robot closer to the Wi-Fi access point.",
+                "  2. Check the Wi-Fi name and password.",
+                "  3. Run watcherobot robot setup again.",
+            )
     elif isinstance(exc, ProvisioningRejectedError):
         lines = (
             "Robot rejected the Wi-Fi settings.",
@@ -652,26 +676,28 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
         field_name="Wi-Fi name",
     )
     password = getpass(_styled("Wi-Fi password: ", "yellow"))
+    print(_styled("Sending Wi-Fi settings to the robot...", "blue"))
     try:
-        await provisioner.provision_wifi(
+        provisioning_result = await provisioner.provision_wifi(
             device,
             ssid=ssid,
             password=password,
             clear_existing=bool(args.clear_existing),
+            on_status=_print_wifi_status_progress,
         )
     finally:
         del password
 
+    connection_detail = (
+        f" (IP: {provisioning_result.wifi.ip})"
+        if provisioning_result.wifi.ip is not None
+        else ""
+    )
     print(
         _styled(
-            "Wi-Fi credentials stored for "
-            f"{_setup_device_identity(device)}; connection not verified.",
-            "yellow",
-        )
-    )
-    _confirm_robot_wifi_connected(
-        wait_for_confirmation=(
-            args.pairing_code is None and _is_interactive_terminal()
+            f"Wi-Fi connected for {_setup_device_identity(device)}"
+            f"{connection_detail}.",
+            "green",
         )
     )
     print()
@@ -742,35 +768,11 @@ async def _scan_setup_devices(
         print()
 
 
-def _confirm_robot_wifi_connected(*, wait_for_confirmation: bool) -> None:
-    print()
-    print("This does not confirm that the password is correct yet.")
-    print("The robot will disconnect Bluetooth and try the Wi-Fi network.")
-    print()
-    print("Check Settings > Wi-Fi on the robot:")
-    print(_styled("  - Connected: continue to the pairing step.", "green"))
-    print(
-        _styled(
-            "  - Offline or Wi-Fi failed: the Wi-Fi name or password may be "
-            "incorrect.",
-            "red",
-        )
-    )
-    print(
-        "    Disconnect/forget that network on the robot, reopen "
-        "Settings > Wi-Fi, then rerun watcherobot robot setup."
-    )
-    if not wait_for_confirmation:
-        return
-    try:
-        input(
-            _styled(
-                "Press Enter after the robot shows Wi-Fi Connected: ",
-                "yellow",
-            )
-        )
-    except (EOFError, KeyboardInterrupt) as exc:
-        raise ProvisioningCancelledError() from exc
+def _print_wifi_status_progress(status: WifiStatus) -> None:
+    if status.state == "connecting":
+        print(_styled("Robot is connecting to Wi-Fi...", "blue"))
+    elif status.state == "connected":
+        print(_styled("Robot confirmed Wi-Fi connectivity.", "green"))
 
 
 def _redact_pairing_codes(message: str) -> str:

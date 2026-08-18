@@ -46,7 +46,7 @@ async def main() -> None:
         ssid="MyWiFi",
         password="secret",
     )
-    print(result.state)  # credentials_saved
+    print(result.state)  # connected
 
 
 asyncio.run(main())
@@ -78,18 +78,17 @@ Neither value may contain an embedded NUL character.
 
 ## Result semantics
 
-`credentials_saved` means that a `sys.ack` matching both
-`cfg.wifi.set` and its `command_id` was received. It does not mean that the
-SSID exists, the password is correct, DHCP succeeded, or the robot is online.
-Use the later Wi-Fi status separately when needed.
+`connected` means that a `sys.ack` matching both `cfg.wifi.set` and its
+`command_id` was followed by a correlated `evt.wifi.status` with state
+`connected`. The BLE session remains active during Wi-Fi validation. Firmware
+may instead report `auth_failed`, `network_not_found`, or `timeout`; each is
+raised as `WifiConnectionFailedError` with a stable `reason`.
 
 The SDK subscribes to notifications before writing, writes with an ATT
 response, and also reads the characteristic's cached response. After success,
 timeout, cancellation, or another error, it makes bounded, independent
 attempts to stop notifications and disconnect. Cleanup timeout or failure is
-not allowed to replace an already acknowledged `credentials_saved` result.
-Consequently, that result does not guarantee BLE disconnected or that the
-firmware resumed its Wi-Fi connection attempt.
+not allowed to replace an already confirmed `connected` result.
 
 For `cfg.wifi.get` and `cfg.wifi.clear`, the shipped firmware places the
 command ACK in the ATT write response, whose payload Bleak does not expose,
@@ -98,8 +97,9 @@ status obtained by the explicit post-write read as the observable success
 signal. A status seen only through Notify remains a candidate until a matching
 ACK/NACK arrives, so an unrelated early notification cannot hide rejection.
 
-Default scan, connect, protocol-response, and per-cleanup-step timeouts are
-10, 12, 3, and 2 seconds. They can be overridden when constructing
+Default scan, connect, protocol-response, Wi-Fi-validation, and
+per-cleanup-step timeouts are 10, 12, 3, 25, and 2 seconds. They can be
+overridden when constructing
 `BluetoothProvisioner`. Notification shutdown and disconnect are bounded
 independently, so a stalled notification shutdown does not prevent the SDK
 from attempting to disconnect. Cleanup is best-effort and its failure is not
@@ -141,12 +141,16 @@ without connecting.
 
 ## Protocol and security boundary
 
-This release intentionally uses the firmware protocol without modifying it:
+The SDK and current firmware use this provisioning protocol:
 
 - device name: `ESP_ROBOT`
 - service: `000000ff-0000-1000-8000-00805f9b34fb`
 - characteristic: `0000ff01-0000-1000-8000-00805f9b34fb`
 - compact UTF-8 JSON, at most 180 bytes per request
+- `evt.wifi.status` terminal states: `connected`, `auth_failed`,
+  `network_not_found`, and `timeout`
+- status events carry the originating Wi-Fi `command_id` for attempt
+  correlation
 
 The protocol sends the SSID and password in JSON and adds no application-layer
 authentication or encryption. This SDK release does not strengthen firmware

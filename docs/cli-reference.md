@@ -103,7 +103,9 @@ logs:
 | Older firmware does not advertise a Device ID | Device ID is unavailable and a firmware update may be required | Bluetooth ID remains only as a compatibility fallback |
 | Bluetooth connection or response times out | Bluetooth communication did not complete | Keep the robot nearby, close competing Bluetooth apps, and retry |
 | Robot rejects the Wi-Fi settings | The supplied network settings were rejected | Check the Wi-Fi name and password, then retry |
-| Credentials are saved but the robot shows Offline / Wi-Fi failed | Storage succeeded, but the Wi-Fi connection is unverified or failed | Disconnect/forget the network on the robot, reopen settings, and enter the correct credentials |
+| Wi-Fi authentication fails | Firmware reports `auth_failed` in the active BLE session | Check the password and rerun setup |
+| No compatible network is found | Firmware reports `network_not_found` | Check the Wi-Fi name, range, and security mode |
+| Wi-Fi validation times out | Firmware reports `timeout`, or the SDK's bounded wait expires | Move closer to the access point, check the credentials, and retry |
 | Firmware returns an incompatible response | The robot and SDK provisioning protocols do not match | Update the firmware and SDK; report both versions if it persists |
 | Runtime pairing fails | The six-digit pairing stage did not complete | Keep the **"Python SDK"** app open, confirm the same network, and use the latest code |
 | The operation is cancelled | Setup was cancelled | No credentials or pairing code are printed |
@@ -121,23 +123,21 @@ automatically. Set `NO_COLOR=1` to disable it explicitly or `FORCE_COLOR=1`
 for a compatible special terminal. The SDK enables Windows PowerShell console
 compatibility automatically.
 
-The command then reads the Wi-Fi password privately and provisions the
-credentials. To finish, return to the robot launcher, open the **"Python SDK"**
+The command then reads the Wi-Fi password privately, provisions the
+credentials, and keeps the BLE session open while firmware reports
+`connecting` followed by `connected`, `auth_failed`, `network_not_found`, or
+`timeout`. Pairing starts only after `connected`. To finish, return to the
+robot launcher, open the **"Python SDK"**
 app, read the six-digit code at the top of its screen, and enter it into the
 same setup flow. Omitted values are prompted in an interactive terminal. The
 password is never accepted as an argument or printed.
 
-`Wi-Fi credentials saved` means only that the robot stored the SSID and
-password; it does not prove that the password was accepted by the access point.
-The current firmware must release Bluetooth before it can try Wi-Fi, so the CLI
-cannot receive the final authentication result in the same BLE session. The
-interactive flow states this boundary and pauses for confirmation: continue
-only after **Settings > Wi-Fi** on the robot shows **Connected**. If it shows
-**Offline** or **Wi-Fi failed**, the network name or password may be wrong;
-disconnect/forget that network on the robot, reopen **Settings > Wi-Fi**, and
-rerun `watcherobot robot setup`. When `--pairing-code` is supplied explicitly,
-the warning remains visible but the additional Enter confirmation is skipped,
-keeping explicit-argument calls predictable.
+The command does not ask the user to confirm the robot screen manually. The
+firmware owns a bounded connection attempt and sends the final result over BLE.
+The SDK also applies a slightly longer host-side deadline so a dropped terminal
+notification cannot leave setup hanging indefinitely. An authentication,
+network-discovery, or timeout failure stops before Runtime pairing and prints a
+specific recovery action without exposing the password.
 
 ```powershell
 watcherobot robot setup
@@ -392,8 +392,8 @@ watcherobot bluetooth scan
 
 Prompts for the Wi-Fi password and sends credentials to the selected device.
 `--clear-existing` asks the device to clear saved credentials first. A
-`credentials_saved` result confirms only that firmware stored the credentials;
-it does not prove that the device joined the network.
+`connected` result means firmware reported that Wi-Fi joined successfully;
+authentication, discovery, and timeout failures return an error instead.
 
 ```powershell
 watcherobot bluetooth provision --device <id> --ssid MyWiFi

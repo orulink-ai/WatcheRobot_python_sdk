@@ -60,8 +60,9 @@ def test_cli_references_cover_robot_setup_recovery_states() -> None:
         assert "watcherobot bluetooth ..." in content
         assert "JSON" in content
         assert "up to 10 seconds" in content or "最长约 10 秒" in content
-        assert "Wi-Fi credentials saved" in content
-        assert "Offline" in content
+        assert "auth_failed" in content
+        assert "network_not_found" in content
+        assert "timeout" in content or "超时" in content
         assert "NO_COLOR=1" in content
         assert "FORCE_COLOR=1" in content
 

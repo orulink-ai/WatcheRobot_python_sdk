@@ -13,6 +13,7 @@ from .errors import (
     ProvisioningProtocolError,
     ProvisioningRejectedError,
     ProvisioningResponseTimeoutError,
+    WifiConnectionFailedError,
 )
 from .models import (
     BluetoothDevice,
@@ -40,4 +41,5 @@ __all__ = [
     "ProvisioningResponseTimeoutError",
     "ProvisioningResult",
     "WifiStatus",
+    "WifiConnectionFailedError",
 ]

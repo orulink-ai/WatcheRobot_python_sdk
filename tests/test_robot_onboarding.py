@@ -25,6 +25,8 @@ from watcherobot.provisioning import (
     ProvisioningResponseTimeoutError,
     ProvisioningResult,
     ProtocolMessage,
+    WifiConnectionFailedError,
+    WifiStatus,
 )
 
 
@@ -54,6 +56,7 @@ class FakeProvisioner:
         ssid: str,
         password: str,
         clear_existing: bool = False,
+        on_status=None,
     ) -> ProvisioningResult:
         self.provision_calls.append(
             {
@@ -63,15 +66,29 @@ class FakeProvisioner:
                 "clear_existing": clear_existing,
             }
         )
+        if on_status is not None:
+            on_status(WifiStatus(state="connecting", ssid=ssid))
+            on_status(
+                WifiStatus(
+                    state="connected",
+                    ssid=ssid,
+                    ip="192.168.1.9",
+                )
+            )
         return ProvisioningResult(
             device=device,
             ssid=ssid,
-            state="credentials_saved",
+            state="connected",
             ack=ProtocolMessage(
                 type="sys.ack",
                 code=0,
                 command_type="cfg.wifi.set",
                 command_id="setup-1",
+            ),
+            wifi=WifiStatus(
+                state="connected",
+                ssid=ssid,
+                ip="192.168.1.9",
             ),
         )
 
@@ -233,8 +250,8 @@ def test_robot_setup_provisions_wifi_then_pairs_without_exposing_password(
     assert "Device ID: WR-A1B2-C3D4-E5F6-0708" in output.out
     assert "Bluetooth ID" not in output.out
     assert "WatcheRobot A1" not in output.out
-    assert "Wi-Fi credentials stored" in output.out
-    assert "connection not verified" in output.out
+    assert "Robot is connecting to Wi-Fi" in output.out
+    assert "Wi-Fi connected for" in output.out
     assert "Robot connected successfully" in output.out
     assert "secret" not in output.out
     assert "secret" not in output.err
@@ -245,7 +262,7 @@ def test_robot_setup_without_arguments_guides_the_complete_interactive_flow(
     capsys,
 ) -> None:
     FakeProvisioner.provision_calls.clear()
-    answers = iter(["", "Office", "", "123456"])
+    answers = iter(["", "Office", "123456"])
     prompts: list[str] = []
     device_states = iter(
         [
@@ -292,7 +309,6 @@ def test_robot_setup_without_arguments_guides_the_complete_interactive_flow(
         "Press Enter after opening Settings > Wi-Fi on the robot: ",
         "Wi-Fi name: ",
         "Wi-Fi password: ",
-        "Press Enter after the robot shows Wi-Fi Connected: ",
         "Enter the 6-digit pairing code: ",
     ]
     output = capsys.readouterr().out
@@ -304,8 +320,7 @@ def test_robot_setup_without_arguments_guides_the_complete_interactive_flow(
     assert "Bluetooth ID" not in output
     assert "WatcheRobot A1" not in output
     assert 'Open the "Python SDK" app' in output
-    assert "does not confirm that the password is correct" in output
-    assert "Offline or Wi-Fi failed" in output
+    assert "Robot confirmed Wi-Fi connectivity" in output
     assert "top of the screen" in output
     assert "watcherobot robot pair <code>" in output
     assert "Robot connected successfully" in output
@@ -402,7 +417,8 @@ def test_robot_setup_uses_semantic_colors_when_forced(
     output = capsys.readouterr().out
     assert "\x1b[34mScanning" in output
     assert "\x1b[32mScan complete" in output
-    assert "\x1b[33mWi-Fi credentials stored" in output
+    assert "\x1b[34mRobot is connecting to Wi-Fi" in output
+    assert "\x1b[32mWi-Fi connected for" in output
     assert "\x1b[36mDevice ID:" in output
 
 
@@ -505,23 +521,33 @@ def test_robot_setup_cancels_and_reaps_an_interrupted_scan(
     asyncio.run(scenario())
 
 
-def test_robot_setup_can_cancel_while_confirming_wifi_connection(
+def test_robot_setup_reports_wrong_wifi_password_without_manual_confirmation(
     monkeypatch,
     capsys,
 ) -> None:
+    class FailingProvisioner(FakeProvisioner):
+        async def provision_wifi(
+            self,
+            device: BluetoothDevice,
+            *,
+            ssid: str,
+            password: str,
+            clear_existing: bool = False,
+            on_status=None,
+        ) -> ProvisioningResult:
+            if on_status is not None:
+                on_status(WifiStatus(state="connecting", ssid=ssid))
+            raise WifiConnectionFailedError("auth_failed")
+
     monkeypatch.setattr(
         "watcherobot.cli.BluetoothProvisioner",
-        FakeProvisioner,
+        FailingProvisioner,
     )
     monkeypatch.setattr(
         "watcherobot.cli._is_interactive_terminal",
         lambda: True,
     )
     monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
-    monkeypatch.setattr(
-        "builtins.input",
-        lambda _prompt: (_ for _ in ()).throw(KeyboardInterrupt),
-    )
 
     assert (
         main(
@@ -534,11 +560,12 @@ def test_robot_setup_can_cancel_while_confirming_wifi_connection(
                 "Office",
             ]
         )
-        == 130
+        == 2
     )
 
     error = capsys.readouterr().err
-    assert "Robot setup cancelled." in error
+    assert "could not authenticate" in error
+    assert "Check the Wi-Fi password" in error
 
 
 def test_robot_setup_uses_arrow_keys_to_choose_a_device_id(
@@ -785,6 +812,7 @@ def test_robot_setup_explains_how_to_recover_from_connection_timeout(
             ssid: str,
             password: str,
             clear_existing: bool = False,
+            on_status=None,
         ) -> ProvisioningResult:
             raise BluetoothConnectionTimeoutError("connection timed out")
 
@@ -855,6 +883,7 @@ def test_robot_setup_gives_distinct_recovery_for_provisioning_failures(
             ssid: str,
             password: str,
             clear_existing: bool = False,
+            on_status=None,
         ) -> ProvisioningResult:
             raise error
 

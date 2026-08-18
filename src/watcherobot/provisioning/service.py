@@ -13,6 +13,7 @@ from .errors import (
     ProvisioningProtocolError,
     ProvisioningRejectedError,
     ProvisioningResponseTimeoutError,
+    WifiConnectionFailedError,
 )
 from .models import (
     BluetoothDevice,
@@ -30,6 +31,7 @@ DEFAULT_SCAN_TIMEOUT = 10.0
 DEFAULT_CONNECT_TIMEOUT = 12.0
 DEFAULT_RESPONSE_TIMEOUT = 3.0
 DEFAULT_CLEANUP_TIMEOUT = 2.0
+DEFAULT_WIFI_VALIDATION_TIMEOUT = 25.0
 _MAX_SSID_BYTES = 31
 _MAX_PASSWORD_BYTES = 63
 
@@ -45,9 +47,12 @@ class BluetoothProvisioner:
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
         response_timeout: float = DEFAULT_RESPONSE_TIMEOUT,
         cleanup_timeout: float = DEFAULT_CLEANUP_TIMEOUT,
+        wifi_validation_timeout: float = DEFAULT_WIFI_VALIDATION_TIMEOUT,
     ) -> None:
         if cleanup_timeout <= 0:
             raise ValueError("Bluetooth cleanup timeout must be positive")
+        if wifi_validation_timeout <= 0:
+            raise ValueError("Wi-Fi validation timeout must be positive")
         if backend is None:
             from .bleak_backend import BleakBackend
 
@@ -57,6 +62,7 @@ class BluetoothProvisioner:
         self._connect_timeout = connect_timeout
         self._response_timeout = response_timeout
         self._cleanup_timeout = cleanup_timeout
+        self._wifi_validation_timeout = wifi_validation_timeout
 
     async def scan_devices(
         self,
@@ -79,6 +85,7 @@ class BluetoothProvisioner:
         ssid: str,
         password: str,
         clear_existing: bool = False,
+        on_status: Callable[[WifiStatus], None] | None = None,
     ) -> ProvisioningResult:
         _validate_credentials(ssid, password)
         try:
@@ -90,11 +97,22 @@ class BluetoothProvisioner:
                     "cfg.wifi.set",
                     {"ssid": ssid, "password": password},
                 )
+                if ack.command_id is None:
+                    raise ProvisioningProtocolError(
+                        "Wi-Fi acknowledgement has no command ID"
+                    )
+                wifi = await session.wait_for_wifi_terminal(
+                    command_id=ack.command_id,
+                    ssid=ssid,
+                    timeout=self._wifi_validation_timeout,
+                    on_status=on_status,
+                )
                 return ProvisioningResult(
                     device=device,
                     ssid=ssid,
-                    state="credentials_saved",
+                    state="connected",
                     ack=ack,
+                    wifi=wifi,
                 )
             finally:
                 await _finish_cleanup(session)
@@ -158,6 +176,9 @@ class _ProvisioningSession:
         self._cleanup_timeout = cleanup_timeout
         self._messages: asyncio.Queue[
             tuple[float, ProtocolMessage | ProvisioningProtocolError]
+        ] = asyncio.Queue()
+        self._wifi_messages: asyncio.Queue[
+            tuple[float, ProtocolMessage]
         ] = asyncio.Queue()
         self._decoder = JsonMessageBuffer()
         self._notifications_started = False
@@ -261,6 +282,50 @@ class _ProvisioningSession:
             ip=message.ip,
         )
 
+    async def wait_for_wifi_terminal(
+        self,
+        *,
+        command_id: str,
+        ssid: str,
+        timeout: float,
+        on_status: Callable[[WifiStatus], None] | None,
+    ) -> WifiStatus:
+        deadline = time.monotonic() + timeout
+        last_state: str | None = None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise WifiConnectionFailedError("timeout")
+            try:
+                _received_at, message = await asyncio.wait_for(
+                    self._wifi_messages.get(),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError as exc:
+                raise WifiConnectionFailedError("timeout") from exc
+            if message.command_id not in {None, command_id}:
+                continue
+            if message.ssid is not None and message.ssid != ssid:
+                continue
+            if message.status is None:
+                continue
+            status = WifiStatus(
+                state=message.status,
+                ssid=message.ssid,
+                ip=message.ip,
+            )
+            if on_status is not None and status.state != last_state:
+                on_status(status)
+            last_state = status.state
+            if status.state == "connected":
+                return status
+            if status.state in {
+                "auth_failed",
+                "network_not_found",
+                "timeout",
+            }:
+                raise WifiConnectionFailedError(status.state)
+
     async def _read_cached_response(
         self,
         deadline: float,
@@ -285,7 +350,7 @@ class _ProvisioningSession:
             self._messages.put_nowait((received_at, exc))
             return None
         for message in messages:
-            self._messages.put_nowait((received_at, message))
+            self._queue_message(received_at, message)
         return messages[-1] if messages else None
 
     def _resolve_cached_status(
@@ -457,12 +522,26 @@ class _ProvisioningSession:
             self._messages.put_nowait((time.monotonic(), exc))
             return
         for message in messages:
-            self._messages.put_nowait((time.monotonic(), message))
+            self._queue_message(time.monotonic(), message)
+
+    def _queue_message(
+        self,
+        received_at: float,
+        message: ProtocolMessage,
+    ) -> None:
+        self._messages.put_nowait((received_at, message))
+        if message.type == "evt.wifi.status":
+            self._wifi_messages.put_nowait((received_at, message))
 
     def _discard_queued_messages(self) -> None:
         while True:
             try:
                 self._messages.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        while True:
+            try:
+                self._wifi_messages.get_nowait()
             except asyncio.QueueEmpty:
                 return
 

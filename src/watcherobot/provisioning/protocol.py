@@ -20,6 +20,9 @@ _WIFI_STATES = {
     "connecting",
     "disconnected",
     "unconfigured",
+    "auth_failed",
+    "network_not_found",
+    "timeout",
 }
 _SAFE_NACK_REASONS = {
     "invalid_json",
