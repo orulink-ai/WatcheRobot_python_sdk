@@ -69,6 +69,8 @@ def verify_release_artifacts(root: Path, expected_version: str) -> VerifiedManif
     version = Version(expected_version)
     hashes = _read_manifest(root)
     dist = root / "dist"
+    if not dist.is_dir():
+        raise ValueError("release dist directory is missing")
     actual = {path.name: path for path in dist.iterdir() if path.is_file()}
     if set(actual) != set(hashes):
         raise ValueError("release files must exactly match SHA256SUMS")

@@ -78,6 +78,9 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
         "  draft-release:", maxsplit=1
     )[0]
     recovery_gate_job = workflow.split("  recover-gate:", maxsplit=1)[1].split(
+        "  recover-draft-assets:", maxsplit=1
+    )[0]
+    recovery_draft_job = workflow.split("  recover-draft-assets:", maxsplit=1)[1].split(
         "  recover-publish-pypi:", maxsplit=1
     )[0]
     recovery_publish_job = workflow.split("  recover-publish-pypi:", maxsplit=1)[1].split(
@@ -88,6 +91,7 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     )[0]
 
     assert "recover-gate:" in workflow
+    assert "recover-draft-assets:" in workflow
     assert "recover-publish-pypi:" in workflow
     assert "recover-verify-pypi:" in workflow
     assert "github.event_name == 'workflow_dispatch'" in workflow
@@ -96,11 +100,12 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     assert "github.ref == 'refs/heads/main'" in workflow
     assert '[[ "${GITHUB_REF}" == "refs/heads/main" ]]' in workflow
     assert "ref: refs/tags/${{ inputs.recover_tag }}" in recovery_gate_job
+    assert "--defer-draft-validation" in recovery_gate_job
     assert "--version-file \"${GITHUB_WORKSPACE}/src/watcherobot/__init__.py\"" in workflow
     assert "gh release download \"${RECOVER_TAG}\"" in workflow
     assert "tools/verify_release_artifacts.py" in workflow
     assert "https://test.pypi.org/pypi/watcherobot/${VERSION}/json" in workflow
-    assert "actions/upload-artifact@v7" in recovery_gate_job
+    assert "actions/upload-artifact@v7" in recovery_draft_job
     assert "actions/download-artifact@v8" in recovery_publish_job
     assert "actions/download-artifact@v8" in recovery_verify_job
     assert "github.run_id" in recovery_gate_job
@@ -117,7 +122,12 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     assert "contents: write" not in gate_job
     assert "contents: read" in build_job
     assert "contents: write" not in build_job
-    assert "contents: write" in recovery_gate_job
+    assert "contents: read" in recovery_gate_job
+    assert "contents: write" not in recovery_gate_job
+    assert "contents: write" in recovery_draft_job
+    assert "actions/checkout" not in recovery_draft_job
+    assert "overwrite: true" in recovery_draft_job
+    assert "needs: [recover-gate, recover-draft-assets]" in recovery_publish_job
     assert "contents: write" not in recovery_publish_job
     assert "id-token: write" in recovery_publish_job
     assert "--no-cache-dir" in workflow

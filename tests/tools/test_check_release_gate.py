@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -161,16 +159,8 @@ def test_recovery_gate_can_read_version_from_checked_out_tag(
     monkeypatch.setattr(
         module.subprocess,
         "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=json.dumps(
-                {
-                    "tagName": "v0.1.1",
-                    "targetCommitish": "abc123",
-                    "isDraft": True,
-                }
-            ),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("draft access must be deferred")
         ),
     )
     monkeypatch.setattr(
@@ -185,7 +175,8 @@ def test_recovery_gate_can_read_version_from_checked_out_tag(
         sha="abc123",
         version_file=version_file,
         allow_existing_pypi=True,
+        defer_draft_validation=True,
     )
 
     assert result.version == "0.1.1"
-    assert result.reuse_artifact is True
+    assert result.reuse_artifact is False

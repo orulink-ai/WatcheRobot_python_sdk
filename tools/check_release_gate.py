@@ -121,6 +121,7 @@ def validate_gate(
     sha: str,
     version_file: Path | None = None,
     allow_existing_pypi: bool = False,
+    defer_draft_validation: bool = False,
 ) -> ReleaseGateResult:
     version = validate_release_tag(
         tag,
@@ -156,37 +157,40 @@ def validate_gate(
         raise ValueError("tag commit must be associated with exactly one valid release version PR")
 
     reusable_draft = False
-    release_result = subprocess.run(
-        (
-            "gh",
-            "release",
-            "view",
-            tag,
-            "--repo",
-            repository,
-            "--json",
-            "tagName,targetCommitish,isDraft",
-        ),
-        text=True,
-        capture_output=True,
-    )
-    if release_result.returncode == 0:
-        release = json.loads(release_result.stdout)
-        if not isinstance(release, dict):
-            raise ValueError("GitHub returned invalid Release metadata")
-        reusable_draft = validate_existing_release(tag=tag, sha=sha, release=release)
+    if not defer_draft_validation:
+        release_result = subprocess.run(
+            (
+                "gh",
+                "release",
+                "view",
+                tag,
+                "--repo",
+                repository,
+                "--json",
+                "tagName,targetCommitish,isDraft",
+            ),
+            check=False,
+            text=True,
+            capture_output=True,
+        )
+        if release_result.returncode == 0:
+            release = json.loads(release_result.stdout)
+            if not isinstance(release, dict):
+                raise ValueError("GitHub returned invalid Release metadata")
+            reusable_draft = validate_existing_release(tag=tag, sha=sha, release=release)
 
     validate_version_absent(
         "PyPI",
         version,
         _http_status(f"https://pypi.org/pypi/watcherobot/{version}/json"),
-        allow_existing=allow_existing_pypi and reusable_draft,
+        allow_existing=allow_existing_pypi
+        and (reusable_draft or defer_draft_validation),
     )
     validate_version_absent(
         "TestPyPI",
         version,
         _http_status(f"https://test.pypi.org/pypi/watcherobot/{version}/json"),
-        allow_existing=reusable_draft,
+        allow_existing=reusable_draft or defer_draft_validation,
     )
     return ReleaseGateResult(version=version, reuse_artifact=reusable_draft)
 
@@ -202,6 +206,11 @@ def main() -> int:
         action="store_true",
         help="Allow an existing PyPI version only while recovering a matching draft Release.",
     )
+    parser.add_argument(
+        "--defer-draft-validation",
+        action="store_true",
+        help="Defer draft Release access to a separate least-privilege workflow job.",
+    )
     args = parser.parse_args()
     result = validate_gate(
         repository=args.repository,
@@ -209,6 +218,7 @@ def main() -> int:
         sha=args.sha,
         version_file=args.version_file,
         allow_existing_pypi=args.allow_existing_pypi,
+        defer_draft_validation=args.defer_draft_validation,
     )
     print(json.dumps({"version": result.version, "reuse_artifact": result.reuse_artifact}))
     return 0

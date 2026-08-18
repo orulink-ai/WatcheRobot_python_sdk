@@ -60,6 +60,17 @@ def test_extra_distribution_not_covered_by_manifest_is_rejected(tmp_path: Path) 
         module.verify_release_artifacts(tmp_path, "0.1.1")
 
 
+def test_missing_distribution_directory_is_rejected(tmp_path: Path) -> None:
+    module = _load_module()
+    (tmp_path / "SHA256SUMS").write_text(
+        f"{'0' * 64}  dist/watcherobot-0.1.1-py3-none-any.whl\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="dist directory is missing"):
+        module.verify_release_artifacts(tmp_path, "0.1.1")
+
+
 @pytest.mark.parametrize("missing_suffix", [".whl", ".tar.gz"])
 def test_missing_required_distribution_type_is_rejected(
     tmp_path: Path, missing_suffix: str
