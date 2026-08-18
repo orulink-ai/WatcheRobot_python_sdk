@@ -127,6 +127,7 @@ class BleakBackend:
                     name=advertised_name,
                     rssi=_advertisement_rssi(advertisement),
                     is_watcher=is_watcher,
+                    device_id=_advertised_device_id(advertisement),
                     _native=native,
                 )
             )
@@ -188,6 +189,27 @@ class BleakBackend:
 def _advertisement_rssi(advertisement: Any) -> int | None:
     value = getattr(advertisement, "rssi", None)
     return value if isinstance(value, int) else None
+
+
+def _advertised_device_id(advertisement: Any) -> str | None:
+    service_data = getattr(advertisement, "service_data", {})
+    if not isinstance(service_data, dict):
+        return None
+    payload = next(
+        (
+            value
+            for key, value in service_data.items()
+            if str(key).lower() == BLE_SERVICE_UUID
+        ),
+        None,
+    )
+    if not isinstance(payload, (bytes, bytearray)) or len(payload) != 10:
+        return None
+    if payload[0] != 1:
+        return None
+    identity = payload[2:]
+    pairs = [identity[index : index + 2].hex().upper() for index in range(0, 8, 2)]
+    return f"WR-{'-'.join(pairs)}"
 
 
 async def _safe_disconnect(

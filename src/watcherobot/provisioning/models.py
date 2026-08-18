@@ -26,15 +26,19 @@ class BluetoothDevice:
     name: str | None
     rssi: int | None
     is_watcher: bool
+    device_id: str | None = None
     _native: Any = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "id": self.id,
             "name": self.name,
             "rssi": self.rssi,
             "is_watcher": self.is_watcher,
         }
+        if self.device_id is not None:
+            result["device_id"] = self.device_id
+        return result
 
 
 @dataclass(frozen=True)

@@ -165,7 +165,8 @@ watcherobot robot setup
 ```
 
 命令会先提示你打开机器人上的 **Settings > Wi-Fi**，确认后才开始扫描；扫描结果使用
-**Bluetooth ID** 标识，附近存在多台机器人时支持使用 **Up/Down** 和回车键选择。
+机器人稳定的 **Device ID** 标识，附近存在多台机器人时支持使用 **Up/Down** 和回车键
+选择。旧固件未广播 Device ID 时会明确标记不可用，仅将 Bluetooth ID 作为兼容信息。
 写入 Wi-Fi 后，回到机器人启动器打开 **"Python SDK"** 应用，把屏幕顶部显示的配对码
 继续输入同一个 setup 流程。
 

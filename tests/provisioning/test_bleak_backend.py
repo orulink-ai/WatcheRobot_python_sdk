@@ -28,6 +28,9 @@ class Advertisement:
     local_name = "ESP_ROBOT"
     rssi = -42
     service_uuids = [BLE_SERVICE_UUID]
+    service_data = {
+        BLE_SERVICE_UUID: bytes.fromhex("0100A1B2C3D4E5F60708"),
+    }
 
 
 class Characteristic:
@@ -124,6 +127,7 @@ def test_bleak_backend_preserves_native_device_and_uses_response_write(
             name_filter=None,
         )
         assert devices[0].id == "platform-device-id"
+        assert devices[0].device_id == "WR-A1B2-C3D4-E5F6-0708"
         assert devices[0].is_watcher
         assert devices[0]._native is not None
 

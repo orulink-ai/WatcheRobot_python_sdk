@@ -212,7 +212,10 @@ def build_parser() -> argparse.ArgumentParser:
         "setup",
         help="Guide Wi-Fi provisioning and Runtime pairing",
     )
-    setup.add_argument("--device", help="Bluetooth device ID")
+    setup.add_argument(
+        "--device",
+        help="Robot Device ID (Bluetooth ID for legacy firmware)",
+    )
     setup.add_argument("--ssid", help="Wi-Fi network name")
     setup.add_argument(
         "--pairing-code",
@@ -470,7 +473,7 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
     finally:
         del password
 
-    print(f"Wi-Fi credentials saved for Bluetooth ID: {device.id}.")
+    print(f"Wi-Fi credentials saved for {_setup_device_identity(device)}.")
     print()
     print("Next, complete pairing on the robot:")
     print("  1. Return to the robot launcher.")
@@ -518,26 +521,30 @@ def _select_setup_device(
             "so Bluetooth advertising is enabled, keep it nearby, and retry."
         )
     if requested_id:
-        matches = [device for device in devices if device.id == requested_id]
+        matches = [
+            device
+            for device in devices
+            if requested_id in {device.device_id, device.id}
+        ]
         if not matches:
             raise DeviceNotFoundError(
-                f"Bluetooth device {requested_id!r} was not found; scan again"
+                f"Robot {requested_id!r} was not found; scan again"
             )
         if len(matches) > 1:
             raise DeviceAmbiguityError(
-                f"Bluetooth device identifier {requested_id!r} is ambiguous"
+                f"Robot identifier {requested_id!r} is ambiguous"
             )
-        print(f"Selected Bluetooth ID: {matches[0].id}")
+        print(f"Selected {_setup_device_identity(matches[0])}")
         return matches[0]
     if len(devices) == 1:
         device = devices[0]
         print("Found one robot.")
-        print(f"Bluetooth ID: {device.id}")
+        print(_setup_device_identity(device))
         return device
     if not _is_interactive_terminal():
         raise CliError(
             "Multiple robots were found; rerun with "
-            "--device <Bluetooth ID>"
+            "--device <Device ID>"
         )
     return _select_setup_device_with_arrows(devices)
 
@@ -548,13 +555,13 @@ def _select_setup_device_with_arrows(
     selected_index = 0
     first_render = True
     print("Found multiple robots.")
-    print("Select a Bluetooth ID with Up/Down, then press Enter:")
+    print("Select a Device ID with Up/Down, then press Enter:")
     while True:
         if not first_render:
             print(f"\x1b[{len(devices)}A", end="")
         for index, device in enumerate(devices):
             marker = ">" if index == selected_index else " "
-            print(f"\r\x1b[2K {marker} {device.id}")
+            print(f"\r\x1b[2K {marker} {_setup_device_identity(device)}")
         first_render = False
         key = _read_setup_menu_key()
         if key == "up":
@@ -562,10 +569,19 @@ def _select_setup_device_with_arrows(
         elif key == "down":
             selected_index = (selected_index + 1) % len(devices)
         elif key == "select":
-            print(f"Selected Bluetooth ID: {devices[selected_index].id}")
+            print(
+                "Selected "
+                f"{_setup_device_identity(devices[selected_index])}"
+            )
             return devices[selected_index]
         elif key == "cancel":
             raise KeyboardInterrupt
+
+
+def _setup_device_identity(device: BluetoothDevice) -> str:
+    if device.device_id is not None:
+        return f"Device ID: {device.device_id}"
+    return f"Device ID unavailable (Bluetooth ID: {device.id})"
 
 
 def _read_setup_menu_key() -> str:

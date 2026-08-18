@@ -179,8 +179,10 @@ watcherobot robot setup
 ```
 
 The command asks you to open **Settings > Wi-Fi** before scanning, identifies
-nearby results by **Bluetooth ID**, and supports **Up/Down** selection when
-several robots are present. After Wi-Fi provisioning, open the robot's
+nearby results by the robot's stable **Device ID**, and supports **Up/Down**
+selection when several robots are present. Older firmware without an advertised
+Device ID is marked as unavailable and shows its Bluetooth ID only as a
+compatibility fallback. After Wi-Fi provisioning, open the robot's
 **"Python SDK"** app and enter the code shown at the top of its screen into the
 same setup flow.
 

@@ -110,10 +110,12 @@ watcherobot robot setup
 ```
 
 The command first asks you to open **Settings > Wi-Fi** on the robot. Scanning
-starts only after you confirm that the page is open. One result is identified
-by its platform-specific **Bluetooth ID**; when several robots are nearby, use
-**Up/Down** and Enter to select the intended Bluetooth ID. The command then
-reads the Wi-Fi password privately and provisions the network.
+starts only after you confirm that the page is open. Results are identified by
+the stable **Device ID** shown on the robot; when several robots are nearby,
+use **Up/Down** and Enter to select the intended Device ID. Older firmware that
+does not advertise a Device ID is explicitly marked as unavailable and shows
+its Bluetooth ID only as a compatibility fallback. The command then reads the
+Wi-Fi password privately and provisions the network.
 
 To finish setup, return to the robot launcher, open the **"Python SDK"** app,
 read the six-digit pairing code at the top of the screen, and enter it in the
