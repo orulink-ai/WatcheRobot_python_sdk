@@ -667,7 +667,7 @@ def test_robot_setup_keeps_pairing_failure_in_the_guided_flow(
 
     def fail_pairing(_pairing_code: str) -> int:
         raise CliError(
-            "Robot pairing timed out. Confirm that both devices use the "
+            "Robot pairing 123456 timed out. Confirm that both devices use the "
             "same network and retry."
         )
 
@@ -689,7 +689,8 @@ def test_robot_setup_keeps_pairing_failure_in_the_guided_flow(
 
     output = capsys.readouterr().err
     assert "Robot pairing could not be completed" in output
-    assert "Robot pairing timed out" in output
+    assert "Robot pairing <pairing-code> timed out" in output
+    assert "123456" not in output
     assert '"Python SDK" app' in output
     assert '"error"' not in output
 
@@ -760,6 +761,77 @@ def test_robot_setup_non_interactive_missing_value_keeps_json_contract(
     assert error == {
         "error": "Wi-Fi name is required in non-interactive use"
     }
+
+
+def test_robot_setup_non_interactive_pairing_failure_keeps_safe_json(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FakeProvisioner,
+    )
+    monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "watcherobot.cli.pair_robot",
+        lambda _code: (_ for _ in ()).throw(
+            CliError("Pairing code 123456 expired")
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--device",
+                FakeProvisioner.device.device_id or "",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 2
+    )
+
+    error = json.loads(capsys.readouterr().err)
+    assert error == {"error": "Pairing code <pairing-code> expired"}
+
+
+def test_robot_setup_preserves_pairing_cancellation_exit_code(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FakeProvisioner,
+    )
+    monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+    monkeypatch.setattr("watcherobot.cli.pair_robot", lambda _code: 130)
+    _enable_interactive_setup(monkeypatch)
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 130
+    )
+
+    error = capsys.readouterr().err
+    assert "Robot setup cancelled." in error
+    assert "123456" not in error
 
 
 def test_robot_setup_eof_matches_ctrl_c_cancellation(

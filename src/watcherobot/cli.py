@@ -59,6 +59,7 @@ from watcherobot.runtime.daemon.instance import (
 APPLICATION_START_TIMEOUT_SECONDS = 90.0
 ROBOT_PAIR_TIMEOUT_SECONDS = 25.0
 _PAIRING_CODE = re.compile(r"^[0-9]{6}$")
+_PAIRING_CODE_IN_TEXT = re.compile(r"(?<![0-9])[0-9]{6}(?![0-9])")
 
 
 class CliError(RuntimeError):
@@ -610,12 +611,20 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
     try:
         result = pair_robot(pairing_code)
     except CliError as exc:
-        raise RobotPairingError(str(exc)) from exc
+        raise RobotPairingError(
+            _redact_pairing_codes(str(exc))
+        ) from exc
+    if result == 130:
+        raise ProvisioningCancelledError()
     if result != 0:
         raise RobotPairingError(
             "Runtime pairing ended before the robot connected."
         )
     return result
+
+
+def _redact_pairing_codes(message: str) -> str:
+    return _PAIRING_CODE_IN_TEXT.sub("<pairing-code>", message)
 
 
 def _prepare_robot_for_setup(*, wait_for_confirmation: bool) -> None:
