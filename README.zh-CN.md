@@ -75,20 +75,27 @@ watcherobot --version
 
 ### 2. 配置第一台机器人
 
-打开机器人和蓝牙，然后执行：
+执行完整引导：
 
 ```powershell
 watcherobot robot setup
 ```
 
-命令会扫描附近的 WatcheRobot，询问 Wi-Fi 名称和密码，再询问机器人屏幕上的
-六位配对码。密码只会私密读取，不允许通过命令行参数传入。随时可查询连接状态：
+命令会先提示你在机器人上打开 **Settings > Wi-Fi**；确认页面已经打开后才开始
+扫描。只找到一台时会展示平台对应的 **Bluetooth ID**；附近有多台机器人时，使用
+**Up/Down** 和回车键按 Bluetooth ID 选择目标设备。随后命令会私密读取 Wi-Fi
+密码并写入网络配置。
+
+配网后回到机器人启动器，打开 **"Python SDK"** 应用，读取屏幕顶部的六位配对码，
+并继续在同一个 `robot setup` 流程中输入。配对属于一次性的设备初始化；`app run`
+只负责启动 Application。随时可查询连接状态：
 
 ```powershell
 watcherobot robot status
 ```
 
-如果机器人已经连接到同一 Wi-Fi，可以跳过蓝牙配网，直接使用当前六位码配对：
+如果机器人已经连接到同一 Wi-Fi，不要重置网络；打开 **"Python SDK"** 应用，直接
+使用当前六位码配对：
 
 ```powershell
 watcherobot robot pair 123456

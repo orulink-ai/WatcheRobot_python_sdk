@@ -164,7 +164,13 @@ JSONL 最后一行是 `type=result`、`ok=true`。
 watcherobot robot setup
 ```
 
-如果机器人已经接入同一 Wi-Fi，只需使用屏幕上的当前六位码配对并确认状态：
+命令会先提示你打开机器人上的 **Settings > Wi-Fi**，确认后才开始扫描；扫描结果使用
+**Bluetooth ID** 标识，附近存在多台机器人时支持使用 **Up/Down** 和回车键选择。
+写入 Wi-Fi 后，回到机器人启动器打开 **"Python SDK"** 应用，把屏幕顶部显示的配对码
+继续输入同一个 setup 流程。
+
+如果机器人已经接入同一 Wi-Fi，不要重置网络；打开 **"Python SDK"** 应用，只需使用
+屏幕上的当前六位码配对并确认状态：
 
 ```powershell
 watcherobot robot pair 123456

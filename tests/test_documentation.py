@@ -22,6 +22,23 @@ def test_readmes_document_managed_application_and_runtime_cli() -> None:
         assert "SDK_DISCOVER" not in readme
 
 
+def test_onboarding_docs_explain_the_guided_robot_setup_flow() -> None:
+    documents = (
+        ROOT / "README.md",
+        ROOT / "README.zh-CN.md",
+        ROOT / "docs" / "cli-reference.md",
+        ROOT / "docs" / "cli-reference.zh-CN.md",
+    )
+
+    for path in documents:
+        content = path.read_text(encoding="utf-8")
+        assert "Settings > Wi-Fi" in content
+        assert "Bluetooth ID" in content
+        assert "Up/Down" in content
+        assert '"Python SDK"' in content
+        assert "watcherobot robot pair" in content
+
+
 def test_resource_and_troubleshooting_guides_match_runtime_ownership() -> None:
     resources = (ROOT / "docs" / "resources.md").read_text(encoding="utf-8")
     troubleshooting = (

@@ -91,23 +91,29 @@ watcherobot --version
 
 ### 2. Set up your first robot
 
-Turn on the robot, enable Bluetooth, and run:
+Run the guided setup:
 
 ```powershell
 watcherobot robot setup
 ```
 
-The command scans for a nearby WatcheRobot, asks for the Wi-Fi name and
-password, then asks for the six-digit code shown by the robot. The password is
-read privately and is never accepted as a command-line argument. Confirm the
-connection at any time with:
+The command first asks you to open **Settings > Wi-Fi** on the robot. Scanning
+starts only after you confirm that the page is open. One result is identified
+by its platform-specific **Bluetooth ID**; when several robots are nearby, use
+**Up/Down** and Enter to select the intended Bluetooth ID. The command then
+reads the Wi-Fi password privately and provisions the network.
+
+To finish setup, return to the robot launcher, open the **"Python SDK"** app,
+read the six-digit pairing code at the top of the screen, and enter it in the
+same `robot setup` flow. Pairing belongs to one-time setup, while `app run`
+only starts an Application. Confirm the connection at any time with:
 
 ```powershell
 watcherobot robot status
 ```
 
-If the robot is already on the same Wi-Fi, skip provisioning and pair it
-directly:
+If the robot is already on the same Wi-Fi, do not reset its network. Open the
+**"Python SDK"** app and pair it directly:
 
 ```powershell
 watcherobot robot pair 123456

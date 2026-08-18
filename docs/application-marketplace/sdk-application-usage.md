@@ -178,8 +178,14 @@ For a new or network-reset robot, complete the guided setup first:
 watcherobot robot setup
 ```
 
-If the robot is already on the same Wi-Fi, pair with its current six-digit code
-and confirm the connection:
+The command asks you to open **Settings > Wi-Fi** before scanning, identifies
+nearby results by **Bluetooth ID**, and supports **Up/Down** selection when
+several robots are present. After Wi-Fi provisioning, open the robot's
+**"Python SDK"** app and enter the code shown at the top of its screen into the
+same setup flow.
+
+If the robot is already on the same Wi-Fi, do not reset it. Open **"Python
+SDK"**, pair with its current six-digit code, and confirm the connection:
 
 ```powershell
 watcherobot robot pair 123456
