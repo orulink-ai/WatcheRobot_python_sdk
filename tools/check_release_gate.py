@@ -114,8 +114,18 @@ def _associated_pull_requests(repository: str, sha: str) -> list[dict[str, objec
     return value
 
 
-def validate_gate(*, repository: str, tag: str, sha: str) -> ReleaseGateResult:
-    version = validate_release_tag(tag, read_package_version())
+def validate_gate(
+    *,
+    repository: str,
+    tag: str,
+    sha: str,
+    version_file: Path | None = None,
+    allow_existing_pypi: bool = False,
+) -> ReleaseGateResult:
+    version = validate_release_tag(
+        tag,
+        read_package_version(version_file) if version_file is not None else read_package_version(),
+    )
     tag_type = _run("git", "cat-file", "-t", tag)
     if tag_type != "tag":
         raise ValueError("release ref must be an annotated tag")
@@ -170,6 +180,7 @@ def validate_gate(*, repository: str, tag: str, sha: str) -> ReleaseGateResult:
         "PyPI",
         version,
         _http_status(f"https://pypi.org/pypi/watcherobot/{version}/json"),
+        allow_existing=allow_existing_pypi and reusable_draft,
     )
     validate_version_absent(
         "TestPyPI",
@@ -185,8 +196,20 @@ def main() -> int:
     parser.add_argument("--repository", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--sha", required=True)
+    parser.add_argument("--version-file", type=Path)
+    parser.add_argument(
+        "--allow-existing-pypi",
+        action="store_true",
+        help="Allow an existing PyPI version only while recovering a matching draft Release.",
+    )
     args = parser.parse_args()
-    result = validate_gate(repository=args.repository, tag=args.tag, sha=args.sha)
+    result = validate_gate(
+        repository=args.repository,
+        tag=args.tag,
+        sha=args.sha,
+        version_file=args.version_file,
+        allow_existing_pypi=args.allow_existing_pypi,
+    )
     print(json.dumps({"version": result.version, "reuse_artifact": result.reuse_artifact}))
     return 0
 

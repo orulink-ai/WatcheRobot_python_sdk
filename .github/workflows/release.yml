@@ -3,9 +3,15 @@ name: Release Python package
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      recover_tag:
+        description: Existing release tag whose matching draft assets should resume production publication
+        required: true
+        type: string
 
 concurrency:
-  group: sdk-release-${{ github.ref }}
+  group: sdk-release-${{ github.event_name == 'workflow_dispatch' && inputs.recover_tag || github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -14,6 +20,7 @@ permissions:
 jobs:
   start-clean:
     name: Clean release workspace before use
+    if: github.event_name == 'push'
     runs-on: [self-hosted, Linux, X64, sdk-release]
     steps:
       - name: Remove files left by a previous release job
@@ -29,6 +36,7 @@ jobs:
 
   gate:
     name: Validate release request
+    if: github.event_name == 'push'
     needs: start-clean
     runs-on: [self-hosted, Linux, X64, sdk-release]
     outputs:
@@ -37,7 +45,7 @@ jobs:
       commit: ${{ steps.gate.outputs.commit }}
       reuse-artifact: ${{ steps.gate.outputs.reuse-artifact }}
     permissions:
-      contents: read
+      contents: write
       pull-requests: read
     steps:
       - uses: actions/checkout@v6
@@ -71,6 +79,8 @@ jobs:
     name: Build immutable distributions
     needs: gate
     runs-on: [self-hosted, Linux, X64, sdk-release]
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
         if: needs.gate.outputs.reuse-artifact != 'true'
@@ -272,8 +282,132 @@ jobs:
 
   finish-clean:
     name: Clean release workspace after use
-    if: always()
+    if: always() && github.event_name == 'push'
     needs: [gate, build, draft-release, publish-testpypi, verify-testpypi, publish-pypi, verify-pypi, finalize-prerelease]
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    steps:
+      - name: Remove checked-out code, environments and downloaded artifacts
+        shell: bash
+        run: |
+          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
+          [[ "${workspace}" == /opt/actions-runner-release/_work/* ]] || {
+            echo "Refusing to clean unexpected workspace: ${workspace}" >&2
+            exit 1
+          }
+          shopt -s dotglob nullglob
+          rm -rf -- "${workspace}"/*
+
+  recover-gate:
+    name: Validate production recovery request
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      commit: ${{ steps.gate.outputs.commit }}
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Check out the current recovery implementation
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Preserve recovery gate from main
+        run: |
+          install -d "${RUNNER_TEMP}/watcherobot-recovery-tools"
+          cp tools/check_release_gate.py tools/check_release_version.py \
+            "${RUNNER_TEMP}/watcherobot-recovery-tools/"
+      - name: Check out the immutable release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.recover_tag }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade packaging
+      - id: gate
+        name: Validate tag, merge commit, draft Release and registries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVER_TAG: ${{ inputs.recover_tag }}
+        run: |
+          tag_commit=$(git rev-list -n 1 "${RECOVER_TAG}")
+          gate_json=$(python "${RUNNER_TEMP}/watcherobot-recovery-tools/check_release_gate.py" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --tag "${RECOVER_TAG}" \
+            --sha "${tag_commit}" \
+            --version-file "${GITHUB_WORKSPACE}/src/watcherobot/__init__.py" \
+            --allow-existing-pypi)
+          version=$(python -c 'import json,sys; print(json.load(sys.stdin)["version"])' <<< "${gate_json}")
+          reuse_artifact=$(python -c 'import json,sys; print(str(json.load(sys.stdin)["reuse_artifact"]).lower())' <<< "${gate_json}")
+          [[ "${reuse_artifact}" == "true" ]] || {
+            echo "Production recovery requires a matching draft GitHub Release." >&2
+            exit 1
+          }
+          python -c 'from packaging.version import Version; import sys; raise SystemExit("Production recovery requires a stable version") if Version(sys.argv[1]).is_prerelease else None' "${version}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "commit=${tag_commit}" >> "${GITHUB_OUTPUT}"
+
+  recover-publish-pypi:
+    name: Resume publication to PyPI from immutable draft assets
+    needs: recover-gate
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    environment:
+      name: pypi
+      url: https://pypi.org/p/watcherobot
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Download the original draft Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVER_TAG: ${{ inputs.recover_tag }}
+        run: |
+          mkdir -p artifact/dist
+          gh release download "${RECOVER_TAG}" --repo "${GITHUB_REPOSITORY}" --pattern 'watcherobot-*' --dir artifact/dist
+          gh release download "${RECOVER_TAG}" --repo "${GITHUB_REPOSITORY}" --pattern SHA256SUMS --dir artifact
+          (cd artifact && sha256sum --check SHA256SUMS)
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - name: Publish only the original distributions to PyPI with OIDC
+        env:
+          UV_PUBLISH_CHECK_URL: https://pypi.org/simple/
+        run: uv publish --trusted-publishing always artifact/dist/*
+
+  recover-verify-pypi:
+    name: Verify recovered PyPI release and publish GitHub Release
+    needs: [recover-gate, recover-publish-pypi]
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the exact recovered release from PyPI
+        run: |
+          python -m venv .venv-pypi-recovery
+          for attempt in {1..12}; do
+            if .venv-pypi-recovery/bin/python -m pip install "watcherobot==${{ needs.recover-gate.outputs.version }}"; then break; fi
+            if [[ "${attempt}" == "12" ]]; then exit 1; fi
+            sleep 10
+          done
+          .venv-pypi-recovery/bin/python -m pip check
+          .venv-pypi-recovery/bin/python -c "import watcherobot; assert watcherobot.__version__ == '${{ needs.recover-gate.outputs.version }}'"
+          .venv-pypi-recovery/bin/watcherobot --help
+      - name: Publish the verified GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVER_TAG: ${{ inputs.recover_tag }}
+        run: gh release edit "${RECOVER_TAG}" --repo "${GITHUB_REPOSITORY}" --draft=false
+
+  recover-finish-clean:
+    name: Clean recovery workspace after use
+    if: always() && github.event_name == 'workflow_dispatch'
+    needs: [recover-gate, recover-publish-pypi, recover-verify-pypi]
     runs-on: [self-hosted, Linux, X64, sdk-release]
     steps:
       - name: Remove checked-out code, environments and downloaded artifacts
