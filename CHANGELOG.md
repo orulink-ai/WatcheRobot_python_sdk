@@ -2,13 +2,19 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-18
+
 - Application 首次开发流程简化为 `pip install watcherobot`、`watcherobot app init` 和 `watcherobot app run`；初始化器会生成播放一次 `happy` 行为的 Hello World 项目，并自动补齐本地开发元数据。
+- 新增 `watcherobot robot setup`、`robot pair` 与 `robot status`，打通蓝牙配网、六位码配对、连接确认和 Application 首次运行闭环。
 - SDK Test Bench 1.1.0 完成 Application Marketplace 发布准备：默认英文界面并支持中文切换，补齐应用图标、作者与英文简介。
 - 发布快照改为完全自包含，内置示例音频随 Application 分发，并明确排除照片、录音等运行产物。
+- SDK Media Lab 完成 RTC 音频、视频与音视频模式的资源仲裁、真实双向媒体诊断、设备端 AEC 指标和重复启停后的资源恢复检查。
+- 修复普通扬声器播放与麦克风录音争用共享音频运行时的问题，冲突操作会被安全串行化。
+- 完善 Daemon 控制协议、Application Runtime 完整性诊断及 Windows/macOS 源码联调边界，并保持既有 Device channel 路由合同。
 
-## [0.1.1a6] - 待发布
+## [0.1.1a6] - 2026-08-17
 
-- 用户明确要求基于最新合入分支发布 SDK 0.1.1a6 预发布版
+- 完善 Application Runtime 完整性错误分类、Daemon 控制协议兼容握手及跨机器默认 Application 启动诊断。
 
 ## [0.1.1a4] - 2026-08-13
 
