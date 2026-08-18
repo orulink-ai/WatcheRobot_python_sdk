@@ -17,6 +17,15 @@ watcherobot app list
 | `application_occupied` | Another Application process is starting or running | Stop it before selecting, installing, or starting another one |
 | `Application startup timed out` during a cold default-Application launch | Older Runtime builds allowed only 30 seconds, while a first Windows launch can need more time to initialize | Update the packaged SDK Runtime. Current builds allow 90 seconds in the Daemon and 120 seconds in Desktop before declaring failure |
 | `No robot is connected` | The robot has not completed Wi-Fi setup and Runtime pairing, or it is offline | Run `watcherobot robot setup`; if Wi-Fi is already configured, use `watcherobot robot pair <six-digit-code>` |
+| `Bluetooth is unavailable on this computer` | Bluetooth is off, no adapter is available, or the operating system reports it unavailable | Turn on Bluetooth, confirm the adapter is available, then rerun `watcherobot robot setup` |
+| `This computer does not support the required Bluetooth mode` | The adapter or operating system cannot act as a BLE central | Use a BLE adapter with central support, confirm the operating system supports BLE scanning, then rerun setup |
+| `Bluetooth access was denied` | The terminal or Python lacks operating-system Bluetooth permission | Allow Bluetooth access in system privacy settings, then rerun setup |
+| `Device ID unavailable` | The robot advertises for provisioning but its firmware does not include the stable Device ID Service Data | Update robot firmware when available; Bluetooth ID is retained only for compatibility |
+| `Robot rejected the Wi-Fi settings` | The firmware rejected the supplied network configuration | Check the Wi-Fi name and password, then rerun setup |
+| `Wi-Fi credentials saved` but the robot shows `Offline` or `Wi-Fi failed` | Credentials were stored, but the access point did not accept the connection or could not be reached | Disconnect/forget the network on the robot, reopen **Settings > Wi-Fi**, and rerun setup with the correct network name and password |
+| `Robot did not respond in time` | The BLE connection was interrupted or the firmware did not answer | Keep the robot nearby on **Settings > Wi-Fi**, close competing Bluetooth apps, and retry |
+| `incompatible Bluetooth response` | The SDK and robot firmware provisioning protocols do not match | Update both the SDK and firmware; report both versions if the error persists |
+| `Robot pairing could not be completed` | Runtime pairing did not finish after Wi-Fi setup | Keep the robot's **"Python SDK"** app open, confirm both devices use the same network, and enter the latest code |
 | `pairing_not_found` | The computer and robot are not on the same network, or the displayed code expired | Confirm both devices use the same network and retry `watcherobot robot pair` with the current code |
 | Command timeout | The device is offline or did not acknowledge the frame | Check `/daemon/devices`, pairing state, firmware logs, and the Runtime log |
 | `CommandError: ... not_found` | The requested resource is not installed in firmware | Use a resource ID supported by the current firmware |

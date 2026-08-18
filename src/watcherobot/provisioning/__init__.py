@@ -4,6 +4,7 @@ from .errors import (
     BluetoothConnectionTimeoutError,
     BluetoothPermissionError,
     BluetoothProvisioningError,
+    BluetoothUnsupportedError,
     BluetoothUnavailableError,
     DeviceAmbiguityError,
     DeviceNotFoundError,
@@ -12,6 +13,7 @@ from .errors import (
     ProvisioningProtocolError,
     ProvisioningRejectedError,
     ProvisioningResponseTimeoutError,
+    WifiConnectionFailedError,
 )
 from .models import (
     BluetoothDevice,
@@ -27,6 +29,7 @@ __all__ = [
     "BluetoothPermissionError",
     "BluetoothProvisioner",
     "BluetoothProvisioningError",
+    "BluetoothUnsupportedError",
     "BluetoothUnavailableError",
     "DeviceAmbiguityError",
     "DeviceNotFoundError",
@@ -38,4 +41,5 @@ __all__ = [
     "ProvisioningResponseTimeoutError",
     "ProvisioningResult",
     "WifiStatus",
+    "WifiConnectionFailedError",
 ]

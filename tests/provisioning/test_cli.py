@@ -38,6 +38,7 @@ class FakeProvisioner:
         ssid: str,
         password: str,
         clear_existing: bool = False,
+        on_status=None,
     ) -> ProvisioningResult:
         self.provision_calls.append(
             {
@@ -47,16 +48,20 @@ class FakeProvisioner:
                 "clear_existing": clear_existing,
             }
         )
+        if on_status is not None:
+            on_status(WifiStatus(state="connecting", ssid=ssid))
+            on_status(WifiStatus(state="connected", ssid=ssid))
         return ProvisioningResult(
             device=device,
             ssid=ssid,
-            state="credentials_saved",
+            state="connected",
             ack=ProtocolMessage(
                 type="sys.ack",
                 code=0,
                 command_type="cfg.wifi.set",
                 command_id="python-wifi-set-1",
             ),
+            wifi=WifiStatus(state="connected", ssid=ssid),
         )
 
     async def get_wifi_status(
@@ -118,7 +123,7 @@ def test_bluetooth_provision_reads_password_interactively(
     output = capsys.readouterr()
     assert "secret" not in output.out
     assert "secret" not in output.err
-    assert json.loads(output.out)["state"] == "credentials_saved"
+    assert json.loads(output.out)["state"] == "connected"
     assert FakeProvisioner.provision_calls == [
         {
             "device": FakeProvisioner.device,

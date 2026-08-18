@@ -10,7 +10,11 @@ class BluetoothProvisioningError(WatcheRobotError):
 
 
 class BluetoothUnavailableError(BluetoothProvisioningError):
-    """Bluetooth is disabled, unsupported, or otherwise unavailable."""
+    """Bluetooth is disabled, missing, or otherwise unavailable."""
+
+
+class BluetoothUnsupportedError(BluetoothProvisioningError):
+    """The Bluetooth adapter or system cannot act as a BLE central."""
 
 
 class BluetoothPermissionError(BluetoothProvisioningError):
@@ -73,6 +77,19 @@ class ProvisioningResponseTimeoutError(BluetoothProvisioningError):
         )
         self.command_type = command_type
         self.timeout = timeout
+
+
+class WifiConnectionFailedError(BluetoothProvisioningError):
+    """The firmware reported a terminal Wi-Fi connection failure."""
+
+    def __init__(self, reason: str) -> None:
+        messages = {
+            "auth_failed": "Wi-Fi authentication failed",
+            "network_not_found": "Wi-Fi network was not found",
+            "timeout": "Wi-Fi connection timed out",
+        }
+        super().__init__(messages.get(reason, "Wi-Fi connection failed"))
+        self.reason = reason
 
 
 class ProvisioningCancelledError(BluetoothProvisioningError):

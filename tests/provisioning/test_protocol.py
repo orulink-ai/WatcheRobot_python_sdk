@@ -154,6 +154,24 @@ def test_parse_message_validates_nack_and_wifi_status() -> None:
     assert status.status == "unconfigured"
 
 
+@pytest.mark.parametrize(
+    "state",
+    ["auth_failed", "network_not_found", "timeout"],
+)
+def test_parse_message_accepts_terminal_wifi_failure_states(
+    state: str,
+) -> None:
+    message = parse_message(
+        '{"type":"evt.wifi.status","code":0,"data":'
+        f'{{"status":"{state}","ssid":"Office",'
+        '"command_id":"cmd-1"}}'
+    )
+
+    assert message.status == state
+    assert message.ssid == "Office"
+    assert message.command_id == "cmd-1"
+
+
 def test_success_ack_does_not_report_a_rejection_reason() -> None:
     ack = parse_message(
         '{"type":"sys.ack","code":0,"data":'

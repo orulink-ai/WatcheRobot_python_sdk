@@ -5,11 +5,17 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from bleak.exc import (
+    BleakBluetoothNotAvailableError,
+    BleakBluetoothNotAvailableReason,
+)
 
 from watcherobot.provisioning import (
     BluetoothConnectionTimeoutError,
     BluetoothDevice,
     BluetoothPermissionError,
+    BluetoothUnsupportedError,
+    BluetoothUnavailableError,
     DeviceNotFoundError,
     ProvisioningProtocolError,
 )
@@ -233,6 +239,63 @@ def test_bleak_backend_maps_permission_denial_without_platform_details(
             )
 
         assert "Access denied" not in str(captured.value)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        BleakBluetoothNotAvailableReason.POWERED_OFF,
+        BleakBluetoothNotAvailableReason.NO_BLUETOOTH,
+    ],
+)
+def test_bleak_backend_maps_disabled_or_missing_bluetooth_adapter(
+    reason: BleakBluetoothNotAvailableReason,
+    monkeypatch,
+) -> None:
+    async def unavailable(**_kwargs: object) -> object:
+        raise BleakBluetoothNotAvailableError("platform details", reason)
+
+    async def scenario() -> None:
+        monkeypatch.setattr(
+            "watcherobot.provisioning.bleak_backend.BleakScanner.discover",
+            unavailable,
+        )
+
+        with pytest.raises(BluetoothUnavailableError) as captured:
+            await BleakBackend().scan_devices(
+                timeout=1.0,
+                name_filter=None,
+            )
+
+        assert "platform details" not in str(captured.value)
+
+    asyncio.run(scenario())
+
+
+def test_bleak_backend_maps_missing_central_role_as_unsupported(
+    monkeypatch,
+) -> None:
+    async def unsupported(**_kwargs: object) -> object:
+        raise BleakBluetoothNotAvailableError(
+            "platform details",
+            BleakBluetoothNotAvailableReason.NO_BLE_CENTRAL_ROLE,
+        )
+
+    async def scenario() -> None:
+        monkeypatch.setattr(
+            "watcherobot.provisioning.bleak_backend.BleakScanner.discover",
+            unsupported,
+        )
+
+        with pytest.raises(BluetoothUnsupportedError) as captured:
+            await BleakBackend().scan_devices(
+                timeout=1.0,
+                name_filter=None,
+            )
+
+        assert "platform details" not in str(captured.value)
 
     asyncio.run(scenario())
 

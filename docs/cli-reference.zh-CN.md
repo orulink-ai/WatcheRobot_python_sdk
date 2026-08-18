@@ -61,15 +61,49 @@ watcherobot daemon stop
 
 ### `watcherobot robot setup [--device <ID>] [--ssid <名称>] [--pairing-code <配对码>] [--clear-existing]`
 
-完成首次连接的完整引导。命令先提示用户在机器人上打开 **Settings > Wi-Fi**，确认
-页面已经打开后才开始扫描。扫描结果显示机器人广播的稳定 **Device ID**；附近有
+完成首次连接的完整引导。命令先提示用户打开电脑蓝牙，并在机器人上打开
+**Settings > Wi-Fi**，确认页面已经打开后才开始扫描。扫描结果显示机器人广播的稳定 **Device ID**；附近有
 多台机器人时，使用 **Up/Down** 和回车键按 Device ID 选择，不以设备名作为配网
 身份。旧固件未广播 Device ID 时会明确标记为不可用，仅把 Bluetooth ID 作为兼容
-信息展示。`--device` 接受 Device ID，同时继续兼容旧固件的 Bluetooth ID。
+信息展示。`--device` 接受 Device ID，同时继续兼容旧固件的 Bluetooth ID。扫描最长约 10 秒，交互式
+终端会持续输出进度点，并在结束后显示发现的机器人数量，避免等待期间看起来像命令卡死。
 
-随后命令私密读取 Wi-Fi 密码并写入网络凭据。配网后回到机器人启动器，打开
+引导流程会区分可恢复状态，不直接向普通用户输出扫描日志：
+
+| 场景 | 命令说明 | 用户下一步 |
+|---|---|---|
+| 电脑蓝牙关闭、不可用或没有适配器 | 当前电脑无法使用蓝牙 | 打开蓝牙或检查适配器，再重新运行 setup |
+| 适配器或系统不支持 BLE Central 模式 | 当前电脑不具备扫描并连接机器人的蓝牙角色 | 更换支持 BLE Central 的适配器，并确认系统支持 BLE 扫描 |
+| 系统拒绝蓝牙权限 | 当前终端或 Python 没有蓝牙访问权限 | 在系统隐私设置中授权，再重新运行 setup |
+| 未发现机器人 | 没有发现配网广播 | 保持 **Settings > Wi-Fi** 页面打开并靠近电脑；已联网机器人改用 `robot pair` |
+| 发现一台或多台新版机器人 | 展示稳定 Device ID | 用 **Up/Down** 选择机器人屏幕上可核对的 Device ID |
+| 旧固件没有广播 Device ID | 明确提示 Device ID 不可用，可能需要升级固件 | Bluetooth ID 仅作为兼容信息保留 |
+| 蓝牙连接或响应超时 | 蓝牙通信没有完成 | 保持机器人靠近、关闭可能占用连接的应用，然后重试 |
+| 机器人拒绝 Wi-Fi 配置 | 网络名称或密码没有被接受 | 检查 Wi-Fi 名称和密码后重试 |
+| Wi-Fi 认证失败 | 固件在当前 BLE 会话上报 `auth_failed` | 检查密码后重新运行 setup |
+| 找不到兼容网络 | 固件上报 `network_not_found` | 检查网络名称、距离和安全模式 |
+| Wi-Fi 验证超时 | 固件上报 `timeout`，或 SDK 的有界等待到期 | 靠近路由器，检查凭据后重试 |
+| 固件返回不兼容响应 | 机器人与 SDK 的配网协议不匹配 | 升级固件和 SDK；持续出现时反馈两端版本 |
+| Runtime 配对失败 | 六位码配对阶段没有完成 | 保持 **"Python SDK"** 应用打开、确认处于同一网络并输入最新配对码 |
+| 用户取消 | 明确显示 setup 已取消 | 不打印 Wi-Fi 密码或配对码 |
+
+`robot setup` 是面向人的引导命令，默认错误采用可执行的普通文本。需要紧凑 JSON 的自动化
+应使用底层 `watcherobot bluetooth ...` 命令，其结构化输出合同保持不变。
+
+交互式终端会用颜色辅助区分状态：蓝色表示进行中，绿色表示成功，黄色表示需要确认，红色表示失败，青色
+突出 Device ID。所有状态同时保留文字和退出码，颜色不是唯一信息来源。输出重定向或非交互执行时自动
+关闭颜色；设置 `NO_COLOR=1` 可显式禁用，`FORCE_COLOR=1` 可用于支持 ANSI 的特殊终端。Windows
+PowerShell 的控制台兼容由 SDK 自动处理。
+
+随后命令私密读取 Wi-Fi 密码并写入网络凭据，同时保持 BLE 会话，实时接收固件上报的
+`connecting`、`connected`、`auth_failed`、`network_not_found` 或 `timeout`。只有收到
+`connected` 才会进入配对。配网后回到机器人启动器，打开
 **"Python SDK"** 应用，读取屏幕顶部的六位配对码，并继续在同一个 setup 流程中
 输入。交互式终端会询问省略的字段；密码永远不能作为命令行参数传入，也不会打印。
+
+流程不再要求用户观察屏幕后手工按回车确认。固件负责限定连接尝试时长并通过 BLE 返回终态；SDK 还设置了
+略长的主机侧截止时间，避免终态通知丢失后命令无限等待。认证失败、找不到网络或超时都会在 Runtime 配对前
+停止，并给出对应恢复步骤，且不会打印密码。
 
 ```powershell
 watcherobot robot setup
@@ -79,7 +113,7 @@ watcherobot robot setup
 
 ```powershell
 watcherobot robot setup `
-  --device <蓝牙设备ID> `
+  --device <Device ID> `
   --ssid MyWiFi `
   --pairing-code 123456
 ```
@@ -111,7 +145,9 @@ watcherobot robot status
 
 #### `watcherobot app init [目录]`
 
-创建一个可直接运行的 Hello World Application，且不会覆盖已有目标。省略目录时，交互式终端会询问项目目录；ID、显示名称、作者和简介会根据目录生成默认值，准备发布时可通过参数覆盖。
+创建一个可直接运行的 Hello World Application，且不会覆盖已有目标。省略目录时，交互式终端只会询问项目目录；
+ID、显示名称、作者和简介都会自动生成，不要求开发者手工填写。例如 `my_app` 默认得到稳定、可读的
+`local.my_app`。准备发布时再通过参数覆盖正式元数据。
 
 ```powershell
 watcherobot app init my_app
@@ -122,6 +158,12 @@ watcherobot app init published_app `
   --author "Example Team" `
   --description "An example WatcheRobot Application"
 ```
+
+如果提供了目录后仍然出现 `Application ID:`、`Application name:` 等逐项提问，说明当前终端调用的是旧版
+CLI。先激活安装源码的虚拟环境，再在 Windows 使用 `where.exe watcherobot`，或在 macOS/Linux 使用
+`command -v watcherobot` 确认命令来源。Application ID 是升级与覆盖
+安装的稳定身份，不使用用户名、时间戳或随机数自动拼接；这些值会泄露本机信息或导致同一项目每次初始化都
+变成不同应用。正式发布应使用团队持有的稳定命名空间，例如 `com.example.my_app`。
 
 会生成 `app.json`、`app.py`、`README.md`、`icon.svg` 和 `.gitignore`；默认
 `app.py` 一定会输出 Hello World 成功日志，连接兼容机器人时还会播放一次 `happy` 行为。
@@ -272,7 +314,7 @@ watcherobot bluetooth scan
 
 ### `watcherobot bluetooth provision --device <ID> --ssid <名称> [--clear-existing]`
 
-提示输入 Wi-Fi 密码，并把凭据发送给所选设备。`--clear-existing` 会先请求设备清除已有凭据。`credentials_saved` 只表示固件确认保存，不代表设备已经成功连上网络。
+提示输入 Wi-Fi 密码，并把凭据发送给所选设备。`--clear-existing` 会先请求设备清除已有凭据。只有固件上报 Wi-Fi 已连接才返回 `connected`；认证失败、找不到网络或超时会直接返回错误。
 
 ```powershell
 watcherobot bluetooth provision --device <id> --ssid MyWiFi

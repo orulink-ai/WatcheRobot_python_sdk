@@ -159,7 +159,7 @@ def test_app_init_derives_metadata_without_prompts(
     monkeypatch,
     capsys,
 ) -> None:
-    target = tmp_path / "hello_robot"
+    target = tmp_path / "hello_robot_test"
     monkeypatch.setattr(
         "builtins.input",
         lambda _prompt: (_ for _ in ()).throw(
@@ -172,10 +172,13 @@ def test_app_init_derives_metadata_without_prompts(
     manifest = json.loads(
         target.joinpath("app.json").read_text(encoding="utf-8")
     )
-    assert manifest["id"] == "local.hello_robot"
-    assert manifest["name"] == "Hello Robot"
+    assert manifest["id"] == "local.hello_robot_test"
+    assert manifest["name"] == "Hello Robot Test"
     assert manifest["author"] == "Local Developer"
-    assert manifest["description"] == "Hello Robot WatcheRobot Application."
+    assert (
+        manifest["description"]
+        == "Hello Robot Test WatcheRobot Application."
+    )
     assert manifest["supported_host_platforms"] == ["windows", "macos"]
     assert capsys.readouterr().err == ""
 

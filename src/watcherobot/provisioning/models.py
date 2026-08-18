@@ -10,8 +10,11 @@ WifiState = Literal[
     "connecting",
     "disconnected",
     "unconfigured",
+    "auth_failed",
+    "network_not_found",
+    "timeout",
 ]
-ProvisioningState = Literal["credentials_saved"]
+ProvisioningState = Literal["connected"]
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,7 @@ class ProvisioningResult:
     ssid: str
     state: ProvisioningState
     ack: ProtocolMessage
+    wifi: WifiStatus
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -103,4 +107,5 @@ class ProvisioningResult:
             "ssid": self.ssid,
             "state": self.state,
             "ack": self.ack.to_dict(),
+            "wifi": self.wifi.to_dict(),
         }

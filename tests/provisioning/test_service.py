@@ -13,6 +13,7 @@ from watcherobot.provisioning import (
     ProvisioningCancelledError,
     ProvisioningRejectedError,
     ProvisioningResponseTimeoutError,
+    WifiConnectionFailedError,
 )
 from watcherobot.provisioning.backend import BleConnection
 from watcherobot.provisioning.protocol import BLE_CHARACTERISTIC_UUID
@@ -37,6 +38,7 @@ class FakeConnection(BleConnection):
         legacy_status_on_start: bool = True,
         block_stop_notifications: bool = False,
         block_disconnect: bool = False,
+        wifi_terminal_state: str | None = "connected",
     ) -> None:
         self.fragmented_notifications = fragmented_notifications
         self.reject_wifi_set = reject_wifi_set
@@ -55,6 +57,7 @@ class FakeConnection(BleConnection):
         self.legacy_status_on_start = legacy_status_on_start
         self.block_stop_notifications = block_stop_notifications
         self.block_disconnect = block_disconnect
+        self.wifi_terminal_state = wifi_terminal_state
         self.characteristic_uuid = BLE_CHARACTERISTIC_UUID
         self.writes: list[dict[str, Any]] = []
         self.cached = b""
@@ -204,6 +207,28 @@ class FakeConnection(BleConnection):
             if self.callback is not None:
                 self.callback(status)
             self.cached = status
+        if request_type == "cfg.wifi.set" and self.callback is not None:
+            for state in ("connecting", self.wifi_terminal_state):
+                if state is None:
+                    continue
+                status = json.dumps(
+                    {
+                        "type": "evt.wifi.status",
+                        "code": 0,
+                        "data": {
+                            "status": state,
+                            "ssid": "Office",
+                            "command_id": command_id,
+                            **(
+                                {"ip": "192.168.1.9"}
+                                if state == "connected"
+                                else {}
+                            ),
+                        },
+                    },
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                self.callback(status)
 
     async def read(self) -> bytes:
         if self.block_read:
@@ -277,7 +302,9 @@ def test_provision_wifi_defaults_to_set_without_clear_and_cleans_up() -> None:
             password="secret",
         )
 
-        assert result.state == "credentials_saved"
+        assert result.state == "connected"
+        assert result.wifi.state == "connected"
+        assert result.wifi.ip == "192.168.1.9"
         assert result.ssid == "Office"
         assert result.ack.command_type == "cfg.wifi.set"
         assert [item["type"] for item in connection.writes] == [
@@ -394,7 +421,7 @@ def test_ack_matching_ignores_wrong_command_and_duplicate_messages() -> None:
         )
 
         assert result.ack.command_id != "another-command"
-        assert result.state == "credentials_saved"
+        assert result.state == "connected"
 
     asyncio.run(scenario())
 
@@ -412,7 +439,7 @@ def test_request_echo_is_ignored_and_does_not_leak_password() -> None:
         )
 
         assert "do-not-leak" not in repr(result)
-        assert result.state == "credentials_saved"
+        assert result.state == "connected"
 
     asyncio.run(scenario())
 
@@ -432,7 +459,77 @@ def test_notify_is_used_when_cached_read_is_empty() -> None:
             password="secret",
         )
 
-        assert result.state == "credentials_saved"
+        assert result.state == "connected"
+
+    asyncio.run(scenario())
+
+
+def test_provision_wifi_reports_connecting_then_connected() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        backend = FakeBackend(connection)
+        provisioner = BluetoothProvisioner(backend=backend)
+        states = []
+
+        result = await provisioner.provision_wifi(
+            backend.device,
+            ssid="Office",
+            password="secret",
+            on_status=states.append,
+        )
+
+        assert [status.state for status in states] == [
+            "connecting",
+            "connected",
+        ]
+        assert result.state == "connected"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "failure_state",
+    ["auth_failed", "network_not_found", "timeout"],
+)
+def test_provision_wifi_raises_a_stable_terminal_failure(
+    failure_state: str,
+) -> None:
+    async def scenario() -> None:
+        connection = FakeConnection(wifi_terminal_state=failure_state)
+        backend = FakeBackend(connection)
+        provisioner = BluetoothProvisioner(backend=backend)
+
+        with pytest.raises(WifiConnectionFailedError) as captured:
+            await provisioner.provision_wifi(
+                backend.device,
+                ssid="Office",
+                password="secret",
+            )
+
+        assert captured.value.reason == failure_state
+        assert connection.disconnected
+
+    asyncio.run(scenario())
+
+
+def test_sdk_timeout_is_a_wifi_failure_when_firmware_sends_no_terminal_state() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection(wifi_terminal_state=None)
+        backend = FakeBackend(connection)
+        provisioner = BluetoothProvisioner(
+            backend=backend,
+            wifi_validation_timeout=0.01,
+        )
+
+        with pytest.raises(WifiConnectionFailedError) as captured:
+            await provisioner.provision_wifi(
+                backend.device,
+                ssid="Office",
+                password="secret",
+            )
+
+        assert captured.value.reason == "timeout"
+        assert connection.disconnected
 
     asyncio.run(scenario())
 
@@ -564,7 +661,7 @@ def test_cleanup_steps_are_bounded_and_disconnect_is_always_attempted(
             timeout=0.2,
         )
 
-        assert result.state == "credentials_saved"
+        assert result.state == "connected"
         assert connection.stop_notifications_started
         assert connection.disconnect_started
 

@@ -78,20 +78,66 @@ automation.
 
 ### `watcherobot robot setup [--device <id>] [--ssid <name>] [--pairing-code <code>] [--clear-existing]`
 
-Guides first-time setup end to end. It first asks the user to open
-**Settings > Wi-Fi** on the robot and starts scanning only after confirmation.
+Guides first-time setup end to end. It first asks the user to turn on computer
+Bluetooth and open **Settings > Wi-Fi** on the robot, then starts scanning only
+after confirmation.
 Results are shown by the stable **Device ID** advertised by the robot. With
 multiple results, use **Up/Down** and Enter to choose the intended Device ID;
 device names are not used as the selection identity. Older firmware without an
 advertised Device ID is marked as unavailable and exposes the Bluetooth ID only
 as a compatibility fallback. `--device` accepts the Device ID and continues to
 accept that fallback Bluetooth ID for older firmware.
+The scan normally takes up to 10 seconds. Interactive terminals print progress
+dots while it is running and report the number of robots found when it ends.
 
-The command then reads the Wi-Fi password privately and provisions the
-credentials. To finish, return to the robot launcher, open the **"Python SDK"**
+The guided flow separates recoverable states instead of returning raw scan
+logs:
+
+| State | What the command explains | Recovery |
+|---|---|---|
+| Computer Bluetooth is off or unavailable | Bluetooth cannot be used | Turn on Bluetooth or check the adapter, then rerun setup |
+| The adapter or system lacks BLE central support | The computer cannot scan and connect in the required Bluetooth role | Use a BLE adapter with central support and confirm the OS supports BLE scanning |
+| Operating-system permission is denied | Bluetooth access was denied | Allow the terminal or Python to use Bluetooth, then rerun setup |
+| No robot is found | No provisioning advertisement was discovered | Keep **Settings > Wi-Fi** open and the robot nearby; already-networked robots use `robot pair` |
+| One or several current robots are found | Stable Device IDs are displayed | Select the Device ID shown on the robot with **Up/Down** |
+| Older firmware does not advertise a Device ID | Device ID is unavailable and a firmware update may be required | Bluetooth ID remains only as a compatibility fallback |
+| Bluetooth connection or response times out | Bluetooth communication did not complete | Keep the robot nearby, close competing Bluetooth apps, and retry |
+| Robot rejects the Wi-Fi settings | The supplied network settings were rejected | Check the Wi-Fi name and password, then retry |
+| Wi-Fi authentication fails | Firmware reports `auth_failed` in the active BLE session | Check the password and rerun setup |
+| No compatible network is found | Firmware reports `network_not_found` | Check the Wi-Fi name, range, and security mode |
+| Wi-Fi validation times out | Firmware reports `timeout`, or the SDK's bounded wait expires | Move closer to the access point, check the credentials, and retry |
+| Firmware returns an incompatible response | The robot and SDK provisioning protocols do not match | Update the firmware and SDK; report both versions if it persists |
+| Runtime pairing fails | The six-digit pairing stage did not complete | Keep the **"Python SDK"** app open, confirm the same network, and use the latest code |
+| The operation is cancelled | Setup was cancelled | No credentials or pairing code are printed |
+
+`robot setup` is intentionally a human-guided command and its default errors
+are plain recovery instructions. Automation that requires compact JSON should
+use the lower-level `watcherobot bluetooth ...` commands, whose structured
+output contract is unchanged.
+
+Interactive terminals use color as a secondary state cue: blue for progress,
+green for success, yellow for confirmation, red for failure, and cyan for
+Device IDs. Text and exit codes always carry the same meaning, so color is
+never the only signal. Redirected and non-interactive output disables color
+automatically. Set `NO_COLOR=1` to disable it explicitly or `FORCE_COLOR=1`
+for a compatible special terminal. The SDK enables Windows PowerShell console
+compatibility automatically.
+
+The command then reads the Wi-Fi password privately, provisions the
+credentials, and keeps the BLE session open while firmware reports
+`connecting` followed by `connected`, `auth_failed`, `network_not_found`, or
+`timeout`. Pairing starts only after `connected`. To finish, return to the
+robot launcher, open the **"Python SDK"**
 app, read the six-digit code at the top of its screen, and enter it into the
 same setup flow. Omitted values are prompted in an interactive terminal. The
 password is never accepted as an argument or printed.
+
+The command does not ask the user to confirm the robot screen manually. The
+firmware owns a bounded connection attempt and sends the final result over BLE.
+The SDK also applies a slightly longer host-side deadline so a dropped terminal
+notification cannot leave setup hanging indefinitely. An authentication,
+network-discovery, or timeout failure stops before Runtime pairing and prints a
+specific recovery action without exposing the password.
 
 ```powershell
 watcherobot robot setup
@@ -102,7 +148,7 @@ password remains interactive:
 
 ```powershell
 watcherobot robot setup `
-  --device <bluetooth-id> `
+  --device <device-id> `
   --ssid MyWiFi `
   --pairing-code 123456
 ```
@@ -140,8 +186,9 @@ shortcut for directly executing `app.py`.
 
 Creates a runnable Hello World Application without overwriting an existing
 target. When the directory is omitted, an interactive terminal prompts for it.
-The ID, display name, author, and description default from the directory and
-can be overridden for publishing.
+That directory is the only interactive question: ID, display name, author, and
+description are generated automatically. For example, `my_app` receives the
+stable, readable ID `local.my_app`. Publishing metadata can be overridden later.
 
 ```powershell
 watcherobot app init my_app
@@ -152,6 +199,14 @@ watcherobot app init published_app `
   --author "Example Team" `
   --description "An example WatcheRobot Application"
 ```
+
+If an explicit directory is followed by `Application ID:` or other metadata
+prompts, the terminal is running an older CLI. Activate the intended virtual
+environment and check the command source with `where.exe watcherobot` on
+Windows or `command -v watcherobot` on macOS/Linux. An
+Application ID is a stable upgrade identity, so the initializer does not append
+a username, timestamp, or random value. Published apps should use a stable
+team-owned namespace such as `com.example.my_app`.
 
 It creates `app.json`, `app.py`, `README.md`, `icon.svg`, and `.gitignore`.
 The generated `app.py` always logs a Hello World success. When a compatible
@@ -337,8 +392,8 @@ watcherobot bluetooth scan
 
 Prompts for the Wi-Fi password and sends credentials to the selected device.
 `--clear-existing` asks the device to clear saved credentials first. A
-`credentials_saved` result confirms only that firmware stored the credentials;
-it does not prove that the device joined the network.
+`connected` result means firmware reported that Wi-Fi joined successfully;
+authentication, discovery, and timeout failures return an error instead.
 
 ```powershell
 watcherobot bluetooth provision --device <id> --ssid MyWiFi

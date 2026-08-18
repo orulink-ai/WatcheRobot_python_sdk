@@ -40,6 +40,48 @@ def test_onboarding_docs_explain_the_guided_robot_setup_flow() -> None:
         assert "watcherobot robot pair" in content
 
 
+def test_cli_references_cover_robot_setup_recovery_states() -> None:
+    references = (
+        ROOT / "docs" / "cli-reference.md",
+        ROOT / "docs" / "cli-reference.zh-CN.md",
+    )
+
+    for path in references:
+        content = path.read_text(encoding="utf-8")
+        assert "Device ID" in content
+        assert "Bluetooth ID" in content
+        assert "Bluetooth connection" in content or "蓝牙连接" in content
+        assert "permission" in content or "权限" in content
+        assert "BLE central" in content or "BLE Central" in content
+        assert "reject" in content or "拒绝" in content
+        assert "incompatible response" in content or "不兼容响应" in content
+        assert "Runtime pairing" in content or "Runtime 配对" in content
+        assert "cancel" in content or "取消" in content
+        assert "watcherobot bluetooth ..." in content
+        assert "JSON" in content
+        assert "up to 10 seconds" in content or "最长约 10 秒" in content
+        assert "auth_failed" in content
+        assert "network_not_found" in content
+        assert "timeout" in content or "超时" in content
+        assert "NO_COLOR=1" in content
+        assert "FORCE_COLOR=1" in content
+
+
+def test_cli_references_explain_automatic_stable_application_ids() -> None:
+    references = (
+        ROOT / "docs" / "cli-reference.md",
+        ROOT / "docs" / "cli-reference.zh-CN.md",
+    )
+
+    for path in references:
+        content = path.read_text(encoding="utf-8")
+        assert "local.my_app" in content
+        assert "Application ID:" in content
+        assert "where.exe watcherobot" in content
+        assert "command -v watcherobot" in content
+        assert "timestamp" in content or "时间戳" in content
+
+
 def test_installation_guides_separate_source_and_release_installation() -> None:
     guides = (
         ROOT / "docs" / "installation.md",
