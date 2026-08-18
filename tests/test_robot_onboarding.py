@@ -344,6 +344,53 @@ def test_robot_setup_labels_missing_device_id_without_misrepresenting_bluetooth_
     assert "Bluetooth ID: legacy-bluetooth-id" in output
 
 
+def test_robot_setup_accepts_legacy_bluetooth_id_as_device_argument(
+    capsys,
+) -> None:
+    device = BluetoothDevice(
+        id="legacy-bluetooth-id",
+        name="ESP_ROBOT",
+        rssi=-45,
+        is_watcher=True,
+        _native=object(),
+    )
+
+    selected = _select_setup_device(
+        [device],
+        requested_id="LEGACY-BLUETOOTH-ID",
+    )
+
+    assert selected is device
+    assert "Device ID unavailable" in capsys.readouterr().out
+
+
+def test_robot_setup_matches_device_id_without_case_sensitivity() -> None:
+    device = BluetoothDevice(
+        id="bluetooth-id",
+        name="ESP_ROBOT",
+        rssi=-45,
+        is_watcher=True,
+        device_id="WR-A1B2-C3D4-E5F6-0708",
+        _native=object(),
+    )
+
+    selected = _select_setup_device(
+        [device],
+        requested_id="wr-a1b2-c3d4-e5f6-0708",
+    )
+
+    assert selected is device
+
+
+def test_bluetooth_device_preserves_legacy_native_positional_argument() -> None:
+    native = object()
+
+    device = BluetoothDevice("bluetooth-id", "ESP_ROBOT", -45, True, native)
+
+    assert device._native is native
+    assert device.device_id is None
+
+
 def test_robot_setup_ctrl_c_at_guidance_exits_as_a_cancellation(
     monkeypatch,
     capsys,

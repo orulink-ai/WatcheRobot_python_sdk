@@ -26,8 +26,8 @@ class BluetoothDevice:
     name: str | None
     rssi: int | None
     is_watcher: bool
-    device_id: str | None = None
     _native: Any = field(default=None, repr=False, compare=False)
+    device_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         result: dict[str, object] = {

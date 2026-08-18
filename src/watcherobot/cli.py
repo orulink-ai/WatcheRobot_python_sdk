@@ -524,7 +524,7 @@ def _select_setup_device(
         matches = [
             device
             for device in devices
-            if requested_id in {device.device_id, device.id}
+            if _setup_device_matches_identifier(device, requested_id)
         ]
         if not matches:
             raise DeviceNotFoundError(
@@ -544,7 +544,7 @@ def _select_setup_device(
     if not _is_interactive_terminal():
         raise CliError(
             "Multiple robots were found; rerun with "
-            "--device <Device ID>"
+            "--device <Device ID or legacy Bluetooth ID>"
         )
     return _select_setup_device_with_arrows(devices)
 
@@ -555,7 +555,7 @@ def _select_setup_device_with_arrows(
     selected_index = 0
     first_render = True
     print("Found multiple robots.")
-    print("Select a Device ID with Up/Down, then press Enter:")
+    print("Select a robot with Up/Down, then press Enter:")
     while True:
         if not first_render:
             print(f"\x1b[{len(devices)}A", end="")
@@ -582,6 +582,17 @@ def _setup_device_identity(device: BluetoothDevice) -> str:
     if device.device_id is not None:
         return f"Device ID: {device.device_id}"
     return f"Device ID unavailable (Bluetooth ID: {device.id})"
+
+
+def _setup_device_matches_identifier(
+    device: BluetoothDevice,
+    requested_id: str,
+) -> bool:
+    normalized = requested_id.casefold()
+    return any(
+        candidate is not None and candidate.casefold() == normalized
+        for candidate in (device.device_id, device.id)
+    )
 
 
 def _read_setup_menu_key() -> str:

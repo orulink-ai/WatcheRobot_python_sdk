@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -12,7 +13,10 @@ from watcherobot.provisioning import (
     DeviceNotFoundError,
     ProvisioningProtocolError,
 )
-from watcherobot.provisioning.bleak_backend import BleakBackend
+from watcherobot.provisioning.bleak_backend import (
+    BleakBackend,
+    _advertised_device_id,
+)
 from watcherobot.provisioning.protocol import (
     BLE_CHARACTERISTIC_UUID,
     BLE_SERVICE_UUID,
@@ -147,6 +151,39 @@ def test_bleak_backend_preserves_native_device_and_uses_response_write(
         assert client.disconnected
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "service_data",
+    [
+        None,
+        {},
+        {BLE_SERVICE_UUID: b"\x01\x00"},
+        {BLE_SERVICE_UUID: bytes.fromhex("0200A1B2C3D4E5F60708")},
+        {BLE_SERVICE_UUID: "not-bytes"},
+    ],
+)
+def test_bleak_backend_rejects_missing_or_unsupported_device_identity(
+    service_data: object,
+) -> None:
+    advertisement = SimpleNamespace(service_data=service_data)
+
+    assert _advertised_device_id(advertisement) is None
+
+
+def test_bleak_backend_accepts_bytearray_device_identity_and_uuid_case() -> None:
+    advertisement = SimpleNamespace(
+        service_data={
+            BLE_SERVICE_UUID.upper(): bytearray.fromhex(
+                "0100A1B2C3D4E5F60708"
+            )
+        }
+    )
+
+    assert (
+        _advertised_device_id(advertisement)
+        == "WR-A1B2-C3D4-E5F6-0708"
+    )
 
 
 def test_bleak_backend_rejects_characteristic_without_response_write(
