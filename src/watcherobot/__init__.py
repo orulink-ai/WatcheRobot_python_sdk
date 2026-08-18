@@ -80,4 +80,4 @@ __all__ = [
     "WifiStatus",
 ]
 
-__version__ = "0.1.1a6"
+__version__ = "0.1.1"

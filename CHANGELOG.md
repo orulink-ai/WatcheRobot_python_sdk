@@ -1,5 +1,9 @@
 # 更新日志
 
+## [0.1.1] - 待发布
+
+- Codex 手动触发：发布 main 最新 SDK 到正式 PyPI
+
 ## [Unreleased]
 
 - Application 首次开发流程简化为 `pip install watcherobot`、`watcherobot app init` 和 `watcherobot app run`；初始化器会生成播放一次 `happy` 行为的 Hello World 项目，并自动补齐本地开发元数据。
