@@ -65,7 +65,8 @@ watcherobot daemon stop
 **Settings > Wi-Fi**，确认页面已经打开后才开始扫描。扫描结果显示机器人广播的稳定 **Device ID**；附近有
 多台机器人时，使用 **Up/Down** 和回车键按 Device ID 选择，不以设备名作为配网
 身份。旧固件未广播 Device ID 时会明确标记为不可用，仅把 Bluetooth ID 作为兼容
-信息展示。`--device` 接受 Device ID，同时继续兼容旧固件的 Bluetooth ID。
+信息展示。`--device` 接受 Device ID，同时继续兼容旧固件的 Bluetooth ID。扫描最长约 10 秒，交互式
+终端会持续输出进度点，并在结束后显示发现的机器人数量，避免等待期间看起来像命令卡死。
 
 引导流程会区分可恢复状态，不直接向普通用户输出扫描日志：
 
@@ -79,6 +80,7 @@ watcherobot daemon stop
 | 旧固件没有广播 Device ID | 明确提示 Device ID 不可用，可能需要升级固件 | Bluetooth ID 仅作为兼容信息保留 |
 | 蓝牙连接或响应超时 | 蓝牙通信没有完成 | 保持机器人靠近、关闭可能占用连接的应用，然后重试 |
 | 机器人拒绝 Wi-Fi 配置 | 网络名称或密码没有被接受 | 检查 Wi-Fi 名称和密码后重试 |
+| 凭据已保存但机器人显示 Offline / Wi-Fi failed | 凭据写入成功，但联网尚未验证或失败 | 在机器人上断开/忘记该网络，重新打开设置并输入正确凭据 |
 | 固件返回不兼容响应 | 机器人与 SDK 的配网协议不匹配 | 升级固件和 SDK；持续出现时反馈两端版本 |
 | Runtime 配对失败 | 六位码配对阶段没有完成 | 保持 **"Python SDK"** 应用打开、确认处于同一网络并输入最新配对码 |
 | 用户取消 | 明确显示 setup 已取消 | 不打印 Wi-Fi 密码或配对码 |
@@ -89,6 +91,12 @@ watcherobot daemon stop
 随后命令私密读取 Wi-Fi 密码并写入网络凭据。配网后回到机器人启动器，打开
 **"Python SDK"** 应用，读取屏幕顶部的六位配对码，并继续在同一个 setup 流程中
 输入。交互式终端会询问省略的字段；密码永远不能作为命令行参数传入，也不会打印。
+
+`Wi-Fi credentials saved` 只表示机器人保存了 SSID 和密码，不表示密码已经验证正确。
+当前固件必须先释放蓝牙资源，随后才能尝试连接 Wi-Fi，因此 CLI 无法从同一个 BLE 会话直接得到最终认证
+结果。交互流程会明确显示这项边界，并暂停在 Wi-Fi 确认步骤：只有机器人 **Settings > Wi-Fi** 显示
+**Connected** 后才继续配对。如果显示 **Offline** 或 **Wi-Fi failed**，网络名称或密码可能错误；在机器人上
+断开/忘记该网络，重新打开 **Settings > Wi-Fi**，再运行 `watcherobot robot setup`。
 
 ```powershell
 watcherobot robot setup

@@ -22,6 +22,7 @@ watcherobot app list
 | `Bluetooth access was denied` | The terminal or Python lacks operating-system Bluetooth permission | Allow Bluetooth access in system privacy settings, then rerun setup |
 | `Device ID unavailable` | The robot advertises for provisioning but its firmware does not include the stable Device ID Service Data | Update robot firmware when available; Bluetooth ID is retained only for compatibility |
 | `Robot rejected the Wi-Fi settings` | The firmware rejected the supplied network configuration | Check the Wi-Fi name and password, then rerun setup |
+| `Wi-Fi credentials saved` but the robot shows `Offline` or `Wi-Fi failed` | Credentials were stored, but the access point did not accept the connection or could not be reached | Disconnect/forget the network on the robot, reopen **Settings > Wi-Fi**, and rerun setup with the correct network name and password |
 | `Robot did not respond in time` | The BLE connection was interrupted or the firmware did not answer | Keep the robot nearby on **Settings > Wi-Fi**, close competing Bluetooth apps, and retry |
 | `incompatible Bluetooth response` | The SDK and robot firmware provisioning protocols do not match | Update both the SDK and firmware; report both versions if the error persists |
 | `Robot pairing could not be completed` | Runtime pairing did not finish after Wi-Fi setup | Keep the robot's **"Python SDK"** app open, confirm both devices use the same network, and enter the latest code |

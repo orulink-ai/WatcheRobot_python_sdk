@@ -87,6 +87,8 @@ device names are not used as the selection identity. Older firmware without an
 advertised Device ID is marked as unavailable and exposes the Bluetooth ID only
 as a compatibility fallback. `--device` accepts the Device ID and continues to
 accept that fallback Bluetooth ID for older firmware.
+The scan normally takes up to 10 seconds. Interactive terminals print progress
+dots while it is running and report the number of robots found when it ends.
 
 The guided flow separates recoverable states instead of returning raw scan
 logs:
@@ -101,6 +103,7 @@ logs:
 | Older firmware does not advertise a Device ID | Device ID is unavailable and a firmware update may be required | Bluetooth ID remains only as a compatibility fallback |
 | Bluetooth connection or response times out | Bluetooth communication did not complete | Keep the robot nearby, close competing Bluetooth apps, and retry |
 | Robot rejects the Wi-Fi settings | The supplied network settings were rejected | Check the Wi-Fi name and password, then retry |
+| Credentials are saved but the robot shows Offline / Wi-Fi failed | Storage succeeded, but the Wi-Fi connection is unverified or failed | Disconnect/forget the network on the robot, reopen settings, and enter the correct credentials |
 | Firmware returns an incompatible response | The robot and SDK provisioning protocols do not match | Update the firmware and SDK; report both versions if it persists |
 | Runtime pairing fails | The six-digit pairing stage did not complete | Keep the **"Python SDK"** app open, confirm the same network, and use the latest code |
 | The operation is cancelled | Setup was cancelled | No credentials or pairing code are printed |
@@ -115,6 +118,16 @@ credentials. To finish, return to the robot launcher, open the **"Python SDK"**
 app, read the six-digit code at the top of its screen, and enter it into the
 same setup flow. Omitted values are prompted in an interactive terminal. The
 password is never accepted as an argument or printed.
+
+`Wi-Fi credentials saved` means only that the robot stored the SSID and
+password; it does not prove that the password was accepted by the access point.
+The current firmware must release Bluetooth before it can try Wi-Fi, so the CLI
+cannot receive the final authentication result in the same BLE session. The
+interactive flow states this boundary and pauses for confirmation: continue
+only after **Settings > Wi-Fi** on the robot shows **Connected**. If it shows
+**Offline** or **Wi-Fi failed**, the network name or password may be wrong;
+disconnect/forget that network on the robot, reopen **Settings > Wi-Fi**, and
+rerun `watcherobot robot setup`.
 
 ```powershell
 watcherobot robot setup

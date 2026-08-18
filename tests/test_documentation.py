@@ -59,6 +59,9 @@ def test_cli_references_cover_robot_setup_recovery_states() -> None:
         assert "cancel" in content or "取消" in content
         assert "watcherobot bluetooth ..." in content
         assert "JSON" in content
+        assert "up to 10 seconds" in content or "最长约 10 秒" in content
+        assert "Wi-Fi credentials saved" in content
+        assert "Offline" in content
 
 
 def test_cli_references_explain_automatic_stable_application_ids() -> None:

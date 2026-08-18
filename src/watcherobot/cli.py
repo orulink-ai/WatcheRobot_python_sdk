@@ -58,6 +58,7 @@ from watcherobot.runtime.daemon.instance import (
 
 APPLICATION_START_TIMEOUT_SECONDS = 90.0
 ROBOT_PAIR_TIMEOUT_SECONDS = 25.0
+_SETUP_SCAN_PROGRESS_INTERVAL_SECONDS = 1.0
 _PAIRING_CODE = re.compile(r"^[0-9]{6}$")
 _PAIRING_CODE_IN_TEXT = re.compile(r"(?<![0-9])[0-9]{6}(?![0-9])")
 
@@ -555,9 +556,17 @@ def _print_robot_setup_input_failure(exc: RobotSetupError) -> int:
 def _print_robot_pairing_failure(exc: RobotPairingError) -> int:
     print("Robot pairing could not be completed.", file=sys.stderr)
     print(str(exc), file=sys.stderr)
-    print('  1. Keep the robot\'s "Python SDK" app open.', file=sys.stderr)
-    print("  2. Confirm both devices use the same network.", file=sys.stderr)
-    print("  3. Enter the latest 6-digit code and retry.", file=sys.stderr)
+    print(
+        "  1. Confirm Settings > Wi-Fi shows Connected on the robot.",
+        file=sys.stderr,
+    )
+    print(
+        "  2. If it shows Offline, disconnect/forget the network and rerun "
+        "setup; the Wi-Fi name or password may be incorrect.",
+        file=sys.stderr,
+    )
+    print('  3. Keep the robot\'s "Python SDK" app open.', file=sys.stderr)
+    print("  4. Enter the latest 6-digit code and retry.", file=sys.stderr)
     return 2
 
 
@@ -567,13 +576,15 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
             args.device is None and _is_interactive_terminal()
         )
     )
-    print("Scanning for nearby WatcheRobot devices...", flush=True)
     provisioner = BluetoothProvisioner()
     devices = [
         device
-        for device in await provisioner.scan_devices()
+        for device in await _scan_setup_devices(provisioner)
         if device.is_watcher
     ]
+    robot_count = len(devices)
+    robot_label = "robot" if robot_count == 1 else "robots"
+    print(f"Scan complete: {robot_count} {robot_label} found.")
     device = _select_setup_device(devices, requested_id=args.device)
     ssid = _setup_text_value(
         args.ssid,
@@ -591,7 +602,11 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
     finally:
         del password
 
-    print(f"Wi-Fi credentials saved for {_setup_device_identity(device)}.")
+    print(
+        "Wi-Fi credentials stored for "
+        f"{_setup_device_identity(device)}; connection not verified."
+    )
+    _confirm_robot_wifi_connected()
     print()
     print("Next, complete pairing on the robot:")
     print("  1. Return to the robot launcher.")
@@ -621,6 +636,55 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
             "Runtime pairing ended before the robot connected."
         )
     return result
+
+
+async def _scan_setup_devices(
+    provisioner: BluetoothProvisioner,
+) -> list[BluetoothDevice]:
+    print(
+        "Scanning for nearby WatcheRobot devices "
+        "(up to 10 seconds)",
+        end="",
+        flush=True,
+    )
+    scan_task = asyncio.create_task(provisioner.scan_devices())
+    try:
+        if not _is_interactive_terminal():
+            return await scan_task
+        while not scan_task.done():
+            done, _pending = await asyncio.wait(
+                {scan_task},
+                timeout=_SETUP_SCAN_PROGRESS_INTERVAL_SECONDS,
+            )
+            if scan_task in done:
+                break
+            print(".", end="", flush=True)
+        return await scan_task
+    finally:
+        print()
+
+
+def _confirm_robot_wifi_connected() -> None:
+    print()
+    print("This does not confirm that the password is correct yet.")
+    print("The robot will disconnect Bluetooth and try the Wi-Fi network.")
+    print()
+    print("Check Settings > Wi-Fi on the robot:")
+    print("  - Connected: continue to the pairing step.")
+    print(
+        "  - Offline or Wi-Fi failed: the Wi-Fi name or password may be "
+        "incorrect."
+    )
+    print(
+        "    Disconnect/forget that network on the robot, reopen "
+        "Settings > Wi-Fi, then rerun watcherobot robot setup."
+    )
+    if not _is_interactive_terminal():
+        return
+    try:
+        input("Press Enter after the robot shows Wi-Fi Connected: ")
+    except (EOFError, KeyboardInterrupt) as exc:
+        raise ProvisioningCancelledError() from exc
 
 
 def _redact_pairing_codes(message: str) -> str:
