@@ -10,7 +10,11 @@ class BluetoothProvisioningError(WatcheRobotError):
 
 
 class BluetoothUnavailableError(BluetoothProvisioningError):
-    """Bluetooth is disabled, unsupported, or otherwise unavailable."""
+    """Bluetooth is disabled, missing, or otherwise unavailable."""
+
+
+class BluetoothUnsupportedError(BluetoothProvisioningError):
+    """The Bluetooth adapter or system cannot act as a BLE central."""
 
 
 class BluetoothPermissionError(BluetoothProvisioningError):

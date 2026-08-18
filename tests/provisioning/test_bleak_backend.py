@@ -14,6 +14,7 @@ from watcherobot.provisioning import (
     BluetoothConnectionTimeoutError,
     BluetoothDevice,
     BluetoothPermissionError,
+    BluetoothUnsupportedError,
     BluetoothUnavailableError,
     DeviceNotFoundError,
     ProvisioningProtocolError,
@@ -247,7 +248,6 @@ def test_bleak_backend_maps_permission_denial_without_platform_details(
     [
         BleakBluetoothNotAvailableReason.POWERED_OFF,
         BleakBluetoothNotAvailableReason.NO_BLUETOOTH,
-        BleakBluetoothNotAvailableReason.NO_BLE_CENTRAL_ROLE,
     ],
 )
 def test_bleak_backend_maps_disabled_or_missing_bluetooth_adapter(
@@ -264,6 +264,32 @@ def test_bleak_backend_maps_disabled_or_missing_bluetooth_adapter(
         )
 
         with pytest.raises(BluetoothUnavailableError) as captured:
+            await BleakBackend().scan_devices(
+                timeout=1.0,
+                name_filter=None,
+            )
+
+        assert "platform details" not in str(captured.value)
+
+    asyncio.run(scenario())
+
+
+def test_bleak_backend_maps_missing_central_role_as_unsupported(
+    monkeypatch,
+) -> None:
+    async def unsupported(**_kwargs: object) -> object:
+        raise BleakBluetoothNotAvailableError(
+            "platform details",
+            BleakBluetoothNotAvailableReason.NO_BLE_CENTRAL_ROLE,
+        )
+
+    async def scenario() -> None:
+        monkeypatch.setattr(
+            "watcherobot.provisioning.bleak_backend.BleakScanner.discover",
+            unsupported,
+        )
+
+        with pytest.raises(BluetoothUnsupportedError) as captured:
             await BleakBackend().scan_devices(
                 timeout=1.0,
                 name_filter=None,

@@ -17,6 +17,7 @@ from .errors import (
     BluetoothConnectionTimeoutError,
     BluetoothPermissionError,
     BluetoothProvisioningError,
+    BluetoothUnsupportedError,
     BluetoothUnavailableError,
     DeviceNotFoundError,
     ProvisioningProtocolError,
@@ -247,6 +248,10 @@ def _map_platform_error(
         if exc.reason in denied_reasons:
             return BluetoothPermissionError(
                 f"Bluetooth permission was denied during {operation}"
+            )
+        if exc.reason == BleakBluetoothNotAvailableReason.NO_BLE_CENTRAL_ROLE:
+            return BluetoothUnsupportedError(
+                "Bluetooth Low Energy central role is not supported"
             )
         return BluetoothUnavailableError(
             f"Bluetooth is unavailable during {operation}"

@@ -94,6 +94,7 @@ logs:
 | State | What the command explains | Recovery |
 |---|---|---|
 | Computer Bluetooth is off or unavailable | Bluetooth cannot be used | Turn on Bluetooth or check the adapter, then rerun setup |
+| The adapter or system lacks BLE central support | The computer cannot scan and connect in the required Bluetooth role | Use a BLE adapter with central support and confirm the OS supports BLE scanning |
 | Operating-system permission is denied | Bluetooth access was denied | Allow the terminal or Python to use Bluetooth, then rerun setup |
 | No robot is found | No provisioning advertisement was discovered | Keep **Settings > Wi-Fi** open and the robot nearby; already-networked robots use `robot pair` |
 | One or several current robots are found | Stable Device IDs are displayed | Select the Device ID shown on the robot with **Up/Down** |
@@ -124,7 +125,7 @@ password remains interactive:
 
 ```powershell
 watcherobot robot setup `
-  --device <bluetooth-id> `
+  --device <device-id> `
   --ssid MyWiFi `
   --pairing-code 123456
 ```

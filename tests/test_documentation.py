@@ -52,6 +52,7 @@ def test_cli_references_cover_robot_setup_recovery_states() -> None:
         assert "Bluetooth ID" in content
         assert "Bluetooth connection" in content or "蓝牙连接" in content
         assert "permission" in content or "权限" in content
+        assert "BLE central" in content or "BLE Central" in content
         assert "reject" in content or "拒绝" in content
         assert "incompatible response" in content or "不兼容响应" in content
         assert "Runtime pairing" in content or "Runtime 配对" in content

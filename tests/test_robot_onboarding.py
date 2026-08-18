@@ -11,6 +11,7 @@ from watcherobot.provisioning import (
     BluetoothDevice,
     BluetoothPermissionError,
     BluetoothProvisioningError,
+    BluetoothUnsupportedError,
     BluetoothUnavailableError,
     ProvisioningProtocolError,
     ProvisioningRejectedError,
@@ -65,6 +66,14 @@ class FakeProvisioner:
 
 def _runtime_state() -> SimpleNamespace:
     return SimpleNamespace(control_url="http://runtime", pid=42)
+
+
+def _enable_interactive_setup(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: True,
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
 
 
 def test_robot_help_exposes_guided_setup_pair_and_status(capsys) -> None:
@@ -432,6 +441,7 @@ def test_robot_setup_reports_when_no_robot_is_discoverable(
         "watcherobot.cli.BluetoothProvisioner",
         EmptyProvisioner,
     )
+    _enable_interactive_setup(monkeypatch)
 
     assert (
         main(
@@ -465,6 +475,10 @@ def test_robot_setup_reports_when_no_robot_is_discoverable(
             BluetoothPermissionError("Bluetooth permission was denied"),
             "Allow Bluetooth access",
         ),
+        (
+            BluetoothUnsupportedError("BLE central role is unavailable"),
+            "does not support the required Bluetooth mode",
+        ),
     ],
 )
 def test_robot_setup_explains_how_to_recover_from_bluetooth_preflight_errors(
@@ -481,6 +495,7 @@ def test_robot_setup_explains_how_to_recover_from_bluetooth_preflight_errors(
         "watcherobot.cli.BluetoothProvisioner",
         FailingProvisioner,
     )
+    _enable_interactive_setup(monkeypatch)
 
     assert (
         main(
@@ -522,6 +537,7 @@ def test_robot_setup_explains_how_to_recover_from_connection_timeout(
         FailingProvisioner,
     )
     monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+    _enable_interactive_setup(monkeypatch)
 
     assert (
         main(
@@ -591,6 +607,7 @@ def test_robot_setup_gives_distinct_recovery_for_provisioning_failures(
         FailingProvisioner,
     )
     monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+    _enable_interactive_setup(monkeypatch)
 
     assert (
         main(
@@ -612,20 +629,19 @@ def test_robot_setup_gives_distinct_recovery_for_provisioning_failures(
     assert '"error"' not in output
 
 
-def test_robot_setup_value_error_uses_guided_output_instead_of_json(
+def test_robot_setup_does_not_mask_an_unexpected_value_error(
     monkeypatch,
-    capsys,
 ) -> None:
     class FailingProvisioner(FakeProvisioner):
         async def scan_devices(self) -> list[BluetoothDevice]:
-            raise ValueError("invalid setup value")
+            raise ValueError("internal setup bug")
 
     monkeypatch.setattr(
         "watcherobot.cli.BluetoothProvisioner",
         FailingProvisioner,
     )
 
-    assert (
+    with pytest.raises(ValueError, match="internal setup bug"):
         main(
             [
                 "robot",
@@ -636,13 +652,6 @@ def test_robot_setup_value_error_uses_guided_output_instead_of_json(
                 "123456",
             ]
         )
-        == 2
-    )
-
-    output = capsys.readouterr().err
-    assert "Robot setup could not be completed" in output
-    assert "invalid setup value" in output
-    assert '"error"' not in output
 
 
 def test_robot_setup_keeps_pairing_failure_in_the_guided_flow(
@@ -654,6 +663,7 @@ def test_robot_setup_keeps_pairing_failure_in_the_guided_flow(
         FakeProvisioner,
     )
     monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+    _enable_interactive_setup(monkeypatch)
 
     def fail_pairing(_pairing_code: str) -> int:
         raise CliError(
@@ -682,6 +692,171 @@ def test_robot_setup_keeps_pairing_failure_in_the_guided_flow(
     assert "Robot pairing timed out" in output
     assert '"Python SDK" app' in output
     assert '"error"' not in output
+
+
+def test_robot_setup_non_interactive_failure_keeps_json_contract(
+    monkeypatch,
+    capsys,
+) -> None:
+    class FailingProvisioner(FakeProvisioner):
+        async def scan_devices(self) -> list[BluetoothDevice]:
+            raise BluetoothUnavailableError("Bluetooth is unavailable")
+
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FailingProvisioner,
+    )
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: False,
+    )
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 2
+    )
+
+    error = json.loads(capsys.readouterr().err)
+    assert error == {"error": "Bluetooth is unavailable"}
+
+
+def test_robot_setup_non_interactive_missing_value_keeps_json_contract(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FakeProvisioner,
+    )
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: False,
+    )
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--device",
+                FakeProvisioner.device.device_id or "",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 2
+    )
+
+    error = json.loads(capsys.readouterr().err)
+    assert error == {
+        "error": "Wi-Fi name is required in non-interactive use"
+    }
+
+
+def test_robot_setup_eof_matches_ctrl_c_cancellation(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        "watcherobot.cli._is_interactive_terminal",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _prompt: (_ for _ in ()).throw(EOFError),
+    )
+
+    assert main(["robot", "setup"]) == 130
+
+    error = capsys.readouterr().err
+    assert "Robot setup cancelled." in error
+    assert '"error"' not in error
+
+
+def test_robot_setup_reports_ambiguous_device_with_recovery(
+    monkeypatch,
+    capsys,
+) -> None:
+    class AmbiguousProvisioner(FakeProvisioner):
+        async def scan_devices(self) -> list[BluetoothDevice]:
+            return [
+                self.device,
+                BluetoothDevice(
+                    id="robot-2",
+                    name="WatcheRobot A2",
+                    rssi=-45,
+                    is_watcher=True,
+                    device_id=self.device.device_id,
+                    _native=object(),
+                ),
+            ]
+
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        AmbiguousProvisioner,
+    )
+    _enable_interactive_setup(monkeypatch)
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--device",
+                FakeProvisioner.device.device_id or "",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 2
+    )
+
+    error = capsys.readouterr().err
+    assert "More than one robot matched" in error
+    assert "without --device" in error
+    assert '"error"' not in error
+
+
+def test_robot_setup_treats_nonzero_pair_result_as_pairing_failure(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(
+        "watcherobot.cli.BluetoothProvisioner",
+        FakeProvisioner,
+    )
+    monkeypatch.setattr("watcherobot.cli.getpass", lambda _prompt: "secret")
+    monkeypatch.setattr("watcherobot.cli.pair_robot", lambda _code: 1)
+    _enable_interactive_setup(monkeypatch)
+
+    assert (
+        main(
+            [
+                "robot",
+                "setup",
+                "--ssid",
+                "Office",
+                "--pairing-code",
+                "123456",
+            ]
+        )
+        == 2
+    )
+
+    error = capsys.readouterr().err
+    assert "Robot pairing could not be completed" in error
+    assert "Runtime pairing ended" in error
 
 
 def test_app_run_without_robot_prints_an_actionable_setup_command(

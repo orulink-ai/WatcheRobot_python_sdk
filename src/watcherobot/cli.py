@@ -39,6 +39,7 @@ from watcherobot.provisioning import (
     BluetoothPermissionError,
     BluetoothProvisioner,
     BluetoothProvisioningError,
+    BluetoothUnsupportedError,
     BluetoothUnavailableError,
     DeviceAmbiguityError,
     DeviceNotFoundError,
@@ -335,15 +336,17 @@ def main(argv: list[str] | None = None) -> int:
                 except ProvisioningCancelledError:
                     return _print_robot_setup_cancelled()
                 except BluetoothProvisioningError as exc:
+                    if not _is_interactive_terminal():
+                        raise
                     return _print_robot_setup_failure(exc)
                 except RobotPairingError as exc:
+                    if not _is_interactive_terminal():
+                        raise
                     return _print_robot_pairing_failure(exc)
                 except RobotSetupError as exc:
+                    if not _is_interactive_terminal():
+                        raise
                     return _print_robot_setup_input_failure(exc)
-                except ValueError as exc:
-                    return _print_robot_setup_input_failure(
-                        RobotSetupError(str(exc))
-                    )
     except (
         ApplicationProjectInitError,
         BluetoothProvisioningError,
@@ -467,7 +470,14 @@ def _print_robot_setup_cancelled() -> int:
 
 def _print_robot_setup_failure(exc: BluetoothProvisioningError) -> int:
     lines: tuple[str, ...]
-    if isinstance(exc, BluetoothUnavailableError):
+    if isinstance(exc, BluetoothUnsupportedError):
+        lines = (
+            "This computer does not support the required Bluetooth mode.",
+            "  1. Use a Bluetooth Low Energy adapter with central support.",
+            "  2. Confirm the operating system supports BLE scanning.",
+            "  3. Run watcherobot robot setup again.",
+        )
+    elif isinstance(exc, BluetoothUnavailableError):
         lines = (
             "Bluetooth is unavailable on this computer.",
             "  1. Turn on Bluetooth on this computer.",
@@ -489,6 +499,13 @@ def _print_robot_setup_failure(exc: BluetoothProvisioningError) -> int:
             "  3. Run watcherobot robot setup again.",
             "Already on Wi-Fi? Open the robot's \"Python SDK\" app and run "
             "watcherobot robot pair <code> instead.",
+        )
+    elif isinstance(exc, DeviceAmbiguityError):
+        lines = (
+            "More than one robot matched that identifier.",
+            "  1. Run watcherobot robot setup without --device.",
+            "  2. Select the intended robot with Up/Down.",
+            "  3. Confirm its Device ID on the robot screen.",
         )
     elif isinstance(exc, BluetoothConnectionTimeoutError):
         lines = (
@@ -591,9 +608,14 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
         except argparse.ArgumentTypeError as exc:
             raise RobotSetupError(str(exc)) from exc
     try:
-        return pair_robot(pairing_code)
+        result = pair_robot(pairing_code)
     except CliError as exc:
         raise RobotPairingError(str(exc)) from exc
+    if result != 0:
+        raise RobotPairingError(
+            "Runtime pairing ended before the robot connected."
+        )
+    return result
 
 
 def _prepare_robot_for_setup(*, wait_for_confirmation: bool) -> None:
@@ -611,7 +633,7 @@ def _prepare_robot_for_setup(*, wait_for_confirmation: bool) -> None:
     try:
         input("Press Enter after opening Settings > Wi-Fi on the robot: ")
     except EOFError as exc:
-        raise RobotSetupError("Robot setup cancelled") from exc
+        raise ProvisioningCancelledError() from exc
 
 
 def _select_setup_device(
@@ -768,7 +790,7 @@ def _setup_text_value(
     try:
         supplied = input(prompt).strip()
     except EOFError as exc:
-        raise RobotSetupError("Robot setup cancelled") from exc
+        raise ProvisioningCancelledError() from exc
     resolved = supplied or default
     if not resolved:
         raise RobotSetupError(f"{field_name} is required")

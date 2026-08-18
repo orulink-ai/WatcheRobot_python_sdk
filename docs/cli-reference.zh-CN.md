@@ -72,6 +72,7 @@ watcherobot daemon stop
 | 场景 | 命令说明 | 用户下一步 |
 |---|---|---|
 | 电脑蓝牙关闭、不可用或没有适配器 | 当前电脑无法使用蓝牙 | 打开蓝牙或检查适配器，再重新运行 setup |
+| 适配器或系统不支持 BLE Central 模式 | 当前电脑不具备扫描并连接机器人的蓝牙角色 | 更换支持 BLE Central 的适配器，并确认系统支持 BLE 扫描 |
 | 系统拒绝蓝牙权限 | 当前终端或 Python 没有蓝牙访问权限 | 在系统隐私设置中授权，再重新运行 setup |
 | 未发现机器人 | 没有发现配网广播 | 保持 **Settings > Wi-Fi** 页面打开并靠近电脑；已联网机器人改用 `robot pair` |
 | 发现一台或多台新版机器人 | 展示稳定 Device ID | 用 **Up/Down** 选择机器人屏幕上可核对的 Device ID |
@@ -97,7 +98,7 @@ watcherobot robot setup
 
 ```powershell
 watcherobot robot setup `
-  --device <蓝牙设备ID> `
+  --device <Device ID> `
   --ssid MyWiFi `
   --pairing-code 123456
 ```
