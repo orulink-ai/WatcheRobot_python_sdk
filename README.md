@@ -86,14 +86,24 @@ python -m pip install --upgrade pip
 python -m pip install watcherobot
 ```
 
-The command above is the normal path after a release is published to PyPI. To
-test an unpublished PR or commit, create a separate `watcherobot-source`
-environment and run `python -m pip install -e .` from the selected checkout.
-Install `.[test]` only when contributing to the SDK.
+The current stable release is
+[`watcherobot 0.1.1`](https://pypi.org/project/watcherobot/0.1.1/). For a
+reproducible installation, pin it explicitly with
+`python -m pip install "watcherobot==0.1.1"`. The unpinned command above is
+the normal path for receiving the latest stable release from PyPI.
+
+To test an unpublished PR or commit, create a separate
+`watcherobot-source` environment and run `python -m pip install -e .` from
+the selected checkout. Install `.[test]` only when contributing to the SDK.
 
 See the [installation guide](docs/installation.md) for both complete paths,
 TestPyPI dependency resolution, and command ownership checks. Do not use the
 PyPI command to validate unpublished source.
+
+Maintainers should follow the
+[SDK release process](docs/release-process.zh-CN.md), including immutable
+artifacts, TestPyPI verification, PyPI Trusted Publishing, and the protected
+production approval.
 
 Verify the installed command when needed:
 

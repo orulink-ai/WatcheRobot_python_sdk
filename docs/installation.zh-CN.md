@@ -90,7 +90,10 @@ python -m mypy src/watcherobot
 
 ## 方式二：正式安装已发布版本
 
-正式版本发布到 PyPI 后，普通开发者不需要克隆 SDK 仓库。
+正式版本发布到 PyPI 后，普通开发者不需要克隆 SDK 仓库。截至 2026-08-19，
+当前稳定版是 [`watcherobot 0.1.1`](https://pypi.org/project/watcherobot/0.1.1/)；
+对应的构建产物和校验文件也保存在
+[GitHub Release v0.1.1](https://github.com/orulink-ai/WatcheRobot_python_sdk/releases/tag/v0.1.1)。
 
 ### 1. 创建独立环境
 
@@ -111,8 +114,10 @@ python -m pip install watcherobot
 安装指定的已发布版本：
 
 ```powershell
-python -m pip install "watcherobot==RELEASED_VERSION"
+python -m pip install "watcherobot==0.1.1"
 ```
+
+需要安装其他历史版本时，将 `0.1.1` 替换为 PyPI 中确实存在的版本号。
 
 后续升级：
 

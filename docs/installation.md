@@ -97,7 +97,10 @@ Application developers do not need the `[test]` dependencies or this step.
 ## Option 2: install a published release
 
 Once a version is published to PyPI, normal Application developers do not need
-to clone this repository.
+to clone this repository. As of 2026-08-19, the current stable release is
+[`watcherobot 0.1.1`](https://pypi.org/project/watcherobot/0.1.1/). The
+corresponding artifacts and checksum manifest are also available from
+[GitHub Release v0.1.1](https://github.com/orulink-ai/WatcheRobot_python_sdk/releases/tag/v0.1.1).
 
 ### 1. Create an isolated environment
 
@@ -118,8 +121,10 @@ python -m pip install watcherobot
 Install a specific published version:
 
 ```powershell
-python -m pip install "watcherobot==RELEASED_VERSION"
+python -m pip install "watcherobot==0.1.1"
 ```
+
+Replace `0.1.1` only with another version that exists on PyPI.
 
 Upgrade later with:
 
