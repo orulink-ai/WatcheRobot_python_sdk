@@ -98,7 +98,7 @@ GitHub App 仅安装到 `orulink-ai/WatcheRobot_python_sdk`，向仓库提供版
 - `ORULINK_RELEASE_APP_ID`
 - `ORULINK_RELEASE_APP_PRIVATE_KEY`
 
-PyPI Pending Trusted Publisher：
+PyPI Trusted Publisher：
 
 | 字段 | 值 |
 |---|---|
@@ -108,13 +108,22 @@ PyPI Pending Trusted Publisher：
 | Workflow | `release.yml` |
 | Environment | `pypi` |
 
-TestPyPI 使用相同仓库与 Workflow，Environment 为 `testpypi`。GitHub `pypi` Environment 只允许 `v*` Tag，
-并配置负责人为 Required Reviewer。
+TestPyPI 使用相同仓库与 Workflow，Environment 为 `testpypi`。GitHub `pypi` Environment 允许 `v*` Tag
+进入标准发布，并允许 `main` 发起受保护的恢复发布；两种入口均配置负责人为 Required Reviewer，不能绕过
+人工审核。
 
-## 首次自动演练与验证
+## 首次正式发布结果
 
-`0.1.1a3` 已由人工流程发布，不再作为自动演练目标。RTC 实机验证通过后可请求稳定版 `0.1.1`；若仍需
-预发布修复，必须递增到新的 PEP 440 版本。实际目标以启用自动发布时重新读取的索引状态为准。
+`watcherobot 0.1.1` 已于 2026-08-19 通过受保护恢复流程发布到
+[正式 PyPI](https://pypi.org/project/watcherobot/0.1.1/)，对应产物与校验文件位于
+[GitHub Release v0.1.1](https://github.com/orulink-ai/WatcheRobot_python_sdk/releases/tag/v0.1.1)，
+成功流水线为
+[GitHub Actions #32171032139](https://github.com/orulink-ai/WatcheRobot_python_sdk/actions/runs/32171032139)。
+发布过程验证了 TestPyPI 原始产物、OIDC Trusted Publishing、GitHub Environment 人工审核、正式 PyPI
+完整文件集合与 SHA256，以及干净环境强制重装、`pip check`、版本导入和 CLI 启动。
+
+后续预发布或稳定版必须递增到新的 PEP 440 版本。实际目标以发起发布时重新读取的 PyPI、TestPyPI、Tag 与
+GitHub Release 状态为准，不能复用或覆盖 `0.1.1`。
 
 TestPyPI 安装验证需要让 SDK 来自 TestPyPI，同时从正式 PyPI 解析依赖：
 
