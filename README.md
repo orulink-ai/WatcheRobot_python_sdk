@@ -101,7 +101,7 @@ TestPyPI dependency resolution, and command ownership checks. Do not use the
 PyPI command to validate unpublished source.
 
 Maintainers should follow the
-[SDK release process](docs/release-process.zh-CN.md), including immutable
+[SDK release process](docs/releasing.md), including immutable
 artifacts, TestPyPI verification, PyPI Trusted Publishing, and the protected
 production approval.
 
