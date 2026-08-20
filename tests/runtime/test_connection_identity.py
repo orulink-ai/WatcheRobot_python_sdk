@@ -5,7 +5,10 @@ import json
 
 from websockets.asyncio.client import connect
 
-from watcherobot.runtime.daemon.connections import ExternalWebSocketServer
+from watcherobot.runtime.daemon.connections import (
+    DeviceConnectionStateRegistry,
+    ExternalWebSocketServer,
+)
 
 
 async def _allow_hardware(_hello, _peer_ip: str) -> None:
@@ -38,6 +41,18 @@ async def _connect_hardware(
     )
     await websocket.recv()
     return websocket
+
+
+def test_device_connection_ids_are_unique_for_registry_lifetime() -> None:
+    registry = DeviceConnectionStateRegistry()
+    websocket = object()
+
+    first = registry.connect(websocket)
+    registry.disconnect(websocket)
+    second = registry.connect(websocket)
+
+    assert first.connection_id == 1
+    assert second.connection_id == 2
 
 
 def test_device_connection_state_only_tracks_current_connection() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import count
 
 
 @dataclass(frozen=True)
@@ -22,9 +23,10 @@ class DeviceConnectionStateRegistry:
 
     def __init__(self) -> None:
         self._states: dict[object, DeviceConnectionState] = {}
+        self._connection_ids = count(1)
 
     def connect(self, websocket: object) -> DeviceConnectionState:
-        state = DeviceConnectionState(connection_id=id(websocket))
+        state = DeviceConnectionState(connection_id=next(self._connection_ids))
         self._states[websocket] = state
         return state
 
