@@ -245,22 +245,29 @@ class ApplicationRuntimeManager:
                         _collect_process_tree,
                         process.pid,
                     )
+                    tracked_descendants = [
+                        pid for pid in tracked_processes if pid != process.pid
+                    ]
                     self._request_graceful_shutdown()
-                    await asyncio.to_thread(
-                        _wait_for_process_ids,
-                        tracked_processes,
-                        min(
-                            self._stop_timeout,
-                            MAX_GRACEFUL_SHUTDOWN_SECONDS,
+                    graceful_timeout = min(
+                        self._stop_timeout,
+                        MAX_GRACEFUL_SHUTDOWN_SECONDS,
+                    )
+                    await asyncio.gather(
+                        _wait_for_asyncio_process(process, graceful_timeout),
+                        asyncio.to_thread(
+                            _wait_for_process_ids,
+                            tracked_descendants,
+                            graceful_timeout,
                         ),
                     )
                     await self.bridge.stop()
                     await asyncio.to_thread(
                         _terminate_process_ids,
-                        tracked_processes,
+                        tracked_descendants,
                         self._stop_timeout,
                     )
-                    await process.wait()
+                    await _terminate_asyncio_process(process, self._stop_timeout)
                     await self._wait_for_log_tasks()
                     self.last_exit_code = process.returncode
                 else:
@@ -613,3 +620,39 @@ def _wait_for_process_ids(pids: list[int], timeout: float) -> None:
             continue
     if processes:
         psutil.wait_procs(processes, timeout=timeout)
+
+
+async def _wait_for_asyncio_process(
+    process: asyncio.subprocess.Process,
+    timeout: float,
+) -> None:
+    """Wait without letting psutil reap asyncio's direct child process."""
+
+    try:
+        await asyncio.wait_for(asyncio.shield(process.wait()), timeout=timeout)
+    except asyncio.TimeoutError:
+        return
+
+
+async def _terminate_asyncio_process(
+    process: asyncio.subprocess.Process,
+    timeout: float,
+) -> None:
+    """Terminate an asyncio-owned process while preserving its real exit code."""
+
+    if process.returncode is not None:
+        return
+    try:
+        process.terminate()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(asyncio.shield(process.wait()), timeout=timeout)
+        return
+    except asyncio.TimeoutError:
+        pass
+    try:
+        process.kill()
+    except ProcessLookupError:
+        pass
+    await process.wait()
