@@ -111,6 +111,9 @@ class ApplicationController(Protocol):
     async def stop_application(self) -> None:
         """Stop the current Application if one exists."""
 
+    async def restart_application(self) -> Any:
+        """Restart the current Application as one lifecycle operation."""
+
     def device_status(self) -> dict[str, Any]:
         """Return the Daemon-owned single device slot."""
 
@@ -282,6 +285,36 @@ class DaemonControlAPI:
         @app.post("/daemon/application/stop")
         async def stop_application() -> dict[str, Any]:
             await self._controller.stop_application()
+            return self._status_response()
+
+        @app.post("/daemon/application/restart")
+        async def restart_application() -> Any:
+            try:
+                await self._controller.restart_application()
+            except ApplicationNotSelectedError as exc:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "error": "application_not_selected",
+                        "message": str(exc),
+                    },
+                )
+            except SessionOccupiedError as exc:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "error": "application_occupied",
+                        "message": str(exc),
+                    },
+                )
+            except ApplicationStartError as exc:
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        "error": "application_start_failed",
+                        "message": str(exc),
+                    },
+                )
             return self._status_response()
 
         @app.post("/daemon/application/select")

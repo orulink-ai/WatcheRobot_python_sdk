@@ -224,6 +224,23 @@ class DaemonRuntime:
         await self.application.stop()
         self.logs.record(f"Application stopped (app_id={app_id})")
 
+    async def restart_application(self) -> ApplicationRun:
+        """Restart the selected Application as one Daemon-owned operation."""
+
+        app_id = self.application.registry.current_app
+        self.logs.record(f"Application restart requested (app_id={app_id})")
+        await self.application.stop()
+        try:
+            run = await self.application.start()
+        except Exception as exc:
+            self.logs.record(f"Application restart failed ({exc})")
+            raise
+        self.logs.record(
+            "Application restarted "
+            f"(app_id={run.app_id}, pid={self.application.process_id})"
+        )
+        return run
+
     def select_application(
         self,
         application_dir: str,

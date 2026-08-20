@@ -83,6 +83,98 @@ asyncio.run(main())
 """
 
 
+GRACEFUL_SHUTDOWN_APP = """
+import asyncio
+import os
+from pathlib import Path
+
+from websockets.asyncio.client import connect
+
+
+async def main():
+    signal = Path(os.environ["WATCHER_APP_SHUTDOWN_SIGNAL"])
+    marker = Path(os.environ["GRACEFUL_SHUTDOWN_MARKER"])
+    async with (
+        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"], proxy=None),
+        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"], proxy=None),
+    ):
+        while not signal.exists():
+            await asyncio.sleep(0.01)
+        marker.write_text("channels-still-open", encoding="utf-8")
+
+
+asyncio.run(main())
+"""
+
+
+SLOW_GRACEFUL_SHUTDOWN_APP = """
+import asyncio
+import os
+from pathlib import Path
+
+from websockets.asyncio.client import connect
+
+
+async def main():
+    signal = Path(os.environ["WATCHER_APP_SHUTDOWN_SIGNAL"])
+    marker = Path(os.environ["GRACEFUL_SHUTDOWN_MARKER"])
+    async with (
+        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"], proxy=None),
+        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"], proxy=None),
+    ):
+        while not signal.exists():
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(1.25)
+        marker.write_text("media-released", encoding="utf-8")
+
+
+asyncio.run(main())
+"""
+
+
+GRACEFUL_SHUTDOWN_DESCENDANT_APP = """
+import asyncio
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from websockets.asyncio.client import connect
+
+
+CHILD = r'''\
+import asyncio
+import os
+from pathlib import Path
+
+from websockets.asyncio.client import connect
+
+
+async def main():
+    signal = Path(os.environ["WATCHER_APP_SHUTDOWN_SIGNAL"])
+    marker = Path(os.environ["GRACEFUL_SHUTDOWN_MARKER"])
+    async with (
+        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"], proxy=None),
+        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"], proxy=None),
+    ):
+        while not signal.exists():
+            await asyncio.sleep(0.01)
+        marker.write_text("descendant-released", encoding="utf-8")
+
+
+asyncio.run(main())
+'''
+
+
+child = subprocess.Popen([sys.executable, "-c", CHILD], env=os.environ.copy())
+Path(os.environ["GRACEFUL_SHUTDOWN_CHILD_READY"]).write_text(
+    str(child.pid),
+    encoding="utf-8",
+)
+raise SystemExit(child.wait())
+"""
+
+
 CHILD_PROCESS_APP = """
 import asyncio
 import os
@@ -394,6 +486,87 @@ def test_runtime_stop_cleans_application_process_tree(
                 break
             await asyncio.sleep(0.01)
         assert not psutil.pid_exists(child_pid)
+
+    asyncio.run(scenario())
+
+
+def test_runtime_requests_graceful_shutdown_before_closing_channels(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        marker = tmp_path / "graceful.marker"
+        signal_root = tmp_path / "signals"
+        _write_application(app_dir, GRACEFUL_SHUTDOWN_APP)
+        monkeypatch.setenv("GRACEFUL_SHUTDOWN_MARKER", str(marker))
+        monkeypatch.setenv("WATCHER_APP_SHUTDOWN_ROOT", str(signal_root))
+        manager = _build_selected_manager(app_dir, app_id="test_app")
+
+        await manager.start()
+        await manager.stop()
+
+        assert marker.read_text(encoding="utf-8") == "channels-still-open"
+        assert manager.last_exit_code == 0
+        assert manager.process_id is None
+
+    asyncio.run(scenario())
+
+
+def test_runtime_allows_media_cleanup_to_finish_before_terminating_application(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        marker = tmp_path / "media-cleanup.marker"
+        signal_root = tmp_path / "signals"
+        _write_application(app_dir, SLOW_GRACEFUL_SHUTDOWN_APP)
+        monkeypatch.setenv("GRACEFUL_SHUTDOWN_MARKER", str(marker))
+        monkeypatch.setenv("WATCHER_APP_SHUTDOWN_ROOT", str(signal_root))
+        manager = _build_selected_manager(
+            app_dir,
+            app_id="test_app",
+            stop_timeout=3,
+        )
+
+        await manager.start()
+        await manager.stop()
+
+        assert marker.read_text(encoding="utf-8") == "media-released"
+        assert manager.last_exit_code == 0
+
+    asyncio.run(scenario())
+
+
+def test_runtime_waits_for_launcher_descendant_to_release_media(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        marker = tmp_path / "descendant-cleanup.marker"
+        child_ready = tmp_path / "descendant-ready.marker"
+        signal_root = tmp_path / "signals"
+        _write_application(app_dir, GRACEFUL_SHUTDOWN_DESCENDANT_APP)
+        monkeypatch.setenv("GRACEFUL_SHUTDOWN_MARKER", str(marker))
+        monkeypatch.setenv("GRACEFUL_SHUTDOWN_CHILD_READY", str(child_ready))
+        monkeypatch.setenv("WATCHER_APP_SHUTDOWN_ROOT", str(signal_root))
+        manager = _build_selected_manager(
+            app_dir,
+            app_id="test_app",
+            stop_timeout=3,
+        )
+
+        await manager.start()
+        for _ in range(100):
+            if child_ready.exists():
+                break
+            await asyncio.sleep(0.01)
+        await manager.stop()
+
+        assert marker.read_text(encoding="utf-8") == "descendant-released"
+        assert manager.last_exit_code == 0
 
     asyncio.run(scenario())
 

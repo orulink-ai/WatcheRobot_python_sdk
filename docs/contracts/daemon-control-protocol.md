@@ -46,3 +46,11 @@ Daemon 控制接口不得返回 Application 的原始 stdout/stderr、历史日�
 
 `GET /daemon/logs` 是既有的 Daemon 自身结构化日志接口，不等同于 Application 进程输出。
 
+## Application 原子重启与优雅退出
+
+`POST /daemon/application/restart` 由 Daemon 作为一次生命周期操作执行当前 Application 的停止和重新启动。调用方不得自行拼接两次独立的 `stop` / `start` 请求，以免在页面断开、并发操作或媒体资源尚未释放时留下半完成状态。
+
+Daemon 每次启动 Application 时会注入仅对当前运行实例有效的停止信号。Application 可通过 `ApplicationContext.shutdown_requested` 轮询该信号，并在返回前关闭麦克风、播放器和外部会话。Daemon 会在保持 Desktop channel 与 Device channel 可用的情况下等待优雅退出；等待超过受限窗口后仍会回收 Application 进程树，避免停止操作无限阻塞。
+
+该停止信号只用于进程生命周期协调，不是业务消息，不改变 Desktop、Application 与 Device 之间的业务帧路由。
+
