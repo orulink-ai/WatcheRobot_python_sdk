@@ -396,6 +396,40 @@ def test_runtime_starts_only_current_app_and_stops_cleanly(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
+def test_runtime_uses_a_private_shutdown_signal_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        shared_temp = tmp_path / "shared-temp"
+        _write_application(app_dir, CONNECTED_APP)
+        monkeypatch.delenv("WATCHER_APP_SHUTDOWN_ROOT", raising=False)
+        monkeypatch.setattr(
+            application_runtime.tempfile,
+            "gettempdir",
+            lambda: str(shared_temp),
+        )
+        manager = _build_selected_manager(app_dir, app_id="test_app")
+
+        run = await manager.start()
+        signal_path = manager._shutdown_signal_path
+
+        assert signal_path is not None
+        assert signal_path.parent.parent == shared_temp
+        assert signal_path.parent.name.startswith(
+            "watcherobot-application-signals-"
+        )
+        assert signal_path.name == f"{run.app_id}-{run.credential}.stop"
+
+        await manager.stop()
+
+        assert not signal_path.exists()
+        assert not signal_path.parent.exists()
+
+    asyncio.run(scenario())
+
+
 def test_runtime_releases_session_when_application_fails_to_start(
     tmp_path: Path,
 ) -> None:
