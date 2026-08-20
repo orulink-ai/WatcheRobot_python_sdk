@@ -211,9 +211,11 @@ def _metadata_from_payload(
     watcherobot_version: str | None,
 ) -> ApplicationManifestMetadata:
     unknown_fields = sorted(set(payload) - _ALLOWED_FIELDS)
-    schema_version = payload.get("schema_version")
-    if schema_version not in (1, 2):
+    schema_version_value = payload.get("schema_version")
+    if schema_version_value not in (1, 2):
         raise ApplicationManifestError("schema_version must be 1 or 2")
+    assert isinstance(schema_version_value, int)
+    schema_version = schema_version_value
     required_fields = (
         _V1_REQUIRED_FIELDS if schema_version == 1 else _V2_REQUIRED_FIELDS
     )

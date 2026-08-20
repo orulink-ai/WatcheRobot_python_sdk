@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 from types import TracebackType
 
 from watcherobot.application.desktop import ApplicationDesktop
@@ -34,6 +35,14 @@ class ApplicationContext:
         self.rtc = ApplicationRtc(transport)
         self.logger = _build_application_logger(app_id)
         self._entered = False
+        shutdown_signal = os.environ.get("WATCHER_APP_SHUTDOWN_SIGNAL", "").strip()
+        self._shutdown_signal = Path(shutdown_signal) if shutdown_signal else None
+
+    @property
+    def shutdown_requested(self) -> bool:
+        """Return whether the Daemon requested this run to stop gracefully."""
+
+        return self._shutdown_signal is not None and self._shutdown_signal.exists()
 
     @classmethod
     def from_environment(cls) -> "ApplicationContext":

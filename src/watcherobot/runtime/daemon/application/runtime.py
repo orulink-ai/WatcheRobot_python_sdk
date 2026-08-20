@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import psutil
+
+
+MAX_GRACEFUL_SHUTDOWN_SECONDS = 3.0
 
 from watcherobot.runtime.daemon.application.bridge import (
     LocalWebSocketApplicationBridge,
@@ -96,6 +100,7 @@ class ApplicationRuntimeManager:
         self._closing = False
         self._log_tasks: list[asyncio.Task[None]] = []
         self._device_status_url: str | None = None
+        self._shutdown_signal_path: Path | None = None
 
     @property
     def process_id(self) -> int | None:
@@ -179,12 +184,13 @@ class ApplicationRuntimeManager:
             run = self.registry.begin_start()
             self.last_state = ApplicationState.STARTING
             self.last_exit_code = None
+            self._prepare_shutdown_signal(run)
             await self._record_lifecycle_log(
                 manifest.app_id,
                 "Application launch requested",
             )
-            await self.bridge.start()
             try:
+                await self.bridge.start()
                 self._process = await asyncio.create_subprocess_exec(
                     *command,
                     cwd=str(self._application_dir),
@@ -207,6 +213,7 @@ class ApplicationRuntimeManager:
                     f"Application process spawn failed: {type(exc).__name__}",
                 )
                 await self.bridge.stop()
+                self._remove_shutdown_signal()
                 self.registry.end_run(ApplicationState.ERROR)
                 self.last_state = ApplicationState.ERROR
                 raise
@@ -236,14 +243,16 @@ class ApplicationRuntimeManager:
                         _collect_process_tree,
                         process.pid,
                     )
+                    self._request_graceful_shutdown()
+                    await asyncio.to_thread(
+                        _wait_for_process_ids,
+                        tracked_processes,
+                        min(
+                            self._stop_timeout,
+                            MAX_GRACEFUL_SHUTDOWN_SECONDS,
+                        ),
+                    )
                     await self.bridge.stop()
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(process.wait()),
-                            timeout=min(1.0, self._stop_timeout),
-                        )
-                    except asyncio.TimeoutError:
-                        pass
                     await asyncio.to_thread(
                         _terminate_process_ids,
                         tracked_processes,
@@ -260,6 +269,7 @@ class ApplicationRuntimeManager:
                 self._process = None
                 self._monitor_task = None
             finally:
+                self._remove_shutdown_signal()
                 self._closing = False
 
         if monitor_task is not None:
@@ -293,6 +303,10 @@ class ApplicationRuntimeManager:
                 ),
             }
         )
+        if self._shutdown_signal_path is not None:
+            environment["WATCHER_APP_SHUTDOWN_SIGNAL"] = os.fspath(
+                self._shutdown_signal_path
+            )
         proxy_names = ("NO_PROXY", "no_proxy")
         if os.name == "nt":
             entries = [
@@ -322,6 +336,31 @@ class ApplicationRuntimeManager:
         if self._device_status_url is not None:
             environment["WATCHER_APP_DEVICE_STATUS_URL"] = self._device_status_url
         return environment
+
+    def _prepare_shutdown_signal(self, run: ApplicationRun) -> None:
+        configured_root = os.environ.get("WATCHER_APP_SHUTDOWN_ROOT", "").strip()
+        root = (
+            Path(configured_root)
+            if configured_root
+            else Path(tempfile.gettempdir())
+            / "watcherobot"
+            / "application-signals"
+        )
+        root.mkdir(parents=True, exist_ok=True)
+        signal_path = root / f"{run.app_id}-{run.credential}.stop"
+        signal_path.unlink(missing_ok=True)
+        self._shutdown_signal_path = signal_path
+
+    def _request_graceful_shutdown(self) -> None:
+        signal_path = self._shutdown_signal_path
+        if signal_path is not None:
+            signal_path.touch(exist_ok=True)
+
+    def _remove_shutdown_signal(self) -> None:
+        signal_path = self._shutdown_signal_path
+        self._shutdown_signal_path = None
+        if signal_path is not None:
+            signal_path.unlink(missing_ok=True)
 
     async def _record_lifecycle_log(self, app_id: str, message: str) -> None:
         if self._log_service is None:
@@ -419,6 +458,7 @@ class ApplicationRuntimeManager:
                 self._process = None
                 self._monitor_task = None
             finally:
+                self._remove_shutdown_signal()
                 self._closing = False
 
     async def _abort_for_error(self) -> None:
@@ -445,6 +485,7 @@ class ApplicationRuntimeManager:
                 self._process = None
                 self._monitor_task = None
             finally:
+                self._remove_shutdown_signal()
                 self._closing = False
 
         current_task = asyncio.current_task()
@@ -549,3 +590,14 @@ def _terminate_process_ids(pids: list[int], timeout: float) -> None:
             continue
     if alive:
         psutil.wait_procs(alive, timeout=timeout)
+
+
+def _wait_for_process_ids(pids: list[int], timeout: float) -> None:
+    processes: list[psutil.Process] = []
+    for pid in pids:
+        try:
+            processes.append(psutil.Process(pid))
+        except psutil.NoSuchProcess:
+            continue
+    if processes:
+        psutil.wait_procs(processes, timeout=timeout)

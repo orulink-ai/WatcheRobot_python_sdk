@@ -41,6 +41,7 @@ class _ControllerStub:
         self.selected_launcher: tuple[str, str] | None = None
         self.select_error: Exception | None = None
         self.shutdown_requested = False
+        self.lifecycle_calls: list[str] = []
         self.logs = [
             {
                 "id": 1,
@@ -67,6 +68,7 @@ class _ControllerStub:
         }
 
     async def start_application(self) -> ApplicationRun:
+        self.lifecycle_calls.append("start")
         if self.start_error is not None:
             raise self.start_error
         self.state = ApplicationState.RUNNING
@@ -78,8 +80,14 @@ class _ControllerStub:
         )
 
     async def stop_application(self) -> None:
+        self.lifecycle_calls.append("stop")
         self.state = ApplicationState.ENDED
         self.process_id = None
+
+    async def restart_application(self) -> ApplicationRun:
+        self.lifecycle_calls.append("restart")
+        await self.stop_application()
+        return await self.start_application()
 
     def device_status(self) -> dict:
         return {"device": dict(self.device)}
@@ -250,6 +258,17 @@ def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None
     assert stopped.status_code == 200
     assert stopped.json()["application"]["state"] == "ended"
 
+    restarted = client.post("/daemon/application/restart")
+    assert restarted.status_code == 200
+    assert restarted.json()["application"]["state"] == "running"
+    assert controller.lifecycle_calls == [
+        "start",
+        "stop",
+        "restart",
+        "stop",
+        "start",
+    ]
+
     assert client.get("/daemon/devices").json() == {
         "device": {
             "state": "idle",
@@ -347,6 +366,21 @@ def test_control_rest_reports_occupied_and_start_failure() -> None:
         "message": "entrypoint failed",
     }
     assert client.get("/daemon/application/logs").status_code == 404
+
+
+def test_control_rest_reports_restart_failure_without_a_second_browser_request() -> None:
+    controller = _ControllerStub()
+    controller.start_error = ApplicationStartError("entrypoint failed")
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+
+    failed = client.post("/daemon/application/restart")
+
+    assert failed.status_code == 500
+    assert failed.json() == {
+        "error": "application_start_failed",
+        "message": "entrypoint failed",
+    }
+    assert controller.lifecycle_calls == ["restart", "stop", "start"]
 
 
 def test_control_rest_starts_creator_work_install() -> None:

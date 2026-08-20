@@ -18,6 +18,46 @@ from watcherobot.runtime.daemon.application.session import (
 )
 
 
+class _TransportStub:
+    capabilities: tuple[str, ...] = ()
+    device_info: dict = {}
+    resource_snapshot: dict = {}
+    resource_baseline: dict = {}
+    resource_rtc_baseline: dict = {}
+    resource_history: list = []
+
+    def set_callbacks(self, *_callbacks) -> None:
+        return None
+
+    def set_desktop_callback(self, _callback) -> None:
+        return None
+
+    def add_message_listener(self, _callback) -> None:
+        return None
+
+    def remove_message_listener(self, _callback) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+def test_application_context_observes_daemon_shutdown_signal(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    signal = tmp_path / "application.stop"
+    monkeypatch.setenv("WATCHER_APP_SHUTDOWN_SIGNAL", str(signal))
+    context = ApplicationContext(
+        app_id="test_app",
+        transport=_TransportStub(),
+    )
+
+    assert context.shutdown_requested is False
+    signal.touch()
+    assert context.shutdown_requested is True
+
+
 def test_context_rejects_processes_without_daemon_application_environment(
     monkeypatch,
 ) -> None:
