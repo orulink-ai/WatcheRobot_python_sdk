@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -101,6 +102,7 @@ class ApplicationRuntimeManager:
         self._log_tasks: list[asyncio.Task[None]] = []
         self._device_status_url: str | None = None
         self._shutdown_signal_path: Path | None = None
+        self._shutdown_signal_directory: Path | None = None
 
     @property
     def process_id(self) -> int | None:
@@ -339,14 +341,20 @@ class ApplicationRuntimeManager:
 
     def _prepare_shutdown_signal(self, run: ApplicationRun) -> None:
         configured_root = os.environ.get("WATCHER_APP_SHUTDOWN_ROOT", "").strip()
-        root = (
-            Path(configured_root)
-            if configured_root
-            else Path(tempfile.gettempdir())
-            / "watcherobot"
-            / "application-signals"
-        )
-        root.mkdir(parents=True, exist_ok=True)
+        if configured_root:
+            root = Path(configured_root)
+            root.mkdir(parents=True, exist_ok=True)
+            self._shutdown_signal_directory = None
+        else:
+            temp_root = Path(tempfile.gettempdir())
+            temp_root.mkdir(parents=True, exist_ok=True)
+            root = Path(
+                tempfile.mkdtemp(
+                    prefix="watcherobot-application-signals-",
+                    dir=temp_root,
+                )
+            )
+            self._shutdown_signal_directory = root
         signal_path = root / f"{run.app_id}-{run.credential}.stop"
         signal_path.unlink(missing_ok=True)
         self._shutdown_signal_path = signal_path
@@ -358,9 +366,13 @@ class ApplicationRuntimeManager:
 
     def _remove_shutdown_signal(self) -> None:
         signal_path = self._shutdown_signal_path
+        signal_directory = self._shutdown_signal_directory
         self._shutdown_signal_path = None
+        self._shutdown_signal_directory = None
         if signal_path is not None:
             signal_path.unlink(missing_ok=True)
+        if signal_directory is not None:
+            shutil.rmtree(signal_directory, ignore_errors=True)
 
     async def _record_lifecycle_log(self, app_id: str, message: str) -> None:
         if self._log_service is None:
