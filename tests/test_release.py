@@ -71,6 +71,24 @@ def test_release_workflow_separates_test_and_production_indexes() -> None:
     assert "password:" not in workflow
 
 
+def test_release_workflow_ignores_inherited_runner_proxy_configuration() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert 'HTTP_PROXY: ""' in workflow
+    assert 'HTTPS_PROXY: ""' in workflow
+    assert 'ALL_PROXY: ""' in workflow
+    assert 'http_proxy: ""' in workflow
+    assert 'https_proxy: ""' in workflow
+    assert 'all_proxy: ""' in workflow
+    assert 'NO_PROXY: "*"' in workflow
+    assert 'no_proxy: "*"' in workflow
+    assert 'GIT_CONFIG_COUNT: "2"' in workflow
+    assert "GIT_CONFIG_KEY_0: http.proxy" in workflow
+    assert 'GIT_CONFIG_VALUE_0: ""' in workflow
+    assert "GIT_CONFIG_KEY_1: https.proxy" in workflow
+    assert 'GIT_CONFIG_VALUE_1: ""' in workflow
+
+
 def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     gate_job = workflow.split("  gate:", maxsplit=1)[1].split("  build:", maxsplit=1)[0]

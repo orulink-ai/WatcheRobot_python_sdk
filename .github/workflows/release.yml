@@ -17,6 +17,24 @@ concurrency:
 permissions:
   contents: read
 
+# Release runners must reach GitHub and package registries directly. Explicit
+# environment and command-scoped Git configuration override stale service-level
+# proxy settings before actions/checkout starts.
+env:
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  ALL_PROXY: ""
+  http_proxy: ""
+  https_proxy: ""
+  all_proxy: ""
+  NO_PROXY: "*"
+  no_proxy: "*"
+  GIT_CONFIG_COUNT: "2"
+  GIT_CONFIG_KEY_0: http.proxy
+  GIT_CONFIG_VALUE_0: ""
+  GIT_CONFIG_KEY_1: https.proxy
+  GIT_CONFIG_VALUE_1: ""
+
 jobs:
   start-clean:
     name: Clean release workspace before use
