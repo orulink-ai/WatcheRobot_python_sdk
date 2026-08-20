@@ -605,6 +605,44 @@ def test_runtime_waits_for_launcher_descendant_to_release_media(
     asyncio.run(scenario())
 
 
+def test_runtime_excludes_asyncio_child_from_psutil_wait(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        marker = tmp_path / "graceful.marker"
+        signal_root = tmp_path / "signals"
+        _write_application(app_dir, GRACEFUL_SHUTDOWN_APP)
+        monkeypatch.setenv("GRACEFUL_SHUTDOWN_MARKER", str(marker))
+        monkeypatch.setenv("WATCHER_APP_SHUTDOWN_ROOT", str(signal_root))
+        manager = _build_selected_manager(app_dir, app_id="test_app")
+        real_wait_for_process_ids = application_runtime._wait_for_process_ids
+
+        def assert_asyncio_child_is_not_reaped(
+            pids: list[int],
+            timeout: float,
+        ) -> None:
+            process = manager._process
+            assert process is not None
+            assert process.pid not in pids
+            real_wait_for_process_ids(pids, timeout)
+
+        monkeypatch.setattr(
+            application_runtime,
+            "_wait_for_process_ids",
+            assert_asyncio_child_is_not_reaped,
+        )
+
+        await manager.start()
+        await manager.stop()
+
+        assert marker.read_text(encoding="utf-8") == "channels-still-open"
+        assert manager.last_exit_code == 0
+
+    asyncio.run(scenario())
+
+
 def test_default_runtime_allows_cold_application_startup() -> None:
     assert DEFAULT_APPLICATION_STARTUP_TIMEOUT >= 90.0
 
