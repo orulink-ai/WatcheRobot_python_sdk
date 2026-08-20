@@ -95,8 +95,8 @@ async def main():
     signal = Path(os.environ["WATCHER_APP_SHUTDOWN_SIGNAL"])
     marker = Path(os.environ["GRACEFUL_SHUTDOWN_MARKER"])
     async with (
-        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"], proxy=None),
-        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"], proxy=None),
+        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"]),
+        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"]),
     ):
         while not signal.exists():
             await asyncio.sleep(0.01)
@@ -119,8 +119,8 @@ async def main():
     signal = Path(os.environ["WATCHER_APP_SHUTDOWN_SIGNAL"])
     marker = Path(os.environ["GRACEFUL_SHUTDOWN_MARKER"])
     async with (
-        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"], proxy=None),
-        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"], proxy=None),
+        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"]),
+        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"]),
     ):
         while not signal.exists():
             await asyncio.sleep(0.01)
@@ -154,8 +154,8 @@ async def main():
     signal = Path(os.environ["WATCHER_APP_SHUTDOWN_SIGNAL"])
     marker = Path(os.environ["GRACEFUL_SHUTDOWN_MARKER"])
     async with (
-        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"], proxy=None),
-        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"], proxy=None),
+        connect(os.environ["WATCHER_APP_DESKTOP_WS_URL"]),
+        connect(os.environ["WATCHER_APP_DEVICE_WS_URL"]),
     ):
         while not signal.exists():
             await asyncio.sleep(0.01)
