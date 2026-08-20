@@ -73,20 +73,23 @@ def test_release_workflow_separates_test_and_production_indexes() -> None:
 
 def test_release_workflow_ignores_inherited_runner_proxy_configuration() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    workflow_env = workflow.split("\nenv:\n", maxsplit=1)[1].split("\njobs:\n", maxsplit=1)[0]
+    environment_names = [
+        line.strip().split(":", maxsplit=1)[0]
+        for line in workflow_env.splitlines()
+        if line.startswith("  ") and ":" in line
+    ]
 
-    assert 'HTTP_PROXY: ""' in workflow
-    assert 'HTTPS_PROXY: ""' in workflow
-    assert 'ALL_PROXY: ""' in workflow
-    assert 'http_proxy: ""' in workflow
-    assert 'https_proxy: ""' in workflow
-    assert 'all_proxy: ""' in workflow
-    assert 'NO_PROXY: "*"' in workflow
-    assert 'no_proxy: "*"' in workflow
-    assert 'GIT_CONFIG_COUNT: "2"' in workflow
-    assert "GIT_CONFIG_KEY_0: http.proxy" in workflow
-    assert 'GIT_CONFIG_VALUE_0: ""' in workflow
-    assert "GIT_CONFIG_KEY_1: https.proxy" in workflow
-    assert 'GIT_CONFIG_VALUE_1: ""' in workflow
+    assert len(environment_names) == len({name.casefold() for name in environment_names})
+    assert 'HTTP_PROXY: ""' in workflow_env
+    assert 'HTTPS_PROXY: ""' in workflow_env
+    assert 'ALL_PROXY: ""' in workflow_env
+    assert 'NO_PROXY: "*"' in workflow_env
+    assert 'GIT_CONFIG_COUNT: "2"' in workflow_env
+    assert "GIT_CONFIG_KEY_0: http.proxy" in workflow_env
+    assert 'GIT_CONFIG_VALUE_0: ""' in workflow_env
+    assert "GIT_CONFIG_KEY_1: https.proxy" in workflow_env
+    assert 'GIT_CONFIG_VALUE_1: ""' in workflow_env
 
 
 def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
