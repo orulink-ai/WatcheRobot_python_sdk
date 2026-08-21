@@ -78,3 +78,16 @@ with app.robot.face_tracking.open_preview() as preview:
 ```
 
 JPEG 与人脸框同帧配对合同见[人脸跟踪预览 API](face-tracking-preview.md)。
+
+## 使用 Vision Debug Lab
+
+SDK 自带的 `examples/vision_debug_lab` 把以上预检、人脸同帧预览、延迟与丢帧指标、
+JPEG + JSONL 录制、HOLD / RECENTER 和诊断报告整合为一个本机调试界面：
+
+```powershell
+watcherobot app run .\examples\vision_debug_lab
+```
+
+它只监听 `127.0.0.1`，并严格使用 Daemon 注入的 Application Device channel，不会直连
+机器人局域网端口。最后一个浏览器断开后会自动 HOLD。详细说明见
+[`examples/vision_debug_lab/README.md`](../examples/vision_debug_lab/README.md)。

@@ -29,6 +29,33 @@ watcherobot app run .\examples\capture_photo
 watcherobot app run .\examples\record_microphone
 ```
 
+For Himax and on-device face-tracking acceptance, run Vision Debug Lab:
+
+```powershell
+watcherobot app run .\examples\vision_debug_lab
+```
+
+It binds only to `127.0.0.1` and uses the Runtime-injected Application Device
+channel. It does not connect to a robot LAN port. The dashboard checks the
+vision backend, Himax connection, current model and capabilities before it
+opens preview. It then displays sequence-matched JPEG and face telemetry,
+collects latency/drop metrics, records JPEG + JSONL datasets, and exports a
+diagnostic report. Closing the last dashboard viewer automatically applies
+HOLD.
+
+PTL firmware can validate the JPEG path but cannot provide face inference.
+SSCMA firmware must expose both `vision.status.v1` and
+`face_tracking.preview.v1`, and the active model must contain a face class.
+Model metadata is read-only in this release; model upload, switching and
+parameter tuning remain outside the Application contract.
+
+On the dual CH342 Type-C bridge, CH342-B is the ESP32 log/flash channel and
+CH342-A can connect to the Himax maintenance UART. Both ports can be opened at
+the same time, and passive Himax UART reading does not block ESP32 SPI
+inference. Keep high-bandwidth preview on the managed Application path and use
+the UART for low-level maintenance or low-volume logs so display animation,
+preview transport, and verbose serial output do not compete unnecessarily.
+
 For an operator-facing media bench, run the standalone SDK Media Lab:
 
 ```powershell

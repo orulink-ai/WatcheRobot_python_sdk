@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "example.vision_debug_lab",
+  "name": "Vision Debug Lab",
+  "version": "1.0.0",
+  "author": "Orulink AI",
+  "description": "Inspect Himax vision health, preview face tracking, record datasets, and export diagnostics.",
+  "requires_watcherobot": ">=0.1.3,<0.2",
+  "icon": "icon.svg",
+  "dependencies": []
+}
