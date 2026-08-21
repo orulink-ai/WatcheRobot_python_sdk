@@ -1,4 +1,4 @@
-"""Typed face-tracking preview API for managed WatcheRobot Applications."""
+"""Typed device-vision and face-tracking APIs for managed Applications."""
 
 from __future__ import annotations
 
@@ -23,7 +23,66 @@ _IMAGE_HEADER = struct.Struct("<4sBBHIIHHI")
 _CLOSED = object()
 _SUPPORTED_RESOLUTIONS = frozenset({(240, 240), (416, 416), (640, 480)})
 FaceTrackingStopPolicy = Literal["hold", "recenter"]
+VisionHealth = Literal["idle", "ready", "busy", "degraded", "error"]
 _ValueT = TypeVar("_ValueT")
+
+
+@dataclass(frozen=True)
+class VisionCapabilities:
+    """Visual features exposed by the active device backend."""
+
+    capture: bool
+    preview: bool
+    inference: bool
+    model_info: bool
+    model_management: bool
+
+
+@dataclass(frozen=True)
+class VisionModel:
+    """Descriptor for the model currently active on the vision coprocessor."""
+
+    model_id: int
+    name: str
+    task: str
+    contains_face_class: bool
+
+
+@dataclass(frozen=True)
+class VisionStatus:
+    """Point-in-time health and capability snapshot for the vision backend."""
+
+    backend: str
+    health: VisionHealth
+    status_code: int
+    initialized: bool
+    connected: bool
+    streaming: bool
+    inferencing: bool
+    capabilities: VisionCapabilities
+    model: VisionModel | None
+
+
+class VisionDomain:
+    """Inspect model-independent device vision health and capabilities."""
+
+    def __init__(self, robot: WatcheRobot) -> None:
+        self._robot = robot
+
+    def status(self, *, timeout: float | None = None) -> VisionStatus:
+        _validate_timeout(timeout)
+        self._robot._require_capability("vision.status.v1")
+        response = self._robot._command("ctrl.vision.status.get", {}, timeout=timeout)
+        return parse_vision_status_response(response)
+
+    def health(self, *, timeout: float | None = None) -> VisionStatus:
+        return self.status(timeout=timeout)
+
+    def active_model(self, *, timeout: float | None = None) -> VisionModel | None:
+        return self.status(timeout=timeout).model
+
+    def capabilities(self, *, timeout: float | None = None) -> VisionCapabilities:
+        return self.status(timeout=timeout).capabilities
 
 
 @dataclass(frozen=True)
@@ -337,6 +396,75 @@ def parse_face_tracking_image(packet: bytes) -> _PreviewImage | None:
     )
 
 
+def parse_vision_status_response(response: object) -> VisionStatus:
+    if not isinstance(response, dict) or response.get("type") != "sys.ack":
+        raise WatcheRobotError("vision status ACK is missing or invalid")
+    data = response.get("data")
+    if not isinstance(data, dict) or data.get("type") != "ctrl.vision.status.get":
+        raise WatcheRobotError("vision status ACK has an invalid data envelope")
+    backend = data.get("backend")
+    health = data.get("health")
+    status_code = data.get("status_code")
+    if not isinstance(backend, str) or not backend:
+        raise WatcheRobotError("vision status ACK has an invalid backend")
+    if health not in {"idle", "ready", "busy", "degraded", "error"}:
+        raise WatcheRobotError("vision status ACK has an invalid health state")
+    if isinstance(status_code, bool) or not isinstance(status_code, int):
+        raise WatcheRobotError("vision status ACK has an invalid status code")
+
+    initialized = _required_bool(data, "initialized")
+    connected = _required_bool(data, "connected")
+    streaming = _required_bool(data, "streaming")
+    inferencing = _required_bool(data, "inferencing")
+    raw_capabilities = data.get("capabilities")
+    if not isinstance(raw_capabilities, dict):
+        raise WatcheRobotError("vision status ACK has invalid capabilities")
+    capabilities = VisionCapabilities(
+        capture=_required_bool(raw_capabilities, "capture"),
+        preview=_required_bool(raw_capabilities, "preview"),
+        inference=_required_bool(raw_capabilities, "inference"),
+        model_info=_required_bool(raw_capabilities, "model_info"),
+        model_management=_required_bool(raw_capabilities, "model_management"),
+    )
+
+    raw_model = data.get("model")
+    if not isinstance(raw_model, dict):
+        raise WatcheRobotError("vision status ACK has an invalid model descriptor")
+    model_available = _required_bool(raw_model, "available")
+    model: VisionModel | None = None
+    if model_available:
+        model_id = _integer(raw_model.get("model_id"), minimum=0)
+        model_name = raw_model.get("model_name")
+        task = raw_model.get("task")
+        contains_face_class = raw_model.get("contains_face_class")
+        if (
+            model_id is None
+            or not isinstance(model_name, str)
+            or not model_name
+            or not isinstance(task, str)
+            or not task
+            or not isinstance(contains_face_class, bool)
+        ):
+            raise WatcheRobotError("vision status ACK has an invalid active model")
+        model = VisionModel(
+            model_id=model_id,
+            name=model_name,
+            task=task,
+            contains_face_class=contains_face_class,
+        )
+    return VisionStatus(
+        backend=backend,
+        health=health,
+        status_code=status_code,
+        initialized=initialized,
+        connected=connected,
+        streaming=streaming,
+        inferencing=inferencing,
+        capabilities=capabilities,
+        model=model,
+    )
+
+
 def parse_face_tracking_telemetry(data: object) -> FaceTrackingTelemetry | None:
     if not isinstance(data, dict) or data.get("v") != 1 or data.get("kind") != "frame":
         return None
@@ -470,6 +598,13 @@ def _integer(
     return value
 
 
+def _required_bool(data: Mapping[str, object], key: str) -> bool:
+    value = data.get(key)
+    if not isinstance(value, bool):
+        raise WatcheRobotError(f"vision status ACK has an invalid {key} flag")
+    return value
+
+
 def _whole_number(value: float) -> int | None:
     return int(value) if value.is_integer() else None
 
@@ -520,4 +655,10 @@ __all__ = [
     "FaceTrackingPreview",
     "FaceTrackingStopPolicy",
     "FaceTrackingTelemetry",
+    "VisionCapabilities",
+    "VisionDomain",
+    "VisionHealth",
+    "VisionModel",
+    "VisionStatus",
+    "parse_vision_status_response",
 ]
