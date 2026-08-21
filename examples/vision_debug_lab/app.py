@@ -1,0 +1,80 @@
+"""Run the loopback-only WatcheRobot Vision Debug Lab."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import socket
+import webbrowser
+from pathlib import Path
+
+import uvicorn
+
+from service import (
+    DaemonDeviceStatusProvider,
+    VisionDebugLabService,
+    create_web_app,
+)
+from watcherobot.application import ApplicationContext
+
+
+ROOT = Path(__file__).resolve().parent
+HOST = "127.0.0.1"
+
+
+async def main() -> None:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind((HOST, 0))
+    listener.listen(128)
+    port = int(listener.getsockname()[1])
+    url = f"http://{HOST}:{port}"
+
+    try:
+        async with ApplicationContext.from_environment() as app:
+            device_status_url = os.environ.get(
+                "WATCHER_APP_DEVICE_STATUS_URL",
+                "",
+            ).strip()
+            if not device_status_url:
+                raise RuntimeError(
+                    "Daemon did not inject WATCHER_APP_DEVICE_STATUS_URL"
+                )
+            service = VisionDebugLabService(
+                robot=app.robot,
+                artifacts_dir=ROOT / "artifacts",
+                device_status_provider=DaemonDeviceStatusProvider(
+                    device_status_url
+                ),
+            )
+            web_app = create_web_app(service, web_root=ROOT / "web")
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    web_app,
+                    host=HOST,
+                    port=port,
+                    access_log=False,
+                    log_level="warning",
+                )
+            )
+            server_task = asyncio.create_task(
+                server.serve(sockets=[listener]),
+                name="vision-debug-lab-http",
+            )
+            while not server.started:
+                if server_task.done():
+                    await server_task
+                await asyncio.sleep(0.02)
+            app.logger.info("Vision Debug Lab: %s", url)
+            if os.environ.get("WATCHER_VISION_LAB_NO_BROWSER") != "1":
+                await asyncio.to_thread(webbrowser.open, url)
+            await server_task
+    finally:
+        listener.close()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
