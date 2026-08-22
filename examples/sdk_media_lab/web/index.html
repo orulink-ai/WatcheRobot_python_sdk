@@ -15,19 +15,19 @@
         <span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <div>
           <p class="eyebrow">WATCHE / HARDWARE SDK CONSOLE 01</p>
-          <h1>SDK 测试台</h1>
+          <h1>SDK Test Bench</h1>
         </div>
       </div>
       <div class="masthead-actions">
         <div class="locale-switch" role="group" aria-label="Language">
           <button id="localeEnglish" type="button" data-locale="en-US" aria-pressed="true">EN</button>
-          <button id="localeChinese" type="button" data-locale="zh-CN" data-i18n-ignore aria-pressed="false">中文</button>
+          <button id="localeChinese" type="button" data-locale="zh-CN" data-i18n-ignore aria-pressed="false">Chinese</button>
         </div>
         <div class="connection" id="connectionBadge" data-state="waiting">
           <span class="status-lamp" aria-hidden="true"></span>
           <div>
-            <small>设备连接</small>
-            <strong id="connectionText">正在校准</strong>
+            <small>Device Connection</small>
+            <strong id="connectionText">Calibrating</strong>
           </div>
         </div>
       </div>
@@ -36,30 +36,30 @@
     <main>
       <section class="mission-panel" aria-labelledby="missionTitle">
         <div>
-          <p class="section-index">00 / 系统说明</p>
-          <h2 id="missionTitle">一张工作台，验证整台机器人。</h2>
+          <p class="section-index">00 / System Overview</p>
+          <h2 id="missionTitle">One bench to validate the whole robot.</h2>
           <p class="mission-copy">
-            从运动、灯光到相机和全双工音频，所有测试均由当前 Python Application 调用公开 SDK API，
-            并通过已授权的设备通道执行。
+            From motion and lighting to camera and full-duplex audio, every test uses public SDK APIs from the current Python Application
+            and runs through its authorized Device channel.
           </p>
         </div>
         <div class="run-block">
           <button class="primary-action" id="runAllButton" type="button">
-            <span>运行基础全检</span>
-            <small>运动 → 灯光 → 扬声器 → 相机 → 麦克风</small>
+            <span>Run Basic Check</span>
+            <small>Motion → Lights → Speaker → Camera → Microphone</small>
           </button>
-          <p id="activeOperation" class="active-operation" aria-live="polite">系统空闲</p>
+          <p id="activeOperation" class="active-operation" aria-live="polite">System Idle</p>
         </div>
       </section>
 
       <section class="pairing-panel" id="pairingPanel" aria-labelledby="pairingTitle">
         <div>
-          <p class="section-index">00.5 / 设备接入</p>
-          <h2 id="pairingTitle">连接机器人</h2>
-          <p>输入设备屏幕上的六位配对码。配对请求由本机 SDK Daemon 管理，配对码不会保存在测试台日志中。</p>
+          <p class="section-index">00.5 / Device Access</p>
+          <h2 id="pairingTitle">Connect Robot</h2>
+          <p>Enter the six-digit pairing code shown on the device. The local SDK Daemon handles pairing, and the code is never stored in Test Bench logs.</p>
         </div>
         <form class="pairing-form" id="pairingForm">
-          <label for="pairingCode">六位配对码</label>
+          <label for="pairingCode">Six-digit pairing code</label>
           <div class="pairing-controls">
             <input
               id="pairingCode"
@@ -80,157 +80,157 @@
               type="text"
               inputmode="decimal"
               autocomplete="off"
-              placeholder="设备 IP（可选）"
-              aria-label="设备 IP（可选，广播受限时填写）"
+              placeholder="Device IP (optional)"
+              aria-label="Device IP (optional when broadcast is restricted)"
             />
-            <button class="pairing-action" id="pairingButton" type="submit">开始配对</button>
+            <button class="pairing-action" id="pairingButton" type="submit">Start Pairing</button>
           </div>
-          <output class="pairing-result" id="pairingResult" aria-live="polite">等待输入设备屏幕上的配对码</output>
+          <output class="pairing-result" id="pairingResult" aria-live="polite">Enter the pairing code shown on the device</output>
         </form>
       </section>
 
-      <section class="telemetry-strip" aria-label="设备遥测信息">
-        <div><span>设备</span><strong id="deviceId">—</strong></div>
-        <div><span>固件</span><strong id="firmwareVersion">—</strong></div>
-        <div><span>能力数量</span><strong id="capabilityCount">00</strong></div>
-        <div><span>最近同步</span><strong id="lastSync">—</strong></div>
+      <section class="telemetry-strip" aria-label="Device Telemetry">
+        <div><span>Device</span><strong id="deviceId">—</strong></div>
+        <div><span>Firmware</span><strong id="firmwareVersion">—</strong></div>
+        <div><span>Capabilities</span><strong id="capabilityCount">00</strong></div>
+        <div><span>Last Sync</span><strong id="lastSync">—</strong></div>
       </section>
 
       <section class="resource-panel" id="resourcePanel" data-state="waiting" aria-labelledby="resourceTitle">
         <div class="resource-heading">
           <div>
-            <p class="section-index">00.8 / 资源生命周期</p>
-            <h2 id="resourceTitle">设备资源监视器</h2>
-            <p>持续观察内部内存、最大连续块和媒体资源；RTC 停止后自动对比启动基线。</p>
+            <p class="section-index">00.8 / Resource Lifecycle</p>
+            <h2 id="resourceTitle">Device Resource Monitor</h2>
+            <p>Continuously monitor internal memory, largest contiguous blocks, and media resources; compare against the startup baseline after RTC stops.</p>
           </div>
           <div class="resource-verdict">
-            <span>生命周期判断</span>
-            <strong id="resourceState">等待设备快照</strong>
-            <small id="resourceStage">尚未收到 evt.sdk.resource_snapshot</small>
+            <span>Lifecycle Verdict</span>
+            <strong id="resourceState">Waiting for Device Snapshot</strong>
+            <small id="resourceStage">No evt.sdk.resource_snapshot received</small>
           </div>
         </div>
         <dl class="resource-metrics">
-          <div><dt>内部可用</dt><dd id="resourceInternal">—</dd></div>
-          <div><dt>最大连续块</dt><dd id="resourceLargest">—</dd></div>
-          <div><dt>DMA 可用</dt><dd id="resourceDma">—</dd></div>
-          <div><dt>DMA 最大连续块</dt><dd id="resourceDmaLargest">—</dd></div>
-          <div><dt>PSRAM 可用</dt><dd id="resourcePsram">—</dd></div>
-          <div><dt>PSRAM 最大连续块</dt><dd id="resourcePsramLargest">—</dd></div>
-          <div><dt>会话内最低内部 RAM</dt><dd id="resourceMinimum">—</dd></div>
+          <div><dt>Internal Free</dt><dd id="resourceInternal">—</dd></div>
+          <div><dt>Largest Block</dt><dd id="resourceLargest">—</dd></div>
+          <div><dt>DMA Free</dt><dd id="resourceDma">—</dd></div>
+          <div><dt>DMA Largest Block</dt><dd id="resourceDmaLargest">—</dd></div>
+          <div><dt>PSRAM Free</dt><dd id="resourcePsram">—</dd></div>
+          <div><dt>PSRAM Largest Block</dt><dd id="resourcePsramLargest">—</dd></div>
+          <div><dt>Session Minimum Internal RAM</dt><dd id="resourceMinimum">—</dd></div>
         </dl>
         <div class="resource-details">
-          <div><span>占用状态</span><strong id="resourceOwners">等待遥测</strong></div>
-          <div><span>相对基线</span><strong id="resourceDelta">等待基线</strong></div>
-          <div><span>释放结果</span><strong id="resourceRelease">尚无 RTC 停止记录</strong></div>
+          <div><span>Owners</span><strong id="resourceOwners">Waiting for Telemetry</strong></div>
+          <div><span>Against Baseline</span><strong id="resourceDelta">Waiting for Baseline</strong></div>
+          <div><span>Release Result</span><strong id="resourceRelease">No RTC Stop Record</strong></div>
         </div>
       </section>
 
-      <section class="actuator-grid" aria-label="执行器测试台">
+      <section class="actuator-grid" aria-label="Actuator Test Bench">
         <article class="control-card motion-card" data-capability="motion">
           <div class="station-head">
-            <p class="section-index">01 / 运动控制</p>
-            <span class="capability-state">检测中</span>
+            <p class="section-index">01 / Motion Control</p>
+            <span class="capability-state">Detecting</span>
           </div>
-          <h2>云台姿态</h2>
-          <p>拖动水平与俯仰角度，通过 <code>robot.motion.move_to()</code> 平滑移动机器人。</p>
+          <h2>Gimbal Position</h2>
+          <p>Adjust pan and tilt to move the robot smoothly through <code>robot.motion.move_to()</code>.</p>
           <div class="motion-visual" aria-hidden="true"><span id="motionHead"></span><i></i></div>
           <div class="control-fields">
-            <label>水平 PAN <strong id="panValue">90°</strong><input id="panControl" type="range" min="30" max="150" value="90" /></label>
-            <label>俯仰 TILT <strong id="tiltValue">115°</strong><input id="tiltControl" type="range" min="100" max="130" value="115" /></label>
+            <label>Horizontal PAN <strong id="panValue">90°</strong><input id="panControl" type="range" min="30" max="150" value="90" /></label>
+            <label>Vertical TILT <strong id="tiltValue">115°</strong><input id="tiltControl" type="range" min="100" max="130" value="115" /></label>
           </div>
           <div class="preset-row">
-            <button type="button" data-motion-preset="left">向左</button>
-            <button type="button" data-motion-preset="center">回中</button>
-            <button type="button" data-motion-preset="right">向右</button>
+            <button type="button" data-motion-preset="left">Left</button>
+            <button type="button" data-motion-preset="center">Center</button>
+            <button type="button" data-motion-preset="right">Right</button>
           </div>
           <div class="button-row">
-            <button class="station-action" id="applyMotionButton" type="button">执行移动</button>
-            <button class="quiet-action" id="stopMotionButton" type="button">立即停止</button>
+            <button class="station-action" id="applyMotionButton" type="button">Move</button>
+            <button class="quiet-action" id="stopMotionButton" type="button">Stop Now</button>
           </div>
-          <output class="station-result" id="motionResult">等待控制</output>
+          <output class="station-result" id="motionResult">Awaiting Control</output>
         </article>
 
         <article class="control-card light-card" data-capability="light">
           <div class="station-head">
-            <p class="section-index">02 / 灯光控制</p>
-            <span class="capability-state">检测中</span>
+            <p class="section-index">02 / Lighting Control</p>
+            <span class="capability-state">Detecting</span>
           </div>
-          <h2>机身灯效</h2>
-          <p>设置颜色、亮度、灯区或循环效果，通过 <code>robot.lights</code> 公共接口下发。</p>
+          <h2>Body Lighting</h2>
+          <p>Set color, brightness, zones, or looping effects through the public <code>robot.lights</code> API.</p>
           <div class="light-visual" id="lightVisual" aria-hidden="true"><i></i><i></i><i></i></div>
           <div class="light-fields">
-            <label>颜色<input id="lightColor" type="color" value="#d9ff57" /></label>
-            <label>亮度 <strong id="brightnessValue">70%</strong><input id="lightBrightness" type="range" min="0" max="100" value="70" /></label>
-            <label>灯区<select id="lightZone"><option value="all">全部</option><option value="side">侧面</option><option value="bottom">底部</option></select></label>
-            <label>效果<select id="lightEffect"><option value="breathing">呼吸</option><option value="blink">闪烁</option><option value="rainbow">彩虹</option><option value="status_pulse">状态脉冲</option></select></label>
+            <label>Color<input id="lightColor" type="color" value="#d9ff57" /></label>
+            <label>Brightness <strong id="brightnessValue">70%</strong><input id="lightBrightness" type="range" min="0" max="100" value="70" /></label>
+            <label>Zone<select id="lightZone"><option value="all">All</option><option value="side">Side</option><option value="bottom">Bottom</option></select></label>
+            <label>Effect<select id="lightEffect"><option value="breathing">Breathing</option><option value="blink">Blink</option><option value="rainbow">Rainbow</option><option value="status_pulse">Status Pulse</option></select></label>
           </div>
           <div class="button-row">
-            <button class="station-action" id="applyLightButton" type="button">应用常亮</button>
-            <button class="quiet-action" id="playLightEffectButton" type="button">播放效果</button>
-            <button class="quiet-action" id="lightsOffButton" type="button">关闭</button>
+            <button class="station-action" id="applyLightButton" type="button">Apply Solid</button>
+            <button class="quiet-action" id="playLightEffectButton" type="button">Play Effect</button>
+            <button class="quiet-action" id="lightsOffButton" type="button">Off</button>
           </div>
-          <output class="station-result" id="lightResult">等待控制</output>
+          <output class="station-result" id="lightResult">Awaiting Control</output>
         </article>
 
         <article class="control-card animation-card" data-capability="animation">
           <div class="station-head">
-            <p class="section-index">02.5 / 屏幕动画</p>
-            <span class="capability-state">检测中</span>
+            <p class="section-index">02.5 / Screen Animation</p>
+            <span class="capability-state">Detecting</span>
           </div>
-          <h2>动画并发验证</h2>
-          <p>设备会动态上报 SD 卡中实际可播放的完整动画目录；音视频会话运行时仍可手动切换或自动随机轮播。</p>
+          <h2>Concurrent Animation Validation</h2>
+          <p>The device reports the complete animation catalog available on its SD card. You can switch animations manually or use randomized playback during an audio/video session.</p>
           <div class="control-fields">
-            <label>动画 ID
+            <label>Animation ID
               <input id="animationId" type="text" list="animationSuggestions" autocomplete="off" />
             </label>
-            <label>随机切换间隔（秒）
+            <label>Random interval (seconds)
               <input id="animationRandomInterval" type="number" min="3" max="120" step="1" value="8" />
             </label>
             <datalist id="animationSuggestions"></datalist>
           </div>
-          <p class="animation-catalog-summary" id="animationCatalogSummary">等待设备上报动画目录</p>
+          <p class="animation-catalog-summary" id="animationCatalogSummary">Waiting for the device animation catalog</p>
           <div class="button-row">
-            <button class="station-action" id="playAnimationButton" type="button">播放动画</button>
-            <button class="quiet-action" id="stopAnimationButton" type="button">停止动画</button>
-            <button class="station-action" id="startRandomAnimationButton" type="button">开始随机播放</button>
-            <button class="quiet-action" id="stopRandomAnimationButton" type="button">停止随机播放</button>
+            <button class="station-action" id="playAnimationButton" type="button">Play Animation</button>
+            <button class="quiet-action" id="stopAnimationButton" type="button">Stop Animation</button>
+            <button class="station-action" id="startRandomAnimationButton" type="button">Start Random</button>
+            <button class="quiet-action" id="stopRandomAnimationButton" type="button">Stop Random</button>
           </div>
-          <output class="station-result" id="animationResult">等待控制</output>
+          <output class="station-result" id="animationResult">Awaiting Control</output>
         </article>
       </section>
 
       <section class="live-video-panel" id="liveVideoPanel" data-available="false" aria-labelledby="liveVideoTitle">
         <div class="live-video-copy">
           <div class="station-head">
-            <p class="section-index">03 / 实时视频</p>
-            <span class="capability-state" id="liveVideoCapability">检测中</span>
+            <p class="section-index">03 / Live Video</p>
+            <span class="capability-state" id="liveVideoCapability">Detecting</span>
           </div>
-          <h2 id="liveVideoTitle">相机实时画面</h2>
+          <h2 id="liveVideoTitle">Live Camera Preview</h2>
           <p>
-              浏览器通过独立局域网通道直接接收 Watcher 的 MJPEG 画面；
-              全双工音频继续使用 WebRTC，Python Application 不转发媒体帧。
+              The browser receives Watcher MJPEG video directly over a dedicated LAN channel;
+              full-duplex audio continues over WebRTC, and the Python Application does not relay media frames.
           </p>
           <div class="live-video-controls">
-            <button class="station-action" id="startLiveVideoButton" type="button">开启实时画面</button>
-            <button class="quiet-action" id="stopLiveVideoButton" type="button" disabled>停止直播</button>
+            <button class="station-action" id="startLiveVideoButton" type="button">Start Live Video</button>
+            <button class="quiet-action" id="stopLiveVideoButton" type="button" disabled>Stop Live Video</button>
           </div>
-          <output class="station-result" id="liveVideoResult">等待开启</output>
+          <output class="station-result" id="liveVideoResult">Awaiting Start</output>
           <dl class="live-video-metrics">
-            <div><dt>状态</dt><dd id="liveVideoState">IDLE</dd></div>
-            <div><dt>显示帧率</dt><dd id="liveVideoFps">0.0 FPS</dd></div>
-            <div><dt>源 / 目标 / 发送</dt><dd id="liveVideoPipelineFps">—</dd></div>
-            <div><dt>平均帧大小 / 发送 P95</dt><dd id="liveVideoTransport">—</dd></div>
-            <div><dt>拥塞压力</dt><dd id="liveVideoCongestion">浏览器 0 / 动画 0</dd></div>
-            <div><dt>动画实测 / 目标</dt><dd id="liveVideoAnimation">未检测到活动动画</dd></div>
-            <div><dt>画面尺寸</dt><dd id="liveVideoResolution">—</dd></div>
-            <div><dt>本地丢帧</dt><dd id="liveVideoDrops">0</dd></div>
+            <div><dt>State</dt><dd id="liveVideoState">IDLE</dd></div>
+            <div><dt>Display FPS</dt><dd id="liveVideoFps">0.0 FPS</dd></div>
+            <div><dt>Source / Target / Sent</dt><dd id="liveVideoPipelineFps">—</dd></div>
+            <div><dt>Average Frame / Send P95</dt><dd id="liveVideoTransport">—</dd></div>
+            <div><dt>Congestion Pressure</dt><dd id="liveVideoCongestion">Browser 0 / Animation 0</dd></div>
+            <div><dt>Animation Actual / Target</dt><dd id="liveVideoAnimation">No active animation detected</dd></div>
+            <div><dt>Resolution</dt><dd id="liveVideoResolution">—</dd></div>
+            <div><dt>Local Drops</dt><dd id="liveVideoDrops">0</dd></div>
           </dl>
         </div>
         <div class="live-video-stage" id="liveVideoStage" data-state="idle">
-          <canvas id="liveVideoCanvas" width="640" height="480" aria-label="Watcher 相机实时画面"></canvas>
+          <canvas id="liveVideoCanvas" width="640" height="480" aria-label="Watcher Live Camera Preview"></canvas>
           <div class="live-video-empty" id="liveVideoEmpty">
             <span class="live-scan" aria-hidden="true"></span>
-            <strong>等待视频信号</strong>
+            <strong>Waiting for Video</strong>
             <small>WATCHER-RTC / MJPEG-DATA</small>
           </div>
           <div class="live-video-hud" aria-hidden="true">
@@ -245,48 +245,48 @@
       <section class="rtc-audio-panel" id="rtcAudioPanel" data-available="false" aria-labelledby="rtcAudioTitle">
         <div>
           <div class="station-head">
-            <p class="section-index">04 / RTC 音频</p>
-            <span class="capability-state" id="rtcAudioCapability">检测中</span>
+            <p class="section-index">04 / RTC Audio</p>
+            <span class="capability-state" id="rtcAudioCapability">Detecting</span>
           </div>
-          <h2 id="rtcAudioTitle">全双工音频通话</h2>
+          <h2 id="rtcAudioTitle">Full-duplex Audio Call</h2>
           <p>
-            将电脑麦克风实时送到 Watcher 扬声器，同时在浏览器播放 Watcher 麦克风声音。
-            信令由当前 Python Application 管理，音频媒体使用局域网 WebRTC 直连。
+            Stream the computer microphone to the Watcher speaker while playing the Watcher microphone in the browser.
+            The current Python Application handles signaling while audio uses a direct LAN WebRTC connection.
           </p>
           <div class="rtc-audio-controls">
-            <button class="station-action" id="startRtcAudioButton" type="button">开启全双工通话</button>
-            <button class="station-action" id="startRtcAvButton" type="button">同时开启音视频</button>
-            <button class="quiet-action" id="stopRtcAudioButton" type="button" disabled>结束通话</button>
+            <button class="station-action" id="startRtcAudioButton" type="button">Start Full-duplex Call</button>
+            <button class="station-action" id="startRtcAvButton" type="button">Start Audio + Video</button>
+            <button class="quiet-action" id="stopRtcAudioButton" type="button" disabled>End Call</button>
           </div>
-          <output class="station-result" id="rtcAudioResult">等待开启</output>
+          <output class="station-result" id="rtcAudioResult">Awaiting Start</output>
         </div>
         <div class="rtc-audio-console" id="rtcAudioConsole" data-state="idle">
           <div class="rtc-audio-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
           <dl class="rtc-audio-metrics">
-            <div><dt>会话状态</dt><dd id="rtcAudioState">IDLE</dd></div>
-            <div><dt>电脑麦克风</dt><dd id="rtcAudioLocalState">未占用</dd></div>
-            <div><dt>电脑 → Watcher</dt><dd id="rtcAudioUpPackets">0</dd></div>
-            <div><dt>Watcher → 电脑</dt><dd id="rtcAudioDownPackets">0</dd></div>
-            <div><dt>机器人麦克风采集</dt><dd id="rtcAudioDeviceCapture">0</dd></div>
-            <div><dt>机器人成功发送</dt><dd id="rtcAudioDeviceTx">0</dd></div>
-            <div><dt>物理麦克风峰值 / 浏览器播放</dt><dd id="rtcAudioSignal">0 / 0.000</dd></div>
-            <div><dt>设备回声消除</dt><dd id="rtcAudioAec">等待设备遥测</dd></div>
-            <div><dt>实时音频分段时延</dt><dd id="rtcAudioLatency">等待分段时延样本</dd></div>
-            <div><dt>验收动作</dt><dd>请对机器人说话</dd></div>
+            <div><dt>Session State</dt><dd id="rtcAudioState">IDLE</dd></div>
+            <div><dt>Computer Microphone</dt><dd id="rtcAudioLocalState">Available</dd></div>
+            <div><dt>Computer → Watcher</dt><dd id="rtcAudioUpPackets">0</dd></div>
+            <div><dt>Watcher → Computer</dt><dd id="rtcAudioDownPackets">0</dd></div>
+            <div><dt>Robot Microphone Capture</dt><dd id="rtcAudioDeviceCapture">0</dd></div>
+            <div><dt>Robot Packets Sent</dt><dd id="rtcAudioDeviceTx">0</dd></div>
+            <div><dt>Physical Mic Peak / Browser Playback</dt><dd id="rtcAudioSignal">0 / 0.000</dd></div>
+            <div><dt>Device Echo Cancellation</dt><dd id="rtcAudioAec">Waiting for Device Telemetry</dd></div>
+            <div><dt>Real-time Audio Stage Latency</dt><dd id="rtcAudioLatency">Waiting for Stage Latency Samples</dd></div>
+            <div><dt>Validation Action</dt><dd>Speak toward the robot</dd></div>
           </dl>
-          <audio id="rtcRemoteAudio" autoplay controls aria-label="Watcher 实时麦克风声音"></audio>
-          <small>默认使用原声麦克风采集；建议佩戴耳机，避免设备与电脑扬声器形成声学回路。</small>
+          <audio id="rtcRemoteAudio" autoplay controls aria-label="Live Watcher Microphone Audio"></audio>
+          <small>Raw microphone capture is used by default. Wear headphones to avoid an acoustic loop between the device and computer speakers.</small>
         </div>
       </section>
 
-      <section class="stations" aria-label="媒体测试台">
+      <section class="stations" aria-label="Media Test Bench">
         <article class="station station-audio" data-capability="audio.stream">
           <div class="station-head">
-            <p class="section-index">05 / 音频下行</p>
-            <span class="capability-state">检测中</span>
+            <p class="section-index">05 / Audio Downlink</p>
+            <span class="capability-state">Detecting</span>
           </div>
-          <h2>扬声器流式播放</h2>
-          <p>通过应用通道传输内置的 24 kHz 单声道 PCM 示例音频。</p>
+          <h2>Speaker Stream</h2>
+          <p>Stream the built-in 24 kHz mono PCM sample through the Application channel.</p>
           <div class="scope speaker-scope" aria-hidden="true">
             <span style="--h: 22%"></span><span style="--h: 44%"></span><span style="--h: 72%"></span>
             <span style="--h: 38%"></span><span style="--h: 88%"></span><span style="--h: 54%"></span>
@@ -294,71 +294,71 @@
             <span style="--h: 76%"></span><span style="--h: 34%"></span><span style="--h: 58%"></span>
           </div>
           <div class="button-row">
-            <button class="station-action" id="playAudioButton" type="button">播放示例</button>
-            <button class="quiet-action" id="stopAudioButton" type="button">停止</button>
+            <button class="station-action" id="playAudioButton" type="button">Play Sample</button>
+            <button class="quiet-action" id="stopAudioButton" type="button">Stop</button>
           </div>
-          <output class="station-result" id="audioResult">等待测试</output>
+          <output class="station-result" id="audioResult">Awaiting Test</output>
         </article>
 
         <article class="station station-camera" data-capability="camera.capture">
           <div class="station-head">
-            <p class="section-index">06 / 图像采集</p>
-            <span class="capability-state">检测中</span>
+            <p class="section-index">06 / Image Capture</p>
+            <span class="capability-state">Detecting</span>
           </div>
-          <h2>相机拍照</h2>
-          <p>请求拍摄一张 JPEG 照片，并将其作为托管应用产物返回。</p>
+          <h2>Camera Capture</h2>
+          <p>Capture one JPEG photo and return it as a managed Application artifact.</p>
           <div class="camera-stage" id="cameraStage">
-            <img id="cameraPreview" alt="最近拍摄的照片" hidden />
+            <img id="cameraPreview" alt="Latest captured photo" hidden />
             <div class="camera-empty" id="cameraEmpty">
               <span class="reticle" aria-hidden="true"></span>
-              <strong>暂无画面</strong>
-              <small>拍照通道已就绪</small>
+              <strong>No Image</strong>
+              <small>Capture channel ready</small>
             </div>
             <span class="frame-corner top-left"></span><span class="frame-corner top-right"></span>
             <span class="frame-corner bottom-left"></span><span class="frame-corner bottom-right"></span>
           </div>
           <div class="button-row">
-            <button class="station-action" id="capturePhotoButton" type="button">拍摄 JPEG</button>
-            <a class="quiet-action link-action" id="downloadPhoto" href="#" download="camera.jpg" hidden>下载照片</a>
+            <button class="station-action" id="capturePhotoButton" type="button">Capture JPEG</button>
+            <a class="quiet-action link-action" id="downloadPhoto" href="#" download="camera.jpg" hidden>Download Photo</a>
           </div>
-          <output class="station-result" id="cameraResult">等待测试</output>
+          <output class="station-result" id="cameraResult">Awaiting Test</output>
         </article>
 
         <article class="station station-microphone" data-capability="microphone">
           <div class="station-head">
-            <p class="section-index">07 / 音频上行</p>
-            <span class="capability-state">检测中</span>
+            <p class="section-index">07 / Audio Uplink</p>
+            <span class="capability-state">Detecting</span>
           </div>
-          <h2>麦克风录音</h2>
-          <p>接收 Watcher 的 Opus 音频，由 SDK 解码为 PCM，并保存为经过校验的 WAV。</p>
+          <h2>Microphone Recording</h2>
+          <p>Receive Watcher Opus audio, decode it to PCM through the SDK, and save a validated WAV file.</p>
           <div class="duration-control">
-            <label for="recordDuration">录音时长</label>
+            <label for="recordDuration">Recording Duration</label>
             <input id="recordDuration" type="range" min="1" max="15" value="5" step="1" />
-            <strong><span id="durationValue">5</span> 秒</strong>
+            <strong><span id="durationValue">5</span> s</strong>
           </div>
-          <canvas class="waveform" id="waveform" width="640" height="150" aria-label="麦克风录音波形"></canvas>
+          <canvas class="waveform" id="waveform" width="640" height="150" aria-label="Microphone recording waveform"></canvas>
           <div class="button-row">
-            <button class="station-action" id="recordMicrophoneButton" type="button">录制 PCM</button>
-            <a class="quiet-action link-action" id="downloadRecording" href="#" download="microphone.wav" hidden>下载录音</a>
+            <button class="station-action" id="recordMicrophoneButton" type="button">Record PCM</button>
+            <a class="quiet-action link-action" id="downloadRecording" href="#" download="microphone.wav" hidden>Download Recording</a>
           </div>
           <audio id="recordingPlayer" controls hidden></audio>
-          <output class="station-result" id="microphoneResult">等待测试</output>
+          <output class="station-result" id="microphoneResult">Awaiting Test</output>
         </article>
       </section>
 
       <section class="lower-grid">
         <article class="capability-panel">
           <div class="panel-heading">
-            <div><p class="section-index">08 / 能力合同</p><h2>设备能力矩阵</h2></div>
-            <span id="capabilitySummary">同步中</span>
+            <div><p class="section-index">08 / Capability Contract</p><h2>Device Capability Matrix</h2></div>
+            <span id="capabilitySummary">Syncing</span>
           </div>
           <div class="capability-grid" id="capabilityGrid" aria-live="polite"></div>
         </article>
 
         <article class="event-panel">
           <div class="panel-heading">
-            <div><p class="section-index">09 / 运行追踪</p><h2>运行日志</h2></div>
-            <button class="text-button" id="clearVisualLog" type="button">清空显示</button>
+            <div><p class="section-index">09 / Runtime Trace</p><h2>Run Log</h2></div>
+            <button class="text-button" id="clearVisualLog" type="button">Clear Display</button>
           </div>
           <ol class="event-log" id="eventLog" aria-live="polite"></ol>
         </article>
@@ -367,8 +367,8 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <footer>
-      <span>本机页面 · 127.0.0.1</span>
-      <span>应用 → 守护进程 → WATCHER</span>
+      <span>Local Page · 127.0.0.1</span>
+      <span>APPLICATION → DAEMON → WATCHER</span>
       <span id="footerClock">--:--:--</span>
     </footer>
   </body>

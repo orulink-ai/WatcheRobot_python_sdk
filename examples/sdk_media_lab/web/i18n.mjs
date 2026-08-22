@@ -1,8 +1,8 @@
 const SUPPORTED_LOCALES = new Set(["en-US", "zh-CN"]);
 
-// Chinese remains the canonical source copy so existing diagnostics and tests keep
-// their stable wording. The presentation layer translates every visible mutation,
-// including status text produced after an asynchronous device event.
+// Local UI sources are English-first. This compatibility dictionary also translates
+// legacy Chinese diagnostics from the device/service and powers the optional Chinese
+// presentation without putting Chinese literals back into the page or controller.
 const ENGLISH_PHRASES = new Map([
   ["基础全检将移动云台、点亮灯光、播放声音、拍照并录制麦克风。请确保机器人周围无遮挡，是否继续？", "The basic check moves the gimbal, lights the body, plays audio, captures a photo, and records the microphone. Make sure the robot has clear space. Continue?"],
   ["输入设备屏幕上的六位配对码。配对请求由本机 SDK Daemon 管理，配对码不会保存在测试台日志中。", "Enter the six-digit pairing code shown on the device. The local SDK Daemon handles pairing, and the code is never stored in Test Bench logs."],
@@ -208,6 +208,7 @@ const ENGLISH_PHRASES = new Map([
   ["同步中", "Syncing"],
   ["设备在线", "Device Online"],
   ["设备已断开", "Device Disconnected"],
+  ["已断开", "disconnected"],
   ["测试台离线", "Test Bench Offline"],
   ["设备离线", "Device Offline"],
   ["已就绪", "Ready"],
@@ -245,6 +246,80 @@ const ENGLISH_PHRASES = new Map([
   ["设备拒绝了 RTC 请求", "Device rejected the RTC request"],
   ["设备 RTC 会话失败", "Device RTC session failed"],
   ["RTC 会话尚未开启", "RTC session is not active"],
+  ["中文", "Chinese"],
+  ["等待遥测", "Waiting for Telemetry"],
+  ["等待基线", "Waiting for Baseline"],
+  ["拖动水平与俯仰角度，通过", "Adjust pan and tilt through"],
+  ["平滑移动机器人。", "to move the robot smoothly."],
+  ["设置颜色、亮度、灯区或循环效果，通过", "Set color, brightness, zones, or looping effects through the public"],
+  ["公共接口下发。", "API."],
+  ["等待设备上报动画目录", "Waiting for the device animation catalog"],
+  ["扬声器播放", "Speaker Playback"],
+  ["停止播放", "Stop Playback"],
+  ["设备配对", "Device Pairing"],
+  ["全双工音频", "Full-duplex Audio"],
+  ["运动停止", "Motion Stop"],
+  ["灯光设置", "Light Settings"],
+  ["灯光效果", "Light Effect"],
+  ["灯光关闭", "Lights Off"],
+  ["动画播放", "Animation Playback"],
+  ["动画停止", "Animation Stop"],
+  ["音视频通话", "Audio/video Call"],
+  ["请求失败（状态码 ", "Request failed (HTTP "],
+  ["SDK 测试台正忙于", "SDK Test Bench is busy with "],
+  ["录音时长必须为 ", "Recording duration must be "],
+  ["RTC 启动前基线", "RTC Pre-start Baseline"],
+  ["连接基线", "Connection Baseline"],
+  ["空闲周期采样", "Idle Periodic Sample"],
+  ["RTC 运行中", "RTC Running"],
+  ["RTC 停止后 200 ms", "200 ms After RTC Stop"],
+  ["RTC 停止后 1 s", "1 s After RTC Stop"],
+  ["RTC 停止后 3 s", "3 s After RTC Stop"],
+  ["媒体系统", "Media System"],
+  ["扬声器", "Speaker"],
+  ["麦克风", "Microphone"],
+  ["语音任务", "Voice Task"],
+  ["人脸预览", "Face Preview"],
+  ["音频编解码器", "Audio Codec"],
+  ["动画运行时", "Animation Runtime"],
+  ["相对 ", "Against "],
+  ["RTC 启动前", "RTC pre-start"],
+  ["：内部 ", ": internal "],
+  ["连续 4 次释放后下降", "declined after 4 consecutive releases"],
+  ["成功 · 第 ", "Success · RTC release #"],
+  [" 次 RTC 释放", ""],
+  ["动画已由设备首帧确认：", "Animation confirmed by device first frame: "],
+  ["设备未在 5 秒内确认动画首帧：", "Device did not confirm the animation first frame within 5 s: "],
+  ["播放请求已接受，等待设备首帧：", "Playback accepted; waiting for the device first frame: "],
+  ["设备已上报 ", "Device reported "],
+  [" 个可播放动画 · ", " playable animations · "],
+  [" 项能力在线", " capabilities online"],
+  ["正在移动到 PAN ", "Moving to PAN "],
+  ["移动完成：PAN ", "Move complete: PAN "],
+  ["灯光已应用：", "Lights applied: "],
+  ["灯效已启动：", "Light effect started: "],
+  ["正在关闭灯光…", "Turning lights off…"],
+  ["动画预取失败：", "Animation prefetch failed: "],
+  ["设备未上报动画：", "Device did not report animation: "],
+  ["正在提交动画 ", "Submitting animation "],
+  ["随机播放已启动 · 每 ", "Random playback started · switching every "],
+  [" 秒切换 · 本轮随机覆盖 ", " s · this shuffled cycle covers "],
+  ["工作中 · 参考累计处理 ", "Active · reference processed "],
+  [" · 丢弃 ", " · dropped "],
+  [" · 麦克风帧 ", " · microphone frame "],
+  [" · 网络约 ", " · network approx. "],
+  ["设备排队 ", "Device queue "],
+  ["（目标 ", " (target "],
+  ["，最低 ", ", minimum "],
+  ["双向音频已建立，但设备发送错误 ", "Two-way audio connected, but the device had "],
+  ["双向音频已建立，但设备发送错误 ${txErrors} 次、扬声器渲染错误 ${deviceRenderErrors} 次", "Two-way audio connected, but the device had ${txErrors} send errors and the speaker had ${deviceRenderErrors} render errors"],
+  [" 次、扬声器渲染错误 ", " send errors and the speaker had "],
+  [" · 欠载 ", " · underruns "],
+  [" · 迟到 ", " · late "],
+  ["下行音频已到达，请点击播放器启用声音", "Downlink audio arrived. Click the player to enable sound"],
+  ["WebRTC 连接", "WebRTC connection "],
+  ["；本地音视频已结束", "; local audio/video stopped"],
+  ["系统", "System"],
   ["拖动水平与俯仰角度，通过 ", "Adjust pan and tilt to move the robot smoothly through "],
   [" 平滑移动机器人。", "."],
   ["设置颜色、亮度、灯区或循环效果，通过 ", "Set color, brightness, zones, or looping effects through the public "],
@@ -279,15 +354,37 @@ const ENGLISH_PHRASES = new Map([
   ["已开始", " started"],
   ["已完成", " completed"],
   ["已停止", " stopped"],
+  ["（", " ("],
+  ["）", ")"],
+  ["：", ": "],
+  ["；", "; "],
+  ["，", ", "],
+  ["、", ", "],
 ]);
 
 const ORDERED_ENGLISH_PHRASES = [...ENGLISH_PHRASES.entries()]
+  .sort(([left], [right]) => right.length - left.length);
+const ORDERED_CHINESE_PHRASES = [...ENGLISH_PHRASES.entries()]
+  // One-character English fragments (for example, punctuation and the unit
+  // "s") are safe in the legacy Chinese-to-English fallback but would corrupt
+  // arbitrary English words when reversed.
+  .filter(([, english]) => english.trim().length >= 2)
+  .map(([chinese, english]) => [english, chinese])
   .sort(([left], [right]) => right.length - left.length);
 const TRANSLATABLE_ATTRIBUTES = ["aria-label", "placeholder", "title", "alt"];
 
 export function translateText(value, locale = "en-US") {
   const source = String(value ?? "");
-  if (locale === "zh-CN") return source;
+  if (locale === "zh-CN") {
+    // Legacy device/service diagnostics may still arrive in Chinese. Preserve
+    // those messages, while translating the English-first local UI sources.
+    if (/\p{Script=Han}/u.test(source)) return source;
+    let translated = source;
+    for (const [english, chinese] of ORDERED_CHINESE_PHRASES) {
+      translated = translated.replaceAll(english, chinese);
+    }
+    return translated;
+  }
   let translated = source;
   for (const [chinese, english] of ORDERED_ENGLISH_PHRASES) {
     translated = translated.replaceAll(chinese, english);
