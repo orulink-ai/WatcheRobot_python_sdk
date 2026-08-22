@@ -10,14 +10,17 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from contextlib import suppress
 from getpass import getpass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from colorama import just_fix_windows_console  # type: ignore[import-untyped]
+from websockets.asyncio.client import connect
 
 from watcherobot import __version__
 from watcherobot.application.project import (
@@ -36,6 +39,8 @@ from watcherobot.distribution.install import (
     ApplicationInstallError,
     list_installed_applications,
 )
+from watcherobot.errors import CommandError, WatcheRobotError
+from watcherobot.protocol import ProtocolError, build_command, parse_json_message
 from watcherobot.provisioning import (
     BluetoothConnectionTimeoutError,
     BluetoothDevice,
@@ -59,6 +64,7 @@ from watcherobot.runtime.daemon.instance import (
     RuntimeStateStore,
     default_runtime_state_root,
 )
+from watcherobot.vision import VisionStatus
 
 
 APPLICATION_START_TIMEOUT_SECONDS = 90.0
@@ -266,6 +272,46 @@ def build_parser() -> argparse.ArgumentParser:
         "status",
         help="Show whether a robot is connected",
     )
+    vision = robot_commands.add_parser(
+        "vision",
+        help="Inspect and select the robot's edge-vision model",
+    )
+    vision_commands = vision.add_subparsers(
+        dest="vision_command",
+        required=True,
+    )
+    vision_commands.add_parser(
+        "status",
+        help="Show Himax backend, active model, and inference state",
+    )
+    model = vision_commands.add_parser(
+        "model",
+        help="Inspect or select the active edge-vision model",
+    )
+    model_commands = model.add_subparsers(
+        dest="model_command",
+        required=True,
+    )
+    model_commands.add_parser(
+        "list",
+        help="Show the active model exposed by the current firmware",
+    )
+    model_use = model_commands.add_parser(
+        "use",
+        help="Select a Himax model slot by ID",
+    )
+    model_use.add_argument("model_id", type=_parse_vision_model_id)
+
+    face_track = robot_commands.add_parser(
+        "face-track",
+        help="Start or stop device-side face tracking and servo following",
+    )
+    face_track_commands = face_track.add_subparsers(
+        dest="face_track_command",
+        required=True,
+    )
+    face_track_commands.add_parser("on", help="Start face tracking")
+    face_track_commands.add_parser("off", help="Stop and hold the current pose")
     return parser
 
 
@@ -342,6 +388,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "robot":
             if args.robot_command == "status":
                 return robot_status()
+            if args.robot_command == "vision":
+                return asyncio.run(_run_robot_vision_command(args))
+            if args.robot_command == "face-track":
+                return asyncio.run(_run_face_tracking_command(args))
             if args.robot_command == "pair":
                 return pair_robot(args.pairing_code)
             if args.robot_command == "setup":
@@ -367,6 +417,7 @@ def main(argv: list[str] | None = None) -> int:
         ApplicationProjectInitError,
         BluetoothProvisioningError,
         CliError,
+        WatcheRobotError,
     ) as exc:
         print(
             json.dumps({"error": str(exc)}, ensure_ascii=False),
@@ -374,6 +425,167 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
     raise CliError("unsupported command")
+
+
+def _parse_vision_model_id(value: str) -> int:
+    try:
+        model_id = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("model ID must be an integer") from exc
+    if not 1 <= model_id <= 255:
+        raise argparse.ArgumentTypeError("model ID must be between 1 and 255")
+    return model_id
+
+
+async def _run_robot_vision_command(args: argparse.Namespace) -> int:
+    if args.vision_command == "status":
+        status = await _get_robot_vision_status()
+        _print_vision_status(status)
+        return 0
+    if args.vision_command == "model" and args.model_command == "list":
+        status = await _get_robot_vision_status()
+        model = status.model
+        if model is None:
+            print("No active edge-vision model is exposed by the firmware.")
+            return 1
+        print("Active edge-vision model")
+        print()
+        print(f"ID:     {model.model_id}")
+        print(f"Name:   {model.name}")
+        print(f"Task:   {model.task}")
+        if not status.capabilities.model_management:
+            print()
+            print("Note: this firmware exposes the active model, not a complete model inventory.")
+        return 0
+    if args.vision_command == "model" and args.model_command == "use":
+        await _run_robot_business_command(
+            "ctrl.vision.model.select",
+            {"model_id": int(args.model_id)},
+        )
+        status = await _get_robot_vision_status()
+        if status.model is None or status.model.model_id != int(args.model_id):
+            raise CliError("Robot acknowledged the model change but did not report the selected model")
+        print(f"Edge-vision model selected: {status.model.model_id} ({status.model.name})")
+        return 0
+    raise CliError("unsupported robot vision command")
+
+
+async def _run_face_tracking_command(args: argparse.Namespace) -> int:
+    if args.face_track_command == "on":
+        await _run_robot_business_command("ctrl.face_tracking.start", {})
+        print("Face tracking started. The robot will follow faces with its servos.")
+        return 0
+    if args.face_track_command == "off":
+        await _run_robot_business_command(
+            "ctrl.face_tracking.stop",
+            {"policy": "hold"},
+        )
+        print("Face tracking stopped. The robot is holding its current pose.")
+        return 0
+    raise CliError("unsupported face tracking command")
+
+
+async def _get_robot_vision_status() -> VisionStatus:
+    from watcherobot.vision import parse_vision_status_response
+
+    response = await _run_robot_business_command("ctrl.vision.status.get", {})
+    return parse_vision_status_response(response)
+
+
+def _print_vision_status(status: VisionStatus) -> None:
+    print("Edge vision")
+    print()
+    print(f"Backend:    {status.backend}")
+    print(f"Health:     {status.health}")
+    print(f"Connected:  {'yes' if status.connected else 'no'}")
+    print(f"Inference:  {'running' if status.inferencing else 'stopped'}")
+    if status.model is None:
+        print("Model:      unavailable")
+    else:
+        print(f"Model:      {status.model.model_id} ({status.model.name})")
+        print(f"Task:       {status.model.task}")
+
+
+async def _run_robot_business_command(
+    message_type: str,
+    data: dict[str, object],
+) -> dict[str, Any]:
+    state = _live_runtime_state()
+    if state is None:
+        raise CliError("Runtime is not running; run 'watcherobot daemon start' first")
+    device = _device_from_payload(
+        _request_json(state.control_url, "/daemon/devices")
+    )
+    if not bool(device.get("online")):
+        raise CliError("Robot is not connected; run 'watcherobot robot status' first")
+    try:
+        return await _send_desktop_command(
+            state.external_url,
+            message_type,
+            data,
+        )
+    except TimeoutError as exc:
+        raise CliError(
+            "Robot command timed out. If an Application is running, it must handle "
+            "or forward this Desktop command; otherwise stop the Application and retry."
+        ) from exc
+
+
+async def _send_desktop_command(
+    external_url: str,
+    message_type: str,
+    data: dict[str, object],
+    *,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    command_id = uuid.uuid4().hex
+    desktop_url = _desktop_loopback_url(external_url)
+    async with connect(desktop_url, max_size=None) as websocket:
+        await websocket.send(
+            json.dumps(
+                {"type": "sys.client.hello", "code": 0, "data": {"role": "desktop"}},
+                separators=(",", ":"),
+            )
+        )
+        hello = await asyncio.wait_for(websocket.recv(), timeout=timeout)
+        if not isinstance(hello, str):
+            raise CliError("Daemon returned an invalid Desktop handshake")
+        hello_message = parse_json_message(hello)
+        if hello_message.get("type") != "sys.ack":
+            raise CliError("Daemon rejected the Desktop command channel")
+
+        await websocket.send(build_command(message_type, data, command_id))
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError
+            frame = await asyncio.wait_for(websocket.recv(), timeout=remaining)
+            if not isinstance(frame, str):
+                continue
+            try:
+                message = parse_json_message(frame)
+            except ProtocolError:
+                continue
+            response_data = message.get("data", {})
+            if response_data.get("command_id") != command_id:
+                continue
+            if message.get("type") == "sys.nack":
+                raise CommandError(
+                    message_type,
+                    str(response_data.get("reason") or response_data.get("error") or "unknown"),
+                )
+            if message.get("type") == "sys.ack":
+                return message
+
+
+def _desktop_loopback_url(external_url: str) -> str:
+    parsed = urlsplit(external_url)
+    hostname = parsed.hostname
+    if hostname not in {"0.0.0.0", "::", "[::]"}:
+        return external_url
+    port = f":{parsed.port}" if parsed.port is not None else ""
+    return urlunsplit((parsed.scheme, f"127.0.0.1{port}", parsed.path, parsed.query, parsed.fragment))
 
 
 def _run_application_init(args: argparse.Namespace) -> int:

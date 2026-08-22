@@ -10,7 +10,11 @@ from watcherobot.robot import WatcheRobot
 
 class FakeTransport:
     def __init__(self, response: dict[str, object], *, capable: bool = True) -> None:
-        self.capabilities = ("vision.status.v1",) if capable else ()
+        self.capabilities = (
+            ("vision.status.v1", "vision.model.select.v1", "face_tracking.control.v1")
+            if capable
+            else ()
+        )
         self.device_info = {"device_id": "watcher-vision-test"}
         self.response = response
         self.commands: list[tuple[str, dict[str, object], float | None]] = []
@@ -93,6 +97,40 @@ def test_vision_convenience_queries_use_the_status_contract() -> None:
     assert robot.vision.health().health == "ready"
     assert robot.vision.active_model() is not None
     assert robot.vision.capabilities().capture
+
+
+def test_vision_model_selection_uses_a_distinct_capability_and_command() -> None:
+    transport = FakeTransport(vision_response())
+    robot = WatcheRobot._from_transport(transport)
+
+    selected = robot.vision.select_model(4, timeout=1.5)
+
+    assert selected is not None
+    assert transport.commands == [
+        ("ctrl.vision.model.select", {"model_id": 4}, 1.5),
+        ("ctrl.vision.status.get", {}, 1.5),
+    ]
+
+
+def test_face_tracking_control_is_independent_from_preview() -> None:
+    transport = FakeTransport(vision_response())
+    robot = WatcheRobot._from_transport(transport)
+
+    robot.face_tracking.start(timeout=1.0)
+    robot.face_tracking.stop(policy="recenter", timeout=2.0)
+
+    assert transport.commands == [
+        ("ctrl.face_tracking.start", {}, 1.0),
+        ("ctrl.face_tracking.stop", {"policy": "recenter"}, 2.0),
+    ]
+
+
+@pytest.mark.parametrize("model_id", [0, -1, 256, True])
+def test_vision_model_selection_rejects_invalid_ids(model_id: object) -> None:
+    robot = WatcheRobot._from_transport(FakeTransport(vision_response()))
+
+    with pytest.raises(ValueError, match="model_id"):
+        robot.vision.select_model(model_id)  # type: ignore[arg-type]
 
 
 def test_vision_status_supports_backends_without_model_introspection() -> None:

@@ -84,6 +84,29 @@ class VisionDomain:
     def capabilities(self, *, timeout: float | None = None) -> VisionCapabilities:
         return self.status(timeout=timeout).capabilities
 
+    def select_model(
+        self,
+        model_id: int,
+        *,
+        timeout: float | None = None,
+    ) -> VisionModel | None:
+        """Select one model slot and return the refreshed active model."""
+
+        if (
+            isinstance(model_id, bool)
+            or not isinstance(model_id, int)
+            or not 1 <= model_id <= 255
+        ):
+            raise ValueError("model_id must be an integer between 1 and 255")
+        _validate_timeout(timeout)
+        self._robot._require_capability("vision.model.select.v1")
+        self._robot._command(
+            "ctrl.vision.model.select",
+            {"model_id": model_id},
+            timeout=timeout,
+        )
+        return self.active_model(timeout=timeout)
+
 
 @dataclass(frozen=True)
 class FaceBox:
@@ -361,9 +384,29 @@ class FaceTrackingDomain:
             queue_size=queue_size,
         )
 
-    def stop(self, *, policy: FaceTrackingStopPolicy = "hold") -> None:
+    def start(self, *, timeout: float | None = None) -> None:
+        """Start device-side face tracking without opening a host preview."""
+
+        _validate_timeout(timeout)
+        self._robot._require_capability("face_tracking.control.v1")
+        self._robot._command("ctrl.face_tracking.start", {}, timeout=timeout)
+
+    def stop(
+        self,
+        *,
+        policy: FaceTrackingStopPolicy = "hold",
+        timeout: float | None = None,
+    ) -> None:
         if policy not in ("hold", "recenter"):
             raise ValueError("policy must be hold or recenter")
+        _validate_timeout(timeout)
+        if "face_tracking.control.v1" in self._robot.capabilities:
+            self._robot._command(
+                "ctrl.face_tracking.stop",
+                {"policy": policy},
+                timeout=timeout,
+            )
+            return
         self._robot._stop_face_tracking_preview(policy)
 
 
