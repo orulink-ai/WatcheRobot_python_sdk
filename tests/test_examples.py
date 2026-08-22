@@ -30,6 +30,15 @@ def test_every_example_is_a_complete_managed_application() -> None:
         assert "WATCHEROBOT_PAIRING_CODE" not in source
 
 
+def test_vision_debug_lab_declares_its_reviewed_marketplace_platform() -> None:
+    manifest = json.loads(
+        (ROOT / "examples" / "vision_debug_lab" / "app.json").read_text()
+    )
+
+    assert manifest["schema_version"] == 2
+    assert manifest["supported_host_platforms"] == ["windows"]
+
+
 def test_quickstart_demonstrates_domain_apis_through_context_robot() -> None:
     source = (
         ROOT / "examples" / "quickstart" / "app.py"
