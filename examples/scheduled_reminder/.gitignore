@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+alarms.json
+alarms.json.corrupt.bak
+alarms.json.tmp

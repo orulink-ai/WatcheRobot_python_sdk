@@ -22,6 +22,10 @@ Available examples include:
 - `vision_debug_lab`: launch a loopback-only Himax vision workbench for
   backend/model health, same-sequence face overlays, metrics, dataset
   recording, HOLD/RECENTER safety, and diagnostic reports.
+- `scheduled_reminder`: a robot alarm clock app — set alarms (time, repeat
+  rules, text) on its local web page (http://127.0.0.1:8766), and the robot
+  speaks them from its speaker at the scheduled times, playing a happy
+  behavior to draw attention.
 - `sdk_media_lab`: launch a standalone loopback browser dashboard for speaker
   streaming, JPEG capture, microphone recording, artifacts, and diagnostics.
 - `capture_photo`: capture one JPEG from the camera.
