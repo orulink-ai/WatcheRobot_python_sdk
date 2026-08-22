@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "example.vision_debug_lab",
+  "id": "com.orulink.vision_debug_lab",
   "name": "Vision Debug Lab",
   "version": "1.0.0",
   "author": "Orulink AI",
