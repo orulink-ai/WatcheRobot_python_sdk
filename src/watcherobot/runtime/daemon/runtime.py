@@ -229,6 +229,14 @@ class DaemonRuntime:
 
         app_id = self.application.registry.current_app
         self.logs.record(f"Application restart requested (app_id={app_id})")
+        try:
+            await self.application.validate_start()
+        except Exception as exc:
+            self.logs.record(
+                "Application restart rejected before stop "
+                f"(app_id={app_id}, error={exc})"
+            )
+            raise
         await self.application.stop()
         try:
             run = await self.application.start()
