@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>机器人闹钟</title>
+<style>
+  :root {
+    --accent: #4da3ff;
+    --accent-weak: #e8f2ff;
+    --bg: #f4f6fa;
+    --card: #ffffff;
+    --text: #1f2733;
+    --muted: #8494a7;
+    --danger: #e5484d;
+    --border: #e3e8ef;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 28px 16px 64px; }
+  header h1 {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 24px; margin: 0 0 4px;
+  }
+  header p { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 18px;
+    box-shadow: 0 1px 3px rgba(16, 29, 46, .05);
+  }
+  .card h2 { font-size: 16px; margin: 0 0 16px; }
+  .form-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 13px; color: var(--muted); }
+  .field input[type="time"],
+  .field input[type="text"],
+  .field select {
+    padding: 9px 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 14px;
+    background: #fff;
+    color: var(--text);
+  }
+  .field input[type="text"] { min-width: 220px; }
+  .days-picker { display: none; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  .days-picker.show { display: flex; }
+  .days-picker label {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 13px; padding: 6px 10px;
+    border: 1px solid var(--border); border-radius: 999px;
+    cursor: pointer; user-select: none;
+  }
+  .days-picker label:has(input:checked) {
+    background: var(--accent-weak); border-color: var(--accent); color: #1266c9;
+  }
+  button {
+    border: 0; border-radius: 10px; padding: 10px 18px;
+    font-size: 14px; cursor: pointer; transition: opacity .15s;
+  }
+  button.primary { background: var(--accent); color: #fff; }
+  button.primary:hover { opacity: .88; }
+  button.ghost {
+    background: transparent; color: var(--danger);
+    border: 1px solid var(--border); padding: 6px 12px; font-size: 13px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .time-cell { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .empty { color: var(--muted); text-align: center; padding: 22px 0; font-size: 14px; }
+  .switch { position: relative; display: inline-block; width: 38px; height: 22px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; inset: 0; background: #cfd8e3; border-radius: 999px; transition: .18s;
+  }
+  .switch .slider::before {
+    content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%;
+    left: 3px; top: 3px; background: #fff; transition: .18s;
+  }
+  .switch input:checked + .slider { background: var(--accent); }
+  .switch input:checked + .slider::before { transform: translateX(16px); }
+  .off td { opacity: .45; }
+  .toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+    background: #1f2733; color: #fff; font-size: 14px;
+    padding: 10px 18px; border-radius: 999px; opacity: 0; pointer-events: none;
+    transition: opacity .2s; z-index: 10;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>⏰ 机器人闹钟</h1>
+    <p>设置闹钟，到点由 WatcheRobot 机器人语音播报。设置完会立即保存并生效。</p>
+  </header>
+
+  <section class="card">
+    <h2>添加闹钟</h2>
+    <form id="alarm-form" class="form-row">
+      <div class="field">
+        <label for="f-time">时间</label>
+        <input type="time" id="f-time" value="19:00" required>
+      </div>
+      <div class="field">
+        <label for="f-repeat">重复</label>
+        <select id="f-repeat">
+          <option value="daily">每天</option>
+          <option value="weekdays">周一至周五</option>
+          <option value="weekends">周六日</option>
+          <option value="custom">自定义</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-text">播报内容</label>
+        <input type="text" id="f-text" maxlength="200" placeholder="例如：到点啦，记得打卡哦！" value="到点啦，记得打卡哦！">
+      </div>
+      <button type="submit" class="primary">添加</button>
+      <div class="days-picker" id="days-picker">
+        <label><input type="checkbox" value="0">周一</label>
+        <label><input type="checkbox" value="1">周二</label>
+        <label><input type="checkbox" value="2">周三</label>
+        <label><input type="checkbox" value="3">周四</label>
+        <label><input type="checkbox" value="4">周五</label>
+        <label><input type="checkbox" value="5">周六</label>
+        <label><input type="checkbox" value="6">周日</label>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>闹钟列表</h2>
+    <div id="list"></div>
+  </section>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+const WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const PRESETS = {
+  daily: [],
+  weekdays: [0, 1, 2, 3, 4],
+  weekends: [5, 6],
+};
+
+const $ = (sel) => document.querySelector(sel);
+
+function toast(message) {
+  const el = $("#toast");
+  el.textContent = message;
+  el.classList.add("show");
+  clearTimeout(el._timer);
+  el._timer = setTimeout(() => el.classList.remove("show"), 2200);
+}
+
+async function api(method, path, body) {
+  const options = { method, headers: {} };
+  if (body !== undefined) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
+  }
+  const response = await fetch(path, options);
+  if (response.status === 204) return null;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `请求失败（${response.status}）`);
+  return data;
+}
+
+function daysLabel(days) {
+  if (!days.length) return "每天";
+  const set = days.join(",");
+  if (set === PRESETS.weekdays.join(",")) return "周一至周五";
+  if (set === PRESETS.weekends.join(",")) return "周六日";
+  return days.map((d) => WEEKDAYS[d]).join("、");
+}
+
+function renderRow(alarm) {
+  const tr = document.createElement("tr");
+  tr.className = alarm.enabled ? "" : "off";
+
+  const timeTd = document.createElement("td");
+  timeTd.className = "time-cell";
+  timeTd.textContent = alarm.time;
+
+  const repeatTd = document.createElement("td");
+  repeatTd.textContent = daysLabel(alarm.days || []);
+
+  const textTd = document.createElement("td");
+  textTd.textContent = alarm.text;
+
+  const stateTd = document.createElement("td");
+  const label = document.createElement("label");
+  label.className = "switch";
+  const toggle = document.createElement("input");
+  toggle.type = "checkbox";
+  toggle.checked = alarm.enabled;
+  toggle.addEventListener("change", () => toggleAlarm(alarm.id, toggle.checked));
+  const slider = document.createElement("span");
+  slider.className = "slider";
+  label.append(toggle, slider);
+  stateTd.append(label);
+
+  const actionTd = document.createElement("td");
+  const del = document.createElement("button");
+  del.className = "ghost";
+  del.textContent = "删除";
+  del.addEventListener("click", () => deleteAlarm(alarm.id));
+  actionTd.append(del);
+
+  tr.append(timeTd, repeatTd, textTd, stateTd, actionTd);
+  return tr;
+}
+
+async function refreshList() {
+  const data = await api("GET", "/api/alarms");
+  const box = $("#list");
+  box.textContent = "";
+  const list = data.alarms || [];
+  if (!list.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "还没有闹钟，先在上面添加一条吧";
+    box.append(empty);
+    return;
+  }
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  ["时间", "重复", "内容", "状态", "操作"].forEach((text) => {
+    const th = document.createElement("th");
+    th.textContent = text;
+    headRow.append(th);
+  });
+  thead.append(headRow);
+  const tbody = document.createElement("tbody");
+  list.forEach((alarm) => tbody.append(renderRow(alarm)));
+  table.append(thead, tbody);
+  box.append(table);
+}
+
+async function toggleAlarm(id, enabled) {
+  try {
+    await api("PATCH", `/api/alarms/${id}`, { enabled });
+    await refreshList();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function deleteAlarm(id) {
+  try {
+    await api("DELETE", `/api/alarms/${id}`);
+    toast("闹钟已删除");
+    await refreshList();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function selectedDays() {
+  return [...$("#days-picker").querySelectorAll("input:checked")].map((el) => Number(el.value));
+}
+
+$("#f-repeat").addEventListener("change", () => {
+  $("#days-picker").classList.toggle("show", $("#f-repeat").value === "custom");
+});
+
+$("#alarm-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const repeat = $("#f-repeat").value;
+  const days = repeat === "custom" ? selectedDays() : PRESETS[repeat];
+  if (repeat === "custom" && days.length === 0) {
+    toast("自定义重复需要至少勾选一天");
+    return;
+  }
+  try {
+    await api("POST", "/api/alarms", {
+      time: $("#f-time").value,
+      text: $("#f-text").value.trim(),
+      days,
+      enabled: true,
+    });
+    toast("闹钟已添加");
+    await refreshList();
+  } catch (error) {
+    toast(error.message);
+  }
+});
+
+refreshList().catch((error) => toast(error.message));
+</script>
+</body>
+</html>
