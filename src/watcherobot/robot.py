@@ -30,6 +30,7 @@ from .vision import (
     FaceTrackingDomain,
     FaceTrackingPreview,
     FaceTrackingStopPolicy,
+    VisionDomain,
 )
 
 
@@ -382,6 +383,7 @@ class WatcheRobot:
         self.lights = LightsDomain(self)
         self.microphone = MicrophoneDomain(self)
         self.camera = CameraDomain(self)
+        self.vision = VisionDomain(self)
         self.face_tracking = FaceTrackingDomain(self)
         self.inputs = InputDomain()
         transport.set_callbacks(self._on_message, self._on_binary, self._on_disconnect)

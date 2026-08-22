@@ -4,6 +4,10 @@
 managed Python Application. The Runtime remains the only component that owns
 pairing, the device connection, UDP reassembly, and Application routing.
 
+For a model-independent preflight check, query `robot.vision.status()` first.
+It reports the active PTL or SSCMA backend, health, generic inference support,
+and active-model metadata. See [Device vision diagnostics](vision-diagnostics.md).
+
 ## Start and consume a preview
 
 ```python

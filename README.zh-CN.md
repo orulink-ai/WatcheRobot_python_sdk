@@ -14,7 +14,7 @@
 你可以用它创建受 Runtime 管理的 Application，并实现：
 
 - 控制行为、动画、运动、灯光、表情、作品和音频；
-- 拍照、录制麦克风 PCM、读取人脸跟踪预览；
+- 拍照、查询当前视觉后端与模型、录制麦克风 PCM、读取人脸跟踪预览；
 - 接收触摸和滚轮等输入事件；
 - 与 Watcher Desktop 交换可选的业务消息；
 - 通过 CLI 本地运行，或在通过 Marketplace 审核后由 Watcher Desktop 安装和启动。
@@ -49,7 +49,7 @@ SDK 仓库只负责 Application API、Daemon、Runtime 控制面和分发工具�
 | 模块 | 主要入口 | 职责 |
 | --- | --- | --- |
 | Application 开发 | `watcherobot.application.ApplicationContext` | 编写受管 Application 的常规入口，提供 `app.robot`、`app.desktop` 和 `app.logger`。 |
-| 机器人能力 | `app.robot` | 行为、动画、运动、音频、灯光、表情、作品、麦克风、相机、人脸跟踪和输入等高层能力。 |
+| 机器人能力 | `app.robot` | 行为、动画、运动、音频、灯光、表情、作品、麦克风、相机、视觉诊断、人脸跟踪和输入等高层能力。 |
 | 高级接入 | `ApplicationChannels` | 供拥有完整业务协议的 Application 使用，按来源接收原始 Desktop / Device 帧。 |
 | Runtime / Daemon | `watcherobot daemon ...` | 配对、设备与 Desktop 连接、通用帧路由、Application 生命周期、日志和本地控制 REST API。 |
 | 机器人新手引导 | `watcherobot robot ...` | 首次 Wi-Fi 配置、六位码配对和连接状态查询。 |
@@ -163,7 +163,7 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 | 查询 SDK 的全部命令 | [完整 CLI 命令参考](docs/cli-reference.zh-CN.md) |
 | 发布 Marketplace Application | [Application Marketplace 文档](docs/application-marketplace/README.md) 与 [Application 分发命令参考](docs/application-marketplace/application-cli-reference.md) |
 | 通过蓝牙配置 Wi-Fi | [蓝牙配网](docs/bluetooth-provisioning.md) |
-| 使用相机、麦克风或人脸跟踪 | [人脸跟踪预览](docs/face-tracking-preview.md) 与 [麦克风音频](docs/microphone-audio.md) |
+| 使用相机、视觉模型、麦克风或人脸跟踪 | [端侧视觉诊断](docs/vision-diagnostics.zh-CN.md)、[人脸跟踪预览](docs/face-tracking-preview.md)与[麦克风音频](docs/microphone-audio.md) |
 | 选择设备行为状态 | [ESP32-S3 v0.3.4 设备行为状态目录](docs/device-states/README.md) |
 | 使用官方资源或 Creator 作品 | [资源与作品说明](docs/resources.md) |
 | 排查配对、连接或 Runtime 问题 | [故障排查](docs/troubleshooting.md) 与 [Runtime 合同](docs/contracts/runtime-profile-index.md) |

@@ -19,8 +19,8 @@ separate copy.
 Use the SDK to create a managed Application that can:
 
 - control behaviors, animations, motion, lights, expressions, works, and audio;
-- capture camera images, record microphone PCM, and consume face-tracking
-  previews;
+- capture camera images, inspect the active vision backend and model, record
+  microphone PCM, and consume face-tracking previews;
 - receive touch and roller input events;
 - exchange optional business messages with Watcher Desktop;
 - be launched locally with the CLI or installed and launched by Watcher
@@ -64,7 +64,7 @@ business logic.
 | Area | Main entry points | What it is for |
 | --- | --- | --- |
 | Application development | `watcherobot.application.ApplicationContext` | The normal starting point for a managed Application. Provides `app.robot`, `app.desktop`, and `app.logger`. |
-| Robot capabilities | `app.robot` | High-level domains for behavior, animation, motion, audio, lights, expressions, works, microphone, camera, face tracking, and input. |
+| Robot capabilities | `app.robot` | High-level domains for behavior, animation, motion, audio, lights, expressions, works, microphone, camera, vision diagnostics, face tracking, and input. |
 | Advanced integration | `ApplicationChannels` | Source-aware raw Desktop and Device channels for Applications that own a complete business protocol. |
 | Runtime and Daemon | `watcherobot daemon ...` | Pairing, device and Desktop connections, generic frame routing, Application lifecycle, logs, and local control REST API. |
 | Robot onboarding | `watcherobot robot ...` | Guided first-time Wi-Fi setup, six-digit-code pairing, and connection status. |
@@ -197,7 +197,7 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 | Look up every SDK command | [Complete CLI reference](docs/cli-reference.md) |
 | Publish a reviewed Marketplace Application | [Marketplace documentation](docs/application-marketplace/README.md) and [Application distribution reference](docs/application-marketplace/application-cli-reference.md) |
 | Provision Wi-Fi over Bluetooth | [Bluetooth provisioning](docs/bluetooth-provisioning.md) |
-| Use camera, microphone, or face tracking | [Face-tracking preview](docs/face-tracking-preview.md) and [microphone audio](docs/microphone-audio.md) |
+| Use camera, vision models, microphone, or face tracking | [Device vision diagnostics](docs/vision-diagnostics.md), [face-tracking preview](docs/face-tracking-preview.md), and [microphone audio](docs/microphone-audio.md) |
 | Select a device behavior state | [ESP32-S3 v0.3.4 state catalog](docs/device-states/README.md) |
 | Work with official resources or Creator works | [Resource and work guide](docs/resources.md) |
 | Diagnose pairing, connection, or runtime problems | [Troubleshooting](docs/troubleshooting.md) and [Runtime contract](docs/contracts/runtime-profile-index.md) |

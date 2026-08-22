@@ -34,6 +34,10 @@ from .vision import (
     FaceTrackingPreview,
     FaceTrackingStopPolicy,
     FaceTrackingTelemetry,
+    VisionCapabilities,
+    VisionHealth,
+    VisionModel,
+    VisionStatus,
 )
 
 __all__ = [
@@ -58,6 +62,10 @@ __all__ = [
     "FaceTrackingPreview",
     "FaceTrackingStopPolicy",
     "FaceTrackingTelemetry",
+    "VisionCapabilities",
+    "VisionHealth",
+    "VisionModel",
+    "VisionStatus",
     "ImageFrame",
     "InputDomain",
     "InputEvent",
