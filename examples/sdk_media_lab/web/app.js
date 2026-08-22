@@ -249,42 +249,42 @@ const elements = {
 };
 
 const actionLabels = {
-  play_audio: "扬声器播放",
-  stop_audio: "停止播放",
-  capture_photo: "相机拍照",
-  record_microphone: "麦克风录音",
-  device_pairing: "设备配对",
-  live_video: "实时视频",
-  rtc_audio: "全双工音频",
-  motion_move: "运动控制",
-  motion_stop: "运动停止",
-  light_color: "灯光设置",
-  light_effect: "灯光效果",
-  light_off: "灯光关闭",
-  animation_play: "动画播放",
-  animation_stop: "动画停止",
-  rtc_av: "音视频通话",
-  system: "系统",
+  play_audio: "Speaker Playback",
+  stop_audio: "Stop Playback",
+  capture_photo: "Camera Capture",
+  record_microphone: "Microphone Recording",
+  device_pairing: "Device Pairing",
+  live_video: "Live Video",
+  rtc_audio: "Full-duplex Audio",
+  motion_move: "Motion Control",
+  motion_stop: "Motion Stop",
+  light_color: "Light Settings",
+  light_effect: "Light Effect",
+  light_off: "Lights Off",
+  animation_play: "Animation Playback",
+  animation_stop: "Animation Stop",
+  rtc_av: "Audio/video Call",
+  system: "System",
 };
 
 const pairingErrors = {
-  invalid_pairing_code: "配对码必须是 6 位数字",
-  device_slot_occupied: "当前已有设备连接或正在配对",
-  pairing_not_found: "未发现对应设备，请确认配对码和网络后重试",
-  device_connect_timeout: "设备连接超时，请重新获取配对码后重试",
-  reconnect_timeout: "设备重连超时，请重新配对",
-  pairing_unavailable: "无法连接 SDK Daemon 的配对服务",
-  "RTC session is not active": "RTC 会话尚未开启",
+  invalid_pairing_code: "Pairing code must contain 6 digits",
+  device_slot_occupied: "A device is already connected or pairing is in progress",
+  pairing_not_found: "Device not found. Check the pairing code and network, then try again",
+  device_connect_timeout: "Device connection timed out. Get a new pairing code and try again",
+  reconnect_timeout: "Device reconnection timed out. Pair again",
+  pairing_unavailable: "Unable to reach the SDK Daemon pairing service",
+  "RTC session is not active": "RTC session is not active",
 };
 
 const rtcErrors = {
-  video_source_timeout: "相机视频源未输出画面；请确认 HX6538 已安装配套视频桥固件",
-  peer_connection_failed: "浏览器与设备的实时连接建立失败",
-  mjpeg_start_failed: "设备相机推流器启动失败",
-  mjpeg_data_channel_closed: "实时视频数据通道已断开",
-  heartbeat_timeout: "实时视频心跳超时",
-  audio_capture_failed: "设备音频采集启动失败",
-  audio_render_failed: "设备扬声器播放启动失败",
+  video_source_timeout: "The camera source produced no video. Confirm that the HX6538 has the matching video-bridge firmware",
+  peer_connection_failed: "The browser could not establish a real-time connection to the device",
+  mjpeg_start_failed: "The device camera streamer failed to start",
+  mjpeg_data_channel_closed: "The live-video data channel disconnected",
+  heartbeat_timeout: "Live-video heartbeat timed out",
+  audio_capture_failed: "Device audio capture failed to start",
+  audio_render_failed: "Device speaker playback failed to start",
 };
 
 async function api(path, options = {}) {
@@ -311,23 +311,23 @@ function hasCapability(name) {
 }
 
 function actionLabel(action) {
-  return actionLabels[action] || action || "未知操作";
+  return actionLabels[action] || action || "Unknown Action";
 }
 
 function localizeError(message, status, code = null, owner = null) {
-  if (!message) return `请求失败（状态码 ${status}）`;
-  if (typeof message !== "string") return `请求失败（状态码 ${status}）`;
+  if (!message) return `Request failed (HTTP ${status})`;
+  if (typeof message !== "string") return `Request failed (HTTP ${status})`;
   if (code === "rtc_resource_busy") {
-    if (owner === "audio_playback") return "扬声器或动画音效正在播放，请停止后再开启";
-    if (owner === "face_tracking_preview") return "人脸跟踪画面正在使用相机，请先停止后再开启";
-    return "音视频资源正在使用中，请停止相关功能后重试";
+    if (owner === "audio_playback") return "Speaker or animation audio is playing. Stop it before starting this feature";
+    if (owner === "face_tracking_preview") return "Face-tracking preview is using the camera. Stop it before starting this feature";
+    return "Audio/video resources are busy. Stop the related feature and try again";
   }
   const busyMatch = message.match(/^media lab is busy with (.+)$/);
-  if (busyMatch) return `SDK 测试台正忙于${actionLabel(busyMatch[1])}`;
+  if (busyMatch) return `SDK Test Bench is busy with ${actionLabel(busyMatch[1])}`;
   const durationMatch = message.match(/^duration must be (.+)$/);
-  if (durationMatch) return `录音时长必须为 ${durationMatch[1]}`;
+  if (durationMatch) return `Recording duration must be ${durationMatch[1]}`;
   if (message.startsWith("Robot firmware does not advertise required RTC capabilities:")) {
-    return "当前固件未声明所需 RTC 能力，请更新并重新连接设备";
+    return "The current firmware does not advertise the required RTC capabilities. Update it and reconnect";
   }
   if (pairingErrors[message]) return pairingErrors[message];
   if (rtcErrors[message]) return rtcErrors[message];
@@ -335,15 +335,15 @@ function localizeError(message, status, code = null, owner = null) {
 }
 
 function localizeEvent(event) {
-  if (["Media Lab ready", "SDK Test Bench ready"].includes(event.message)) return "SDK 测试台已就绪";
-  if (event.message === "Device pairing started") return "设备配对已开始";
-  if (event.message === "Audio stop requested") return "已请求停止播放";
+  if (["Media Lab ready", "SDK Test Bench ready"].includes(event.message)) return "SDK Test Bench ready";
+  if (event.message === "Device pairing started") return "Device pairing started";
+  if (event.message === "Audio stop requested") return "Playback stop requested";
   const label = actionLabel(event.action);
-  if (event.message.endsWith(" started")) return `${label}已开始`;
-  if (event.message.endsWith(" completed")) return `${label}已完成`;
-  if (event.message.endsWith(" stopped")) return `${label}已停止`;
+  if (event.message.endsWith(" started")) return `${label} started`;
+  if (event.message.endsWith(" completed")) return `${label} completed`;
+  if (event.message.endsWith(" stopped")) return `${label} stopped`;
   const failedAt = event.message.indexOf(" failed:");
-  if (failedAt >= 0) return `${label}失败：${event.message.slice(failedAt + 8).trim()}`;
+  if (failedAt >= 0) return `${label} failed: ${event.message.slice(failedAt + 8).trim()}`;
   return event.message;
 }
 
@@ -377,27 +377,27 @@ function updateResourceMonitor(status) {
     status.resources?.history,
   );
   const stateLabels = {
-    waiting: "等待设备快照",
-    observing: "持续观察中",
-    recovered: "RTC 资源已回到基线",
-    context_changed: "媒体已释放，动画缓存或上下文已变化",
-    degraded: "RTC 停止后仍有资源占用",
-    failed: "资源释放调用失败",
+    waiting: "Waiting for Device Snapshot",
+    observing: "Monitoring",
+    recovered: "RTC resources returned to baseline",
+    context_changed: "Media released; animation cache or context changed",
+    degraded: "Resources remain allocated after RTC stopped",
+    failed: "Resource release call failed",
   };
   const stageLabels = {
-    baseline: "连接基线",
-    rtc_pre_start: "RTC 启动前基线",
-    periodic: "空闲周期采样",
-    rtc_running: "RTC 运行中",
-    rtc_release_200ms: "RTC 停止后 200 ms",
-    rtc_release_1000ms: "RTC 停止后 1 s",
-    rtc_release_3000ms: "RTC 停止后 3 s",
+    baseline: "Connection Baseline",
+    rtc_pre_start: "RTC Pre-start Baseline",
+    periodic: "Idle Periodic Sample",
+    rtc_running: "RTC Running",
+    rtc_release_200ms: "200 ms After RTC Stop",
+    rtc_release_1000ms: "1 s After RTC Stop",
+    rtc_release_3000ms: "3 s After RTC Stop",
   };
   elements.resourcePanel.dataset.state = health.state;
   elements.resourceState.textContent = stateLabels[health.state] || health.state;
   elements.resourceStage.textContent = current
-    ? `${status.connected ? "实时" : "设备离线，最后样本"} · ${stageLabels[current.stage] || current.stage || "未知阶段"} · #${current.sequence || 0}`
-    : "尚未收到 evt.sdk.resource_snapshot";
+    ? `${status.connected ? "Live" : "Device offline, last sample"} · ${stageLabels[current.stage] || current.stage || "Unknown Stage"} · #${current.sequence || 0}`
+    : "No evt.sdk.resource_snapshot received";
 
   const memory = current?.memory || {};
   elements.resourceInternal.textContent = formatBytes(memory.internal?.free_bytes);
@@ -406,38 +406,38 @@ function updateResourceMonitor(status) {
   elements.resourceDmaLargest.textContent = formatBytes(memory.dma?.largest_free_block_bytes);
   elements.resourcePsram.textContent = memory.psram
     ? formatBytes(memory.psram.free_bytes)
-    : "未启用";
+    : "Disabled";
   elements.resourcePsramLargest.textContent = memory.psram
     ? formatBytes(memory.psram.largest_free_block_bytes)
-    : "未启用";
+    : "Disabled";
   elements.resourceMinimum.textContent = formatBytes(memory.internal?.minimum_free_bytes);
 
   const resourceLabels = {
     rtc: "RTC",
-    media_system: "媒体系统",
-    tts_playback: "扬声器",
-    microphone_runtime: "麦克风",
-    voice_runtime: "语音任务",
-    face_tracking_preview: "人脸预览",
-    audio_codec: "音频编解码器",
-    animation: "屏幕动画",
-    animation_runtime: "动画运行时",
+    media_system: "Media System",
+    tts_playback: "Speaker",
+    microphone_runtime: "Microphone",
+    voice_runtime: "Voice Task",
+    face_tracking_preview: "Face Preview",
+    audio_codec: "Audio Codec",
+    animation: "Screen Animation",
+    animation_runtime: "Animation Runtime",
   };
   const owners = Object.entries(current?.resources || {})
     .filter(([name, active]) => name !== "voice_state" && active === true)
     .map(([name]) => resourceLabels[name] || name);
-  elements.resourceOwners.textContent = owners.length > 0 ? owners.join(" / ") : "无活动媒体资源";
+  elements.resourceOwners.textContent = owners.length > 0 ? owners.join(" / ") : "No Active Media Resources";
   elements.resourceDelta.textContent = lifecycleBaseline
-    ? `相对 ${hasRtcBaseline ? "RTC 启动前" : "连接基线"}：内部 ${formatSignedBytes(health.deltas.internalFreeBytes)} / ${formatSignedBytes(health.deltas.internalLargestBytes)} · DMA ${formatSignedBytes(health.deltas.dmaLargestBytes)} · PSRAM ${formatSignedBytes(health.deltas.psramLargestBytes)}${health.trend?.monotonicDecline ? " · 连续 4 次释放后下降" : ""}`
-    : "等待资源基线";
+    ? `Against ${hasRtcBaseline ? "RTC pre-start" : "Connection Baseline"}: internal ${formatSignedBytes(health.deltas.internalFreeBytes)} / ${formatSignedBytes(health.deltas.internalLargestBytes)} · DMA ${formatSignedBytes(health.deltas.dmaLargestBytes)} · PSRAM ${formatSignedBytes(health.deltas.psramLargestBytes)}${health.trend?.monotonicDecline ? " · declined after 4 consecutive releases" : ""}`
+    : "Waiting for Resource Baseline";
 
   const release = current?.release;
   if (!release || !release.sequence) {
-    elements.resourceRelease.textContent = "尚无 RTC 停止记录";
+    elements.resourceRelease.textContent = "No RTC Stop Record";
   } else if (release.complete === false) {
-    elements.resourceRelease.textContent = `失败：${(release.failures || []).join(" / ") || "未知释放步骤"}`;
+    elements.resourceRelease.textContent = `Failed: ${(release.failures || []).join(" / ") || "Unknown Release Step"}`;
   } else {
-    elements.resourceRelease.textContent = `成功 · 第 ${release.sequence} 次 RTC 释放`;
+    elements.resourceRelease.textContent = `Success · RTC release #${release.sequence}`;
   }
 }
 
@@ -454,17 +454,17 @@ function updateAnimationConfirmation(status) {
   if (outcome.state === state.animation.lastState && outcome.state === "pending") return;
   state.animation.lastState = outcome.state;
   if (outcome.state === "confirmed") {
-    setResult(elements.animationResult, `动画已由设备首帧确认：${outcome.animationId}`, "ok");
+    setResult(elements.animationResult, `Animation confirmed by device first frame: ${outcome.animationId}`, "ok");
     state.animation.requestedId = null;
     state.animation.requestAccepted = false;
   } else if (outcome.state === "failed") {
-    const message = `设备未在 5 秒内确认动画首帧：${outcome.animationId}`;
+    const message = `Device did not confirm the animation first frame within 5 s: ${outcome.animationId}`;
     setResult(elements.animationResult, message, "error");
     notify(message, "error");
     state.animation.requestedId = null;
     state.animation.requestAccepted = false;
   } else if (outcome.state === "pending") {
-    setResult(elements.animationResult, `播放请求已接受，等待设备首帧：${outcome.animationId}`, "running");
+    setResult(elements.animationResult, `Playback accepted; waiting for the device first frame: ${outcome.animationId}`, "running");
   }
 }
 
@@ -485,10 +485,10 @@ function renderAnimationCatalog(value, connected) {
     }
   }
   elements.animationCatalogSummary.textContent = !connected
-    ? `设备离线 · 保留上次 ${catalog.length} 个动画`
+    ? `Device offline · retained ${catalog.length} animations`
     : catalog.length > 0
-      ? `设备已上报 ${catalog.length} 个可播放动画 · 随机顺序整轮覆盖且不重复`
-      : "当前固件尚未上报可播放动画目录";
+      ? `Device reported ${catalog.length} playable animations · full shuffled cycle without repeats`
+      : "The current firmware has not reported an animation catalog";
 }
 
 function renderStatus(status) {
@@ -496,9 +496,9 @@ function renderStatus(status) {
   renderAnimationCatalog(status.animations, status.connected);
   if (!status.connected && state.animation.random.active) stopRandomAnimation({ quiet: true });
   elements.connectionBadge.dataset.state = status.connected ? "online" : "offline";
-  elements.connectionText.textContent = status.connected ? "设备在线" : "设备已断开";
-  elements.deviceId.textContent = status.device?.device_id || "未识别";
-  elements.firmwareVersion.textContent = status.device?.firmware_version || "未知";
+  elements.connectionText.textContent = status.connected ? "Device Online" : "Device Disconnected";
+  elements.deviceId.textContent = status.device?.device_id || "Unidentified";
+  elements.firmwareVersion.textContent = status.device?.firmware_version || "Unknown";
   elements.capabilityCount.textContent = String(status.capabilities.length).padStart(2, "0");
   elements.lastSync.textContent = new Date().toLocaleTimeString([], { hour12: false });
   updateResourceMonitor(status);
@@ -507,10 +507,10 @@ function renderStatus(status) {
   const localActions = [...state.localResources];
   const activeLabels = Object.values(owners).map(actionLabel);
   elements.activeOperation.textContent = !status.connected
-    ? "设备已断开，请重新连接后再测试"
+    ? "Device disconnected. Reconnect before testing"
     : activeLabels.length > 0
-      ? `正在执行 / ${activeLabels.join(" + ")}`
-      : localActions.length > 0 ? `操作已下发 / ${localActions.join(" + ")}` : "系统空闲";
+      ? `Running / ${activeLabels.join(" + ")}`
+      : localActions.length > 0 ? `Command sent / ${localActions.join(" + ")}` : "System Idle";
 
   const pairingState = status.connection?.state || "unavailable";
   const pairingInProgress = ["discovering", "connecting", "reconnecting"].includes(pairingState);
@@ -519,11 +519,11 @@ function renderStatus(status) {
   elements.pairingCode.disabled = state.pairingBusy || pairingInProgress;
   elements.deviceIp.disabled = state.pairingBusy || pairingInProgress;
   if (status.connected) {
-    setResult(elements.pairingResult, "设备配对成功", "ok");
+    setResult(elements.pairingResult, "Device paired", "ok");
   } else if (state.pairingBusy || pairingState === "discovering") {
-    setResult(elements.pairingResult, "正在发现设备…", "running");
+    setResult(elements.pairingResult, "Discovering device…", "running");
   } else if (pairingState === "connecting" || pairingState === "reconnecting") {
-    setResult(elements.pairingResult, "已发现设备，正在建立连接…", "running");
+    setResult(elements.pairingResult, "Device found; connecting…", "running");
   } else if (status.connection?.last_error) {
     setResult(
       elements.pairingResult,
@@ -536,8 +536,8 @@ function renderStatus(status) {
     const available = status.capabilities.includes(station.dataset.capability);
     station.dataset.available = String(status.connected && available);
     station.querySelector(".capability-state").textContent = !status.connected
-      ? "设备离线"
-      : available ? "已就绪" : "设备未声明";
+      ? "Device Offline"
+      : available ? "Ready" : "Not Advertised";
   });
 
   const activeRtcMode = resolveRtcMode(
@@ -561,14 +561,14 @@ function renderStatus(status) {
   const rtcAudioActive = rtcModeHasAudio(activeRtcMode);
   elements.liveVideoPanel.dataset.available = String(liveAvailable);
   elements.liveVideoCapability.textContent = !status.connected
-    ? "设备离线"
-    : liveAvailable ? "已就绪" : "需要新固件";
+    ? "Device Offline"
+    : liveAvailable ? "Ready" : "New Firmware Required";
   elements.startLiveVideoButton.disabled = !availability.startRtcVideo || !liveAvailable || state.rtc.teardownInProgress;
   elements.stopLiveVideoButton.disabled = !availability.stopRtc || !liveActive;
   elements.rtcAudioPanel.dataset.available = String(rtcAudioAvailable);
   elements.rtcAudioCapability.textContent = !status.connected
-    ? "设备离线"
-    : rtcAudioAvailable ? "已就绪" : "需要新固件";
+    ? "Device Offline"
+    : rtcAudioAvailable ? "Ready" : "New Firmware Required";
   elements.startRtcAudioButton.disabled = !availability.startRtcAudio || !rtcAudioAvailable || state.rtc.teardownInProgress;
   elements.startRtcAvButton.disabled = !availability.startRtcAv || !liveAvailable || !rtcAudioAvailable
     || state.rtc.teardownInProgress;
@@ -604,8 +604,8 @@ function renderStatus(status) {
     return chip;
   }));
   elements.capabilitySummary.textContent = status.connected
-    ? `${status.capabilities.length} 项能力在线`
-    : `设备离线 · ${status.capabilities.length} 项上次协商`;
+    ? `${status.capabilities.length} capabilities online`
+    : `Device Offline · ${status.capabilities.length} previously negotiated capabilities`;
   renderEvents(status.events || []);
   restoreArtifacts(status.artifacts || {});
 }
@@ -636,7 +636,7 @@ async function refreshStatus({ quiet = true } = {}) {
     renderStatus(await api("/api/status"));
   } catch (error) {
     elements.connectionBadge.dataset.state = "offline";
-    elements.connectionText.textContent = "测试台离线";
+    elements.connectionText.textContent = "Test Bench Offline";
     if (!quiet) notify(error.message, "error");
   }
 }
@@ -655,7 +655,7 @@ async function runAction({
   const actionResources = resources || [resource];
   if (actionResources.some((name) => state.localResources.has(name)) && !interrupt) return null;
   if (!state.status?.connected) {
-    const error = new Error("设备已断开，请重新连接后再测试");
+    const error = new Error("Device disconnected. Reconnect before testing");
     notify(error.message, "error");
     throw error;
   }
@@ -688,14 +688,14 @@ async function pairDevice() {
   const pairingCode = elements.pairingCode.value.trim();
   const deviceIp = elements.deviceIp.value.trim();
   if (!/^[0-9]{6}$/.test(pairingCode)) {
-    const message = "配对码必须是 6 位数字";
+    const message = "Pairing code must contain 6 digits";
     setResult(elements.pairingResult, message, "error");
     notify(message, "error");
     elements.pairingCode.focus();
     return;
   }
   state.pairingBusy = true;
-  setResult(elements.pairingResult, "正在提交配对请求…", "running");
+  setResult(elements.pairingResult, "Submitting pairing request…", "running");
   renderStatus(state.status);
   try {
     await api("/api/device/pair", {
@@ -703,8 +703,8 @@ async function pairDevice() {
       body: JSON.stringify({ pairing_code: pairingCode, device_ip: deviceIp || null }),
     });
     elements.pairingCode.value = "";
-    setResult(elements.pairingResult, "正在发现设备…", "running");
-    notify("配对请求已提交，请保持机器人开机", "ok");
+    setResult(elements.pairingResult, "Discovering device…", "running");
+    notify("Pairing request submitted. Keep the robot powered on", "ok");
   } catch (error) {
     setResult(elements.pairingResult, error.message, "error");
     notify(error.message, "error");
@@ -773,7 +773,7 @@ async function drawWaveform(url) {
   } catch (error) {
     context.fillStyle = "#929b94";
     context.font = "14px Cascadia Mono, monospace";
-    context.fillText("无法解码录音波形", 20, height / 2);
+    context.fillText(i18n.translate("Unable to decode recording waveform"), 20, height / 2);
   }
 }
 
@@ -791,7 +791,7 @@ function drawEmptyWaveform() {
   context.stroke();
   context.fillStyle = "#929b94";
   context.font = "13px Cascadia Mono, monospace";
-  context.fillText("等待 PCM 音频信号", 18, height / 2 - 14);
+  context.fillText(i18n.translate("Waiting for PCM Audio"), 18, height / 2 - 14);
 }
 
 function resetLiveVideoMetrics() {
@@ -834,8 +834,8 @@ async function applyMotion() {
     path: "/api/controls/motion/move",
     body: { pan_deg: pan, tilt_deg: tilt, duration_ms: 600 },
     result: elements.motionResult,
-    pending: `正在移动到 PAN ${pan}° / TILT ${tilt}°…`,
-    complete: () => `移动完成：PAN ${pan}° / TILT ${tilt}°`,
+    pending: `Moving to PAN ${pan}° / TILT ${tilt}°…`,
+    complete: () => `Move complete: PAN ${pan}° / TILT ${tilt}°`,
     station: elements.applyMotionButton.closest(".control-card"),
     resource: "motion",
   });
@@ -845,8 +845,8 @@ async function stopMotion() {
   return runAction({
     path: "/api/controls/motion/stop",
     result: elements.motionResult,
-    pending: "正在停止运动…",
-    complete: () => "运动已停止",
+    pending: "Stopping motion…",
+    complete: () => "Motion stopped",
     resource: "motion",
     interrupt: true,
   });
@@ -870,8 +870,8 @@ async function applyLight() {
     path: "/api/controls/lights/color",
     body,
     result: elements.lightResult,
-    pending: "正在应用灯光…",
-    complete: () => `灯光已应用：${body.color.toUpperCase()} / ${Math.round(body.brightness * 100)}%`,
+    pending: "Applying lights…",
+    complete: () => `Lights applied: ${body.color.toUpperCase()} / ${Math.round(body.brightness * 100)}%`,
     station: elements.applyLightButton.closest(".control-card"),
     resource: "light",
   });
@@ -889,8 +889,8 @@ async function playLightEffect() {
     path: "/api/controls/lights/effect",
     body,
     result: elements.lightResult,
-    pending: "正在启动灯效…",
-    complete: () => `灯效已启动：${elements.lightEffect.selectedOptions[0].textContent}`,
+    pending: "Starting light effect…",
+    complete: () => `Light effect started: ${elements.lightEffect.selectedOptions[0].textContent}`,
     station: elements.applyLightButton.closest(".control-card"),
     resource: "light",
   });
@@ -900,8 +900,8 @@ async function lightsOff() {
   return runAction({
     path: "/api/controls/lights/off",
     result: elements.lightResult,
-    pending: "正在关闭灯光…",
-    complete: () => "灯光已关闭",
+    pending: "Turning lights off…",
+    complete: () => "Lights off",
     resource: "light",
     interrupt: true,
   });
@@ -924,7 +924,7 @@ async function prefetchAnimation(animationId, { quiet = true } = {}) {
     state.animation.prefetchedId = animationId;
     return payload;
   } catch (error) {
-    if (!quiet) notify(`动画预取失败：${error.message}`, "error");
+    if (!quiet) notify(`Animation prefetch failed: ${error.message}`, "error");
     return null;
   } finally {
     if (state.animation.prefetchPromise === request) state.animation.prefetchPromise = null;
@@ -948,21 +948,21 @@ function stopRandomAnimation({ quiet = false } = {}) {
   elements.stopRandomAnimationButton.disabled = true;
   elements.animationRandomInterval.disabled = !state.status?.connected;
   if (!quiet) {
-    setResult(elements.animationResult, "随机播放已停止，当前动画将继续显示", "ok");
-    notify("随机动画播放已停止", "ok");
+    setResult(elements.animationResult, "Random playback stopped; the current animation remains visible", "ok");
+    notify("Random animation playback stopped", "ok");
   }
 }
 
 async function playAnimation({ fromRandom = false } = {}) {
   const animationId = elements.animationId.value.trim();
   if (!/^[a-z][a-z0-9_]{0,62}$/.test(animationId)) {
-    const message = "动画 ID 只能包含小写字母、数字和下划线";
+    const message = "Animation ID may contain only lowercase letters, numbers, and underscores";
     setResult(elements.animationResult, message, "error");
     notify(message, "error");
     return null;
   }
   if (state.animation.catalog.length > 0 && !state.animation.catalog.includes(animationId)) {
-    const message = `设备未上报动画：${animationId}`;
+    const message = `Device did not report animation: ${animationId}`;
     setResult(elements.animationResult, message, "error");
     notify(message, "error");
     return null;
@@ -978,11 +978,11 @@ async function playAnimation({ fromRandom = false } = {}) {
       path: "/api/controls/animation/play",
       body: { animation_id: animationId },
       result: elements.animationResult,
-      pending: `正在提交动画 ${animationId}…`,
+      pending: `Submitting animation ${animationId}…`,
       complete: () => {
         state.animation.requestAccepted = true;
         state.animation.requestedAtMs = Date.now();
-        return `播放请求已接受，等待设备首帧：${animationId}`;
+        return `Playback accepted; waiting for the device first frame: ${animationId}`;
       },
       station: elements.playAnimationButton.closest(".control-card"),
       resource: "animation",
@@ -1011,7 +1011,7 @@ async function runRandomAnimation(generation) {
   const animationId = randomState.remainingIds.shift() || null;
   if (!animationId) {
     stopRandomAnimation({ quiet: true });
-    setResult(elements.animationResult, "设备没有可用于随机播放的动画", "error");
+    setResult(elements.animationResult, "The device has no animations available for randomized playback", "error");
     return;
   }
   elements.animationId.value = animationId;
@@ -1041,7 +1041,7 @@ async function runRandomAnimation(generation) {
 
 function startRandomAnimation() {
   if (state.animation.catalog.length === 0) {
-    const message = "设备尚未上报可播放动画目录";
+    const message = "The device has not reported an animation catalog";
     setResult(elements.animationResult, message, "error");
     notify(message, "error");
     return;
@@ -1058,7 +1058,7 @@ function startRandomAnimation() {
   elements.animationRandomInterval.disabled = true;
   setResult(
     elements.animationResult,
-    `随机播放已启动 · 每 ${randomState.intervalMs / 1000} 秒切换 · 本轮随机覆盖 ${randomState.remainingIds.length} 个动画`,
+    `Random playback started · switching every ${randomState.intervalMs / 1000} s · this shuffled cycle covers ${randomState.remainingIds.length} animations`,
     "running",
   );
   runRandomAnimation(randomState.generation).catch(() => {});
@@ -1081,8 +1081,8 @@ async function stopAnimation() {
   return runAction({
     path: "/api/controls/animation/stop",
     result: elements.animationResult,
-    pending: "正在停止动画…",
-    complete: () => "动画已停止",
+    pending: "Stopping animation…",
+    complete: () => "Animation stopped",
     resource: "animation",
     interrupt: true,
   });
@@ -1129,28 +1129,28 @@ function updateRtcAudioHealth() {
   const deviceI2sBytes = Number(deviceStats.audio_i2s_bytes || 0);
   const devicePlaybackPeak = Number(deviceStats.audio_pcm_peak || 0);
   elements.rtcAudioDeviceCapture.textContent = String(captureFrames);
-  elements.rtcAudioDeviceTx.textContent = txErrors > 0 ? `${txPackets} / 错误 ${txErrors}` : String(txPackets);
+  elements.rtcAudioDeviceTx.textContent = txErrors > 0 ? `${txPackets} / errors ${txErrors}` : String(txPackets);
   elements.rtcAudioSignal.textContent = `${capturePeak} / ${state.rtc.browserAudioLevel.toFixed(3)}`;
   elements.rtcAudioAec.textContent = !hasRawMicrophonePeak
-    ? "旧固件：无物理麦克风遥测"
+    ? "Legacy firmware: no physical microphone telemetry"
     : !aecActive
-      ? "未启用（原始麦克风兜底）"
+      ? "Disabled (raw microphone fallback)"
       : aecReferenceDrops > 0
-        ? `工作中 · 参考累计处理 ${formatBytes(aecReferenceBytes)} · 丢弃 ${aecReferenceDrops}`
+        ? `Active · reference processed ${formatBytes(aecReferenceBytes)} · dropped ${aecReferenceDrops}`
         : aecReferenceBytes > 0
-          ? `工作中 · 参考累计处理 ${formatBytes(aecReferenceBytes)}`
-          : "工作中 · 等待电脑下行参考音频";
+          ? `Active · reference processed ${formatBytes(aecReferenceBytes)}`
+          : "Active · waiting for computer downlink reference audio";
   const browserLatency = state.rtc.audioLatency;
   const estimatedNetworkOneWayMs = state.rtc.rttUs > 0 ? state.rtc.rttUs / 2000 : 0;
   const processingLatency = microphoneReadUs > 0 || aecProcessUs > 0 || opusEncodeUs > 0
-    ? ` · 麦克风帧 ${(microphoneReadUs / 1000).toFixed(1)} ms · AEC ${(aecProcessUs / 1000).toFixed(1)} ms · OPUS ${(opusEncodeUs / 1000).toFixed(1)} ms`
+    ? ` · microphone frame ${(microphoneReadUs / 1000).toFixed(1)} ms · AEC ${(aecProcessUs / 1000).toFixed(1)} ms · OPUS ${(opusEncodeUs / 1000).toFixed(1)} ms`
     : "";
   const networkLatency = estimatedNetworkOneWayMs > 0
-    ? ` · 网络约 ${estimatedNetworkOneWayMs.toFixed(1)} ms`
+    ? ` · network approx. ${estimatedNetworkOneWayMs.toFixed(1)} ms`
     : "";
   elements.rtcAudioLatency.textContent = browserLatency.sampleValid || devicePipelineAgeUs > 0
-    ? `设备排队 ${(devicePipelineAgeUs / 1000).toFixed(1)} ms${networkLatency} · 浏览器 ${browserLatency.actualMs} ms（目标 ${browserLatency.targetMs} ms，最低 ${browserLatency.minimumMs} ms）${processingLatency}`
-    : "等待分段时延样本";
+    ? `Device queue ${(devicePipelineAgeUs / 1000).toFixed(1)} ms${networkLatency} · Browser ${browserLatency.actualMs} ms (target ${browserLatency.targetMs} ms, minimum ${browserLatency.minimumMs} ms)${processingLatency}`
+    : "Waiting for Stage Latency Samples";
   const health = evaluateRtcAudioHealth({
     peerConnected: state.rtc.peer.connectionState === "connected",
     browserTxPackets: state.rtc.browserAudioSent,
@@ -1174,12 +1174,12 @@ function updateRtcAudioHealth() {
   state.rtc.audioHealthState = health.state;
   if (health.state === "healthy") {
     setRtcAudioState("connected");
-    setResult(elements.rtcAudioResult, "全双工链路已验证：浏览器正在播放 Watcher 的非静音音频轨道", "ok");
+    setResult(elements.rtcAudioResult, "Full-duplex path verified: the browser is playing a non-silent Watcher audio track", "ok");
   } else if (health.state === "degraded") {
     setRtcAudioState("connected");
     setResult(
       elements.rtcAudioResult,
-      `双向音频已建立，但设备发送错误 ${txErrors} 次、扬声器渲染错误 ${deviceRenderErrors} 次`,
+      `Two-way audio connected, but the device had ${txErrors} send errors and the speaker had ${deviceRenderErrors} render errors`,
       "error",
     );
   } else if (health.state === "failed") {
@@ -1191,19 +1191,19 @@ function updateRtcAudioHealth() {
       "device_rx", "device_decode", "device_playback", "device_playback_signal",
     ].includes(item));
     const message = missingDeviceCapture
-      ? "机器人麦克风没有产生音频帧，请检查麦克风采集与音频资源占用"
+      ? "The robot microphone produced no audio frames. Inspect microphone capture and audio resource ownership"
       : missingDeviceSignal
-        ? "机器人已发送音频包，但采集内容接近静音；请对着机器人麦克风说话并检查采集链路"
+        ? "The robot sent audio packets, but capture is nearly silent. Speak toward the robot microphone and inspect the capture path"
         : missingBrowserSignal
-          ? "浏览器已收到机器人音频包，但解码信号接近静音；请检查编码与浏览器音频轨道"
+          ? "The browser received robot audio packets, but the decoded signal is nearly silent. Inspect encoding and the browser audio track"
           : missingBrowserPlayback
-            ? "机器人音频已到达，但浏览器播放器处于暂停或静音状态；请点击播放器开启声音"
+            ? "Robot audio arrived, but the browser player is paused or muted. Enable sound in the player"
             : missingDevicePlayback
-              ? "电脑音频已发送，但机器人没有完成有声解码与扬声器输出；请检查设备播放统计"
-      : "机器人麦克风音频未到达电脑，请查看机器人发送计数与错误码";
+              ? "Computer audio was sent, but the robot did not complete audible decode and speaker output. Inspect device playback metrics"
+      : "Robot microphone audio did not reach the computer. Inspect robot transmit counters and error codes";
     setRtcAudioState("failed", message);
   } else if (health.state === "verifying") {
-    setRtcAudioState("connecting", "媒体连接已建立，正在验证机器人麦克风上行…");
+    setRtcAudioState("connecting", "Media connected; validating robot microphone uplink…");
   }
 }
 
@@ -1226,10 +1226,10 @@ function updateLiveVideoHealth() {
   elements.liveVideoTransport.textContent = jpegBytes || egressP95Us
     ? `${formatBytes(jpegBytes)} / ${(egressP95Us / 1000).toFixed(1)} MS`
     : "—";
-  elements.liveVideoCongestion.textContent = `浏览器 ${browserCongestion} / 动画 ${animationPressure}`;
+  elements.liveVideoCongestion.textContent = `Browser ${browserCongestion} / Animation ${animationPressure}`;
   elements.liveVideoAnimation.textContent = animationFps || animationTargetFps || animationUnderruns || animationLateMaxUs
-    ? `${animationFps.toFixed(1)} / ${animationTargetFps.toFixed(1)} FPS · 欠载 ${animationUnderruns} · 迟到 ${(animationLateMaxUs / 1000).toFixed(1)} MS`
-    : "未检测到活动动画";
+    ? `${animationFps.toFixed(1)} / ${animationTargetFps.toFixed(1)} FPS · underruns ${animationUnderruns} · late ${(animationLateMaxUs / 1000).toFixed(1)} MS`
+    : "No active animation detected";
 }
 
 function setRtcSessionState(value, message = null) {
@@ -1261,7 +1261,7 @@ async function startRtcSession(mode) {
   elements.rtcAudioDeviceCapture.textContent = "0";
   elements.rtcAudioDeviceTx.textContent = "0";
   elements.rtcAudioSignal.textContent = "0 / 0.000";
-  elements.rtcAudioAec.textContent = "等待设备遥测";
+  elements.rtcAudioAec.textContent = "Waiting for Device Telemetry";
   state.rtc.browserAudioSent = 0;
   state.rtc.browserAudioReceived = 0;
   state.rtc.browserAudioLevel = 0;
@@ -1269,11 +1269,11 @@ async function startRtcSession(mode) {
   state.rtc.audioHealthState = "starting";
   state.rtc.audioJitterCounter = null;
   state.rtc.audioLatency = { sampleValid: false, actualMs: 0, targetMs: 0, minimumMs: 0 };
-  if (wantsAudio) setRtcAudioState("starting", "正在请求电脑麦克风权限…");
+  if (wantsAudio) setRtcAudioState("starting", "Requesting computer microphone permission…");
   if (wantsVideo) {
     setLiveVideoState("starting", wantsAudio
-      ? "正在申请相机、音频与实时传输资源…"
-      : "正在申请相机与实时传输资源…");
+      ? "Acquiring camera, audio, and real-time transport resources…"
+      : "Acquiring camera and real-time transport resources…");
   }
   elements.startRtcAudioButton.disabled = true;
   elements.startLiveVideoButton.disabled = true;
@@ -1282,7 +1282,7 @@ async function startRtcSession(mode) {
     let localStream = null;
     if (wantsAudio) {
       if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error("当前浏览器不支持麦克风采集");
+        throw new Error("This browser does not support microphone capture");
       }
       localStream = rtcDiagnosticAudioEnabled()
         ? await createRtcDiagnosticAudioStream()
@@ -1297,7 +1297,7 @@ async function startRtcSession(mode) {
         return;
       }
       state.rtc.localStream = localStream;
-      elements.rtcAudioLocalState.textContent = "采集中";
+      elements.rtcAudioLocalState.textContent = "Capturing";
     }
 
     const startPath = mode === "video" ? "/api/video/session/start" : "/api/rtc/session/start";
@@ -1327,7 +1327,7 @@ async function startRtcSession(mode) {
         elements.rtcRemoteAudio.srcObject = remoteStream;
         configureLowLatencyAudioReceivers(peer);
         elements.rtcRemoteAudio.play().catch(() => {
-          setResult(elements.rtcAudioResult, "下行音频已到达，请点击播放器启用声音", "running");
+          setResult(elements.rtcAudioResult, "Downlink audio arrived. Click the player to enable sound", "running");
         });
       });
     }
@@ -1343,17 +1343,17 @@ async function startRtcSession(mode) {
       body: JSON.stringify({ kind: "offer", sdp: offer.sdp }),
     });
     if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
-    if (wantsAudio) setRtcAudioState("signaling", "电脑麦克风已开启，等待 Watcher 应答…");
+    if (wantsAudio) setRtcAudioState("signaling", "Computer microphone is active; waiting for Watcher…");
     if (wantsVideo) setLiveVideoState("signaling", wantsAudio
-      ? "音视频协商已发送，等待 Watcher 应答…"
-      : "已发送浏览器协商信息，等待 Watcher 应答…");
+      ? "Audio/video offer sent; waiting for Watcher…"
+      : "Browser offer sent; waiting for Watcher…");
     await refreshStatus();
   } catch (error) {
     if (!isCurrentRtcGeneration(state.rtc.generation, generation)) return;
     const message = error?.name === "NotAllowedError"
-      ? "未获得电脑麦克风权限，请允许后重试"
+      ? "Computer microphone permission was denied. Allow access and try again"
       : error?.name === "NotFoundError"
-        ? "未检测到可用的电脑麦克风"
+        ? "No computer microphone is available"
         : error.message;
     await failRtcSession(message);
   }
@@ -1366,10 +1366,10 @@ function bindRtcPeerEvents(peer, generation) {
     if (connectionState === "connected" && rtcModeHasAudio(state.rtc.mode)) {
       state.rtc.audioConnectedAt = performance.now();
       state.rtc.audioHealthState = "connecting";
-      setRtcAudioState("connecting", "媒体连接已建立，正在验证机器人麦克风上行…");
+      setRtcAudioState("connecting", "Media connected; validating robot microphone uplink…");
     }
     if (["failed", "disconnected", "closed"].includes(connectionState) && state.rtc.peer) {
-      failRtcSession(`WebRTC 连接${connectionState === "failed" ? "失败" : "已断开"}`);
+      failRtcSession(`WebRTC connection ${connectionState === "failed" ? "Failed" : "disconnected"}`);
     }
   });
   peer.addEventListener("icecandidate", (event) => {
@@ -1409,7 +1409,7 @@ function createMjpegVideoTransport(peer, generation) {
   const controlChannel = peer.createDataChannel("rtc-control", { ordered: true });
   state.rtc.channel = controlChannel;
   const url = state.status?.connection?.mjpeg_websocket_url;
-  if (!url) throw new Error("设备未提供实时视频直连地址");
+  if (!url) throw new Error("Device did not provide a direct live-video URL");
   const socket = new WebSocket(url);
   state.rtc.videoSocket = socket;
   socket.binaryType = "arraybuffer";
@@ -1419,7 +1419,7 @@ function createMjpegVideoTransport(peer, generation) {
     setLiveVideoState("connected");
     setResult(
       elements.liveVideoResult,
-      rtcModeHasAudio(state.rtc.mode) ? "音视频通道已连接" : "实时画面通道已连接",
+      rtcModeHasAudio(state.rtc.mode) ? "Audio/video channel connected" : "Live-video channel connected",
       "ok",
     );
   });
@@ -1434,7 +1434,7 @@ function createMjpegVideoTransport(peer, generation) {
       && state.rtc.peer === peer
       && !state.rtc.teardownInProgress
     ) {
-      failRtcSession("实时画面通道已关闭");
+      failRtcSession("Live-video channel closed");
     }
   });
 }
@@ -1581,7 +1581,7 @@ async function handleRtcEvent(message, generation) {
   const data = message.data || {};
   if (message.type === "sys.nack") {
     await failRtcSession(localizeError(
-      data.error || data.reason || "设备拒绝了 RTC 请求",
+      data.error || data.reason || "Device rejected the RTC request",
       undefined,
       data.error === "busy" ? "rtc_resource_busy" : null,
       data.owner,
@@ -1590,7 +1590,7 @@ async function handleRtcEvent(message, generation) {
   }
   if (message.type === "evt.rtc.state") {
     setRtcSessionState(data.state || "connecting");
-    if (data.state === "failed") await failRtcSession(localizeError(data.reason || "设备 RTC 会话失败"));
+    if (data.state === "failed") await failRtcSession(localizeError(data.reason || "Device RTC session failed"));
     if (data.state === "stopped" && state.rtc.peer) cleanupRtcSession();
     return;
   }
@@ -1648,13 +1648,13 @@ async function stopRtcSession() {
   cleanupRtcSession();
   try {
     await api(rtcEndpoint("stop", mode), { method: "POST" });
-    if (hadVideo) setResult(elements.liveVideoResult, "实时画面已停止", "ok");
-    if (hadAudio) setResult(elements.rtcAudioResult, "全双工通话已结束", "ok");
+    if (hadVideo) setResult(elements.liveVideoResult, "Live video stopped", "ok");
+    if (hadAudio) setResult(elements.rtcAudioResult, "Full-duplex call ended", "ok");
     await refreshStatus();
   } catch (error) {
-    notify(`${error.message}；本地音视频已结束`, "error");
-    if (hadVideo) setResult(elements.liveVideoResult, "本地音视频已结束，设备释放确认超时", "error");
-    if (hadAudio) setResult(elements.rtcAudioResult, "本地音视频已结束，设备释放确认超时", "error");
+    notify(`${error.message}; local audio/video stopped`, "error");
+    if (hadVideo) setResult(elements.liveVideoResult, "Local audio/video stopped, but device release confirmation timed out", "error");
+    if (hadAudio) setResult(elements.rtcAudioResult, "Local audio/video stopped, but device release confirmation timed out", "error");
     await refreshStatus();
   } finally {
     state.rtc.teardownInProgress = false;
@@ -1714,7 +1714,7 @@ function cleanupRtcSession() {
   state.rtc.mediaRttUs = 0;
   state.rtc.audioJitterCounter = null;
   state.rtc.audioLatency = { sampleValid: false, actualMs: 0, targetMs: 0, minimumMs: 0 };
-  elements.rtcAudioLatency.textContent = "等待分段时延样本";
+  elements.rtcAudioLatency.textContent = "Waiting for Stage Latency Samples";
   if (channel) {
     channel.onclose = null;
     try { channel.close(); } catch (_) {}
@@ -1735,7 +1735,7 @@ function cleanupRtcSession() {
   }
   elements.rtcRemoteAudio.pause();
   elements.rtcRemoteAudio.srcObject = null;
-  elements.rtcAudioLocalState.textContent = "未占用";
+  elements.rtcAudioLocalState.textContent = "Available";
   elements.stopLiveVideoButton.disabled = true;
   elements.stopRtcAudioButton.disabled = true;
   elements.startLiveVideoButton.disabled = state.rtc.teardownInProgress
@@ -1844,8 +1844,8 @@ async function playAudio() {
   return runAction({
     path: "/api/actions/play-audio",
     result: elements.audioResult,
-    pending: "正在传输 PCM 示例音频…",
-    complete: (payload) => `播放完成 · ${formatBytes(payload.bytes)}`,
+    pending: "Streaming PCM sample…",
+    complete: (payload) => `Playback complete · ${formatBytes(payload.bytes)}`,
     station: document.querySelector(".station-audio"),
     resources: ["microphone", "speaker"],
   });
@@ -1855,8 +1855,8 @@ async function capturePhoto() {
   const payload = await runAction({
     path: "/api/actions/capture-photo",
     result: elements.cameraResult,
-    pending: "正在请求 JPEG 画面…",
-    complete: (value) => `照片接收完成 · ${formatBytes(value.bytes)}`,
+    pending: "Requesting JPEG frame…",
+    complete: (value) => `Photo received · ${formatBytes(value.bytes)}`,
     station: document.querySelector(".station-camera"),
     resources: ["camera", "animation"],
   });
@@ -1870,8 +1870,8 @@ async function recordMicrophone() {
     path: "/api/actions/record-microphone",
     body: { duration },
     result: elements.microphoneResult,
-    pending: `正在录制 ${duration} 秒…`,
-    complete: (value) => `${value.duration_seconds.toFixed(3)} 秒 · 丢帧 ${value.dropped_frames} · 解码失败 ${value.decode_failures}`,
+    pending: `Recording ${duration} s…`,
+    complete: (value) => `${value.duration_seconds.toFixed(3)} s · drops ${value.dropped_frames} · decode failures ${value.decode_failures}`,
     station: document.querySelector(".station-microphone"),
     resources: ["microphone", "speaker"],
   });
@@ -1880,7 +1880,9 @@ async function recordMicrophone() {
 }
 
 async function runAll() {
-  const allowed = window.confirm("基础全检将移动云台、点亮灯光、播放声音、拍照并录制麦克风。请确保机器人周围无遮挡，是否继续？");
+  const allowed = window.confirm(i18n.translate(
+    "The basic check moves the gimbal, lights the body, plays audio, captures a photo, and records the microphone. Make sure the robot has clear space. Continue?",
+  ));
   if (!allowed) return;
   try {
     await applyMotion();
@@ -1888,9 +1890,9 @@ async function runAll() {
     await playAudio();
     await capturePhoto();
     await recordMicrophone();
-    notify("基础全检通过：执行器与媒体链路均已完成", "ok");
+    notify("Basic check passed: actuator and media paths completed", "ok");
   } catch (_) {
-    notify("基础全检已在首个失败环节停止", "error");
+    notify("Basic check stopped at the first failed stage", "error");
   }
 }
 
@@ -1933,8 +1935,8 @@ elements.stopAudioButton.addEventListener("click", () => {
   runAction({
     path: "/api/actions/stop-audio",
     result: elements.audioResult,
-    pending: "正在停止播放…",
-    complete: () => "已请求停止播放",
+    pending: "Stopping playback…",
+    complete: () => "Playback stop requested",
     interrupt: true,
   }).catch(() => {});
 });
