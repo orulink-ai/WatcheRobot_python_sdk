@@ -4,6 +4,10 @@ Vision Debug Lab 是一个由 SDK Runtime 管理的本机视觉调试 Applicatio
 Himax 视觉后端、当前模型和人脸追踪链路是否可用，并把同序号 JPEG、检测框和跟踪遥测
 显示在同一画面上。
 
+当前公开版本已在 Windows 上完成端到端实机验收，因此 Marketplace Manifest 仅声明
+`windows`。macOS 在完成对应 Runtime、浏览器和机器人实机验收后再单独开放，不能仅根据
+Python 源码可移植性推断兼容。
+
 ## 启动
 
 先确认设备已由 SDK Runtime 管理并处于在线状态，再从 SDK 仓库运行：
