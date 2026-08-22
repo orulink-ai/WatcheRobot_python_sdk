@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "id": "local.dshtts_speaker",
+  "name": "DSH TTS Speaker",
+  "version": "0.1.0",
+  "requires_watcherobot": ">=0.1.2a1,<0.2",
+  "dependencies": [],
+  "supported_host_platforms": [
+    "windows",
+    "macos"
+  ],
+  "description": "DSH 对话语音播报插件：将 DSH 生成的文本转为语音，通过 WatcheRobot 机器人播报。使用 edge-tts + ffmpeg 实现高质量中文 TTS。",
+  "author": "DSH Developer",
+  "icon": "icon.svg"
+}
