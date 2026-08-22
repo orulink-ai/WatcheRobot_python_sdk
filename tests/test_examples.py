@@ -13,6 +13,7 @@ EXAMPLE_IDS = {
     "capture_photo": "example.capture_photo",
     "record_microphone": "example.record_microphone",
     "sdk_media_lab": "example.sdk_media_lab",
+    "vision_debug_lab": "example.vision_debug_lab",
 }
 
 
@@ -76,6 +77,31 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     assert "sdk_media_lab" in examples_guide
     assert "sdk_media_lab" in hardware_guide
     assert "127.0.0.1" in hardware_guide
+
+
+def test_vision_debug_lab_is_loopback_only_and_uses_managed_vision_apis() -> None:
+    root = ROOT / "examples" / "vision_debug_lab"
+    entrypoint = root.joinpath("app.py").read_text(encoding="utf-8")
+    service = root.joinpath("service.py").read_text(encoding="utf-8")
+    page = root.joinpath("web", "index.html").read_text(encoding="utf-8")
+    script = root.joinpath("web", "app.js").read_text(encoding="utf-8")
+    packet_module = root.joinpath("web", "preview-packet.mjs").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'HOST = "127.0.0.1"' in entrypoint
+    assert "ApplicationContext.from_environment()" in entrypoint
+    assert "app.robot" in entrypoint
+    assert "robot.vision.status" in service
+    assert "robot.face_tracking.open_preview" in service
+    assert "192.168." not in service
+    assert "Vision Debug Lab" in page
+    assert "/ws/preview" in packet_module
+    assert "new WebSocket" in script
+    assert "drawImage" in script
+    assert "strokeRect" in script
+    assert "192.168." not in script
+    assert "192.168." not in packet_module
 
 
 def test_media_lab_is_ready_for_marketplace_distribution() -> None:
