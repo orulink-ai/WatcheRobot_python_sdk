@@ -19,6 +19,9 @@ Application does not stop the Runtime or rebuild the device connection.
 
 Available examples include:
 
+- `vision_debug_lab`: launch a loopback-only Himax vision workbench for
+  backend/model health, same-sequence face overlays, metrics, dataset
+  recording, HOLD/RECENTER safety, and diagnostic reports.
 - `sdk_media_lab`: launch a standalone loopback browser dashboard for speaker
   streaming, JPEG capture, microphone recording, artifacts, and diagnostics.
 - `capture_photo`: capture one JPEG from the camera.
