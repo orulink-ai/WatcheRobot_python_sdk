@@ -1,0 +1,13 @@
+{
+  "name": "dsh-speak-watcherobot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH slash command that speaks the last assistant response through WatcheRobot",
+  "type": "module",
+  "main": "./src/index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    }
+  }
+}

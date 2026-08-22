@@ -19,6 +19,9 @@ Application does not stop the Runtime or rebuild the device connection.
 
 Available examples include:
 
+- `dshtts_speaker`: expose a loopback TTS bridge that converts DSH assistant
+  replies with edge-tts and plays them through the robot speaker; includes
+  matching Windows PowerShell and macOS/Linux shell clients.
 - `vision_debug_lab`: launch a loopback-only Himax vision workbench for
   backend/model health, same-sequence face overlays, metrics, dataset
   recording, HOLD/RECENTER safety, and diagnostic reports.

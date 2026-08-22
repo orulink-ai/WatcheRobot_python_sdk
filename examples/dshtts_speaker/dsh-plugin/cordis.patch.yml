@@ -1,0 +1,7 @@
+# DSH Speak WatcheRobot — patch layer
+# Registers a /speak slash command that sends the last assistant response
+# to the WatcheRobot TTS speaker for voice broadcast.
+
+- insert:
+    - id: command-speak
+      name: dsh-speak-watcherobot
