@@ -973,7 +973,7 @@ def test_audio_latency_diagnostics_expose_the_browser_minimum_buffer() -> None:
     javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
 
     assert "browserLatency.minimumMs" in javascript
-    assert "最低 ${browserLatency.minimumMs} ms" in javascript
+    assert "minimum ${browserLatency.minimumMs} ms" in javascript
 
 
 def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
@@ -1373,7 +1373,7 @@ def test_media_lab_stop_closes_browser_media_before_waiting_for_device_release()
     assert stop_body.index("cleanupRtcSession();") < stop_body.index(
         'await api(rtcEndpoint("stop", mode), { method: "POST" });'
     )
-    assert "本地音视频已结束，设备释放确认超时" in stop_body
+    assert "Local audio/video stopped, but device release confirmation timed out" in stop_body
     assert "elements.stopLiveVideoButton.disabled = !hadVideo || !state.rtc.peer" not in stop_body
     assert "elements.stopRtcAudioButton.disabled = !hadAudio || !state.rtc.peer" not in stop_body
 
@@ -1400,7 +1400,7 @@ def test_media_lab_ui_explains_rtc_audio_playback_conflicts() -> None:
 
     assert "payload.error" in javascript
     assert 'code === "rtc_resource_busy"' in javascript
-    assert "扬声器或动画音效正在播放，请停止后再开启" in javascript
+    assert "Speaker or animation audio is playing. Stop it before starting this feature" in javascript
 
 
 def test_media_lab_browser_entrypoint_only_queries_declared_element_ids() -> None:
@@ -1428,10 +1428,10 @@ def test_rtc_audio_ui_uses_raw_microphone_and_aec_diagnostics() -> None:
     assert "audio_aec_active" in javascript
     assert "audio_aec_reference_bytes" in javascript
     assert "audio_aec_reference_processed_bytes" in javascript
-    assert "参考累计处理" in javascript
+    assert "reference processed" in javascript
     assert "rtcAudioAec" in javascript
     assert "id=\"rtcAudioAec\"" in document
-    assert "物理麦克风峰值" in document
+    assert "Physical Mic Peak" in document
 
 
 def test_browser_mdns_host_candidates_are_rewritten_without_touching_other_candidates() -> None:
@@ -1481,7 +1481,7 @@ def test_http_app_maps_validation_and_busy_failures_to_stable_errors(tmp_path: P
     }
 
 
-def test_local_ui_preserves_chinese_source_copy_behind_an_english_default() -> None:
+def test_local_ui_uses_english_source_copy_without_chinese_hardcoding() -> None:
     html = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
     javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
     i18n = LAB_ROOT.joinpath("web", "i18n.mjs").read_text(encoding="utf-8")
@@ -1489,33 +1489,32 @@ def test_local_ui_preserves_chinese_source_copy_behind_an_english_default() -> N
     assert '<html lang="en" data-i18n-ready="false">' in html
     assert 'defaultLocale: "en-US"' in javascript
     for copy in (
-        "SDK 测试台",
-        "连接机器人",
-        "输入设备屏幕上的六位配对码",
-        "运行基础全检",
-        "云台姿态",
-        "机身灯效",
-        "扬声器流式播放",
-        "资源生命周期",
-        "释放结果",
-        "相机拍照",
-        "相机实时画面",
-        "开启实时画面",
-        "全双工音频通话",
-        "开启全双工通话",
-        "麦克风录音",
-        "设备能力矩阵",
-        "运行日志",
-        "等待测试",
+        "SDK Test Bench",
+        "Connect Robot",
+        "Run Basic Check",
+        "Gimbal Position",
+        "Body Lighting",
+        "Speaker Stream",
+        "Resource Lifecycle",
+        "Release Result",
+        "Camera Capture",
+        "Live Camera Preview",
+        "Start Live Video",
+        "Full-duplex Audio Call",
+        "Start Full-duplex Call",
+        "Microphone Recording",
+        "Device Capability Matrix",
+        "Run Log",
+        "Awaiting Test",
     ):
         assert copy in html
 
     for copy in (
-        "设备在线",
-        "配对码必须是 6 位数字",
-        "正在发现设备",
-        "系统空闲",
-        "正在传输 PCM 示例音频",
+        "Device Online",
+        "Pairing code must contain 6 digits",
+        "Discovering device",
+        "System Idle",
+        "Streaming PCM sample",
         "rtc-control",
         "mjpeg_websocket_url",
         "new WebSocket(url)",
@@ -1534,8 +1533,8 @@ def test_local_ui_preserves_chinese_source_copy_behind_an_english_default() -> N
         "state.rtc.generation !== generation",
         'api("/api/rtc/session/start"',
         'addEventListener("track"',
-        "本地音视频已结束，设备释放确认超时",
-        "基础全检通过",
+        "Local audio/video stopped, but device release confirmation timed out",
+        "Basic check passed",
     ):
         assert copy in javascript
 
@@ -1551,7 +1550,7 @@ def test_local_ui_preserves_chinese_source_copy_behind_an_english_default() -> N
     ):
         assert english_copy in html + i18n
 
-    assert "SDK 媒体实验室" not in html + javascript + i18n
+    assert not re.search(r"[\u4e00-\u9fff]", html + javascript)
 
     assert "localResources: new Set()" in javascript
     assert "actionResources.some((name) => state.localResources.has(name))" in javascript
@@ -1565,7 +1564,7 @@ def test_local_ui_preserves_chinese_source_copy_behind_an_english_default() -> N
     assert 'path: "/api/actions/stop-audio"' in javascript
     assert 'path: "/api/controls/motion/stop"' in javascript
     assert javascript.count("interrupt: true") >= 2
-    assert "设备已断开，请重新连接后再测试" in javascript
+    assert "Device disconnected. Reconnect before testing" in javascript
     assert 'api("/api/device/pair"' in javascript
     assert 'autocomplete="one-time-code"' in html
     assert 'name="device_ip"' in html
