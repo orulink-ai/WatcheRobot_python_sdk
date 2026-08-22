@@ -13,7 +13,7 @@ EXAMPLE_IDS = {
     "capture_photo": "example.capture_photo",
     "record_microphone": "example.record_microphone",
     "sdk_media_lab": "example.sdk_media_lab",
-    "vision_debug_lab": "example.vision_debug_lab",
+    "vision_debug_lab": "com.orulink.vision_debug_lab",
 }
 
 
