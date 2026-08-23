@@ -51,7 +51,23 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+The application context exposes three main entry points: `app.robot`
+(robot capabilities), `app.desktop` (business message channel to Watcher
+Desktop), and `app.logger` (logging).
+
 No robot at hand? `app run` enters offline mode and explains what to do next.
+
+Verify your installation at any time:
+
+```powershell
+watcherobot --version
+```
+
+For the full first-time setup flow (Bluetooth scanning, selecting the stable
+**Device ID** with **Up/Down**, opening **Settings > Wi-Fi** on the robot, the
+**Bluetooth ID** compatibility fallback for older firmware, and entering the
+pairing code from the **"Python SDK"** app on the robot), see the
+[installation guide](docs/installation.md).
 
 ## 🧭 What do you want to do?
 
@@ -76,7 +92,8 @@ This package has two complementary roles:
 
 Your Application focuses on product behavior; the Runtime handles pairing,
 connections, lifecycle, logs, and transport. Watcher Desktop uses this same
-Runtime/Daemon implementation—it does not embed another Daemon.
+Runtime/Daemon implementation—desktop uses this same Runtime/Daemon
+implementation rather than embedding another Daemon.
 
 ```text
 Your Application
@@ -134,8 +151,12 @@ watcherobot robot pair 123456      # replace with the code shown on the robot
 watcherobot app init my_app && cd my_app && watcherobot app run
 watcherobot app check .            # validate before publishing
 watcherobot app publish .          # publish to the Marketplace after login
+watcherobot app install <app-id>   # install from the Marketplace
+watcherobot app list               # list installed applications
+watcherobot app uninstall <app-id> # uninstall
 ```
 
+For diagnostics, read `GET /daemon/logs` from the local control API.
 See the [complete CLI reference](docs/cli-reference.md) for every command.
 
 ## ✅ Requirements and support

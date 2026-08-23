@@ -50,7 +50,20 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Application 上下文提供三个常用入口：`app.robot`（机器人能力）、
+`app.desktop`（与 Watcher Desktop 的业务消息通道）、`app.logger`（日志）。
+
 没有机器人在手边也能跑：`app run` 会进入离线模式并提示下一步。
+
+随时验证安装是否成功：
+
+```powershell
+watcherobot --version
+```
+
+首次配置的完整流程（蓝牙扫描、用 **Up/Down** 选择稳定的 **Device ID**、在机器人上打开
+**Settings > Wi-Fi**、旧固件的 **Bluetooth ID** 兼容回退，以及通过机器人上的
+**"Python SDK"** 应用输入配对码）见[安装指南](docs/installation.zh-CN.md)。
 
 ## 🧭 你想做什么？
 
@@ -72,7 +85,7 @@ asyncio.run(main())
 - **Application SDK** — 面向开发者的公开 Python API。
 - **Runtime/Daemon** — 唯一的本地运行时，负责与机器人配对、持有设备连接、管理 Application 进程。
 
-你的 Application 只写产品逻辑；Runtime 处理配对、连接、生命周期、日志和传输。Watcher Desktop 使用的就是这同一份 Runtime/Daemon 实现，不内嵌另一份 Daemon。
+你的 Application 只写产品逻辑；Runtime 处理配对、连接、生命周期、日志和传输。桌面端也使用同一份Runtime/Daemon实现——Watcher Desktop 不会内嵌另一份 Daemon。
 
 ```text
 Your Application
@@ -123,9 +136,12 @@ watcherobot robot pair 123456      # 123456 换成机器人屏幕上的配对码
 watcherobot app init my_app && cd my_app && watcherobot app run
 watcherobot app check .            # 发布前校验
 watcherobot app publish .          # 登录后发布到 Marketplace
+watcherobot app install <app-id>   # 从 Marketplace 安装
+watcherobot app list               # 列出已安装应用
+watcherobot app uninstall <app-id> # 卸载
 ```
 
-全部命令见 [CLI 参考](docs/cli-reference.md)。
+诊断运行时可读取 `GET /daemon/logs`（本地控制 API）。全部命令见 [CLI 参考](docs/cli-reference.md)。
 
 ## ✅ 环境要求
 
