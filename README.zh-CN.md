@@ -2,6 +2,8 @@
 
 用 Python 控制 WatcheRobot 桌面机器人：几行代码就能让机器人做动作、说话、看世界。
 
+> 🌐 [English](README.md) | 中文
+
 [![PyPI](https://img.shields.io/pypi/v/watcherobot)](https://pypi.org/project/watcherobot/)
 [![Python](https://img.shields.io/pypi/pyversions/watcherobot)](https://pypi.org/project/watcherobot/)
 
@@ -21,6 +23,18 @@ watcherobot app init hello_robot
 cd hello_robot
 watcherobot app run
 ```
+
+> 💡 **没有安装 Conda？** 两条路任选：
+>
+> - **最简路径** —— 不用 Conda，直接装进系统 Python（3.10–3.12）：
+>   ```powershell
+>   python -m pip install --upgrade pip
+>   python -m pip install watcherobot
+>   ```
+> - **推荐长期使用** —— 先[安装 Miniconda](https://docs.anaconda.com/miniconda/install/)，
+>   再执行上面的命令。独立环境可以避免和机器上其他 Python 项目的依赖冲突。
+>
+> 两条路最终都得到同一个 `watcherobot` 命令，先用哪条都行，之后随时可切换。
 
 跑通后，试试让机器人开心一下：
 

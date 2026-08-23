@@ -8,6 +8,12 @@
 两种方式都建议使用独立 Conda 环境，不要安装到 `base`。项目支持 Python
 3.10–3.12，推荐使用 Python 3.11，以获得更稳定的第三方依赖兼容性。
 
+> 💡 **没有安装 Conda？** 如果只是安装正式版，可以不用 Conda：在任意
+> Python 3.10–3.12 环境里执行 `python -m pip install watcherobot` 即可。
+> 但如果之后想从源码安装、或希望环境隔离，仍建议按下面的说明使用独立环境；
+> 可先参考 [Miniconda 安装文档](https://docs.anaconda.com/miniconda/install/)
+> 完成安装。
+
 ## 方式一：从源码安装
 
 ### 1. 创建独立环境

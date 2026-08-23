@@ -5,7 +5,7 @@ Control your WatcheRobot desktop robot with Python: a few lines of code to make 
 [![PyPI](https://img.shields.io/pypi/v/watcherobot)](https://pypi.org/project/watcherobot/)
 [![Python](https://img.shields.io/pypi/pyversions/watcherobot)](https://pypi.org/project/watcherobot/)
 
-> 中文文档：[README.zh-CN.md](README.zh-CN.md)
+> 🌐 English | [中文文档](README.zh-CN.md)
 
 ## 🚀 Quick start in 5 minutes
 
@@ -23,6 +23,19 @@ watcherobot app init hello_robot
 cd hello_robot
 watcherobot app run
 ```
+
+> 💡 **Don't have Conda?** Two options:
+>
+> - **Simplest path** — skip Conda and install into your system Python (3.10–3.12):
+>   ```powershell
+>   python -m pip install --upgrade pip
+>   python -m pip install watcherobot
+>   ```
+> - **Recommended long-term** — [install Miniconda](https://docs.anaconda.com/miniconda/install/)
+>   first, then run the commands above. A dedicated environment avoids dependency
+>   conflicts with other Python projects on your machine.
+>
+> Both paths end with the same `watcherobot` command; you can switch later at any time.
 
 Once that works, make the robot happy:
 
