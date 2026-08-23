@@ -59,6 +59,12 @@ SDK 仓库只负责 Application API、Daemon、Runtime 控制面和分发工具�
 
 ## 快速开始
 
+开始之前请确认：
+
+- 电脑已安装 Python 3.10–3.12（推荐 3.11），且可用蓝牙；
+- 机器人在身边并已开机（还没有机器人也没关系，第 3 步可以离线跑通）；
+- 配网时电脑和机器人需要连接同一个 Wi-Fi。
+
 ### 1. 安装 SDK
 
 建议使用独立 Conda 环境，不要安装到 `base`。SDK 支持 Python 3.10–3.12，推荐
@@ -86,21 +92,26 @@ watcherobot --version
 
 ### 2. 配置第一台机器人
 
-执行完整引导：
+`watcherobot robot setup` 是一条交互式引导命令，会带着你完成三件事：
+通过蓝牙为机器人配网（写入 Wi-Fi 名称和密码）、与机器人配对（输入六位配对码）、
+并确认最终连接状态。跟着终端里的提示逐步操作即可：
 
 ```powershell
 watcherobot robot setup
 ```
 
-命令会先提示你打开电脑蓝牙，并在机器人上打开 **Settings > Wi-Fi**；确认页面已经
-打开后才开始扫描。扫描结果展示机器人上可核对的稳定 **Device ID**；附近有多台机器人时，使用
-**Up/Down** 和回车键按 Device ID 选择目标设备。旧固件未广播 Device ID 时，命令会
-明确标记 Device ID 不可用，并仅把 Bluetooth ID 作为兼容信息展示。随后命令会私密
-读取 Wi-Fi 密码并写入网络配置。
+引导过程如下：
 
-配网后回到机器人启动器，打开 **"Python SDK"** 应用，读取屏幕顶部的六位配对码，
-并继续在同一个 `robot setup` 流程中输入。配对属于一次性的设备初始化；`app run`
-只负责启动 Application。随时可查询连接状态：
+1. 命令提示你打开电脑蓝牙，并在机器人上打开 **Settings > Wi-Fi**；确认页面已经
+   打开后才开始扫描。
+2. 扫描结果展示机器人上可核对的稳定 **Device ID**；附近有多台机器人时，使用
+   **Up/Down** 和回车键按 Device ID 选择目标设备。旧固件未广播 Device ID 时，命令会
+   明确标记 Device ID 不可用，并仅把 Bluetooth ID 作为兼容信息展示。随后命令会私密
+   读取 Wi-Fi 密码并写入网络配置。
+3. 配网后回到机器人启动器，打开 **"Python SDK"** 应用，读取屏幕顶部的六位配对码，
+   并继续在同一个 `robot setup` 流程中输入，完成配对。
+
+配对属于一次性的设备初始化；`app run` 只负责启动 Application。随时可查询连接状态：
 
 ```powershell
 watcherobot robot status
@@ -117,21 +128,41 @@ watcherobot robot pair 123456
 
 ### 3. 创建并运行第一个 Application
 
+`watcherobot app init` 会用内置模板在当前目录创建一个 Application 项目。执行：
+
 ```powershell
 watcherobot app init hello_robot
 cd hello_robot
 watcherobot app run
 ```
 
-生成的 Hello World Application 一定会输出成功问候；连接兼容机器人后，还会播放一次
-`happy` 行为。没有连接机器人时，`app run` 会明确提示执行
-`watcherobot robot setup`，同时继续以离线模式运行。配对和设备连接始终由 Runtime
-独占管理。
+`app init hello_robot` 会在 `./hello_robot/` 下生成一个可直接运行的 Hello World 应用，
+包含以下文件：
+
+```text
+hello_robot/
+├─ app.json     # 应用元数据（ID、名称、版本等）
+├─ app.py       # 应用入口，包含完整可运行的示例代码
+├─ README.md    # 项目说明
+├─ icon.svg     # 应用图标
+└─ .gitignore
+```
+
+`watcherobot app run` 会通过 Runtime（Daemon）启动这个应用：终端会输出成功问候；
+如果已连接兼容的机器人，还会播放一次 `happy` 动画——这就是"让机器人开心一下"。
+还没有连接机器人时，`app run` 会明确提示执行 `watcherobot robot setup`，
+同时继续以离线模式运行。配对和设备连接始终由 Runtime 独占管理。
+
+遇到找不到设备、配对码位置或未配对提示等问题时，参见[故障排查](docs/troubleshooting.md)。
 
 本地控制 API 还提供 `GET /daemon/logs`；产品集成与排障接口见
 [Runtime 合同](docs/contracts/runtime-profile-index.md)。
 
-### 4. 编写 Application
+### 4. 修改 Application
+
+第 3 步生成的 `hello_robot/app.py` 内容就是下面这段代码——刚才机器人播放
+`happy` 动画，正是它的效果。修改这个文件后重新执行 `watcherobot app run`
+即可看到变化：
 
 ```python
 import asyncio
@@ -148,7 +179,10 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-初始化器已经把同样的代码生成到 `hello_robot/app.py`。准备发布时，仍可通过参数覆盖正式元数据：
+初始化器已经把同样的代码生成到 `hello_robot/app.py`。注意：请始终通过
+`watcherobot app run` 启动应用，不要直接运行 `app.py`——Application 必须由
+Daemon 托管，才能获得设备连接和 Desktop 通道。准备发布时，
+仍可通过参数覆盖正式元数据：
 
 ```powershell
 watcherobot app init my_app --id com.example.my_app --author "Example Team"

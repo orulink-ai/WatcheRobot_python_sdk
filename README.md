@@ -74,6 +74,12 @@ business logic.
 
 ## Quick start
 
+Before you start, make sure that:
+
+- Your computer has Python 3.10–3.12 installed (3.11 recommended) and Bluetooth available;
+- A robot is nearby and powered on (no robot yet? Step 3 still works in offline mode);
+- For provisioning, the computer and robot share the same Wi-Fi network.
+
 ### 1. Install the SDK
 
 Use a dedicated Conda environment instead of `base`. The SDK supports Python
@@ -113,24 +119,31 @@ watcherobot --version
 
 ### 2. Set up your first robot
 
-Run the guided setup:
+`watcherobot robot setup` is an interactive guided command that walks you through
+three things: provisioning the robot over Bluetooth (writing the Wi-Fi name and
+password), pairing with it (entering a six-digit code), and confirming the final
+connection state. Just follow the terminal prompts:
 
 ```powershell
 watcherobot robot setup
 ```
 
-The command first asks you to turn on computer Bluetooth and open
-**Settings > Wi-Fi** on the robot. Scanning starts only after you confirm that
-the page is open. Results are identified by
-the stable **Device ID** shown on the robot; when several robots are nearby,
-use **Up/Down** and Enter to select the intended Device ID. Older firmware that
-does not advertise a Device ID is explicitly marked as unavailable and shows
-its Bluetooth ID only as a compatibility fallback. The command then reads the
-Wi-Fi password privately and provisions the network.
+What the guide does:
 
-To finish setup, return to the robot launcher, open the **"Python SDK"** app,
-read the six-digit pairing code at the top of the screen, and enter it in the
-same `robot setup` flow. Pairing belongs to one-time setup, while `app run`
+1. The command asks you to turn on computer Bluetooth and open
+   **Settings > Wi-Fi** on the robot. Scanning starts only after you confirm
+   that the page is open.
+2. Results are identified by the stable **Device ID** shown on the robot; when
+   several robots are nearby, use **Up/Down** and Enter to select the intended
+   Device ID. Older firmware that does not advertise a Device ID is explicitly
+   marked as unavailable and shows its Bluetooth ID only as a compatibility
+   fallback. The command then reads the Wi-Fi password privately and provisions
+   the network.
+3. To finish, return to the robot launcher, open the **"Python SDK"** app,
+   read the six-digit pairing code at the top of the screen, and enter it in
+   the same `robot setup` flow to complete pairing.
+
+Pairing belongs to one-time setup, while `app run`
 only starts an Application. Confirm the connection at any time with:
 
 ```powershell
@@ -148,23 +161,47 @@ Replace `123456` with the current code shown by the robot.
 
 ### 3. Create and run your first Application
 
+`watcherobot app init` creates an Application project from the built-in
+template. Run:
+
 ```powershell
 watcherobot app init hello_robot
 cd hello_robot
 watcherobot app run
 ```
 
-The generated Hello World Application always logs a successful greeting. If a
-compatible robot is connected, it also plays the `happy` behavior once. If no
-robot is connected, `app run` explains how to start `watcherobot robot setup`
+`app init hello_robot` generates a runnable Hello World application in
+`./hello_robot/` with these files:
+
+```text
+hello_robot/
+├─ app.json     # Application metadata (ID, name, version, ...)
+├─ app.py       # Entry point with a complete runnable example
+├─ README.md    # Project notes
+├─ icon.svg     # Application icon
+└─ .gitignore
+```
+
+`watcherobot app run` starts this application through the Runtime (Daemon):
+the terminal logs a successful greeting, and if a compatible robot is
+connected it also plays the `happy` behavior once — that is the robot's way of
+saying hello. If no robot is connected, `app run`
+explains how to start `watcherobot robot setup`
 and continues in offline mode. The Runtime remains the only owner of pairing
 and the device connection.
+
+If you hit problems such as a missing device, an unknown pairing code location,
+or a not-paired prompt, see [Troubleshooting](docs/troubleshooting.md).
 
 The local control API also exposes `GET /daemon/logs`; see the
 [Runtime contract](docs/contracts/runtime-profile-index.md) for product
 integration and diagnostics.
 
-### 4. Write an Application
+### 4. Modify an Application
+
+The `hello_robot/app.py` generated in step 3 contains exactly the code below —
+that is what made the robot play `happy`. Edit the file and run
+`watcherobot app run` again to see your changes:
 
 ```python
 import asyncio
@@ -181,7 +218,10 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-The initializer generated this same pattern in `hello_robot/app.py`. Metadata
+The initializer generated this same pattern in `hello_robot/app.py`. Always
+start applications through `watcherobot app run`, never `python app.py`
+directly — an Application must be hosted by the Daemon to receive the device
+connection and Desktop channel. Metadata
 flags remain available when you are preparing a project for publication:
 
 ```powershell
