@@ -7,6 +7,8 @@ Control your WatcheRobot desktop robot with Python: a few lines of code to make 
 
 > 🌐 English | [中文文档](README.zh-CN.md)
 
+<a id="quick-start"></a>
+
 ## 🚀 Quick start
 
 Before you start:
@@ -45,10 +47,21 @@ python -m pip install --upgrade pip
 python -m pip install watcherobot
 ```
 
-Confirm which SDK the terminal will run:
+Confirm that the SDK is installed and that the command comes from the active
+environment:
 
 ```powershell
+# Windows PowerShell
+Get-Command watcherobot
 watcherobot --version
+python -m pip show watcherobot
+```
+
+```sh
+# macOS / Linux
+command -v watcherobot
+watcherobot --version
+python -m pip show watcherobot
 ```
 
 For PEP 668, PATH, `python3`, source-checkout, and TestPyPI troubleshooting,
@@ -146,14 +159,16 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 
 | Your goal | Go here |
 | --- | --- |
-| Make the robot act / speak / light up | [Quick start](#-quick-start) and the [SDK Application guide](docs/application-marketplace/sdk-application-usage.md) |
-| Read the source and understand how it works | [Source and repository boundaries](#-source-and-repository-boundaries) and [How it works](#️-how-it-works-runtimedaemon) |
+| Make the robot act / speak / light up | [Quick start](#quick-start) and the [SDK Application guide](docs/application-marketplace/sdk-application-usage.md) |
+| Read the source and understand how it works | [Source and repository boundaries](#source-boundaries) and [How it works](#runtime-daemon) |
 | Use the camera / microphone / face tracking | [Vision diagnostics](docs/vision-diagnostics.md), [face-tracking preview](docs/face-tracking-preview.md), [microphone audio](docs/microphone-audio.md) |
 | Provision Wi-Fi over Bluetooth | [Bluetooth provisioning](docs/bluetooth-provisioning.md) |
 | Publish an app to the Marketplace | [Marketplace documentation](docs/application-marketplace/README.md) |
 | Pairing or connection problems | [Troubleshooting](docs/troubleshooting.md) |
 | Look up every CLI command | [Complete CLI reference](docs/cli-reference.md) |
 | Learn from working code | [Application examples](examples/README.md) |
+
+<a id="runtime-daemon"></a>
 
 ## ⚙️ How it works (Runtime/Daemon)
 
@@ -180,6 +195,8 @@ An Application never opens its own discovery socket or device WebSocket, and
 never receives pairing credentials. When an Application is running, Desktop
 and device business frames pass through that Application. Without one, the
 Runtime transparently forwards frames between Desktop and device.
+
+<a id="source-boundaries"></a>
 
 ## 🧩 Source and repository boundaries
 

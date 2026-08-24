@@ -7,6 +7,8 @@
 [![PyPI](https://img.shields.io/pypi/v/watcherobot)](https://pypi.org/project/watcherobot/)
 [![Python](https://img.shields.io/pypi/pyversions/watcherobot)](https://pypi.org/project/watcherobot/)
 
+<a id="quick-start-zh"></a>
+
 ## 🚀 快速开始
 
 开始之前请确认：
@@ -43,10 +45,20 @@ python -m pip install --upgrade pip
 python -m pip install watcherobot
 ```
 
-确认当前终端实际使用的 SDK：
+确认 SDK 已安装，并核对命令确实来自当前激活的环境：
 
 ```powershell
+# Windows PowerShell
+Get-Command watcherobot
 watcherobot --version
+python -m pip show watcherobot
+```
+
+```sh
+# macOS / Linux
+command -v watcherobot
+watcherobot --version
+python -m pip show watcherobot
 ```
 
 PEP 668、PATH、`python3`、源码 checkout 和 TestPyPI 的处理方法见
@@ -136,14 +148,16 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 
 | 你的需求 | 去这里 |
 | --- | --- |
-| 让机器人做动作 / 说话 / 亮灯 | [快速开始](#-快速开始) 和 [SDK Application 指南](docs/application-marketplace/sdk-application-usage.zh-CN.md) |
-| 看源码、理解核心运行机制 | [源码与仓库边界](#-源码与仓库边界)和[运行架构](#️-它是如何工作的runtimedaemon) |
+| 让机器人做动作 / 说话 / 亮灯 | [快速开始](#quick-start-zh) 和 [SDK Application 指南](docs/application-marketplace/sdk-application-usage.zh-CN.md) |
+| 看源码、理解核心运行机制 | [源码与仓库边界](#source-boundaries-zh)和[运行架构](#runtime-daemon-zh) |
 | 用摄像头 / 麦克风 / 人脸跟踪 | [视觉诊断](docs/vision-diagnostics.zh-CN.md)、[人脸跟踪预览（英文）](docs/face-tracking-preview.md)、[麦克风音频（英文）](docs/microphone-audio.md) |
-| 蓝牙配网 Wi-Fi | [蓝牙配网指南](docs/bluetooth-provisioning.md) |
-| 发布应用到 Marketplace | [Marketplace 文档](docs/application-marketplace/README.md) |
-| 配对 / 连接出问题了 | [Troubleshooting](docs/troubleshooting.md) |
+| 蓝牙配网 Wi-Fi | [蓝牙配网指南（英文）](docs/bluetooth-provisioning.md) |
+| 发布应用到 Marketplace | [Marketplace 文档（英文）](docs/application-marketplace/README.md) |
+| 配对 / 连接出问题了 | [故障排查（英文）](docs/troubleshooting.md) |
 | 查所有命令的用法 | [完整 CLI 参考](docs/cli-reference.zh-CN.md) |
-| 从可运行的例子学 | [Application 示例](examples/README.md) |
+| 从可运行的例子学 | [Application 示例（英文）](examples/README.md) |
+
+<a id="runtime-daemon-zh"></a>
 
 ## ⚙️ 它是如何工作的？（Runtime/Daemon）
 
@@ -164,6 +178,8 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 ```
 
 Application 永远不会自己开发现套接字或设备 WebSocket，也拿不到配对凭据。有 Application 在运行时，Desktop 与设备的业务帧经过它；没有时，Runtime 在 Desktop 与设备之间透明转发。
+
+<a id="source-boundaries-zh"></a>
 
 ## 🧩 源码与仓库边界
 

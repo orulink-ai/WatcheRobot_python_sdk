@@ -5,8 +5,9 @@
 - **从源码安装**：用于验证尚未发布的 PR、分支或固定 commit，以及参与 SDK 开发。
 - **正式安装**：用于普通 Application 开发者安装已经发布到 PyPI 的稳定版或预发布版。
 
-两种方式都建议使用独立 Conda 环境，不要安装到 `base`。项目支持 Python
-3.10–3.12，推荐使用 Python 3.11，以获得更稳定的第三方依赖兼容性。
+两种安装方式都应使用隔离环境，可以选择 Conda 或 `venv`；不要安装到 Conda `base`
+或系统 Python。项目支持 Python 3.10–3.12，推荐使用 Python 3.11，以获得更稳定的
+第三方依赖兼容性。
 
 > 💡 **没有安装 Conda？** Conda 不是必需条件，但仍强烈建议隔离环境。请创建并激活
 > Python 3.10–3.12 的 `venv`，再执行 `python -m pip install watcherobot`。
