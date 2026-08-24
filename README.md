@@ -9,65 +9,138 @@ Control your WatcheRobot desktop robot with Python: a few lines of code to make 
 
 ## 🚀 Quick start in 5 minutes
 
+Before you start:
+
+- install Python 3.10–3.12 (3.11 recommended);
+- use Windows or macOS with Bluetooth for first-time robot setup;
+- keep the robot nearby and powered on for hardware steps. Without a robot,
+  you can still create and run the sample Application in offline mode;
+- keep the computer and robot on the same Wi-Fi network when pairing.
+
+### 1. Install the SDK
+
 ```powershell
-# 1. Install (Python 3.11 recommended, in a dedicated environment)
 conda create -n watcherobot python=3.11 -y
 conda activate watcherobot
+python -m pip install --upgrade pip
 python -m pip install watcherobot
+```
 
-# 2. Pair your robot for the first time (guided, just follow the prompts)
+Do not want to use Conda? Create an isolated `venv` instead of installing into
+the system Python:
+
+```powershell
+# Windows PowerShell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install watcherobot
+```
+
+```sh
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install watcherobot
+```
+
+Confirm which SDK the terminal will run:
+
+```powershell
+watcherobot --version
+```
+
+For PEP 668, PATH, `python3`, source-checkout, and TestPyPI troubleshooting,
+see the [installation guide](docs/installation.md).
+
+### 2. Set up the first robot
+
+`watcherobot robot setup` is an interactive guide that provisions Wi-Fi,
+pairs the robot with the Runtime, and confirms the final connection:
+
+```powershell
 watcherobot robot setup
+```
 
-# 3. Create and run your first application
+The guide asks you to:
+
+1. enable Bluetooth and open **Settings > Wi-Fi** on the robot;
+2. select the matching **Device ID** with **Up/Down**, then enter the Wi-Fi
+   credentials privately;
+3. open the **"Python SDK"** app on the robot and enter its six-digit pairing
+   code in the same setup flow.
+
+If the robot is already on Wi-Fi, do not reset the network. Open the
+**"Python SDK"** app and pair with its current code:
+
+```powershell
+watcherobot robot pair 123456
+watcherobot robot status
+```
+
+Replace `123456` with the code currently shown by the robot. Older firmware
+that does not advertise a Device ID is clearly marked and falls back to its
+Bluetooth ID for compatibility.
+
+### 3. Create and run the first Application
+
+Run each command separately so the flow works in Windows PowerShell 5.1,
+PowerShell 7, and macOS/Linux shells:
+
+```powershell
 watcherobot app init hello_robot
 cd hello_robot
 watcherobot app run
 ```
 
-> 💡 **Don't have Conda?** Two options:
->
-> - **Simplest path** — skip Conda and install into your system Python (3.10–3.12):
->   ```powershell
->   python -m pip install --upgrade pip
->   python -m pip install watcherobot
->   ```
-> - **Recommended long-term** — [install Miniconda](https://docs.anaconda.com/miniconda/install/)
->   first, then run the commands above. A dedicated environment avoids dependency
->   conflicts with other Python projects on your machine.
->
-> Both paths end with the same `watcherobot` command; you can switch later at any time.
+The initializer creates:
 
-Once that works, make the robot happy:
+```text
+hello_robot/
+├─ app.json     # Application identity, version, and dependencies
+├─ app.py       # managed Application entry point
+├─ README.md    # generated project instructions
+├─ icon.svg     # Application icon
+└─ .gitignore
+```
+
+`watcherobot app run` starts the project through the Runtime/Daemon. The
+terminal prints the Application greeting; when a compatible robot is
+connected, it also plays the `happy` behavior once. Without a robot, the
+Application continues in offline mode and explains how to connect one.
+
+Always start an Application with `watcherobot app run`, never with
+`python app.py`: the Daemon must inject the Device and Desktop channels.
+For setup or connection failures, see [troubleshooting](docs/troubleshooting.md).
+
+### 4. Understand and modify the sample
+
+The generated `hello_robot/app.py` contains the code below. Edit that file,
+then run `watcherobot app run` again from the `hello_robot` directory:
 
 ```python
 import asyncio
+
 from watcherobot.application import ApplicationContext
+
 
 async def main() -> None:
     async with ApplicationContext.from_environment() as app:
         job = await asyncio.to_thread(app.robot.behavior.play, "happy")
         await asyncio.to_thread(job.wait, 20.0)
 
+
 asyncio.run(main())
 ```
 
-The application context exposes three main entry points: `app.robot`
-(robot capabilities), `app.desktop` (business message channel to Watcher
-Desktop), and `app.logger` (logging).
-
-No robot at hand? `app run` enters offline mode and explains what to do next.
-
-Verify your installation at any time:
+The context exposes `app.robot` for robot capabilities, `app.desktop` for
+Watcher Desktop business messages, and `app.logger` for Application logs.
+When preparing a real project, generate its stable metadata explicitly:
 
 ```powershell
-watcherobot --version
+watcherobot app init my_app --id com.example.my_app --author "Example Team"
 ```
-
-For the full first-time setup flow (Bluetooth scanning, selecting the stable
-**Device ID** with **Up/Down**, opening **Settings > Wi-Fi** on the robot, the
-**Bluetooth ID** compatibility fallback for older firmware, and entering the
-pairing code from the **"Python SDK"** app on the robot), see the
-[installation guide](docs/installation.md).
 
 ## 🧭 What do you want to do?
 
@@ -91,9 +164,8 @@ This package has two complementary roles:
   owns its device connection, and manages Application processes.
 
 Your Application focuses on product behavior; the Runtime handles pairing,
-connections, lifecycle, logs, and transport. Watcher Desktop uses this same
-Runtime/Daemon implementation—desktop uses this same Runtime/Daemon
-implementation rather than embedding another Daemon.
+connections, lifecycle, logs, and transport. Watcher Desktop does not embed
+another Daemon; desktop uses this same Runtime/Daemon implementation.
 
 ```text
 Your Application
@@ -140,7 +212,9 @@ APIs for products that integrate with WatcheRobot.
 
 ```powershell
 # Runtime lifecycle
-watcherobot daemon start / status / stop
+watcherobot daemon start
+watcherobot daemon status
+watcherobot daemon stop
 
 # First-time robot setup and connection
 watcherobot robot setup
@@ -148,9 +222,13 @@ watcherobot robot status
 watcherobot robot pair 123456      # replace with the code shown on the robot
 
 # Application development and distribution
-watcherobot app init my_app && cd my_app && watcherobot app run
+watcherobot app init my_app
+cd my_app
+watcherobot app run
+watcherobot app login
 watcherobot app check .            # validate before publishing
-watcherobot app publish .          # publish to the Marketplace after login
+watcherobot app publish .          # upload an immutable source snapshot
+watcherobot app submit .           # submit that snapshot for Marketplace review
 watcherobot app install <app-id>   # install from the Marketplace
 watcherobot app list               # list installed applications
 watcherobot app uninstall <app-id> # uninstall
@@ -165,6 +243,6 @@ See the [complete CLI reference](docs/cli-reference.md) for every command.
 - Windows or macOS for Bluetooth Wi-Fi provisioning
 - A WatcheRobot device for pairing and hardware features
 
-Current stable release: [`watcherobot 0.1.1`](https://pypi.org/project/watcherobot/0.1.1/).
+See the PyPI badge above for the current stable release.
 For maintainers, see the [release process](docs/releasing.md).
 Licensed under [Apache-2.0](LICENSE).

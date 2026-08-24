@@ -9,73 +9,140 @@
 
 ## 🚀 5 分钟上手
 
+开始之前请确认：
+
+- 已安装 Python 3.10–3.12（推荐 3.11）；
+- 首次蓝牙配网使用 Windows 或 macOS；
+- 硬件步骤需要机器人在身边并保持开机；没有机器人时，仍可离线创建并运行示例 Application；
+- 配对时电脑和机器人处于同一 Wi-Fi 网络。
+
+### 1. 安装 SDK
+
 ```powershell
-# 1. 安装（推荐 Python 3.11，独立环境）
 conda create -n watcherobot python=3.11 -y
 conda activate watcherobot
+python -m pip install --upgrade pip
 python -m pip install watcherobot
+```
 
-# 2. 首次配对机器人（引导式，跟着提示走即可）
+不使用 Conda 时，请创建隔离的 `venv`，不要直接污染系统 Python：
+
+```powershell
+# Windows PowerShell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install watcherobot
+```
+
+```sh
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install watcherobot
+```
+
+确认当前终端实际使用的 SDK：
+
+```powershell
+watcherobot --version
+```
+
+PEP 668、PATH、`python3`、源码 checkout 和 TestPyPI 的处理方法见
+[安装指南](docs/installation.zh-CN.md)。
+
+### 2. 配置第一台机器人
+
+`watcherobot robot setup` 是交互式引导，会完成 Wi-Fi 配置、Runtime 配对和最终连接确认：
+
+```powershell
 watcherobot robot setup
+```
 
-# 3. 创建并运行你的第一个应用
+引导过程会要求你：
+
+1. 打开电脑蓝牙，并在机器人上进入 **Settings > Wi-Fi**；
+2. 使用 **Up/Down** 按稳定的 **Device ID** 选择机器人，再私密输入 Wi-Fi 凭据；
+3. 在机器人上打开 **"Python SDK"** 应用，将屏幕顶部的六位配对码输入同一个引导流程。
+
+如果机器人已经联网，不要重置 Wi-Fi；打开 **"Python SDK"** 应用后直接配对：
+
+```powershell
+watcherobot robot pair 123456
+watcherobot robot status
+```
+
+请把 `123456` 替换为机器人当前显示的配对码。旧固件没有广播 Device ID 时，命令会
+明确标记并使用 Bluetooth ID 作为兼容信息。
+
+### 3. 创建并运行第一个 Application
+
+以下命令逐行执行，兼容 Windows PowerShell 5.1、PowerShell 7 和 macOS/Linux Shell：
+
+```powershell
 watcherobot app init hello_robot
 cd hello_robot
 watcherobot app run
 ```
 
-> 💡 **没有安装 Conda？** 两条路任选：
->
-> - **最简路径** —— 不用 Conda，直接装进系统 Python（3.10–3.12）：
->   ```powershell
->   python -m pip install --upgrade pip
->   python -m pip install watcherobot
->   ```
-> - **推荐长期使用** —— 先[安装 Miniconda](https://docs.anaconda.com/miniconda/install/)，
->   再执行上面的命令。独立环境可以避免和机器上其他 Python 项目的依赖冲突。
->
-> 两条路最终都得到同一个 `watcherobot` 命令，先用哪条都行，之后随时可切换。
+初始化器会生成：
 
-跑通后，试试让机器人开心一下：
+```text
+hello_robot/
+├─ app.json     # Application 身份、版本和依赖
+├─ app.py       # 受管 Application 入口
+├─ README.md    # 生成项目的使用说明
+├─ icon.svg     # Application 图标
+└─ .gitignore
+```
+
+`watcherobot app run` 会通过 Runtime/Daemon 启动项目。终端会输出 Application 问候；
+连接兼容机器人后还会播放一次 `happy` 行为。没有机器人时，Application 会继续以离线模式
+运行并提示连接方法。
+
+必须使用 `watcherobot app run`，不要直接运行 `python app.py`：Application 需要由
+Daemon 注入 Device channel 和 Desktop channel。配对或连接失败时参见
+[故障排查](docs/troubleshooting.md)。
+
+### 4. 理解并修改示例
+
+第 3 步生成的 `hello_robot/app.py` 就是下面这段代码。在 `hello_robot` 目录修改文件后，
+重新执行 `watcherobot app run` 即可看到变化：
 
 ```python
 import asyncio
+
 from watcherobot.application import ApplicationContext
+
 
 async def main() -> None:
     async with ApplicationContext.from_environment() as app:
         job = await asyncio.to_thread(app.robot.behavior.play, "happy")
         await asyncio.to_thread(job.wait, 20.0)
 
+
 asyncio.run(main())
 ```
 
-Application 上下文提供三个常用入口：`app.robot`（机器人能力）、
-`app.desktop`（与 Watcher Desktop 的业务消息通道）、`app.logger`（日志）。
-
-没有机器人在手边也能跑：`app run` 会进入离线模式并提示下一步。
-
-随时验证安装是否成功：
+Application 上下文提供 `app.robot`（机器人能力）、`app.desktop`（与 Watcher Desktop
+交换业务消息）和 `app.logger`（Application 日志）。准备正式项目时，可以显式生成稳定元数据：
 
 ```powershell
-watcherobot --version
+watcherobot app init my_app --id com.example.my_app --author "Example Team"
 ```
-
-首次配置的完整流程（蓝牙扫描、用 **Up/Down** 选择稳定的 **Device ID**、在机器人上打开
-**Settings > Wi-Fi**、旧固件的 **Bluetooth ID** 兼容回退，以及通过机器人上的
-**"Python SDK"** 应用输入配对码）见[安装指南](docs/installation.zh-CN.md)。
 
 ## 🧭 你想做什么？
 
 | 你的需求 | 去这里 |
 | --- | --- |
-| 让机器人做动作 / 说话 / 亮灯 | [快速开始](#-5-分钟上手) 和 [SDK Application 指南](docs/application-marketplace/sdk-application-usage.md) |
+| 让机器人做动作 / 说话 / 亮灯 | [快速开始](#-5-分钟上手) 和 [SDK Application 指南](docs/application-marketplace/sdk-application-usage.zh-CN.md) |
 | 看源码、理解核心运行机制 | [架构概览](#️-它是如何工作的runtimedaemon) |
-| 用摄像头 / 麦克风 / 人脸跟踪 | [视觉诊断](docs/vision-diagnostics.md)、[人脸跟踪预览](docs/face-tracking-preview.md)、[麦克风音频](docs/microphone-audio.md) |
+| 用摄像头 / 麦克风 / 人脸跟踪 | [视觉诊断](docs/vision-diagnostics.zh-CN.md)、[人脸跟踪预览（英文）](docs/face-tracking-preview.md)、[麦克风音频（英文）](docs/microphone-audio.md) |
 | 蓝牙配网 Wi-Fi | [蓝牙配网指南](docs/bluetooth-provisioning.md) |
 | 发布应用到 Marketplace | [Marketplace 文档](docs/application-marketplace/README.md) |
 | 配对 / 连接出问题了 | [Troubleshooting](docs/troubleshooting.md) |
-| 查所有命令的用法 | [完整 CLI 参考](docs/cli-reference.md) |
+| 查所有命令的用法 | [完整 CLI 参考](docs/cli-reference.zh-CN.md) |
 | 从可运行的例子学 | [Application 示例](examples/README.md) |
 
 ## ⚙️ 它是如何工作的？（Runtime/Daemon）
@@ -85,15 +152,15 @@ watcherobot --version
 - **Application SDK** — 面向开发者的公开 Python API。
 - **Runtime/Daemon** — 唯一的本地运行时，负责与机器人配对、持有设备连接、管理 Application 进程。
 
-你的 Application 只写产品逻辑；Runtime 处理配对、连接、生命周期、日志和传输。桌面端也使用同一份Runtime/Daemon实现——Watcher Desktop 不会内嵌另一份 Daemon。
+你的 Application 只写产品逻辑；Runtime 处理配对、连接、生命周期、日志和传输。桌面端也使用同一份 Runtime/Daemon 实现——Watcher Desktop 不会内嵌另一份 Daemon。
 
 ```text
-Your Application
+你的 Application
   └─ ApplicationContext / ApplicationChannels
-       └─ WatcheRobot Runtime (Daemon)
-            ├─ pairing, device connection, logs, process lifecycle
+       └─ WatcheRobot Runtime（Daemon）
+            ├─ 配对、设备连接、日志、进程生命周期
             ├─ Desktop channel ─────────────── Watcher Desktop
-            └─ Device channel ──────────────── WatcheRobot device
+            └─ Device channel ──────────────── WatcheRobot 设备
 ```
 
 Application 永远不会自己开发现套接字或设备 WebSocket，也拿不到配对凭据。有 Application 在运行时，Desktop 与设备的业务帧经过它；没有时，Runtime 在 Desktop 与设备之间透明转发。
@@ -119,13 +186,15 @@ Application 永远不会自己开发现套接字或设备 WebSocket，也拿不�
 | 选择设备行为状态 | [ESP32-S3 v0.3.4 状态目录](docs/device-states/README.md) |
 | 官方资源与创作者作品 | [资源与作品指南](docs/resources.md) |
 | 诊断配对、连接或运行时问题 | [Troubleshooting](docs/troubleshooting.md) 与 [Runtime 契约](docs/contracts/runtime-profile-index.md) |
-| 在官方 Workspace 中做源码集成 | `yarn desktop:dev`（见 [Workspace 说明](docs/installation.md)） |
+| 在官方 Workspace 中做源码集成 | `yarn desktop:dev`（见 [Workspace 说明](docs/installation.zh-CN.md)） |
 
 ## ⌨️ 常用命令速查
 
 ```powershell
 # Runtime 生命周期
-watcherobot daemon start / status / stop
+watcherobot daemon start
+watcherobot daemon status
+watcherobot daemon stop
 
 # 机器人首次配置与连接
 watcherobot robot setup
@@ -133,15 +202,19 @@ watcherobot robot status
 watcherobot robot pair 123456      # 123456 换成机器人屏幕上的配对码
 
 # 应用开发与分发
-watcherobot app init my_app && cd my_app && watcherobot app run
+watcherobot app init my_app
+cd my_app
+watcherobot app run
+watcherobot app login
 watcherobot app check .            # 发布前校验
-watcherobot app publish .          # 登录后发布到 Marketplace
+watcherobot app publish .          # 上传不可变源码快照
+watcherobot app submit .           # 将快照提交 Marketplace 审核
 watcherobot app install <app-id>   # 从 Marketplace 安装
 watcherobot app list               # 列出已安装应用
 watcherobot app uninstall <app-id> # 卸载
 ```
 
-诊断运行时可读取 `GET /daemon/logs`（本地控制 API）。全部命令见 [CLI 参考](docs/cli-reference.md)。
+诊断运行时可读取 `GET /daemon/logs`（本地控制 API）。全部命令见 [CLI 参考](docs/cli-reference.zh-CN.md)。
 
 ## ✅ 环境要求
 
@@ -149,4 +222,4 @@ watcherobot app uninstall <app-id> # 卸载
 - Windows 或 macOS（蓝牙 Wi-Fi 配网需要）
 - 一台 WatcheRobot 设备（配对和硬件功能需要）
 
-当前稳定版本：[`watcherobot 0.1.1`](https://pypi.org/project/watcherobot/0.1.1/)。维护者发布流程见 [releasing](docs/releasing.md)。许可证：[Apache-2.0](LICENSE)。
+当前稳定版本以页面顶部 PyPI 徽章为准。维护者发布流程见 [releasing](docs/releasing.md)。许可证：[Apache-2.0](LICENSE)。
