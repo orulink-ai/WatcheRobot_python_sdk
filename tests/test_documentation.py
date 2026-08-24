@@ -1,6 +1,23 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_readme_local_links_resolve_to_repository_files() -> None:
+    link_pattern = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+    for name in ("README.md", "README.zh-CN.md"):
+        content = (ROOT / name).read_text(encoding="utf-8")
+        for target in link_pattern.findall(content):
+            if target.startswith(("http://", "https://", "#")):
+                continue
+            relative_path = target.split("#", 1)[0]
+            if not relative_path:
+                continue
+            assert (ROOT / relative_path).is_file(), (
+                f"{name} contains a broken local link: {target}"
+            )
 
 
 def test_readmes_document_managed_application_and_runtime_cli() -> None:

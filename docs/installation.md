@@ -11,12 +11,12 @@ Use a dedicated Conda environment for either workflow; do not install into
 `base`. The SDK supports Python 3.10–3.12. Python 3.11 is recommended for the
 most predictable third-party dependency compatibility.
 
-> 💡 **Don't have Conda?** For a plain release installation you can skip Conda:
-> `python -m pip install watcherobot` into any Python 3.10–3.12 works. The
-> dedicated-environment advice below still applies if you later want isolation,
-> or want to install from source — see the
-> [Miniconda installation guide](https://docs.anaconda.com/miniconda/install/)
-> to set Conda up first.
+> 💡 **Don't have Conda?** Conda is optional, but isolation is still strongly
+> recommended. Create a Python 3.10–3.12 `venv`, activate it, then run
+> `python -m pip install watcherobot`. This avoids PEP 668 restrictions and
+> dependency conflicts with system Python. See the quick start in the main
+> README for Windows and macOS/Linux activation commands, or install
+> [Miniconda](https://docs.anaconda.com/miniconda/install/).
 
 ## Option 1: install from source
 

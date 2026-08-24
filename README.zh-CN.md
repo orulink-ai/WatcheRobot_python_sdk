@@ -7,7 +7,7 @@
 [![PyPI](https://img.shields.io/pypi/v/watcherobot)](https://pypi.org/project/watcherobot/)
 [![Python](https://img.shields.io/pypi/pyversions/watcherobot)](https://pypi.org/project/watcherobot/)
 
-## 🚀 5 分钟上手
+## 🚀 快速开始
 
 开始之前请确认：
 
@@ -136,8 +136,8 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 
 | 你的需求 | 去这里 |
 | --- | --- |
-| 让机器人做动作 / 说话 / 亮灯 | [快速开始](#-5-分钟上手) 和 [SDK Application 指南](docs/application-marketplace/sdk-application-usage.zh-CN.md) |
-| 看源码、理解核心运行机制 | [架构概览](#️-它是如何工作的runtimedaemon) |
+| 让机器人做动作 / 说话 / 亮灯 | [快速开始](#-快速开始) 和 [SDK Application 指南](docs/application-marketplace/sdk-application-usage.zh-CN.md) |
+| 看源码、理解核心运行机制 | [源码与仓库边界](#-源码与仓库边界)和[运行架构](#️-它是如何工作的runtimedaemon) |
 | 用摄像头 / 麦克风 / 人脸跟踪 | [视觉诊断](docs/vision-diagnostics.zh-CN.md)、[人脸跟踪预览（英文）](docs/face-tracking-preview.md)、[麦克风音频（英文）](docs/microphone-audio.md) |
 | 蓝牙配网 Wi-Fi | [蓝牙配网指南](docs/bluetooth-provisioning.md) |
 | 发布应用到 Marketplace | [Marketplace 文档](docs/application-marketplace/README.md) |
@@ -165,6 +165,17 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 
 Application 永远不会自己开发现套接字或设备 WebSocket，也拿不到配对凭据。有 Application 在运行时，Desktop 与设备的业务帧经过它；没有时，Runtime 在 Desktop 与设备之间透明转发。
 
+## 🧩 源码与仓库边界
+
+- `src/watcherobot/application/`：受管 Application API 与通道合同。
+- `src/watcherobot/runtime/daemon/`：Runtime/Daemon 的唯一源码。Watcher Desktop
+  安装并拉起这一实现，不维护第二份 Daemon。
+- `src/watcherobot/vision.py`：端侧视觉与人脸跟踪的类型化 Application API。
+- 独立 Desktop 仓库负责桌面 UI 和打包；官方默认 Application 位于
+  `WatcheRobot_server`，SDK 不负责其中的 ASR、LLM 或 TTS 产品逻辑。
+- 官方 Workspace 使用 `yarn desktop:dev` 将当前 SDK checkout 绑定到 Workspace
+  自管环境。源码开发流程见[安装指南](docs/installation.zh-CN.md)。
+
 ## 🛠️ SDK 能做什么？
 
 用它创建受 Runtime 管理的 Application：
@@ -181,11 +192,11 @@ Application 永远不会自己开发现套接字或设备 WebSocket，也拿不�
 
 | 目标 | 从这里开始 |
 | --- | --- |
-| 端到端构建并测试一个 Application | [SDK Application 指南](docs/application-marketplace/sdk-application-usage.md) |
-| 发布一个通过审核的 Marketplace 应用 | [Marketplace 文档](docs/application-marketplace/README.md) 及 [分发参考](docs/application-marketplace/application-cli-reference.md) |
+| 端到端构建并测试一个 Application | [SDK Application 指南](docs/application-marketplace/sdk-application-usage.zh-CN.md) |
+| 发布一个通过审核的 Marketplace 应用 | [Marketplace 文档（英文）](docs/application-marketplace/README.md)及[分发参考（英文）](docs/application-marketplace/application-cli-reference.md) |
 | 选择设备行为状态 | [ESP32-S3 v0.3.4 状态目录](docs/device-states/README.md) |
-| 官方资源与创作者作品 | [资源与作品指南](docs/resources.md) |
-| 诊断配对、连接或运行时问题 | [Troubleshooting](docs/troubleshooting.md) 与 [Runtime 契约](docs/contracts/runtime-profile-index.md) |
+| 官方资源与创作者作品 | [资源与作品指南（英文）](docs/resources.md) |
+| 诊断配对、连接或运行时问题 | [Troubleshooting（英文）](docs/troubleshooting.md)与[Runtime 契约（英文）](docs/contracts/runtime-profile-index.md) |
 | 在官方 Workspace 中做源码集成 | `yarn desktop:dev`（见 [Workspace 说明](docs/installation.zh-CN.md)） |
 
 ## ⌨️ 常用命令速查
@@ -214,7 +225,9 @@ watcherobot app list               # 列出已安装应用
 watcherobot app uninstall <app-id> # 卸载
 ```
 
-诊断运行时可读取 `GET /daemon/logs`（本地控制 API）。全部命令见 [CLI 参考](docs/cli-reference.zh-CN.md)。
+常规排障先执行 `watcherobot daemon status`。产品集成可从发现到的本地控制地址读取
+`GET /daemon/logs`；端点发现和响应合同见 [Runtime 契约（英文）](docs/contracts/runtime-profile-index.md)。
+全部命令见 [CLI 参考](docs/cli-reference.zh-CN.md)。
 
 ## ✅ 环境要求
 

@@ -7,7 +7,7 @@ Control your WatcheRobot desktop robot with Python: a few lines of code to make 
 
 > 🌐 English | [中文文档](README.zh-CN.md)
 
-## 🚀 Quick start in 5 minutes
+## 🚀 Quick start
 
 Before you start:
 
@@ -26,7 +26,7 @@ python -m pip install --upgrade pip
 python -m pip install watcherobot
 ```
 
-Do not want to use Conda? Create an isolated `venv` instead of installing into
+Don't want to use Conda? Create an isolated `venv` instead of installing into
 the system Python:
 
 ```powershell
@@ -54,7 +54,7 @@ watcherobot --version
 For PEP 668, PATH, `python3`, source-checkout, and TestPyPI troubleshooting,
 see the [installation guide](docs/installation.md).
 
-### 2. Set up the first robot
+### 2. Set up your first robot
 
 `watcherobot robot setup` is an interactive guide that provisions Wi-Fi,
 pairs the robot with the Runtime, and confirms the final connection:
@@ -146,8 +146,8 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 
 | Your goal | Go here |
 | --- | --- |
-| Make the robot act / speak / light up | [Quick start](#-quick-start-in-5-minutes) and the [SDK Application guide](docs/application-marketplace/sdk-application-usage.md) |
-| Read the source, understand how it works | [How it works (Runtime/Daemon)](#️-how-it-works-runtimedaemon) |
+| Make the robot act / speak / light up | [Quick start](#-quick-start) and the [SDK Application guide](docs/application-marketplace/sdk-application-usage.md) |
+| Read the source and understand how it works | [Source and repository boundaries](#-source-and-repository-boundaries) and [How it works](#️-how-it-works-runtimedaemon) |
 | Use the camera / microphone / face tracking | [Vision diagnostics](docs/vision-diagnostics.md), [face-tracking preview](docs/face-tracking-preview.md), [microphone audio](docs/microphone-audio.md) |
 | Provision Wi-Fi over Bluetooth | [Bluetooth provisioning](docs/bluetooth-provisioning.md) |
 | Publish an app to the Marketplace | [Marketplace documentation](docs/application-marketplace/README.md) |
@@ -155,7 +155,7 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 | Look up every CLI command | [Complete CLI reference](docs/cli-reference.md) |
 | Learn from working code | [Application examples](examples/README.md) |
 
-## ⚙️ How it works? (Runtime/Daemon)
+## ⚙️ How it works (Runtime/Daemon)
 
 This package has two complementary roles:
 
@@ -180,6 +180,22 @@ An Application never opens its own discovery socket or device WebSocket, and
 never receives pairing credentials. When an Application is running, Desktop
 and device business frames pass through that Application. Without one, the
 Runtime transparently forwards frames between Desktop and device.
+
+## 🧩 Source and repository boundaries
+
+- `src/watcherobot/application/` contains the managed Application API and
+  channel contracts.
+- `src/watcherobot/runtime/daemon/` is the only Runtime/Daemon source. Watcher
+  Desktop installs and starts this implementation instead of maintaining a
+  second Daemon.
+- `src/watcherobot/vision.py` contains the typed edge-vision and face-tracking
+  Application APIs.
+- The separate Desktop repository owns desktop UI and packaging. The official
+  default Application lives in `WatcheRobot_server`; the SDK does not own its
+  ASR, LLM, or TTS product logic.
+- In the official Workspace, `yarn desktop:dev` binds the current SDK checkout
+  into the Workspace-managed environment. See the
+  [installation guide](docs/installation.md) for source-development details.
 
 ## 🛠️ What can I build?
 
@@ -234,8 +250,11 @@ watcherobot app list               # list installed applications
 watcherobot app uninstall <app-id> # uninstall
 ```
 
-For diagnostics, read `GET /daemon/logs` from the local control API.
-See the [complete CLI reference](docs/cli-reference.md) for every command.
+For normal troubleshooting, start with `watcherobot daemon status`. Product
+integrations can read `GET /daemon/logs` from the discovered local control URL;
+see the [Runtime contract](docs/contracts/runtime-profile-index.md) for endpoint
+discovery and response details. See the
+[complete CLI reference](docs/cli-reference.md) for every command.
 
 ## ✅ Requirements and support
 
