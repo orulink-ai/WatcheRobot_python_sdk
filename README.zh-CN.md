@@ -177,7 +177,7 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
             └─ Device channel ──────────────── WatcheRobot 设备
 ```
 
-Application 永远不会自己开发现套接字或设备 WebSocket，也拿不到配对凭据。有 Application 在运行时，Desktop 与设备的业务帧经过它；没有时，Runtime 在 Desktop 与设备之间透明转发。
+Application 永远不会自行打开发现套接字或设备 WebSocket，也拿不到配对凭据。有 Application 在运行时，Desktop 与设备的业务帧经过它；没有时，Runtime 在 Desktop 与设备之间透明转发。
 
 <a id="source-boundaries-zh"></a>
 
@@ -236,9 +236,9 @@ watcherobot app login
 watcherobot app check .            # 发布前校验
 watcherobot app publish .          # 上传不可变源码快照
 watcherobot app submit .           # 将快照提交 Marketplace 审核
-watcherobot app install <app-id>   # 从 Marketplace 安装
+watcherobot app install com.example.my_app   # 替换为实际 Application ID
 watcherobot app list               # 列出已安装应用
-watcherobot app uninstall <app-id> # 卸载
+watcherobot app uninstall com.example.my_app
 ```
 
 常规排障先执行 `watcherobot daemon status`。产品集成可从发现到的本地控制地址读取

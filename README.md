@@ -262,9 +262,9 @@ watcherobot app login
 watcherobot app check .            # validate before publishing
 watcherobot app publish .          # upload an immutable source snapshot
 watcherobot app submit .           # submit that snapshot for Marketplace review
-watcherobot app install <app-id>   # install from the Marketplace
+watcherobot app install com.example.my_app   # replace with the real Application ID
 watcherobot app list               # list installed applications
-watcherobot app uninstall <app-id> # uninstall
+watcherobot app uninstall com.example.my_app
 ```
 
 For normal troubleshooting, start with `watcherobot daemon status`. Product

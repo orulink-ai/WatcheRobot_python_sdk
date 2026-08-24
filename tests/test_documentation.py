@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
-def _markdown_anchor_ids(content: str) -> set[str]:
+def _lightweight_markdown_anchor_ids(content: str) -> set[str]:
     explicit_ids = set(re.findall(r'<a id="([^"]+)"></a>', content))
     headings = re.findall(r"^#{1,6}\s+(.+?)\s*$", content, flags=re.MULTILINE)
     for heading in headings:
@@ -14,7 +14,7 @@ def _markdown_anchor_ids(content: str) -> set[str]:
     return explicit_ids
 
 
-def test_readme_local_links_and_fragments_resolve() -> None:
+def test_readme_lightweight_local_links_and_fragments_resolve() -> None:
     link_pattern = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
     for name in ("README.md", "README.zh-CN.md"):
@@ -29,7 +29,7 @@ def test_readme_local_links_and_fragments_resolve() -> None:
             )
             if separator and fragment:
                 target_content = target_path.read_text(encoding="utf-8")
-                assert fragment in _markdown_anchor_ids(target_content), (
+                assert fragment in _lightweight_markdown_anchor_ids(target_content), (
                     f"{name} contains a broken Markdown fragment: {target}"
                 )
 
