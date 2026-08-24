@@ -7,9 +7,17 @@ This guide separates two different workflows:
 - **Install a release** when an Application developer needs a version already
   published to PyPI.
 
-Use a dedicated Conda environment for either workflow; do not install into
-`base`. The SDK supports Python 3.10–3.12. Python 3.11 is recommended for the
-most predictable third-party dependency compatibility.
+Use an isolated environment for either workflow. Conda and `venv` are both
+supported; do not install into Conda `base` or the system Python. The SDK
+supports Python 3.10–3.12. Python 3.11 is recommended for the most predictable
+third-party dependency compatibility.
+
+> 💡 **Don't have Conda?** Conda is optional, but isolation is still strongly
+> recommended. Create a Python 3.10–3.12 `venv`, activate it, then run
+> `python -m pip install watcherobot`. This avoids PEP 668 restrictions and
+> dependency conflicts with system Python. See the quick start in the main
+> README for Windows and macOS/Linux activation commands, or install
+> [Miniconda](https://docs.anaconda.com/miniconda/install/).
 
 ## Option 1: install from source
 

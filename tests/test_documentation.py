@@ -1,6 +1,37 @@
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
+
+
+def _lightweight_markdown_anchor_ids(content: str) -> set[str]:
+    explicit_ids = set(re.findall(r'<a id="([^"]+)"></a>', content))
+    headings = re.findall(r"^#{1,6}\s+(.+?)\s*$", content, flags=re.MULTILINE)
+    for heading in headings:
+        slug = heading.lower()
+        slug = re.sub(r"[^\w\- ]", "", slug)
+        explicit_ids.add(slug.replace(" ", "-"))
+    return explicit_ids
+
+
+def test_readme_lightweight_local_links_and_fragments_resolve() -> None:
+    link_pattern = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+    for name in ("README.md", "README.zh-CN.md"):
+        content = (ROOT / name).read_text(encoding="utf-8")
+        for target in link_pattern.findall(content):
+            if target.startswith(("http://", "https://")):
+                continue
+            relative_path, separator, fragment = target.partition("#")
+            target_path = ROOT / relative_path if relative_path else ROOT / name
+            assert target_path.is_file(), (
+                f"{name} contains a broken local link: {target}"
+            )
+            if separator and fragment:
+                target_content = target_path.read_text(encoding="utf-8")
+                assert fragment in _lightweight_markdown_anchor_ids(target_content), (
+                    f"{name} contains a broken Markdown fragment: {target}"
+                )
 
 
 def test_readmes_document_managed_application_and_runtime_cli() -> None:
