@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Robot Alarm application icon">
+  <defs>
+    <linearGradient id="clockBody" x1="112" y1="82" x2="398" y2="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3B82F6"/>
+      <stop offset="0.55" stop-color="#155EEF"/>
+      <stop offset="1" stop-color="#102A72"/>
+    </linearGradient>
+    <linearGradient id="facePanel" x1="163" y1="180" x2="349" y2="348" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F8FBFF"/>
+      <stop offset="1" stop-color="#D9E8FF"/>
+    </linearGradient>
+    <linearGradient id="sunrise" x1="194" y1="117" x2="323" y2="339" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFD166"/>
+      <stop offset="1" stop-color="#FF8A34"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#071938" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+    <path d="M142 126 98 83c-8-8-21-8-29 0l-19 19c-8 8-8 21 0 29l46 46c12-21 27-38 46-51Z" fill="url(#sunrise)"/>
+    <path d="m370 126 44-43c8-8 21-8 29 0l19 19c8 8 8 21 0 29l-46 46c-12-21-27-38-46-51Z" fill="url(#sunrise)"/>
+    <circle cx="256" cy="270" r="170" fill="url(#clockBody)"/>
+    <circle cx="256" cy="270" r="143" fill="#0B1736" opacity="0.42"/>
+    <rect x="145" y="168" width="222" height="204" rx="72" fill="url(#facePanel)"/>
+
+    <path d="M256 134v-31" stroke="#DCEAFF" stroke-width="16" stroke-linecap="round"/>
+    <circle cx="256" cy="87" r="18" fill="url(#sunrise)"/>
+
+    <rect x="186" y="226" width="45" height="58" rx="22.5" fill="#143D8D"/>
+    <rect x="281" y="226" width="45" height="58" rx="22.5" fill="#143D8D"/>
+    <circle cx="216" cy="243" r="8" fill="#7DD3FC"/>
+    <circle cx="311" cy="243" r="8" fill="#7DD3FC"/>
+    <path d="M205 315c14 16 31 24 51 24s37-8 51-24" fill="none" stroke="#FF963F" stroke-width="17" stroke-linecap="round"/>
+
+    <path d="M132 390 93 434" stroke="#143D8D" stroke-width="28" stroke-linecap="round"/>
+    <path d="m380 390 39 44" stroke="#143D8D" stroke-width="28" stroke-linecap="round"/>
+  </g>
+
+  <path d="M401 222c17 14 27 31 31 51" fill="none" stroke="#FFB84D" stroke-width="13" stroke-linecap="round"/>
+  <path d="M425 196c29 23 46 52 51 86" fill="none" stroke="#FF8A34" stroke-width="13" stroke-linecap="round"/>
+</svg>

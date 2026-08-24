@@ -1,10 +1,17 @@
 {
-  "schema_version": 1,
-  "id": "example.scheduled_reminder",
+  "schema_version": 2,
+  "id": "com.orulink.robot_alarm",
   "name": "Robot Alarm",
   "version": "1.0.0",
   "requires_watcherobot": ">=0.1.0a4,<0.2",
   "dependencies": [
     "edge-tts>=6.1.10"
-  ]
+  ],
+  "supported_host_platforms": [
+    "windows",
+    "macos"
+  ],
+  "description": "Set recurring alarms in a local web page and have WatcheRobot announce them with voice and behavior at the scheduled time.",
+  "author": "Orulink AI",
+  "icon": "icon.svg"
 }
