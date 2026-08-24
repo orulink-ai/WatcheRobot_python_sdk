@@ -3,7 +3,10 @@
 一个可直接运行的 WatcheRobot Application：**本地网页设置闹钟，到点由机器人
 喇叭语音播报**，并播放一次 `happy` 行为引起注意。
 
-- Application ID: `example.scheduled_reminder`
+- Application ID: `com.orulink.robot_alarm`
+- 应用商店名称：`Robot Alarm`
+- 作者：`Orulink AI`
+- 桌面平台：Windows、macOS
 - 依赖 SDK：`watcherobot >=0.1.0a4,<0.2`
 
 ## 怎么用
@@ -63,6 +66,20 @@ watcherobot app run .\examples\scheduled_reminder
 ```powershell
 python -m pytest examples/scheduled_reminder/tests -q
 ```
+
+## 发布到应用商店
+
+应用清单使用 `schema_version: 2`，包含正式 Application ID、平台声明、简介和
+SVG 图标。公开发布前先确认源码中不包含本地闹钟数据、缓存或凭据：
+
+```powershell
+watcherobot app check .\examples\scheduled_reminder
+watcherobot app publish .\examples\scheduled_reminder
+watcherobot app submit .\examples\scheduled_reminder --commit <publish 返回的 commit>
+```
+
+`publish` 会把应用源码上传到开发者的公开 Hugging Face Space；`submit` 只提交
+该不可变 commit 到官方应用商店审核，审核合入后才会正式展示。
 
 ## 注意
 
