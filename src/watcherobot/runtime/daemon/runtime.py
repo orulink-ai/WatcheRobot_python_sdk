@@ -7,6 +7,7 @@ import asyncio
 import secrets
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from watcherobot.runtime.daemon.application.bridge import ChannelNotConnectedError
@@ -30,10 +31,16 @@ from watcherobot.runtime.daemon.connections.websocket_server import (
 from watcherobot.runtime.daemon.control.rest import DaemonControlServer
 from watcherobot.runtime.daemon.logging import DaemonLogService
 from watcherobot.runtime.daemon.maintenance import MaintenanceError, MaintenanceService
+from watcherobot.runtime.daemon.pairing.bindings_store import (
+    DeviceBinding,
+    DeviceBindingsSnapshot,
+    DeviceBindingsStore,
+)
 from watcherobot.runtime.daemon.pairing.protocol import (
     DeviceSessionEnd,
     HardwareHello,
     build_device_state_event,
+    derive_binding_secret,
 )
 from watcherobot.runtime.daemon.pairing.session import (
     DevicePairingSession,
@@ -47,6 +54,12 @@ from watcherobot.runtime.daemon.preview.udp_service import (
     FaceTrackingUdpPreviewService,
 )
 from watcherobot.runtime.daemon.routing.raw import RawFrameRouter
+
+
+def _utc_now_ms() -> int:
+    """Informational wall clock for binding metadata; never drives decisions."""
+
+    return int(time.time() * 1000)
 
 
 class DaemonRuntime:
@@ -66,6 +79,7 @@ class DaemonRuntime:
         daemon_log_path: Path | None = None,
         pairing_udp_port: int = 37021,
         preview_udp_port: int = 0,
+        device_bindings_store: DeviceBindingsStore | None = None,
         managed_app_root: Path | None = None,
         bundled_resource_root: Path | None = None,
         source_default_application_root: Path | None = None,
@@ -109,8 +123,17 @@ class DaemonRuntime:
             application_registry=self.application.registry,
             application_bridge=self.application.bridge,
         )
+        # watcher-lan-pairing/1.1: with a persistent bindings store the
+        # instance id survives restarts so remembered devices can recognise
+        # this daemon again; without one the legacy ephemeral identity keeps
+        # every existing caller behaviour unchanged.
+        self._device_bindings = device_bindings_store
+        if device_bindings_store is not None:
+            daemon_instance_id = device_bindings_store.load().daemon_instance_id
+        else:
+            daemon_instance_id = secrets.token_hex(16)
         self.device_pairing = DevicePairingSession(
-            daemon_instance_id=secrets.token_hex(16),
+            daemon_instance_id=daemon_instance_id,
         )
         self._clock = clock
         self.connection_registry = connection_registry
@@ -180,6 +203,7 @@ class DaemonRuntime:
         self.application.set_device_status_url(
             f"{self.control_server.base_url}/daemon/devices"
         )
+        await self._maybe_start_reunite_scan()
         self.logs.record(
             "Daemon Runtime ready "
             f"(external={self.external_server.url}, "
@@ -447,6 +471,7 @@ class DaemonRuntime:
             code=1000,
             reason="device session released",
         )
+        self._forget_device_binding("disconnect requested")
         await self._publish_device_state(self.device_pairing.snapshot())
         self.logs.record("Device disconnected by desktop request")
         return True
@@ -468,6 +493,7 @@ class DaemonRuntime:
     def device_status(self) -> dict[str, object]:
         device = self.device_pairing.snapshot()
         peer_ip = self.device_pairing.expected_peer_ip
+        device["reuniting"] = self.device_pairing.reuniting
         device["preview_websocket_url"] = (
             f"ws://{peer_ip}:81/ws/face-track"
             if device["online"] and peer_ip is not None
@@ -495,7 +521,86 @@ class DaemonRuntime:
             "Device connected "
             f"(peer_ip={peer_ip}, request_id={hello.pair_request_id})"
         )
+        self._save_device_binding(hello, peer_ip)
         await self._publish_device_state(self.device_pairing.snapshot())
+
+    async def _maybe_start_reunite_scan(self) -> None:
+        """Best-effort automatic reconnect to the remembered device at boot."""
+
+        if self._device_bindings is None:
+            return
+        if self.device_pairing.state is not DevicePairingState.IDLE:
+            return
+        binding = self._device_bindings.load().device
+        if binding is None:
+            return
+        request = self.device_pairing.start_reunite_scan(
+            request_id=secrets.token_hex(16),
+            nonce=secrets.token_hex(16),
+            target_mode=binding.target_mode,
+            websocket_port=self.external_server.bound_port,
+            binding_secret=binding.binding_secret,
+            now=self._clock(),
+        )
+        try:
+            self.pairing_udp.activate(peer_ip=binding.last_peer_ip)
+        except Exception as exc:
+            # A stale or currently absent interface must not kill the scan:
+            # fall back to broadcast-only reachability before giving up.
+            self.logs.record(f"Reunite unicast probe unavailable ({exc})")
+            try:
+                self.pairing_udp.activate()
+            except Exception as fallback_exc:
+                self.device_pairing.release()
+                self.logs.record(f"Device reunite scan aborted ({fallback_exc})")
+                return
+        self.logs.record(
+            "Device reunite scan started "
+            f"(mode={binding.target_mode}, request_id={request.request_id}, "
+            f"last_peer_ip={binding.last_peer_ip})"
+        )
+
+    def _save_device_binding(self, hello: HardwareHello, peer_ip: str) -> None:
+        """Seed/refresh the durable binding after a manual pairing connect."""
+
+        token = self.device_pairing.take_manual_binding_token()
+        if token is None or self._device_bindings is None:
+            return
+        now_ms = _utc_now_ms()
+        snapshot = self._device_bindings.load()
+        try:
+            existing = snapshot.device
+            self._device_bindings.write(
+                replace(
+                    snapshot,
+                    device=DeviceBinding(
+                        binding_secret=derive_binding_secret(token),
+                        target_mode=hello.mode,
+                        last_peer_ip=peer_ip,
+                        last_ws_port=self.external_server.bound_port,
+                        paired_at_ms=(
+                            existing.paired_at_ms if existing is not None else now_ms
+                        ),
+                        last_connected_at_ms=now_ms,
+                    ),
+                )
+            )
+        except (OSError, ValueError) as exc:
+            self.logs.record(f"Device binding persistence failed ({exc})")
+            return
+        self.logs.record("Device binding saved (fast reconnect armed)")
+
+    def _forget_device_binding(self, reason: str) -> bool:
+        if self._device_bindings is None:
+            return False
+        try:
+            removed = self._device_bindings.clear_device()
+        except OSError as exc:
+            self.logs.record(f"Device binding clear failed ({exc})")
+            return False
+        if removed:
+            self.logs.record(f"Device binding forgotten ({reason})")
+        return removed
 
     async def _device_disconnected(self, _peer_ip: str) -> None:
         if self.device_pairing.state is not DevicePairingState.CONNECTED:

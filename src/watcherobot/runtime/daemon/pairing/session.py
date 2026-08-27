@@ -12,10 +12,13 @@ from enum import Enum
 from watcherobot.runtime.daemon.pairing.protocol import (
     LAN_PAIRING_TARGET_MODES,
     HardwareHello,
+    LinkReuniteAccept,
+    LinkReuniteRequest,
     PairAccept,
     PairBusy,
     PairCancel,
     PairRequest,
+    reunite_response_mac,
 )
 
 
@@ -24,6 +27,7 @@ DEFAULT_CONNECT_TIMEOUT_SECONDS = 10.0
 DEFAULT_RECONNECT_TIMEOUT_SECONDS = 30.0
 
 _LOWER_HEX_32 = re.compile(r"^[0-9a-f]{32}$")
+_LOWER_HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _PAIRING_CODE = re.compile(r"^[0-9]{6}$")
 
 
@@ -71,18 +75,28 @@ class DevicePairingSession:
         self._reconnect_timeout_seconds = reconnect_timeout_seconds
 
         self._state = DevicePairingState.IDLE
-        self._request: PairRequest | None = None
+        self._request: PairRequest | LinkReuniteRequest | None = None
         self._session_token: str | None = None
         self._expected_peer_ip: str | None = None
         self._deadline: float | None = None
         self._last_error: str | None = None
+        # watcher-lan-pairing/1.1 fast reconnect bookkeeping.
+        self._reuniting = False
+        self._reunite_secret: str | None = None
+        self._pending_manual_token: str | None = None
 
     @property
     def state(self) -> DevicePairingState:
         return self._state
 
     @property
-    def current_request(self) -> PairRequest | None:
+    def reuniting(self) -> bool:
+        """True while an automatic reunite scan owns the slot."""
+
+        return self._reuniting and self._state is DevicePairingState.DISCOVERING
+
+    @property
+    def current_request(self) -> PairRequest | LinkReuniteRequest | None:
         return self._request
 
     @property
@@ -178,6 +192,9 @@ class DevicePairingSession:
             raise PairingSessionError("pairing_credential_invalid")
 
         self._session_token = response.session_token
+        # Manual pairing is the only exchange allowed to (re)seed the
+        # long-term binding secret; reunite sessions keep it stable.
+        self._pending_manual_token = response.session_token
         self._expected_peer_ip = peer_ip
         self._state = DevicePairingState.CONNECTING
         self._deadline = now + self._connect_timeout_seconds
@@ -220,10 +237,111 @@ class DevicePairingSession:
         self._deadline = None
         self._last_error = None
 
+    def start_reunite_scan(
+        self,
+        *,
+        request_id: str,
+        nonce: str,
+        target_mode: str,
+        websocket_port: int,
+        binding_secret: str,
+        now: float,
+    ) -> LinkReuniteRequest:
+        """Occupy the idle slot with an automatic reunite broadcast scan."""
+
+        if self._state is not DevicePairingState.IDLE:
+            raise PairingSessionError("device_slot_occupied")
+        if target_mode not in LAN_PAIRING_TARGET_MODES:
+            raise PairingSessionError("unsupported_target_mode")
+        if type(websocket_port) is not int or not 1 <= websocket_port <= 65535:
+            raise PairingSessionError("invalid_websocket_port")
+        if (
+            _LOWER_HEX_32.fullmatch(request_id or "") is None
+            or _LOWER_HEX_32.fullmatch(nonce or "") is None
+            or _LOWER_HEX_64.fullmatch(binding_secret or "") is None
+        ):
+            raise PairingSessionError("internal_error", "invalid reunite credentials")
+
+        self._request = LinkReuniteRequest(
+            request_id=request_id,
+            daemon_instance_id=self.daemon_instance_id,
+            nonce=nonce,
+            target_mode=target_mode,
+            websocket_port=websocket_port,
+        )
+        self._reuniting = True
+        self._reunite_secret = binding_secret
+        self._session_token = None
+        self._expected_peer_ip = None
+        self._state = DevicePairingState.DISCOVERING
+        self._deadline = now + self._discovery_timeout_seconds
+        self._last_error = None
+        return self._request
+
+    def accept_reunite(
+        self,
+        response: LinkReuniteAccept,
+        *,
+        peer_ip: str,
+        now: float,
+    ) -> None:
+        """Verify the challenge MAC and move a reunite scan into CONNECTING."""
+
+        if (
+            self._state is not DevicePairingState.DISCOVERING
+            or not self._reuniting
+            or self._request is None
+        ):
+            raise PairingSessionError("invalid_state_transition")
+        if (
+            not self._matches_response(
+                request_id=response.request_id,
+                daemon_instance_id=response.daemon_instance_id,
+            )
+            or response.nonce != self._request.nonce  # noqa: E501 - attribute chains read better than one boolean
+            or response.target_mode != self._request.target_mode
+            or not peer_ip
+        ):
+            raise PairingSessionError("pairing_credential_invalid")
+        assert self._reunite_secret is not None
+        expected_mac = reunite_response_mac(
+            self._reunite_secret,
+            request_id=self._request.request_id,
+            nonce=self._request.nonce,
+            daemon_instance_id=self.daemon_instance_id,
+            target_mode=self._request.target_mode,
+        )
+        if not hmac.compare_digest(expected_mac, response.response_mac):
+            raise PairingSessionError("pairing_credential_invalid")
+
+        # The scanner stops broadcasting on accept; reconnects of this session
+        # reuse its credentials without reseeding the binding secret.
+        self._reuniting = False
+        self._reunite_secret = None
+        self._session_token = response.session_token
+        self._expected_peer_ip = peer_ip
+        self._state = DevicePairingState.CONNECTING
+        self._deadline = now + self._connect_timeout_seconds
+
+    def take_manual_binding_token(self) -> str | None:
+        """Return and consume the manual pairing token eligible for binding.
+
+        Yields the session token exactly once per manual pairing: after the
+        hello that first established the current CONNECTED slot. Reconnects
+        and reunite sessions never produce one.
+        """
+
+        token = self._pending_manual_token
+        if self._state is not DevicePairingState.CONNECTED or token is None:
+            return None
+        self._pending_manual_token = None
+        return token
+
     def device_disconnected(self, *, now: float) -> None:
         if self._state is not DevicePairingState.CONNECTED:
             raise PairingSessionError("invalid_state_transition")
         self._state = DevicePairingState.RECONNECTING
+        self._pending_manual_token = None
         self._deadline = now + self._reconnect_timeout_seconds
 
     def cancel(self) -> bool:
@@ -270,13 +388,15 @@ class DevicePairingSession:
         if self._deadline is None or now < self._deadline:
             return False
 
-        error_by_state = {
-            DevicePairingState.DISCOVERING: "pairing_not_found",
-            DevicePairingState.CONNECTING: "device_connect_timeout",
-            DevicePairingState.RECONNECTING: "reconnect_timeout",
-        }
-        error = error_by_state.get(self._state)
-        if error is None:
+        if self._state is DevicePairingState.DISCOVERING and self._reuniting:
+            error = "reunite_unavailable"
+        elif self._state is DevicePairingState.DISCOVERING:
+            error = "pairing_not_found"
+        elif self._state is DevicePairingState.CONNECTING:
+            error = "device_connect_timeout"
+        elif self._state is DevicePairingState.RECONNECTING:
+            error = "reconnect_timeout"
+        else:
             return False
         self._reset(last_error=error)
         return True
@@ -300,3 +420,6 @@ class DevicePairingSession:
         self._expected_peer_ip = None
         self._deadline = None
         self._last_error = last_error
+        self._reuniting = False
+        self._reunite_secret = None
+        self._pending_manual_token = None

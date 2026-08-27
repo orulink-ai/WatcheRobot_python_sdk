@@ -17,6 +17,7 @@ from watcherobot.runtime.daemon.instance import (
     RuntimeStateStore,
     default_runtime_state_root,
 )
+from watcherobot.runtime.daemon.pairing.bindings_store import DeviceBindingsStore
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
 
 
@@ -85,6 +86,7 @@ async def run_runtime(args: argparse.Namespace) -> int:
         preview_udp_port=args.preview_udp_port,
         application_log_dir=state_root / "logs" / "applications",
         daemon_log_path=state_root / "logs" / "daemon.jsonl",
+        device_bindings_store=DeviceBindingsStore(state_root),
         managed_app_root=(
             Path(args.managed_app_root).resolve()
             if args.managed_app_root is not None

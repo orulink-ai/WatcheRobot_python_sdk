@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from watcherobot.runtime.daemon.pairing.protocol import (
+    LinkReuniteAccept,
     PairAccept,
     PairBusy,
     PairingProtocolError,
@@ -514,6 +515,17 @@ class PairingUdpService:
             message = parse_udp_message(data)
             if isinstance(message, PairAccept):
                 self._session.accept_device(
+                    message,
+                    peer_ip=address[0],
+                    now=self._clock(),
+                )
+                self._selected_interface = interface
+                self._record_receive_context(address[0], interface)
+            elif isinstance(message, LinkReuniteAccept):
+                # MAC verification happens inside the session; a wrong MAC
+                # raises PairingSessionError and lands in the shared reject
+                # path below without disturbing the scan.
+                self._session.accept_reunite(
                     message,
                     peer_ip=address[0],
                     now=self._clock(),

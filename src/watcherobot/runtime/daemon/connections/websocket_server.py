@@ -22,6 +22,8 @@ from watcherobot.runtime.daemon.connections.registry import (
 from watcherobot.runtime.daemon.pairing.protocol import (
     DeviceSessionEnd,
     HardwareHello,
+    LAN_PAIRING_HELLO_VERSIONS,
+    LAN_PAIRING_PROTOCOL,
     PairingProtocolError,
     build_hardware_hello_ack,
     build_hardware_hello_nack,
@@ -342,8 +344,8 @@ class ExternalWebSocketServer:
                 hello = parse_hardware_hello(frame)
             except PairingProtocolError:
                 protocol_matches = (
-                    payload.get("pairing_protocol") == "watcher-lan-pairing"
-                    and payload.get("pairing_version") == "1.0"
+                    payload.get("pairing_protocol") == LAN_PAIRING_PROTOCOL
+                    and payload.get("pairing_version") in LAN_PAIRING_HELLO_VERSIONS
                 )
                 if protocol_matches:
                     error = "pairing_credential_invalid"
