@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Watcher Expression Lab</title>
-  <link rel="stylesheet" href="./styles.css?v=expression-lab-15">
+  <link rel="stylesheet" href="./styles.css?v=expression-lab-16">
   </head>
   <body data-layout="studio">
     <header class="masthead">
@@ -99,6 +99,38 @@
           <label class="toggle"><input id="autoBlink" type="checkbox" checked><span></span>自动眨眼</label>
           </details>
         </section>
+        <section id="eyelidControlsModule" class="control-module eyelid-module">
+          <header class="module-heading"><span>LID</span><b>眼皮与情绪</b><small id="eyeShapeState">中性 · 四遮罩独立控制</small></header>
+          <div class="emotion-strip" role="group" aria-label="眼睛情绪形态">
+            <button class="eye-shape active" data-eye-shape="neutral">中性</button>
+            <button class="eye-shape" data-eye-shape="happy">开心</button>
+            <button class="eye-shape" data-eye-shape="sad">伤心</button>
+            <button class="eye-shape" data-eye-shape="unimpressed">无语</button>
+            <button class="eye-shape" data-eye-shape="angry">愤怒</button>
+            <button class="eye-shape" data-eye-shape="sleepy">困倦</button>
+          </div>
+          <details class="advanced" open>
+            <summary>四块眼皮遮罩 <small>位置为 206 逻辑画布像素</small></summary>
+            <div class="eyelid-grid">
+              <fieldset><legend>左上眼皮</legend>
+                <label><span>纵向位置 <output id="leftUpperLidYValue">-65</output></span><input id="leftUpperLidY" aria-label="左上眼皮纵向位置" type="range" min="-80" max="80" step="1" value="-65"></label>
+                <label><span>旋转 <output id="leftUpperLidRotationValue">0°</output></span><input id="leftUpperLidRotation" aria-label="左上眼皮旋转" type="range" min="-45" max="45" step="1" value="0"></label>
+              </fieldset>
+              <fieldset><legend>右上眼皮</legend>
+                <label><span>纵向位置 <output id="rightUpperLidYValue">-65</output></span><input id="rightUpperLidY" aria-label="右上眼皮纵向位置" type="range" min="-80" max="80" step="1" value="-65"></label>
+                <label><span>旋转 <output id="rightUpperLidRotationValue">0°</output></span><input id="rightUpperLidRotation" aria-label="右上眼皮旋转" type="range" min="-45" max="45" step="1" value="0"></label>
+              </fieldset>
+              <fieldset><legend>左下眼皮</legend>
+                <label><span>纵向位置 <output id="leftLowerLidYValue">65</output></span><input id="leftLowerLidY" aria-label="左下眼皮纵向位置" type="range" min="-80" max="80" step="1" value="65"></label>
+                <label><span>旋转 <output id="leftLowerLidRotationValue">0°</output></span><input id="leftLowerLidRotation" aria-label="左下眼皮旋转" type="range" min="-45" max="45" step="1" value="0"></label>
+              </fieldset>
+              <fieldset><legend>右下眼皮</legend>
+                <label><span>纵向位置 <output id="rightLowerLidYValue">65</output></span><input id="rightLowerLidY" aria-label="右下眼皮纵向位置" type="range" min="-80" max="80" step="1" value="65"></label>
+                <label><span>旋转 <output id="rightLowerLidRotationValue">0°</output></span><input id="rightLowerLidRotation" aria-label="右下眼皮旋转" type="range" min="-45" max="45" step="1" value="0"></label>
+              </fieldset>
+            </div>
+          </details>
+        </section>
         <section id="accessoryControlsModule" class="control-module accessory-module" data-active="false">
           <header class="module-heading"><span>DECOR</span><b>标签与装饰</b><small id="accessoryModuleState">先选择头部装饰</small></header>
           <div class="select-grid">
@@ -136,6 +168,6 @@
       <label class="toggle"><input id="scanlines" type="checkbox" checked><span></span>屏幕扫描纹理</label>
     </aside>
     <div id="toast" class="toast" role="alert"></div>
-  <script src="./app.js?v=expression-lab-15"></script>
+  <script src="./app.js?v=expression-lab-16"></script>
   </body>
 </html>

@@ -38,7 +38,7 @@ def make_service(
     resource_snapshot=None,
 ) -> tuple[ExpressionLabService, FakeExpressionRuntime]:
     runtime = FakeExpressionRuntime()
-    capabilities = ("expression.runtime.v1", "expression.runtime.v2") if expression_supported else ("animation",)
+    capabilities = ("expression.runtime.v1", "expression.runtime.v2", "expression.runtime.v3") if expression_supported else ("animation",)
     robot = SimpleNamespace(
         expression_runtime=runtime,
         capabilities=capabilities if connected else (),
@@ -68,6 +68,14 @@ def test_service_owns_expression_lifecycle() -> None:
         tilt_deg=4,
         left_tilt_deg=0,
         right_tilt_deg=0,
+        left_upper_lid_y=-65,
+        left_upper_lid_rotation_deg=0,
+        right_upper_lid_y=-65,
+        right_upper_lid_rotation_deg=0,
+        left_lower_lid_y=65,
+        left_lower_lid_rotation_deg=0,
+        right_lower_lid_y=65,
+        right_lower_lid_rotation_deg=0,
         tag="none",
         accessory="halo",
         accessory_scale=1.25,
@@ -107,6 +115,14 @@ def test_service_owns_expression_lifecycle() -> None:
                 "tilt_deg": 4,
                 "left_tilt_deg": 0,
                 "right_tilt_deg": 0,
+                "left_upper_lid_y": -65,
+                "left_upper_lid_rotation_deg": 0,
+                "right_upper_lid_y": -65,
+                "right_upper_lid_rotation_deg": 0,
+                "left_lower_lid_y": 65,
+                "left_lower_lid_rotation_deg": 0,
+                "right_lower_lid_y": 65,
+                "right_lower_lid_rotation_deg": 0,
                 "tag": "none",
                 "accessory": "halo",
                 "accessory_scale": 1.25,
@@ -168,7 +184,7 @@ def test_status_tolerates_one_probe_timeout_but_discards_repeated_stale_capabili
     service = ExpressionLabService(
         robot=SimpleNamespace(
             expression_runtime=runtime,
-            capabilities=("expression.runtime.v1", "expression.runtime.v2"),
+            capabilities=("expression.runtime.v1", "expression.runtime.v2", "expression.runtime.v3"),
             device_info={"model": "Watcher"},
             resource_snapshot={},
             refresh_device_info=fail_refresh,
@@ -203,7 +219,7 @@ def test_successful_device_probe_resets_the_consecutive_timeout_guard() -> None:
     service = ExpressionLabService(
         robot=SimpleNamespace(
             expression_runtime=runtime,
-            capabilities=("expression.runtime.v1", "expression.runtime.v2"),
+            capabilities=("expression.runtime.v1", "expression.runtime.v2", "expression.runtime.v3"),
             device_info={"model": "Watcher"},
             resource_snapshot={},
             refresh_device_info=refresh,
@@ -247,7 +263,7 @@ def test_failed_restart_does_not_report_stale_active_state() -> None:
     service = ExpressionLabService(
         robot=SimpleNamespace(
             expression_runtime=runtime,
-            capabilities=("expression.runtime.v1", "expression.runtime.v2"),
+            capabilities=("expression.runtime.v1", "expression.runtime.v2", "expression.runtime.v3"),
             device_info={"model": "Watcher"},
         )
     )
@@ -276,7 +292,7 @@ def test_web_api_returns_structured_json_for_sdk_command_rejection(tmp_path: Pat
     service = ExpressionLabService(
         robot=SimpleNamespace(
             expression_runtime=runtime,
-            capabilities=("expression.runtime.v1", "expression.runtime.v2"),
+            capabilities=("expression.runtime.v1", "expression.runtime.v2", "expression.runtime.v3"),
             device_info={"model": "Watcher"},
             resource_snapshot={},
         )
@@ -359,8 +375,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         stylesheet = client.get("/styles.css")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-15"' in index.text
-    assert 'src="./app.js?v=expression-lab-15"' in index.text
+    assert 'href="./styles.css?v=expression-lab-16"' in index.text
+    assert 'src="./app.js?v=expression-lab-16"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -424,6 +440,24 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert "const GAZE_TRAVEL_PIXELS = 32" in script.text
     assert "p.gaze_x * GAZE_TRAVEL_PIXELS" in script.text
     assert "p.gaze_y * GAZE_TRAVEL_PIXELS" in script.text
+    for lid_id in (
+        "leftUpperLidY",
+        "leftUpperLidRotation",
+        "rightUpperLidY",
+        "rightUpperLidRotation",
+        "leftLowerLidY",
+        "leftLowerLidRotation",
+        "rightLowerLidY",
+        "rightLowerLidRotation",
+    ):
+        assert f'id="{lid_id}"' in index.text
+    for shape in ("neutral", "happy", "sad", "unimpressed", "angry", "sleepy"):
+        assert f'data-eye-shape="{shape}"' in index.text
+    assert "const eyeShapeDefaults" in script.text
+    assert "drawEyelidMasks" in script.text
+    assert 'const eyeCanvas = document.createElement("canvas")' in script.text
+    assert 'eyeCtx.globalCompositeOperation = "destination-out"' in script.text
+    assert "ctx.drawImage(eyeCanvas, 0, 0)" in script.text
     assert "sendExpressionUpdate" in script.text
     assert "在 Watcher 打开 Desktop Link" in script.text
     assert "打开 Python SDK" not in script.text
