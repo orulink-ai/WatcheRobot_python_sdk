@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Watcher Expression Lab</title>
-  <link rel="stylesheet" href="./styles.css?v=expression-lab-12">
+  <link rel="stylesheet" href="./styles.css?v=expression-lab-13">
   </head>
   <body data-layout="studio">
     <header class="masthead">
@@ -29,9 +29,13 @@
       <section class="stage panel">
         <div class="panel-heading"><span>01</span><h1>表情舞台</h1><small>412 × 412 NATIVE DEVICE CANVAS · 20 FPS TARGET</small></div>
         <div class="screen-shell">
-          <canvas id="faceCanvas" width="412" height="412" aria-label="Watcher 表情预览"></canvas>
+          <canvas id="faceCanvas" width="412" height="412" aria-label="Watcher 表情预览" aria-describedby="pointerTrackingState"></canvas>
           <div class="screen-scan" aria-hidden="true"></div>
           <div class="screen-meta"><span id="presetReadout">STANDBY</span><span id="fpsReadout">20.0 FPS</span></div>
+        </div>
+        <div class="pointer-tracking-bar">
+          <label class="toggle pointer-toggle"><input id="pointerTracking" type="checkbox" checked><span></span>鼠标追踪</label>
+          <span id="pointerTrackingState" role="status">将鼠标移入画面，眼睛会跟随并同步到实机</span>
         </div>
         <div class="transport">
           <button id="startButton" class="primary" disabled>正在检测 SDK…</button>
@@ -131,6 +135,6 @@
       <label class="toggle"><input id="scanlines" type="checkbox" checked><span></span>屏幕扫描纹理</label>
     </aside>
     <div id="toast" class="toast" role="alert"></div>
-  <script src="./app.js?v=expression-lab-12"></script>
+  <script src="./app.js?v=expression-lab-13"></script>
   </body>
 </html>
