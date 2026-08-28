@@ -1,8 +1,11 @@
 const byId = (id) => document.getElementById(id);
 const canvas = byId("faceCanvas");
 const POINTER_SMOOTHING_MS = 90;
-const POINTER_SYNC_INTERVAL_MS = 80;
-const POINTER_DEVICE_TRANSITION_MS = 70;
+const POINTER_GAZE_GAIN_DEFAULT = 1.45;
+const POINTER_FLAT_SYNC_INTERVAL_MS = 55;
+const POINTER_FLAT_TRANSITION_MS = 90;
+const POINTER_SPHERE_SYNC_INTERVAL_MS = 95;
+const POINTER_SPHERE_TRANSITION_MS = 150;
 const POINTER_SYNC_EPSILON = 0.015;
 const displayCtx = canvas.getContext("2d", { alpha: false });
 const flatCanvas = document.createElement("canvas");
@@ -21,7 +24,7 @@ const controls = {
   transition: byId("transition"), autoBlink: byId("autoBlink"),
   blinkInterval: byId("blinkInterval"), blinkDuration: byId("blinkDuration"), eyeColor: byId("eyeColor"),
   sphereEnabled: byId("sphereEnabled"), sphereStrength: byId("sphereStrength"),
-  pointerTracking: byId("pointerTracking"),
+  pointerTracking: byId("pointerTracking"), pointerGain: byId("pointerGain"),
 };
 const state = {
   active: false, serviceReady: false, statusInitialized: false,
@@ -29,7 +32,7 @@ const state = {
   preset: "standby", sending: false, pairing: false, statusBusy: false,
   intentActive: false, resumePending: false, resumeTimer: 0,
   lastFrame: performance.now(), phase: 0, debounce: 0,
-  pointerInside: false, pointerTargetX: 0, pointerTargetY: 0,
+  pointerInside: false, pointerRawX: 0, pointerRawY: 0, pointerTargetX: 0, pointerTargetY: 0,
   pointerX: 0, pointerY: 0, pointerLastSyncAt: 0,
   pointerLastSentX: Number.NaN, pointerLastSentY: Number.NaN,
   updateBusy: false, queuedUpdate: null,
@@ -117,6 +120,7 @@ function refreshPointerReadout() {
   byId("gazeYValue").value = gaze.y.toFixed(2);
   controls.gazeX.disabled = tracking;
   controls.gazeY.disabled = tracking;
+  byId("pointerGainValue").value = `${Number(controls.pointerGain.value).toFixed(2)}×`;
   canvas.dataset.pointerTracking = String(tracking);
   byId("pointerTrackingState").textContent = tracking
     ? (state.pointerInside ? "正在跟随鼠标 · Web 与 Watcher 使用同一视线参数" : "将鼠标移入画面，移出后会平滑回正")
@@ -297,12 +301,20 @@ function presentFrame(sphereStrength) {
   displayCtx.putImageData(sphereCache.output, 0, 0);
 }
 
+function applyPointerGain() {
+  const configuredGain = Number(controls.pointerGain.value);
+  const gain = Number.isFinite(configuredGain) ? configuredGain : POINTER_GAZE_GAIN_DEFAULT;
+  state.pointerTargetX = Math.max(-1, Math.min(1, state.pointerRawX * gain));
+  state.pointerTargetY = Math.max(-1, Math.min(1, state.pointerRawY * gain));
+}
+
 function updatePointerTarget(event) {
   if (!controls.pointerTracking.checked) return;
   const bounds = canvas.getBoundingClientRect();
   if (bounds.width <= 0 || bounds.height <= 0) return;
-  state.pointerTargetX = Math.max(-1, Math.min(1, ((event.clientX - bounds.left) / bounds.width) * 2 - 1));
-  state.pointerTargetY = Math.max(-1, Math.min(1, ((event.clientY - bounds.top) / bounds.height) * 2 - 1));
+  state.pointerRawX = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
+  state.pointerRawY = ((event.clientY - bounds.top) / bounds.height) * 2 - 1;
+  applyPointerGain();
   state.pointerInside = true;
   refreshPointerReadout();
 }
@@ -310,6 +322,8 @@ function updatePointerTarget(event) {
 function releasePointerTarget() {
   if (!controls.pointerTracking.checked) return;
   state.pointerInside = false;
+  state.pointerRawX = 0;
+  state.pointerRawY = 0;
   state.pointerTargetX = 0;
   state.pointerTargetY = 0;
   refreshPointerReadout();
@@ -327,8 +341,12 @@ function updatePointerMotion(dt) {
 }
 
 function maybeSyncPointerGaze(now) {
+  const sphereActive = controls.sphereEnabled.checked && Number(controls.sphereStrength.value) > 0;
+  const pointerTiming = sphereActive
+    ? { intervalMs: POINTER_SPHERE_SYNC_INTERVAL_MS, transitionMs: POINTER_SPHERE_TRANSITION_MS }
+    : { intervalMs: POINTER_FLAT_SYNC_INTERVAL_MS, transitionMs: POINTER_FLAT_TRANSITION_MS };
   if (!controls.pointerTracking.checked || !state.active || state.sending ||
-      now - state.pointerLastSyncAt < POINTER_SYNC_INTERVAL_MS) return;
+      now - state.pointerLastSyncAt < pointerTiming.intervalMs) return;
   const gaze = effectiveGaze();
   if (Number.isFinite(state.pointerLastSentX) &&
       Math.abs(gaze.x - state.pointerLastSentX) < POINTER_SYNC_EPSILON &&
@@ -339,7 +357,7 @@ function maybeSyncPointerGaze(now) {
   sendExpressionUpdate({
     gaze_x: Number(gaze.x.toFixed(3)),
     gaze_y: Number(gaze.y.toFixed(3)),
-    transition_ms: POINTER_DEVICE_TRANSITION_MS,
+    transition_ms: pointerTiming.transitionMs,
   });
 }
 
@@ -624,18 +642,24 @@ document.querySelectorAll(".preset").forEach((button) => button.addEventListener
   controls.openness.value = defaults.openness; controls.spacing.value = defaults.spacing; controls.tilt.value = defaults.tilt; controls.tag.value = defaults.tag;
   queueUpdate();
 }));
-Object.entries(controls).filter(([name]) => name !== "pointerTracking")
+Object.entries(controls).filter(([name]) => name !== "pointerTracking" && name !== "pointerGain")
   .forEach(([, control]) => control.addEventListener("input", queueUpdate));
 controls.pointerTracking.addEventListener("input", () => {
   if (controls.pointerTracking.checked) {
     state.pointerX = Number(controls.gazeX.value);
     state.pointerY = Number(controls.gazeY.value);
+    state.pointerRawX = 0;
+    state.pointerRawY = 0;
     state.pointerTargetX = 0;
     state.pointerTargetY = 0;
   } else {
     state.pointerInside = false;
   }
   queueUpdate();
+});
+controls.pointerGain.addEventListener("input", () => {
+  if (state.pointerInside) applyPointerGain();
+  refreshReadouts();
 });
 canvas.addEventListener("pointermove", updatePointerTarget);
 canvas.addEventListener("pointerleave", releasePointerTarget);
