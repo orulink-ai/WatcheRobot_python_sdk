@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from watcherobot.errors import CommandError
 
-from service import ExpressionLabService, create_web_app
+from service import ExpressionLabService, ExpressionStartRequest, create_web_app
 
 
 class FakeExpressionRuntime:
@@ -28,6 +28,12 @@ class FailingStartRuntime(FakeExpressionRuntime):
         super().start(preset, **parameters)
         if self.fail:
             raise RuntimeError("device rejected start")
+
+
+def test_expression_start_defaults_to_flat_rendering() -> None:
+    request = ExpressionStartRequest(preset="standby")
+
+    assert request.sphere_strength == 0.0
 
 
 def make_service(
@@ -375,8 +381,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         stylesheet = client.get("/styles.css")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-17"' in index.text
-    assert 'src="./app.js?v=expression-lab-17"' in index.text
+    assert 'href="./styles.css?v=expression-lab-18"' in index.text
+    assert 'src="./app.js?v=expression-lab-18"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -422,11 +428,18 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert 'controls.accessoryScale.disabled = !hasAccessory' in script.text
     assert 'id="deviceFps"' in index.text
     assert 'color: controls.eyeColor.value.toUpperCase()' in script.text
-    assert 'id="sphereEnabled"' in index.text
-    assert 'id="sphereStrength"' in index.text
-    assert "function buildSphereMap(strength)" in script.text
-    assert "presentFrame(p.sphere_strength)" in script.text
-    assert "sphere_strength: controls.sphereEnabled.checked" in script.text
+    assert 'id="sphereEnabled"' not in index.text
+    assert 'id="sphereStrength"' not in index.text
+    assert "function buildSphereMap(strength)" not in script.text
+    assert "willReadFrequently" not in script.text
+    assert "sphere_strength: 0" in script.text
+    assert "displayCtx.drawImage(flatCanvas, 0, 0)" in script.text
+    for reset_id in ("resetEyeDefaults", "resetEyelidDefaults", "resetAccessoryDefaults"):
+        assert f'id="{reset_id}"' in index.text
+        assert f'byId("{reset_id}").addEventListener("click"' in script.text
+    assert "const eyeControlDefaults" in script.text
+    assert "const accessoryControlDefaults" in script.text
+    assert "function applyControlDefaults(defaults)" in script.text
     assert 'id="pointerTracking"' in index.text
     assert 'id="pointerTrackingState"' in index.text
     assert 'id="pointerGain"' in index.text
@@ -435,10 +448,10 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert 'canvas.addEventListener("pointerleave", releasePointerTarget)' in script.text
     assert "function updatePointerMotion(dt)" in script.text
     assert "function maybeSyncPointerGaze(now)" in script.text
-    assert "transition_ms: pointerTiming.transitionMs" in script.text
+    assert "transition_ms: POINTER_FLAT_TRANSITION_MS" in script.text
     assert "Math.exp(-dt / POINTER_SMOOTHING_MS)" in script.text
     assert "POINTER_GAZE_GAIN_DEFAULT" in script.text
-    assert "POINTER_SPHERE_TRANSITION_MS" in script.text
+    assert "POINTER_SPHERE_TRANSITION_MS" not in script.text
     assert "controls.pointerGain.value" in script.text
     assert "const GAZE_TRAVEL_PIXELS = 32" in script.text
     assert "p.gaze_x * GAZE_TRAVEL_PIXELS" in script.text
