@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Watcher Expression Lab</title>
-  <link rel="stylesheet" href="./styles.css?v=expression-lab-11">
+  <link rel="stylesheet" href="./styles.css?v=expression-lab-12">
   </head>
   <body data-layout="studio">
     <header class="masthead">
@@ -74,6 +74,16 @@
             <label><span>右眼独立倾斜 <output id="rightTiltValue">0°</output></span><input id="rightTilt" aria-label="右眼独立倾斜滑杆" type="range" min="-30" max="30" step="1" value="0"></label>
           </div>
           </details>
+          <details class="advanced sphere-control" open>
+          <summary>球面投影 <small id="sphereModeState">已开启 · 预计算映射</small></summary>
+          <div class="sphere-switch-row">
+            <label class="toggle"><input id="sphereEnabled" type="checkbox" checked><span></span>启用球面效果</label>
+            <small>眼睛、Tag 与装饰统一贴合球面</small>
+          </div>
+          <div class="slider-grid">
+            <label><span>球面强度 <output id="sphereStrengthValue">0.68</output></span><input id="sphereStrength" aria-label="球面强度滑杆" type="range" min="0" max="1" step="0.01" value="0.68"></label>
+          </div>
+          </details>
           <details class="advanced">
           <summary>颜色与眨眼 <small>设备端自动循环</small></summary>
           <div class="motion-grid">
@@ -121,6 +131,6 @@
       <label class="toggle"><input id="scanlines" type="checkbox" checked><span></span>屏幕扫描纹理</label>
     </aside>
     <div id="toast" class="toast" role="alert"></div>
-  <script src="./app.js?v=expression-lab-11"></script>
+  <script src="./app.js?v=expression-lab-12"></script>
   </body>
 </html>
