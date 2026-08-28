@@ -114,6 +114,9 @@ button.primary:hover, button.primary:focus-visible { color: #050704; background:
   gap: 16px;
   align-items: start;
 }
+.stage { position: sticky; top: 16px; }
+.controls { grid-column: 2 / -1; }
+.inspector { grid-column: 1 / -1; }
 .panel { background: rgba(17, 23, 17, .94); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
 .panel-heading { min-height: 64px; padding: 14px 18px; display: grid; grid-template-columns: 28px auto 1fr; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
 .panel-heading > span { color: var(--green); font: 12px "Cascadia Code", monospace; }
@@ -189,7 +192,10 @@ input[type="range"] { width: 100%; height: 18px; margin: 8px 0 0; accent-color: 
 .sphere-switch-row > small { color: var(--muted); text-align: right; }
 .sphere-control[data-enabled="false"] .slider-grid { opacity: .45; }
 
-.inspector pre { min-height: 270px; margin: 0; padding: 20px; overflow: auto; color: #b9c8b2; background: #0a0e0a; border-bottom: 1px solid var(--line); font: 12px/1.75 "Cascadia Code", monospace; white-space: pre-wrap; }
+.inspector { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, .7fr); }
+.inspector .panel-heading, .inspector .performance-strip { grid-column: 1 / -1; }
+.inspector pre { min-height: 220px; max-height: 360px; margin: 0; padding: 20px; overflow: auto; color: #b9c8b2; background: #0a0e0a; border-right: 1px solid var(--line); font: 12px/1.75 "Cascadia Code", monospace; white-space: pre-wrap; }
+.inspector .note { align-self: start; }
 .performance-strip { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); background: rgba(161, 240, 60, .025); }
 .performance-strip span { min-width: 0; padding: 12px 14px; border-right: 1px solid var(--line); }
 .performance-strip span:last-child { border-right: 0; }
@@ -213,16 +219,19 @@ body[data-layout="compact"] .workbench { grid-template-columns: minmax(360px, .9
 body[data-layout="compact"] .inspector { grid-column: 1 / -1; }
 body[data-layout="compact"] .screen-shell { max-width: 440px; }
 body[data-layout="stage"] .workbench { grid-template-columns: minmax(560px, 1.5fr) minmax(380px, .7fr); }
-body[data-layout="stage"] .stage { grid-row: span 2; }
-body[data-layout="stage"] .inspector { grid-column: 2; }
+body[data-layout="stage"] .inspector { grid-column: 1 / -1; }
+
+@media (min-width: 1321px) {
+  .controls .slider-grid, .controls .motion-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .controls .eyelid-grid, .controls .accessory-module .slider-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
 
 @media (max-width: 1100px) {
   .masthead { grid-template-columns: auto auto; padding-block: 12px; }
   .connection-guide { grid-row: 2; grid-column: 1 / -1; }
   .workbench, body[data-layout="compact"] .workbench, body[data-layout="stage"] .workbench { grid-template-columns: 1fr 1fr; }
-  .stage { grid-column: 1 / -1; }
-  body[data-layout="stage"] .stage { grid-row: auto; }
-  body[data-layout="stage"] .inspector { grid-column: auto; }
+  .stage { position: static; }
+  .stage, .controls, .inspector, body[data-layout="stage"] .inspector { grid-column: 1 / -1; }
 }
 @media (max-width: 720px) {
   .masthead { min-height: 72px; padding: 14px 16px; gap: 12px; }
@@ -232,6 +241,9 @@ body[data-layout="stage"] .inspector { grid-column: 2; }
   .pairing-form { grid-column: 2; width: min(100%, 240px); margin-top: 4px; }
   .workbench, body[data-layout="compact"] .workbench, body[data-layout="stage"] .workbench { width: calc(100% - 20px); grid-template-columns: 1fr; margin-top: 10px; }
   .stage, .inspector, body[data-layout="stage"] .inspector { grid-column: 1; }
+  .inspector { grid-template-columns: 1fr; }
+  .inspector .panel-heading, .inspector .performance-strip { grid-column: 1; }
+  .inspector pre { border-right: 0; border-bottom: 1px solid var(--line); }
   .panel-heading { grid-template-columns: 26px auto; }
   .panel-heading small { display: none; }
   .screen-shell { width: calc(100% - 32px); padding: 14px; border-radius: 20px; }
