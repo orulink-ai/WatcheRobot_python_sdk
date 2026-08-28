@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Watcher Expression Lab</title>
+  <link rel="stylesheet" href="./styles.css?v=expression-lab-11">
+  </head>
+  <body data-layout="studio">
+    <header class="masthead">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div><strong>WATCHER EXPRESSION LAB</strong><small>PROCEDURAL FACE / SDK MODE</small></div>
+      </div>
+      <div id="connectionGuide" class="connection-guide" data-state="preview" aria-live="polite">
+        <span class="connection-code">LINK</span>
+        <span class="connection-copy"><b id="connectionTitle">正在检测 SDK</b><small id="connectionHint">页面将自动识别 Watcher 连接状态</small></span>
+        <form id="pairingForm" class="pairing-form" hidden>
+          <label for="pairingCode">屏幕配对码</label>
+          <input id="pairingCode" name="pairing_code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" aria-describedby="pairingHint">
+          <button id="pairingButton" type="submit" disabled>连接</button>
+          <small id="pairingHint" class="visually-hidden">输入 Watcher 屏幕上显示的六位数字配对码</small>
+        </form>
+      </div>
+      <div class="runtime-status" role="status"><span id="statusLamp"></span><b id="statusText">设备未接管</b></div>
+    </header>
+
+    <main class="workbench">
+      <section class="stage panel">
+        <div class="panel-heading"><span>01</span><h1>表情舞台</h1><small>412 × 412 NATIVE DEVICE CANVAS · 20 FPS TARGET</small></div>
+        <div class="screen-shell">
+          <canvas id="faceCanvas" width="412" height="412" aria-label="Watcher 表情预览"></canvas>
+          <div class="screen-scan" aria-hidden="true"></div>
+          <div class="screen-meta"><span id="presetReadout">STANDBY</span><span id="fpsReadout">20.0 FPS</span></div>
+        </div>
+        <div class="transport">
+          <button id="startButton" class="primary" disabled>正在检测 SDK…</button>
+          <button id="stopButton" disabled>退出实验</button>
+          <span id="syncState">LOCAL PREVIEW</span>
+        </div>
+      </section>
+
+      <section class="controls panel">
+        <div class="panel-heading"><span>02</span><h2>动作参数</h2><small>拖动后约 80 ms 同步</small></div>
+        <div class="preset-strip" role="group" aria-label="表情预设">
+          <button class="preset active" data-preset="standby">待机</button>
+          <button class="preset" data-preset="thinking">思考</button>
+          <button class="preset" data-preset="speaking">说话</button>
+        </div>
+        <section id="eyeControlsModule" class="control-module eye-module">
+          <header class="module-heading"><span>EYE</span><b>眼睛自定义</b><small>造型 / 视线 / 动态</small></header>
+          <div class="select-grid">
+          <label>眼睛风格<select id="style"><option value="watcher">Watcher 默认</option><option value="watcher_compact">紧凑</option><option value="watcher_focus">专注</option><option value="watcher_open">开阔</option><option value="watcher_pulse">脉冲</option></select></label>
+          </div>
+          <div class="slider-grid">
+          <label><span>水平视线 <output id="gazeXValue">0.00</output></span><input id="gazeX" aria-label="水平视线滑杆" type="range" min="-1" max="1" step="0.01" value="0"></label>
+          <label><span>垂直视线 <output id="gazeYValue">0.00</output></span><input id="gazeY" aria-label="垂直视线滑杆" type="range" min="-1" max="1" step="0.01" value="0"></label>
+          <label><span>睁合程度 <output id="opennessValue">1.00</output></span><input id="openness" aria-label="睁合程度滑杆" type="range" min="0.05" max="1.2" step="0.01" value="1"></label>
+          <label><span>眼睛间距 <output id="spacingValue">0.85</output></span><input id="spacing" aria-label="眼睛间距滑杆" type="range" min="0.4" max="1.6" step="0.01" value="0.85"></label>
+          <label><span>整体缩放 <output id="scaleValue">1.00</output></span><input id="scale" aria-label="整体缩放滑杆" type="range" min="0.5" max="1.5" step="0.01" value="1"></label>
+          <label><span>整体宽度 <output id="scaleXValue">2.00</output></span><input id="scaleX" aria-label="整体宽度滑杆" type="range" min="0.75" max="2.2" step="0.01" value="2"></label>
+          <label><span>整体高度 <output id="scaleYValue">2.00</output></span><input id="scaleY" aria-label="整体高度滑杆" type="range" min="0.75" max="2.2" step="0.01" value="2"></label>
+          <label><span>倾斜角度 <output id="tiltValue">0°</output></span><input id="tilt" aria-label="倾斜角度滑杆" type="range" min="-30" max="30" step="1" value="0"></label>
+          <label><span>过渡时间 <output id="transitionValue">180 ms</output></span><input id="transition" aria-label="过渡时间滑杆" type="range" min="0" max="1000" step="20" value="180"></label>
+          </div>
+          <details class="advanced" open>
+          <summary>高级造型 <small>左右眼可独立塑形</small></summary>
+          <div class="slider-grid">
+            <label><span>线条粗细 <output id="strokeValue">1.00</output></span><input id="stroke" aria-label="线条粗细滑杆" type="range" min="0.5" max="2" step="0.01" value="1"></label>
+            <label><span>端点圆角 <output id="roundnessValue">1.00</output></span><input id="roundness" aria-label="端点圆角滑杆" type="range" min="0" max="1" step="0.01" value="1"></label>
+            <label><span>左眼开合 <output id="leftOpennessValue">1.00</output></span><input id="leftOpenness" aria-label="左眼开合滑杆" type="range" min="0.1" max="1.5" step="0.01" value="1"></label>
+            <label><span>右眼开合 <output id="rightOpennessValue">1.00</output></span><input id="rightOpenness" aria-label="右眼开合滑杆" type="range" min="0.1" max="1.5" step="0.01" value="1"></label>
+            <label><span>左眼独立倾斜 <output id="leftTiltValue">0°</output></span><input id="leftTilt" aria-label="左眼独立倾斜滑杆" type="range" min="-30" max="30" step="1" value="0"></label>
+            <label><span>右眼独立倾斜 <output id="rightTiltValue">0°</output></span><input id="rightTilt" aria-label="右眼独立倾斜滑杆" type="range" min="-30" max="30" step="1" value="0"></label>
+          </div>
+          </details>
+          <details class="advanced">
+          <summary>颜色与眨眼 <small>设备端自动循环</small></summary>
+          <div class="motion-grid">
+            <label class="color-field">眼睛颜色<input id="eyeColor" aria-label="眼睛颜色" type="color" value="#a1f03c"><output id="eyeColorValue">#A1F03C</output></label>
+            <label><span>眨眼间隔 <output id="blinkIntervalValue">3600 ms</output></span><input id="blinkInterval" aria-label="眨眼间隔滑杆" type="range" min="1200" max="10000" step="100" value="3600"></label>
+            <label><span>眨眼时长 <output id="blinkDurationValue">200 ms</output></span><input id="blinkDuration" aria-label="眨眼时长滑杆" type="range" min="100" max="800" step="20" value="200"></label>
+          </div>
+          <label class="toggle"><input id="autoBlink" type="checkbox" checked><span></span>自动眨眼</label>
+          </details>
+        </section>
+        <section id="accessoryControlsModule" class="control-module accessory-module" data-active="false">
+          <header class="module-heading"><span>DECOR</span><b>标签与装饰</b><small id="accessoryModuleState">先选择头部装饰</small></header>
+          <div class="select-grid">
+            <label>表情标签<select id="tag"><option value="none">无</option><option value="thinking">思考点</option><option value="question">问号</option><option value="love">爱心</option></select></label>
+            <label>头部装饰<select id="accessory"><option value="none">无</option><option value="halo">天使光环</option><option value="devil_horns">恶魔红角</option><option value="ninja_mask">忍者面罩</option><option value="hero_mask">英雄面罩</option><option value="eyepatch">海盗眼罩</option><option value="antenna">UFO 天线</option></select></label>
+          </div>
+          <details class="advanced" open>
+            <summary>装饰变换 <small>仅作用于头部装饰</small></summary>
+            <div class="slider-grid">
+              <label><span>装饰缩放 <output id="accessoryScaleValue">1.00</output></span><input id="accessoryScale" aria-label="装饰缩放滑杆" type="range" min="0.25" max="2" step="0.01" value="1"></label>
+              <label><span>装饰横向位置 <output id="accessoryXValue">0.00</output></span><input id="accessoryX" aria-label="装饰横向位置滑杆" type="range" min="-1" max="1" step="0.01" value="0"></label>
+              <label><span>装饰竖向位置 <output id="accessoryYValue">0.00</output></span><input id="accessoryY" aria-label="装饰竖向位置滑杆" type="range" min="-1" max="1" step="0.01" value="0"></label>
+              <label><span>装饰旋转 <output id="accessoryRotationValue">0°</output></span><input id="accessoryRotation" aria-label="装饰旋转滑杆" type="range" min="-180" max="180" step="1" value="0"></label>
+            </div>
+          </details>
+        </section>
+      </section>
+
+      <section class="inspector panel">
+        <div class="panel-heading"><span>03</span><h2>SDK 输出</h2><small>可保存为表情参数预设</small></div>
+        <div class="performance-strip" aria-label="真机性能">
+          <span><small>DEVICE FPS</small><b id="deviceFps">—</b></span>
+          <span><small>DRAW</small><b id="deviceDraw">—</b></span>
+          <span><small>PSRAM FREE</small><b id="devicePsram">—</b></span>
+        </div>
+        <pre id="sdkOutput"></pre>
+        <div class="note"><b>当前实验策略</b><p>浏览器发送参数，ESP32 本地逐帧生成 RGB565。没有 GIF 解码、没有 AnimPack 读取，也没有把 Web 画面串流到设备。</p></div>
+      </section>
+    </main>
+
+    <button id="openTweaks" class="open-tweaks" hidden>TWEAKS</button>
+    <aside id="tweaks" class="tweaks">
+      <div><b>Tweaks</b><button id="closeTweaks" aria-label="关闭 Tweaks">×</button></div>
+      <label>工作台布局<select id="layout"><option value="studio">Studio</option><option value="compact">Compact</option><option value="stage">Stage Focus</option></select></label>
+      <label class="toggle"><input id="scanlines" type="checkbox" checked><span></span>屏幕扫描纹理</label>
+    </aside>
+    <div id="toast" class="toast" role="alert"></div>
+  <script src="./app.js?v=expression-lab-11"></script>
+  </body>
+</html>

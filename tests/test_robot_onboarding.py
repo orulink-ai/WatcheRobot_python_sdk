@@ -319,7 +319,7 @@ def test_robot_setup_without_arguments_guides_the_complete_interactive_flow(
     assert "Device ID: WR-A1B2-C3D4-E5F6-0708" in output
     assert "Bluetooth ID" not in output
     assert "WatcheRobot A1" not in output
-    assert 'Open the "Python SDK" app' in output
+    assert 'Open the "Desktop Link" app' in output
     assert "Robot confirmed Wi-Fi connectivity" in output
     assert "top of the screen" in output
     assert "watcherobot robot pair <code>" in output
@@ -981,7 +981,7 @@ def test_robot_setup_keeps_pairing_failure_in_the_guided_flow(
     assert "Robot pairing could not be completed" in output
     assert "Robot pairing <pairing-code> timed out" in output
     assert "123456" not in output
-    assert '"Python SDK" app' in output
+    assert '"Desktop Link" app' in output
     assert "Settings > Wi-Fi shows Connected" in output
     assert "Wi-Fi name or password" in output
     assert '"error"' not in output
