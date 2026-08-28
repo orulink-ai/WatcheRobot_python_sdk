@@ -6,7 +6,7 @@ const POINTER_GAZE_GAIN_DEFAULT = 1.45;
 const POINTER_FLAT_SYNC_INTERVAL_MS = 55;
 const POINTER_FLAT_TRANSITION_MS = 90;
 const POINTER_SYNC_EPSILON = 0.015;
-const LID_MASK_HALF_WIDTH_PIXELS = 84;
+const LID_MASK_HALF_WIDTH_PIXELS = 112;
 const LID_MASK_HALF_HEIGHT_PIXELS = 64;
 const displayCtx = canvas.getContext("2d", { alpha: false });
 const flatCanvas = document.createElement("canvas");
@@ -169,8 +169,11 @@ function renderAccessoryModule() {
   controls.accessoryRotation.disabled = !hasAccessory;
 }
 
-function drawLidMask(context, centerX, centerY, logicalY, rotationDeg) {
+function drawLidMask(context, centerX, centerY, logicalY, rotationDeg, clipLeft, clipRight) {
   context.save();
+  context.beginPath();
+  context.rect(clipLeft, 0, clipRight - clipLeft, canvas.height);
+  context.clip();
   context.translate(centerX, centerY + logicalY * 2);
   context.rotate(rotationDeg * Math.PI / 180);
   context.fillRect(
@@ -187,10 +190,11 @@ function drawEyelidMasks(p, eyeSpacing, gazeX, gazeY) {
   eyeCtx.globalCompositeOperation = "destination-out";
   eyeCtx.fillStyle = "#000";
   const centerY = canvas.height / 2 + gazeY;
-  drawLidMask(eyeCtx, canvas.width / 2 - eyeSpacing + gazeX, centerY, p.left_upper_lid_y, p.left_upper_lid_rotation_deg);
-  drawLidMask(eyeCtx, canvas.width / 2 + eyeSpacing + gazeX, centerY, p.right_upper_lid_y, p.right_upper_lid_rotation_deg);
-  drawLidMask(eyeCtx, canvas.width / 2 - eyeSpacing + gazeX, centerY, p.left_lower_lid_y, p.left_lower_lid_rotation_deg);
-  drawLidMask(eyeCtx, canvas.width / 2 + eyeSpacing + gazeX, centerY, p.right_lower_lid_y, p.right_lower_lid_rotation_deg);
+  const splitX = canvas.width / 2 + gazeX;
+  drawLidMask(eyeCtx, canvas.width / 2 - eyeSpacing + gazeX, centerY, p.left_upper_lid_y, p.left_upper_lid_rotation_deg, 0, splitX);
+  drawLidMask(eyeCtx, canvas.width / 2 + eyeSpacing + gazeX, centerY, p.right_upper_lid_y, p.right_upper_lid_rotation_deg, splitX, canvas.width);
+  drawLidMask(eyeCtx, canvas.width / 2 - eyeSpacing + gazeX, centerY, p.left_lower_lid_y, p.left_lower_lid_rotation_deg, 0, splitX);
+  drawLidMask(eyeCtx, canvas.width / 2 + eyeSpacing + gazeX, centerY, p.right_lower_lid_y, p.right_lower_lid_rotation_deg, splitX, canvas.width);
   eyeCtx.restore();
 }
 

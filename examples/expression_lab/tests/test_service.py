@@ -471,6 +471,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         assert f'data-eye-shape="{shape}"' in index.text
     assert "const eyeShapeDefaults" in script.text
     assert "drawEyelidMasks" in script.text
+    assert "const LID_MASK_HALF_WIDTH_PIXELS = 112" in script.text
+    assert "context.rect(clipLeft, 0, clipRight - clipLeft, canvas.height)" in script.text
     assert 'const eyeCanvas = document.createElement("canvas")' in script.text
     assert 'eyeCtx.globalCompositeOperation = "destination-out"' in script.text
     assert "ctx.drawImage(eyeCanvas, 0, 0)" in script.text
