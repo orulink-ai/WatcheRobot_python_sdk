@@ -1,7 +1,7 @@
 # Device-side procedural expressions
 
 `app.robot.expression_runtime` controls the negotiated
-`expression.runtime.v2` capability. The Application sends compact parameters;
+`expression.runtime.v3` capability. The Application sends compact parameters;
 the ESP32 generates RGB565 frames locally and keeps the Daemon content-agnostic.
 
 ```python
@@ -23,6 +23,14 @@ await asyncio.to_thread(
     tilt_deg=-7,
     left_tilt_deg=-3,
     right_tilt_deg=3,
+    left_upper_lid_y=-30,
+    left_upper_lid_rotation_deg=-14,
+    right_upper_lid_y=-30,
+    right_upper_lid_rotation_deg=14,
+    left_lower_lid_y=65,
+    left_lower_lid_rotation_deg=0,
+    right_lower_lid_y=65,
+    right_lower_lid_rotation_deg=0,
     tag="thinking",
     accessory="halo",
     accessory_scale=1.15,
@@ -50,14 +58,21 @@ await asyncio.to_thread(app.robot.expression_runtime.stop)
 The runtime exposes three presets (`standby`, `thinking`, and `speaking`), five
 Watcher styles, four optional tags, six built-in accessories (`halo`,
 `devil_horns`, `ninja_mask`, `hero_mask`, `eyepatch`, and `antenna`), uniform and independent width/height scale, stroke and
-roundness, per-eye openness and tilt, blink timing, RGB color, and an optional
+roundness, per-eye openness and tilt, four independent eyelid masks, blink timing, RGB color, and an optional
 precomputed sphere projection (`sphere_strength` from `0.0` to `1.0`). A value
 of `0.0` keeps the exact flat renderer. The default
 Watcher geometry is 2× the original PoC eye size with tighter 0.85 spacing.
 Calls fail before
 transport when a value is outside its supported range, and fail with
 `WatcheRobotError` when the connected firmware does not advertise
-`expression.runtime.v2`.
+`expression.runtime.v3`.
+
+Each eye has an upper and lower mask. The four `*_lid_y` values use logical
+coordinates from `-80` to `80`; each matching `*_lid_rotation_deg` accepts
+`-45` to `45`. Neutral values place upper masks at `-65` and lower masks at
+`65`. The masks follow their eye's gaze center, interpolate with
+`transition_ms`, affect only eye-colored pixels, and are included before the
+sphere projection. This keeps tags and accessories on independent layers.
 
 While this runtime is active it does not read or decode AnimPack assets. The
 SDK experiment deliberately leaves the existing AnimPack APIs intact as a

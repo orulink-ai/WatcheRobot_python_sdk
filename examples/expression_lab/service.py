@@ -37,6 +37,14 @@ class ExpressionStartRequest(BaseModel):
     tilt_deg: int = Field(default=0, ge=-30, le=30)
     left_tilt_deg: int = Field(default=0, ge=-30, le=30)
     right_tilt_deg: int = Field(default=0, ge=-30, le=30)
+    left_upper_lid_y: int = Field(default=-65, ge=-80, le=80)
+    left_upper_lid_rotation_deg: int = Field(default=0, ge=-45, le=45)
+    right_upper_lid_y: int = Field(default=-65, ge=-80, le=80)
+    right_upper_lid_rotation_deg: int = Field(default=0, ge=-45, le=45)
+    left_lower_lid_y: int = Field(default=65, ge=-80, le=80)
+    left_lower_lid_rotation_deg: int = Field(default=0, ge=-45, le=45)
+    right_lower_lid_y: int = Field(default=65, ge=-80, le=80)
+    right_lower_lid_rotation_deg: int = Field(default=0, ge=-45, le=45)
     tag: str = Field(default="none", pattern="^(none|thinking|question|love)$")
     accessory: str = Field(
         default="none",
@@ -76,6 +84,14 @@ class ExpressionUpdateRequest(BaseModel):
     tilt_deg: int | None = Field(default=None, ge=-30, le=30)
     left_tilt_deg: int | None = Field(default=None, ge=-30, le=30)
     right_tilt_deg: int | None = Field(default=None, ge=-30, le=30)
+    left_upper_lid_y: int | None = Field(default=None, ge=-80, le=80)
+    left_upper_lid_rotation_deg: int | None = Field(default=None, ge=-45, le=45)
+    right_upper_lid_y: int | None = Field(default=None, ge=-80, le=80)
+    right_upper_lid_rotation_deg: int | None = Field(default=None, ge=-45, le=45)
+    left_lower_lid_y: int | None = Field(default=None, ge=-80, le=80)
+    left_lower_lid_rotation_deg: int | None = Field(default=None, ge=-45, le=45)
+    right_lower_lid_y: int | None = Field(default=None, ge=-80, le=80)
+    right_lower_lid_rotation_deg: int | None = Field(default=None, ge=-45, le=45)
     tag: str | None = Field(default=None, pattern="^(none|thinking|question|love)$")
     accessory: str | None = Field(
         default=None,
@@ -132,7 +148,7 @@ class ExpressionLabService:
             capabilities = tuple(getattr(self._robot, "capabilities", ()))
             device_info = dict(getattr(self._robot, "device_info", {}))
             device_connected = probe_succeeded and bool(capabilities or device_info)
-            expression_supported = device_connected and "expression.runtime.v2" in capabilities
+            expression_supported = device_connected and "expression.runtime.v3" in capabilities
             resource_snapshot = dict(getattr(self._robot, "resource_snapshot", {}))
             if not device_connected:
                 resource_snapshot = {}
@@ -166,7 +182,7 @@ class ExpressionLabService:
             if not connection["device_connected"]:
                 raise RuntimeError("Watcher is not connected")
             if not connection["expression_supported"]:
-                raise RuntimeError("connected firmware does not support expression.runtime.v2")
+                raise RuntimeError("connected firmware does not support expression.runtime.v3")
             if self._active:
                 self._runtime.stop()
                 self._active = False

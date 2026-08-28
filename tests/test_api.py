@@ -28,7 +28,7 @@ class FakeTransport:
             "animation",
             "animation.prefetch.v1",
             "expression.runtime.v1",
-            "expression.runtime.v2",
+            "expression.runtime.v3",
             "motion",
             "audio",
             "audio.stream",
@@ -182,6 +182,14 @@ def test_expression_runtime_domain_builds_bounded_parameter_commands():
         tilt_deg=8,
         left_tilt_deg=-3,
         right_tilt_deg=4,
+        left_upper_lid_y=-40,
+        left_upper_lid_rotation_deg=12,
+        right_upper_lid_y=-38,
+        right_upper_lid_rotation_deg=-12,
+        left_lower_lid_y=24,
+        left_lower_lid_rotation_deg=-14,
+        right_lower_lid_y=26,
+        right_lower_lid_rotation_deg=14,
         tag="none",
         accessory="halo",
         accessory_scale=1.25,
@@ -229,6 +237,14 @@ def test_expression_runtime_domain_builds_bounded_parameter_commands():
                 "tilt_deg": 8,
                 "left_tilt_deg": -3,
                 "right_tilt_deg": 4,
+                "left_upper_lid_y": -40,
+                "left_upper_lid_rotation_deg": 12,
+                "right_upper_lid_y": -38,
+                "right_upper_lid_rotation_deg": -12,
+                "left_lower_lid_y": 24,
+                "left_lower_lid_rotation_deg": -14,
+                "right_lower_lid_y": 26,
+                "right_lower_lid_rotation_deg": 14,
                 "tag": "none",
                 "accessory": "halo",
                 "accessory_scale_milli": 1250,
@@ -281,6 +297,10 @@ def test_expression_runtime_domain_builds_bounded_parameter_commands():
         ("update", {"tilt_deg": 31}, "tilt_deg"),
         ("update", {"left_tilt_deg": -31}, "left_tilt_deg"),
         ("update", {"right_tilt_deg": 31}, "right_tilt_deg"),
+        ("update", {"left_upper_lid_y": -81}, "left_upper_lid_y"),
+        ("update", {"right_lower_lid_y": 81}, "right_lower_lid_y"),
+        ("update", {"left_lower_lid_rotation_deg": -46}, "left_lower_lid_rotation_deg"),
+        ("update", {"right_upper_lid_rotation_deg": 46}, "right_upper_lid_rotation_deg"),
         ("update", {"tag": "arbitrary_svg"}, "tag"),
         ("update", {"accessory": "arbitrary_canvas_js"}, "accessory"),
         ("update", {"accessory_scale": 2.01}, "accessory_scale"),
@@ -305,11 +325,11 @@ def test_expression_runtime_rejects_unsafe_or_out_of_range_values(method, kwargs
 def test_expression_runtime_requires_negotiated_firmware_capability():
     transport = FakeTransport()
     transport.capabilities = tuple(
-        capability for capability in transport.capabilities if capability != "expression.runtime.v2"
+        capability for capability in transport.capabilities if capability != "expression.runtime.v3"
     )
     robot = WatcheRobot._from_transport(transport)
 
-    with pytest.raises(WatcheRobotError, match="expression.runtime.v2"):
+    with pytest.raises(WatcheRobotError, match="expression.runtime.v3"):
         robot.expression_runtime.start("standby")
 
 
