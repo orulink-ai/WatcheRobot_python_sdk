@@ -27,6 +27,8 @@ class FakeTransport:
             "behavior",
             "animation",
             "animation.prefetch.v1",
+            "expression.runtime.v1",
+            "expression.runtime.v2",
             "motion",
             "audio",
             "audio.stream",
@@ -157,6 +159,153 @@ def test_animation_domain_exposes_the_device_catalog_as_an_immutable_snapshot():
     robot = WatcheRobot._from_transport(transport)
 
     assert robot.animation.available_ids == ("boot", "happy", "smile")
+
+
+def test_expression_runtime_domain_builds_bounded_parameter_commands():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    robot.expression_runtime.start(
+        "standby",
+        style="watcher",
+        gaze_x=0.35,
+        gaze_y=-0.1,
+        openness=0.8,
+        spacing=0.85,
+        scale=1.15,
+        scale_x=2.0,
+        scale_y=2.0,
+        stroke=1.1,
+        roundness=0.75,
+        left_openness=0.9,
+        right_openness=1.1,
+        tilt_deg=8,
+        left_tilt_deg=-3,
+        right_tilt_deg=4,
+        tag="none",
+        accessory="halo",
+        accessory_scale=1.25,
+        accessory_x=0.2,
+        accessory_y=-0.15,
+        accessory_rotation_deg=18,
+        auto_blink=True,
+        blink_interval_ms=4200,
+        blink_duration_ms=260,
+        color="#A1F03C",
+        transition_ms=180,
+    )
+    robot.expression_runtime.update(
+        preset="thinking",
+        gaze_x=-0.25,
+        tag="thinking",
+        accessory="devil_horns",
+        accessory_scale=0.8,
+        accessory_x=-0.3,
+        accessory_y=0.1,
+        accessory_rotation_deg=-22,
+        transition_ms=240,
+    )
+    robot.expression_runtime.stop()
+
+    assert transport.commands == [
+        (
+            "ctrl.expression.runtime.start",
+            {
+                "preset": "standby",
+                "style": "watcher",
+                "gaze_x_milli": 350,
+                "gaze_y_milli": -100,
+                "openness_milli": 800,
+                "spacing_milli": 850,
+                "scale_milli": 1150,
+                "scale_x_milli": 2000,
+                "scale_y_milli": 2000,
+                "stroke_milli": 1100,
+                "roundness_milli": 750,
+                "left_openness_milli": 900,
+                "right_openness_milli": 1100,
+                "tilt_deg": 8,
+                "left_tilt_deg": -3,
+                "right_tilt_deg": 4,
+                "tag": "none",
+                "accessory": "halo",
+                "accessory_scale_milli": 1250,
+                "accessory_x_milli": 200,
+                "accessory_y_milli": -150,
+                "accessory_rotation_deg": 18,
+                "auto_blink": True,
+                "blink_interval_ms": 4200,
+                "blink_duration_ms": 260,
+                "color_rgb565": 0xA787,
+                "transition_ms": 180,
+            },
+        ),
+        (
+            "ctrl.expression.runtime.update",
+            {
+                "preset": "thinking",
+                "gaze_x_milli": -250,
+                "tag": "thinking",
+                "accessory": "devil_horns",
+                "accessory_scale_milli": 800,
+                "accessory_x_milli": -300,
+                "accessory_y_milli": 100,
+                "accessory_rotation_deg": -22,
+                "transition_ms": 240,
+            },
+        ),
+        ("ctrl.expression.runtime.stop", {}),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("method", "kwargs", "message"),
+    [
+        ("start", {"preset": "unknown"}, "preset"),
+        ("start", {"preset": "standby", "style": "canvas_js"}, "style"),
+        ("update", {}, "at least one"),
+        ("update", {"gaze_x": 1.01}, "gaze_x"),
+        ("update", {"openness": 0.0}, "openness"),
+        ("update", {"spacing": 0.39}, "spacing"),
+        ("update", {"scale": 1.51}, "scale"),
+        ("update", {"scale_x": 2.21}, "scale_x"),
+        ("update", {"scale_y": 0.74}, "scale_y"),
+        ("update", {"stroke": 2.01}, "stroke"),
+        ("update", {"roundness": -0.01}, "roundness"),
+        ("update", {"left_openness": 1.51}, "left_openness"),
+        ("update", {"right_openness": 0.09}, "right_openness"),
+        ("update", {"tilt_deg": 31}, "tilt_deg"),
+        ("update", {"left_tilt_deg": -31}, "left_tilt_deg"),
+        ("update", {"right_tilt_deg": 31}, "right_tilt_deg"),
+        ("update", {"tag": "arbitrary_svg"}, "tag"),
+        ("update", {"accessory": "arbitrary_canvas_js"}, "accessory"),
+        ("update", {"accessory_scale": 2.01}, "accessory_scale"),
+        ("update", {"accessory_x": -1.01}, "accessory_x"),
+        ("update", {"accessory_y": 1.01}, "accessory_y"),
+        ("update", {"accessory_rotation_deg": 181}, "accessory_rotation_deg"),
+        ("update", {"auto_blink": 1}, "auto_blink"),
+        ("update", {"blink_interval_ms": 1199}, "blink_interval_ms"),
+        ("update", {"blink_duration_ms": 801}, "blink_duration_ms"),
+        ("update", {"color": "green"}, "color"),
+        ("update", {"transition_ms": 2001}, "transition_ms"),
+    ],
+)
+def test_expression_runtime_rejects_unsafe_or_out_of_range_values(method, kwargs, message):
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises((TypeError, ValueError), match=message):
+        getattr(robot.expression_runtime, method)(**kwargs)
+
+
+def test_expression_runtime_requires_negotiated_firmware_capability():
+    transport = FakeTransport()
+    transport.capabilities = tuple(
+        capability for capability in transport.capabilities if capability != "expression.runtime.v2"
+    )
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(WatcheRobotError, match="expression.runtime.v2"):
+        robot.expression_runtime.start("standby")
 
 
 @pytest.mark.parametrize("work_id", ["", "UPPER", "contains-dash", "1starts_with_digit", "x" * 24])

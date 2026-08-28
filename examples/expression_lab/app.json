@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "example.expression_lab",
+  "name": "Watcher Expression Lab",
+  "version": "0.1.0",
+  "author": "Orulink AI",
+  "description": "Tune and preview device-side procedural Watcher expressions from a local web workbench.",
+  "requires_watcherobot": ">=0.1.4,<0.2",
+  "dependencies": []
+}

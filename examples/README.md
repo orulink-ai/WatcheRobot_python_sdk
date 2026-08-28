@@ -19,6 +19,8 @@ Application does not stop the Runtime or rebuild the device connection.
 
 Available examples include:
 
+- `expression_lab`: launch a loopback-only animation workbench that previews
+  and tunes the device-side procedural Watcher expression runtime.
 - `dshtts_speaker`: expose a loopback TTS bridge that converts DSH assistant
   replies with edge-tts and plays them through the robot speaker; includes
   matching Windows PowerShell and macOS/Linux shell clients.
