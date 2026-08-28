@@ -144,10 +144,12 @@ class BleakBackend:
             raise DeviceNotFoundError(
                 f"Bluetooth device {device.id!r} has no scan handle"
             )
+        # Windows WinRT can reject filtered discovery after NimBLE emits a
+        # Services Changed indication. Discover all services, then enforce the
+        # FF01 protocol contract below.
         client = BleakClient(
             device._native,
             timeout=timeout,
-            services=[BLE_SERVICE_UUID],
         )
         try:
             await asyncio.wait_for(client.connect(), timeout=timeout)

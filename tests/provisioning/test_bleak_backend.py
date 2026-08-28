@@ -66,11 +66,9 @@ class FakeBleakClient:
         native: object,
         *,
         timeout: float,
-        services: list[str],
     ) -> None:
         self.native = native
         self.timeout = timeout
-        self.requested_services = services
         self.services = Services(self.characteristic)
         self.is_connected = False
         self.notify_callback: Any = None
@@ -150,7 +148,7 @@ def test_bleak_backend_preserves_native_device_and_uses_response_write(
 
         client = FakeBleakClient.instances[-1]
         assert client.native is devices[0]._native
-        assert client.requested_services == [BLE_SERVICE_UUID]
+        assert client.timeout == 2.0
         assert client.write_args is not None
         assert client.write_args[2] is True
         assert client.stopped
