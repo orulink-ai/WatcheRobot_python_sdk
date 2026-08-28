@@ -5,15 +5,13 @@ const POINTER_SMOOTHING_MS = 90;
 const POINTER_GAZE_GAIN_DEFAULT = 1.45;
 const POINTER_FLAT_SYNC_INTERVAL_MS = 55;
 const POINTER_FLAT_TRANSITION_MS = 90;
-const POINTER_SPHERE_SYNC_INTERVAL_MS = 95;
-const POINTER_SPHERE_TRANSITION_MS = 150;
 const POINTER_SYNC_EPSILON = 0.015;
 const LID_MASK_HALF_WIDTH_PIXELS = 84;
 const LID_MASK_HALF_HEIGHT_PIXELS = 64;
 const displayCtx = canvas.getContext("2d", { alpha: false });
 const flatCanvas = document.createElement("canvas");
 flatCanvas.width = canvas.width; flatCanvas.height = canvas.height;
-const ctx = flatCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
+const ctx = flatCanvas.getContext("2d", { alpha: false });
 const eyeCanvas = document.createElement("canvas");
 eyeCanvas.width = canvas.width; eyeCanvas.height = canvas.height;
 const eyeCtx = eyeCanvas.getContext("2d");
@@ -33,7 +31,6 @@ const controls = {
   rightLowerLidY: byId("rightLowerLidY"), rightLowerLidRotation: byId("rightLowerLidRotation"),
   transition: byId("transition"), autoBlink: byId("autoBlink"),
   blinkInterval: byId("blinkInterval"), blinkDuration: byId("blinkDuration"), eyeColor: byId("eyeColor"),
-  sphereEnabled: byId("sphereEnabled"), sphereStrength: byId("sphereStrength"),
   pointerTracking: byId("pointerTracking"), pointerGain: byId("pointerGain"),
 };
 const state = {
@@ -47,13 +44,6 @@ const state = {
   pointerLastSentX: Number.NaN, pointerLastSentY: Number.NaN,
   updateBusy: false, queuedUpdate: null,
 };
-const sphereCache = {
-  strengthMilli: -1,
-  sourceIndices: new Int32Array(canvas.width * canvas.height),
-  shades: new Uint8Array(canvas.width * canvas.height),
-  shell: new Uint8Array(canvas.width * canvas.height),
-  output: displayCtx.createImageData(canvas.width, canvas.height),
-};
 const presetDefaults = {
   standby: { openness: 1, spacing: .85, tilt: 0, tag: "none" },
   thinking: { openness: .72, spacing: .82, tilt: -7, tag: "thinking" },
@@ -66,6 +56,17 @@ const eyeShapeDefaults = {
   unimpressed: { leftUpperLidY: -30, leftUpperLidRotation: 0, rightUpperLidY: -30, rightUpperLidRotation: 0, leftLowerLidY: 65, leftLowerLidRotation: 0, rightLowerLidY: 65, rightLowerLidRotation: 0 },
   angry: { leftUpperLidY: -28, leftUpperLidRotation: 18, rightUpperLidY: -28, rightUpperLidRotation: -18, leftLowerLidY: 65, leftLowerLidRotation: 0, rightLowerLidY: 65, rightLowerLidRotation: 0 },
   sleepy: { leftUpperLidY: -24, leftUpperLidRotation: 4, rightUpperLidY: -24, rightUpperLidRotation: -4, leftLowerLidY: 48, leftLowerLidRotation: 0, rightLowerLidY: 48, rightLowerLidRotation: 0 },
+};
+const eyeControlDefaults = {
+  style: "watcher", gazeX: 0, gazeY: 0, openness: 1, spacing: .85,
+  scale: 1, scaleX: 2, scaleY: 2, stroke: 1, roundness: 1,
+  leftOpenness: 1, rightOpenness: 1, tilt: 0, leftTilt: 0, rightTilt: 0,
+  transition: 180, autoBlink: true, blinkInterval: 3600, blinkDuration: 200,
+  eyeColor: "#a1f03c",
+};
+const accessoryControlDefaults = {
+  tag: "none", accessory: "none", accessoryScale: 1,
+  accessoryX: 0, accessoryY: 0, accessoryRotation: 0,
 };
 
 function effectiveGaze() {
@@ -102,7 +103,7 @@ function values() {
     right_lower_lid_rotation_deg: Number(controls.rightLowerLidRotation.value),
     auto_blink: controls.autoBlink.checked, blink_interval_ms: Number(controls.blinkInterval.value),
     blink_duration_ms: Number(controls.blinkDuration.value), color: controls.eyeColor.value.toUpperCase(),
-    sphere_strength: controls.sphereEnabled.checked ? Number(controls.sphereStrength.value) : 0,
+    sphere_strength: 0,
   };
 }
 
@@ -137,10 +138,6 @@ function refreshReadouts() {
   byId("blinkIntervalValue").value = `${controls.blinkInterval.value} ms`;
   byId("blinkDurationValue").value = `${controls.blinkDuration.value} ms`;
   byId("eyeColorValue").value = controls.eyeColor.value.toUpperCase();
-  byId("sphereStrengthValue").value = Number(controls.sphereStrength.value).toFixed(2);
-  byId("sphereModeState").textContent = controls.sphereEnabled.checked ? "已开启 · 预计算映射" : "平面模式";
-  controls.sphereStrength.disabled = !controls.sphereEnabled.checked;
-  document.querySelector(".sphere-control").dataset.enabled = String(controls.sphereEnabled.checked);
   byId("presetReadout").textContent = state.preset.toUpperCase();
   const args = values();
   const lines = Object.entries(args).map(([key, value]) => `    ${key}=${typeof value === "string" ? `"${value}"` : value},`);
@@ -275,91 +272,6 @@ function drawAccessory(accessory, layer, t, transform) {
   ctx.restore();
 }
 
-function buildSphereMap(strength) {
-  const strengthMilli = Math.round(strength * 1000);
-  if (sphereCache.strengthMilli === strengthMilli) return;
-  const size = canvas.width;
-  const centerTwice = size - 1;
-  const radiusSquared = centerTwice * centerTwice;
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const destination = y * size + x;
-      const dxTwice = 2 * x - centerTwice;
-      const dyTwice = 2 * y - centerTwice;
-      const distanceSquared = dxTwice * dxTwice + dyTwice * dyTwice;
-      if (strengthMilli > 0 && distanceSquared > radiusSquared) {
-        sphereCache.sourceIndices[destination] = -1;
-        sphereCache.shades[destination] = 0;
-        sphereCache.shell[destination] = 0;
-        continue;
-      }
-      const bulgeMilli = Math.floor(strengthMilli * distanceSquared * 420 / (1000 * radiusSquared));
-      const sourceXTwice = Math.trunc(dxTwice * (1000 + bulgeMilli) / 1000) + centerTwice;
-      const sourceYTwice = Math.trunc(dyTwice * (1000 + bulgeMilli) / 1000) + centerTwice;
-      if (sourceXTwice < 0 || sourceYTwice < 0 || sourceXTwice > 2 * centerTwice || sourceYTwice > 2 * centerTwice) {
-        sphereCache.sourceIndices[destination] = -1;
-        sphereCache.shades[destination] = 0;
-        sphereCache.shell[destination] = 0;
-        continue;
-      }
-      const sourceX = Math.floor((sourceXTwice + 1) / 2);
-      const sourceY = Math.floor((sourceYTwice + 1) / 2);
-      sphereCache.sourceIndices[destination] = sourceY * size + sourceX;
-      sphereCache.shades[destination] = 63 - Math.floor(strengthMilli * distanceSquared * 14 / (1000 * radiusSquared));
-      const highlightX = dxTwice + Math.trunc(centerTwice / 3);
-      const highlightY = dyTwice + Math.trunc(centerTwice / 3);
-      const highlightRadiusSquared = Math.floor(radiusSquared / 9);
-      const highlightDistanceSquared = highlightX * highlightX + highlightY * highlightY;
-      const radialMilli = Math.floor(distanceSquared * 1000 / radiusSquared);
-      let shell = Math.floor(strengthMilli * 3 / 1000);
-      if (radialMilli > 700) shell += Math.floor(strengthMilli * (radialMilli - 700) * 10 / 300000);
-      if (highlightDistanceSquared < highlightRadiusSquared) {
-        shell += Math.floor(strengthMilli * (highlightRadiusSquared - highlightDistanceSquared) * 12 /
-          (1000 * highlightRadiusSquared));
-      }
-      sphereCache.shell[destination] = shell;
-    }
-  }
-  sphereCache.strengthMilli = strengthMilli;
-}
-
-function presentFrame(sphereStrength) {
-  if (sphereStrength <= 0) {
-    displayCtx.drawImage(flatCanvas, 0, 0);
-    return;
-  }
-  buildSphereMap(sphereStrength);
-  const sourceImage = ctx.getImageData(0, 0, flatCanvas.width, flatCanvas.height);
-  const source = new Uint32Array(sourceImage.data.buffer);
-  const output = new Uint32Array(sphereCache.output.data.buffer);
-  for (let index = 0; index < output.length; index += 1) {
-    const sourceIndex = sphereCache.sourceIndices[index];
-    if (sourceIndex < 0) {
-      output[index] = 0xff000000;
-      continue;
-    }
-    const color = source[sourceIndex];
-    const shade = sphereCache.shades[index];
-    const shell = sphereCache.shell[index];
-    if (color === 0xff000000) {
-      const red = Math.floor(shell * 255 / 310);
-      const green = Math.floor(shell * 255 / 189);
-      const blue = Math.floor(shell * 255 / 310);
-      output[index] = (0xff000000 | (blue << 16) | (green << 8) | red) >>> 0;
-      continue;
-    }
-    if (shade >= 63) {
-      output[index] = color;
-      continue;
-    }
-    const red = Math.floor((color & 0xff) * shade / 63);
-    const green = Math.floor(((color >>> 8) & 0xff) * shade / 63);
-    const blue = Math.floor(((color >>> 16) & 0xff) * shade / 63);
-    output[index] = (0xff000000 | (blue << 16) | (green << 8) | red) >>> 0;
-  }
-  displayCtx.putImageData(sphereCache.output, 0, 0);
-}
-
 function applyPointerGain() {
   const configuredGain = Number(controls.pointerGain.value);
   const gain = Number.isFinite(configuredGain) ? configuredGain : POINTER_GAZE_GAIN_DEFAULT;
@@ -400,12 +312,8 @@ function updatePointerMotion(dt) {
 }
 
 function maybeSyncPointerGaze(now) {
-  const sphereActive = controls.sphereEnabled.checked && Number(controls.sphereStrength.value) > 0;
-  const pointerTiming = sphereActive
-    ? { intervalMs: POINTER_SPHERE_SYNC_INTERVAL_MS, transitionMs: POINTER_SPHERE_TRANSITION_MS }
-    : { intervalMs: POINTER_FLAT_SYNC_INTERVAL_MS, transitionMs: POINTER_FLAT_TRANSITION_MS };
   if (!controls.pointerTracking.checked || !state.active || state.sending ||
-      now - state.pointerLastSyncAt < pointerTiming.intervalMs) return;
+      now - state.pointerLastSyncAt < POINTER_FLAT_SYNC_INTERVAL_MS) return;
   const gaze = effectiveGaze();
   if (Number.isFinite(state.pointerLastSentX) &&
       Math.abs(gaze.x - state.pointerLastSentX) < POINTER_SYNC_EPSILON &&
@@ -416,7 +324,7 @@ function maybeSyncPointerGaze(now) {
   sendExpressionUpdate({
     gaze_x: Number(gaze.x.toFixed(3)),
     gaze_y: Number(gaze.y.toFixed(3)),
-    transition_ms: pointerTiming.transitionMs,
+    transition_ms: POINTER_FLAT_TRANSITION_MS,
   });
 }
 
@@ -466,7 +374,7 @@ function render(now) {
   ctx.drawImage(eyeCanvas, 0, 0);
   drawAccessory(p.accessory, "front", state.phase, p);
   drawTag(p.tag, p.color);
-  presentFrame(p.sphere_strength);
+  displayCtx.drawImage(flatCanvas, 0, 0);
   refreshPointerReadout();
   maybeSyncPointerGaze(now);
   byId("fpsReadout").textContent = `${(1000 / Math.max(1, dt)).toFixed(1)} FPS`;
@@ -702,6 +610,44 @@ function queueUpdate() {
   state.debounce = window.setTimeout(() => sendExpressionUpdate(values()), 80);
 }
 
+function applyControlDefaults(defaults) {
+  Object.entries(defaults).forEach(([name, value]) => {
+    if (typeof value === "boolean") controls[name].checked = value;
+    else controls[name].value = value;
+  });
+}
+
+function resetEyeControls() {
+  applyControlDefaults(eyeControlDefaults);
+  state.preset = "standby";
+  document.querySelectorAll(".preset").forEach((button) => {
+    button.classList.toggle("active", button.dataset.preset === state.preset);
+  });
+  state.pointerInside = false;
+  state.pointerRawX = 0; state.pointerRawY = 0;
+  state.pointerTargetX = 0; state.pointerTargetY = 0;
+  state.pointerX = 0; state.pointerY = 0;
+  state.pointerLastSentX = Number.NaN; state.pointerLastSentY = Number.NaN;
+  queueUpdate();
+  toast("眼睛参数已恢复默认");
+}
+
+function resetEyelidControls() {
+  state.eyeShape = "neutral";
+  applyControlDefaults(eyeShapeDefaults.neutral);
+  document.querySelectorAll(".eye-shape").forEach((button) => {
+    button.classList.toggle("active", button.dataset.eyeShape === state.eyeShape);
+  });
+  queueUpdate();
+  toast("眼皮参数已恢复中性");
+}
+
+function resetAccessoryControls() {
+  applyControlDefaults(accessoryControlDefaults);
+  queueUpdate();
+  toast("标签与装饰已恢复默认");
+}
+
 document.querySelectorAll(".preset").forEach((button) => button.addEventListener("click", () => {
   state.preset = button.dataset.preset;
   document.querySelectorAll(".preset").forEach((candidate) => candidate.classList.toggle("active", candidate === button));
@@ -744,6 +690,9 @@ controls.pointerGain.addEventListener("input", () => {
   if (state.pointerInside) applyPointerGain();
   refreshReadouts();
 });
+byId("resetEyeDefaults").addEventListener("click", resetEyeControls);
+byId("resetEyelidDefaults").addEventListener("click", resetEyelidControls);
+byId("resetAccessoryDefaults").addEventListener("click", resetAccessoryControls);
 canvas.addEventListener("pointermove", updatePointerTarget);
 canvas.addEventListener("pointerleave", releasePointerTarget);
 canvas.addEventListener("pointercancel", releasePointerTarget);

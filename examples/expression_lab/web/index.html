@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Watcher Expression Lab</title>
-  <link rel="stylesheet" href="./styles.css?v=expression-lab-17">
+  <link rel="stylesheet" href="./styles.css?v=expression-lab-18">
   </head>
   <body data-layout="studio">
     <header class="masthead">
@@ -53,7 +53,7 @@
           <button class="preset" data-preset="speaking">说话</button>
         </div>
         <section id="eyeControlsModule" class="control-module eye-module">
-          <header class="module-heading"><span>EYE</span><b>眼睛自定义</b><small>造型 / 视线 / 动态</small></header>
+          <header class="module-heading"><span>EYE</span><b>眼睛自定义</b><div class="module-actions"><small>造型 / 视线 / 动态</small><button id="resetEyeDefaults" class="module-reset" type="button">恢复默认</button></div></header>
           <div class="select-grid">
           <label>眼睛风格<select id="style"><option value="watcher">Watcher 默认</option><option value="watcher_compact">紧凑</option><option value="watcher_focus">专注</option><option value="watcher_open">开阔</option><option value="watcher_pulse">脉冲</option></select></label>
           </div>
@@ -79,16 +79,6 @@
             <label><span>右眼独立倾斜 <output id="rightTiltValue">0°</output></span><input id="rightTilt" aria-label="右眼独立倾斜滑杆" type="range" min="-30" max="30" step="1" value="0"></label>
           </div>
           </details>
-          <details class="advanced sphere-control" open>
-          <summary>球面投影 <small id="sphereModeState">已开启 · 预计算映射</small></summary>
-          <div class="sphere-switch-row">
-            <label class="toggle"><input id="sphereEnabled" type="checkbox" checked><span></span>启用球面效果</label>
-            <small>眼睛、Tag 与装饰统一贴合球面</small>
-          </div>
-          <div class="slider-grid">
-            <label><span>球面强度 <output id="sphereStrengthValue">0.68</output></span><input id="sphereStrength" aria-label="球面强度滑杆" type="range" min="0" max="1" step="0.01" value="0.68"></label>
-          </div>
-          </details>
           <details class="advanced">
           <summary>颜色与眨眼 <small>设备端自动循环</small></summary>
           <div class="motion-grid">
@@ -100,7 +90,7 @@
           </details>
         </section>
         <section id="eyelidControlsModule" class="control-module eyelid-module">
-          <header class="module-heading"><span>LID</span><b>眼皮与情绪</b><small id="eyeShapeState">中性 · 四遮罩独立控制</small></header>
+          <header class="module-heading"><span>LID</span><b>眼皮与情绪</b><div class="module-actions"><small id="eyeShapeState">中性 · 四遮罩独立控制</small><button id="resetEyelidDefaults" class="module-reset" type="button">恢复默认</button></div></header>
           <div class="emotion-strip" role="group" aria-label="眼睛情绪形态">
             <button class="eye-shape active" data-eye-shape="neutral">中性</button>
             <button class="eye-shape" data-eye-shape="happy">开心</button>
@@ -132,7 +122,7 @@
           </details>
         </section>
         <section id="accessoryControlsModule" class="control-module accessory-module" data-active="false">
-          <header class="module-heading"><span>DECOR</span><b>标签与装饰</b><small id="accessoryModuleState">先选择头部装饰</small></header>
+          <header class="module-heading"><span>DECOR</span><b>标签与装饰</b><div class="module-actions"><small id="accessoryModuleState">先选择头部装饰</small><button id="resetAccessoryDefaults" class="module-reset" type="button">恢复默认</button></div></header>
           <div class="select-grid">
             <label>表情标签<select id="tag"><option value="none">无</option><option value="thinking">思考点</option><option value="question">问号</option><option value="love">爱心</option></select></label>
             <label>头部装饰<select id="accessory"><option value="none">无</option><option value="halo">天使光环</option><option value="devil_horns">恶魔红角</option><option value="ninja_mask">忍者面罩</option><option value="hero_mask">英雄面罩</option><option value="eyepatch">海盗眼罩</option><option value="antenna">UFO 天线</option></select></label>
@@ -168,6 +158,6 @@
       <label class="toggle"><input id="scanlines" type="checkbox" checked><span></span>屏幕扫描纹理</label>
     </aside>
     <div id="toast" class="toast" role="alert"></div>
-  <script src="./app.js?v=expression-lab-17"></script>
+  <script src="./app.js?v=expression-lab-18"></script>
   </body>
 </html>
