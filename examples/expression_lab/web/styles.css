@@ -126,8 +126,10 @@ button.primary:hover, button.primary:focus-visible { color: #050704; background:
 .screen-scan { pointer-events: none; position: absolute; inset: 20px; border-radius: 12px; opacity: .17; background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(161, 240, 60, .2) 4px); mix-blend-mode: screen; }
 body:not(.scanlines) .screen-scan { display: none; }
 .screen-meta { position: absolute; left: 32px; right: 32px; bottom: 28px; display: flex; justify-content: space-between; color: rgba(161,240,60,.55); font: 10px "Cascadia Code", monospace; }
-.pointer-tracking-bar { min-height: 48px; margin: -10px 18px 14px; padding: 8px 12px; display: flex; align-items: center; gap: 14px; border: 1px solid var(--line); border-radius: 8px; background: rgba(9, 13, 9, .52); }
+.pointer-tracking-bar { min-height: 54px; margin: -10px 18px 14px; padding: 8px 12px; display: grid; grid-template-columns: auto minmax(130px, .7fr) minmax(180px, 1.3fr); align-items: center; gap: 14px; border: 1px solid var(--line); border-radius: 8px; background: rgba(9, 13, 9, .52); }
 .pointer-tracking-bar .pointer-toggle { min-height: 30px; margin: 0; flex: 0 0 auto; color: var(--ink); font-weight: 700; }
+.pointer-gain > span { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font: 10px "Cascadia Code", monospace; }
+.pointer-gain input { height: 14px; margin-top: 3px; }
 .pointer-tracking-bar > span { color: var(--muted); font: 10px/1.4 "Cascadia Code", monospace; }
 .pointer-tracking-bar[data-inside="true"] { border-color: rgba(161, 240, 60, .38); background: rgba(161, 240, 60, .04); }
 .pointer-tracking-bar[data-inside="true"] > span { color: var(--green); }
@@ -225,6 +227,8 @@ body[data-layout="stage"] .inspector { grid-column: 2; }
   .panel-heading small { display: none; }
   .screen-shell { width: calc(100% - 32px); padding: 14px; border-radius: 20px; }
   .screen-scan { inset: 14px; }
+  .pointer-tracking-bar { grid-template-columns: auto 1fr; }
+  .pointer-tracking-bar > span { grid-column: 1 / -1; }
   .select-grid, .slider-grid, .motion-grid { grid-template-columns: 1fr; }
   .module-heading { grid-template-columns: 46px auto; }
   .module-heading small { grid-column: 2; justify-self: start; margin-top: -8px; padding-bottom: 10px; }
