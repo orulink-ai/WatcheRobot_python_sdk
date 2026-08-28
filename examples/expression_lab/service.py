@@ -50,6 +50,7 @@ class ExpressionStartRequest(BaseModel):
     blink_interval_ms: int = Field(default=3600, ge=1200, le=10000)
     blink_duration_ms: int = Field(default=200, ge=100, le=800)
     color: str = Field(default="#A1F03C", pattern="^#[0-9A-Fa-f]{6}$")
+    sphere_strength: float = Field(default=0.68, ge=0.0, le=1.0)
     transition_ms: int = Field(default=180, ge=0, le=2000)
 
 
@@ -88,6 +89,7 @@ class ExpressionUpdateRequest(BaseModel):
     blink_interval_ms: int | None = Field(default=None, ge=1200, le=10000)
     blink_duration_ms: int | None = Field(default=None, ge=100, le=800)
     color: str | None = Field(default=None, pattern="^#[0-9A-Fa-f]{6}$")
+    sphere_strength: float | None = Field(default=None, ge=0.0, le=1.0)
     transition_ms: int | None = Field(default=None, ge=0, le=2000)
 
 

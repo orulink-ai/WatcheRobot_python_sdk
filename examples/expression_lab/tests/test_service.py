@@ -78,6 +78,7 @@ def test_service_owns_expression_lifecycle() -> None:
         blink_interval_ms=3600,
         blink_duration_ms=200,
         color="#A1F03C",
+        sphere_strength=0.68,
         transition_ms=180,
     )
     updated = service.update(gaze_x=-0.4, openness=0.65, transition_ms=120)
@@ -116,6 +117,7 @@ def test_service_owns_expression_lifecycle() -> None:
                 "blink_interval_ms": 3600,
                 "blink_duration_ms": 200,
                 "color": "#A1F03C",
+                "sphere_strength": 0.68,
                 "transition_ms": 180,
             },
         ),
@@ -357,8 +359,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         stylesheet = client.get("/styles.css")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-11"' in index.text
-    assert 'src="./app.js?v=expression-lab-11"' in index.text
+    assert 'href="./styles.css?v=expression-lab-12"' in index.text
+    assert 'src="./app.js?v=expression-lab-12"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -401,6 +403,11 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert 'controls.accessoryScale.disabled = !hasAccessory' in script.text
     assert 'id="deviceFps"' in index.text
     assert 'color: controls.eyeColor.value.toUpperCase()' in script.text
+    assert 'id="sphereEnabled"' in index.text
+    assert 'id="sphereStrength"' in index.text
+    assert "function buildSphereMap(strength)" in script.text
+    assert "presentFrame(p.sphere_strength)" in script.text
+    assert "sphere_strength: controls.sphereEnabled.checked" in script.text
     assert "在 Watcher 打开 Desktop Link" in script.text
     assert "打开 Python SDK" not in script.text
     assert '"/api/' not in script.text

@@ -153,6 +153,7 @@ class ExpressionRuntimeDomain(_Domain):
         blink_interval_ms: int | None = None,
         blink_duration_ms: int | None = None,
         color: str | None = None,
+        sphere_strength: float | None = None,
         transition_ms: int | None = None,
         require_any: bool = False,
     ) -> dict[str, Any]:
@@ -236,6 +237,10 @@ class ExpressionRuntimeDomain(_Domain):
                 payload[name] = value
         if color is not None:
             payload["color_rgb565"] = _expression_color_rgb565(color)
+        if sphere_strength is not None:
+            payload["sphere_strength_milli"] = _expression_scaled_number(
+                "sphere_strength", sphere_strength, 0.0, 1.0
+            )
         if transition_ms is not None:
             if (
                 isinstance(transition_ms, bool)
@@ -277,6 +282,7 @@ class ExpressionRuntimeDomain(_Domain):
         blink_interval_ms: int | None = None,
         blink_duration_ms: int | None = None,
         color: str | None = None,
+        sphere_strength: float | None = None,
         transition_ms: int | None = None,
     ) -> None:
         payload = self._build_payload(
@@ -306,6 +312,7 @@ class ExpressionRuntimeDomain(_Domain):
             blink_interval_ms=blink_interval_ms,
             blink_duration_ms=blink_duration_ms,
             color=color,
+            sphere_strength=sphere_strength,
             transition_ms=transition_ms,
         )
         self._robot._require_capability("expression.runtime.v2")
@@ -340,6 +347,7 @@ class ExpressionRuntimeDomain(_Domain):
         blink_interval_ms: int | None = None,
         blink_duration_ms: int | None = None,
         color: str | None = None,
+        sphere_strength: float | None = None,
         transition_ms: int | None = None,
     ) -> None:
         payload = self._build_payload(
@@ -369,6 +377,7 @@ class ExpressionRuntimeDomain(_Domain):
             blink_interval_ms=blink_interval_ms,
             blink_duration_ms=blink_duration_ms,
             color=color,
+            sphere_strength=sphere_strength,
             transition_ms=transition_ms,
             require_any=True,
         )

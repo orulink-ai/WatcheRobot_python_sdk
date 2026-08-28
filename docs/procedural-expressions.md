@@ -33,6 +33,7 @@ await asyncio.to_thread(
     blink_interval_ms=3600,
     blink_duration_ms=200,
     color="#A1F03C",
+    sphere_strength=0.68,
     transition_ms=180,
 )
 
@@ -49,7 +50,9 @@ await asyncio.to_thread(app.robot.expression_runtime.stop)
 The runtime exposes three presets (`standby`, `thinking`, and `speaking`), five
 Watcher styles, four optional tags, six built-in accessories (`halo`,
 `devil_horns`, `ninja_mask`, `hero_mask`, `eyepatch`, and `antenna`), uniform and independent width/height scale, stroke and
-roundness, per-eye openness and tilt, blink timing, and RGB color. The default
+roundness, per-eye openness and tilt, blink timing, RGB color, and an optional
+precomputed sphere projection (`sphere_strength` from `0.0` to `1.0`). A value
+of `0.0` keeps the exact flat renderer. The default
 Watcher geometry is 2× the original PoC eye size with tighter 0.85 spacing.
 Calls fail before
 transport when a value is outside its supported range, and fail with
