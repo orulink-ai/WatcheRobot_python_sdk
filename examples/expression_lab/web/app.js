@@ -1,5 +1,6 @@
 const byId = (id) => document.getElementById(id);
 const canvas = byId("faceCanvas");
+const GAZE_TRAVEL_PIXELS = 32;
 const POINTER_SMOOTHING_MS = 90;
 const POINTER_GAZE_GAIN_DEFAULT = 1.45;
 const POINTER_FLAT_SYNC_INTERVAL_MS = 55;
@@ -378,7 +379,7 @@ function render(now) {
   }
   if (p.preset === "speaking" || p.style === "watcher_pulse") openness *= .83 + Math.sin(state.phase * 7.4) * .14;
   const styleScale = { watcher: 1, watcher_compact: .94, watcher_focus: .9, watcher_open: 1.12, watcher_pulse: 1 }[p.style];
-  const gazeX = p.gaze_x * 20; const gazeY = p.gaze_y * 20;
+  const gazeX = p.gaze_x * GAZE_TRAVEL_PIXELS; const gazeY = p.gaze_y * GAZE_TRAVEL_PIXELS;
   const segments = [
     [-30.75, 0, 5, 30], [-18.25, 0, 6, 58], [-6.25, -23.5, 6, 25], [-6.25, 24, 6, 24],
     [6.25, -23.5, 5, 25], [6.25, 23.5, 5, 25], [18.25, 0, 5, 58], [30.75, 0, 6, 30],

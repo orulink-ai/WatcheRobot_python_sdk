@@ -85,3 +85,6 @@ Device updates are coalesced using timing selected for the active flat or sphere
 renderer; leaving the preview returns the target to the neutral gaze. This
 reuses the normal Application → Daemon → Device channel and never streams
 browser pixels to Watcher.
+
+At the normalized `gaze_x` / `gaze_y` limits, both renderers move the eye group
+by 32 physical pixels (16 logical pixels at the 2× native render scale).

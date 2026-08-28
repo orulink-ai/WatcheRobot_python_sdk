@@ -359,8 +359,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         stylesheet = client.get("/styles.css")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-14"' in index.text
-    assert 'src="./app.js?v=expression-lab-14"' in index.text
+    assert 'href="./styles.css?v=expression-lab-15"' in index.text
+    assert 'src="./app.js?v=expression-lab-15"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -421,6 +421,9 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert "POINTER_GAZE_GAIN_DEFAULT" in script.text
     assert "POINTER_SPHERE_TRANSITION_MS" in script.text
     assert "controls.pointerGain.value" in script.text
+    assert "const GAZE_TRAVEL_PIXELS = 32" in script.text
+    assert "p.gaze_x * GAZE_TRAVEL_PIXELS" in script.text
+    assert "p.gaze_y * GAZE_TRAVEL_PIXELS" in script.text
     assert "sendExpressionUpdate" in script.text
     assert "在 Watcher 打开 Desktop Link" in script.text
     assert "打开 Python SDK" not in script.text
