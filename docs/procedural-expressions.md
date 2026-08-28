@@ -79,7 +79,9 @@ The browser preview is a design aid. Device FPS, LCD transfer time, memory
 headroom, and final pixels must still be verified on physical hardware.
 
 The Expression Lab enables pointer gaze by default. Pointer coordinates inside
-the 412 × 412 preview are normalized to `gaze_x` and `gaze_y`, damped locally,
-and coalesced to at most one device update every 80 ms. Leaving the preview
-returns the target to the neutral gaze. This reuses the normal Application →
-Daemon → Device channel and never streams browser pixels to Watcher.
+the 412 × 412 preview are normalized to `gaze_x` and `gaze_y`, multiplied by a
+configurable `0.60`–`2.00` response gain (`1.45` by default), and damped locally.
+Device updates are coalesced using timing selected for the active flat or sphere
+renderer; leaving the preview returns the target to the neutral gaze. This
+reuses the normal Application → Daemon → Device channel and never streams
+browser pixels to Watcher.
