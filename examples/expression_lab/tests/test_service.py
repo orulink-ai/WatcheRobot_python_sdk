@@ -375,8 +375,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         stylesheet = client.get("/styles.css")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-16"' in index.text
-    assert 'src="./app.js?v=expression-lab-16"' in index.text
+    assert 'href="./styles.css?v=expression-lab-17"' in index.text
+    assert 'src="./app.js?v=expression-lab-17"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -386,6 +386,9 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert stylesheet.status_code == 200
     assert stylesheet.headers["content-type"].startswith("text/css")
     assert stylesheet.headers["cache-control"] == "no-store"
+    assert ".controls { grid-column: 2 / -1; }" in stylesheet.text
+    assert ".inspector { grid-column: 1 / -1; }" in stylesheet.text
+    assert ".stage { position: sticky; top: 16px; }" in stylesheet.text
     assert script.status_code == 200
     assert "javascript" in script.headers["content-type"]
     assert script.headers["cache-control"] == "no-store"
