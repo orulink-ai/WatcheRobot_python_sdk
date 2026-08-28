@@ -359,8 +359,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         stylesheet = client.get("/styles.css")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-12"' in index.text
-    assert 'src="./app.js?v=expression-lab-12"' in index.text
+    assert 'href="./styles.css?v=expression-lab-13"' in index.text
+    assert 'src="./app.js?v=expression-lab-13"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -408,6 +408,15 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert "function buildSphereMap(strength)" in script.text
     assert "presentFrame(p.sphere_strength)" in script.text
     assert "sphere_strength: controls.sphereEnabled.checked" in script.text
+    assert 'id="pointerTracking"' in index.text
+    assert 'id="pointerTrackingState"' in index.text
+    assert 'canvas.addEventListener("pointermove", updatePointerTarget)' in script.text
+    assert 'canvas.addEventListener("pointerleave", releasePointerTarget)' in script.text
+    assert "function updatePointerMotion(dt)" in script.text
+    assert "function maybeSyncPointerGaze(now)" in script.text
+    assert "transition_ms: POINTER_DEVICE_TRANSITION_MS" in script.text
+    assert "Math.exp(-dt / POINTER_SMOOTHING_MS)" in script.text
+    assert "sendExpressionUpdate" in script.text
     assert "在 Watcher 打开 Desktop Link" in script.text
     assert "打开 Python SDK" not in script.text
     assert '"/api/' not in script.text
