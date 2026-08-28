@@ -1,5 +1,9 @@
 const byId = (id) => document.getElementById(id);
 const canvas = byId("faceCanvas");
+const POINTER_SMOOTHING_MS = 90;
+const POINTER_SYNC_INTERVAL_MS = 80;
+const POINTER_DEVICE_TRANSITION_MS = 70;
+const POINTER_SYNC_EPSILON = 0.015;
 const displayCtx = canvas.getContext("2d", { alpha: false });
 const flatCanvas = document.createElement("canvas");
 flatCanvas.width = canvas.width; flatCanvas.height = canvas.height;
@@ -17,6 +21,7 @@ const controls = {
   transition: byId("transition"), autoBlink: byId("autoBlink"),
   blinkInterval: byId("blinkInterval"), blinkDuration: byId("blinkDuration"), eyeColor: byId("eyeColor"),
   sphereEnabled: byId("sphereEnabled"), sphereStrength: byId("sphereStrength"),
+  pointerTracking: byId("pointerTracking"),
 };
 const state = {
   active: false, serviceReady: false, statusInitialized: false,
@@ -24,6 +29,10 @@ const state = {
   preset: "standby", sending: false, pairing: false, statusBusy: false,
   intentActive: false, resumePending: false, resumeTimer: 0,
   lastFrame: performance.now(), phase: 0, debounce: 0,
+  pointerInside: false, pointerTargetX: 0, pointerTargetY: 0,
+  pointerX: 0, pointerY: 0, pointerLastSyncAt: 0,
+  pointerLastSentX: Number.NaN, pointerLastSentY: Number.NaN,
+  updateBusy: false, queuedUpdate: null,
 };
 const sphereCache = {
   strengthMilli: -1,
@@ -38,7 +47,15 @@ const presetDefaults = {
   speaking: { openness: .9, spacing: .88, tilt: 0, tag: "none" },
 };
 
+function effectiveGaze() {
+  if (controls.pointerTracking.checked) {
+    return { x: state.pointerX, y: state.pointerY };
+  }
+  return { x: Number(controls.gazeX.value), y: Number(controls.gazeY.value) };
+}
+
 function values() {
+  const gaze = effectiveGaze();
   return {
     preset: state.preset, style: controls.style.value, tag: controls.tag.value,
     accessory: controls.accessory.value,
@@ -46,7 +63,7 @@ function values() {
     accessory_x: Number(controls.accessoryX.value),
     accessory_y: Number(controls.accessoryY.value),
     accessory_rotation_deg: Number(controls.accessoryRotation.value),
-    gaze_x: Number(controls.gazeX.value), gaze_y: Number(controls.gazeY.value),
+    gaze_x: Number(gaze.x.toFixed(3)), gaze_y: Number(gaze.y.toFixed(3)),
     openness: Number(controls.openness.value), spacing: Number(controls.spacing.value),
     scale: Number(controls.scale.value),
     scale_x: Number(controls.scaleX.value), scale_y: Number(controls.scaleY.value),
@@ -62,8 +79,7 @@ function values() {
 
 function refreshReadouts() {
   renderAccessoryModule();
-  byId("gazeXValue").value = Number(controls.gazeX.value).toFixed(2);
-  byId("gazeYValue").value = Number(controls.gazeY.value).toFixed(2);
+  refreshPointerReadout();
   byId("opennessValue").value = Number(controls.openness.value).toFixed(2);
   byId("spacingValue").value = Number(controls.spacing.value).toFixed(2);
   byId("scaleValue").value = Number(controls.scale.value).toFixed(2);
@@ -92,6 +108,20 @@ function refreshReadouts() {
   const args = values();
   const lines = Object.entries(args).map(([key, value]) => `    ${key}=${typeof value === "string" ? `"${value}"` : value},`);
   byId("sdkOutput").textContent = `app.robot.expression_runtime.${state.active ? "update" : "start"}(\n${lines.join("\n")}\n)`;
+}
+
+function refreshPointerReadout() {
+  const gaze = effectiveGaze();
+  const tracking = controls.pointerTracking.checked;
+  byId("gazeXValue").value = gaze.x.toFixed(2);
+  byId("gazeYValue").value = gaze.y.toFixed(2);
+  controls.gazeX.disabled = tracking;
+  controls.gazeY.disabled = tracking;
+  canvas.dataset.pointerTracking = String(tracking);
+  byId("pointerTrackingState").textContent = tracking
+    ? (state.pointerInside ? "正在跟随鼠标 · Web 与 Watcher 使用同一视线参数" : "将鼠标移入画面，移出后会平滑回正")
+    : "鼠标追踪已关闭，可使用水平/垂直视线滑杆";
+  document.querySelector(".pointer-tracking-bar").dataset.inside = String(tracking && state.pointerInside);
 }
 
 function renderAccessoryModule() {
@@ -267,11 +297,58 @@ function presentFrame(sphereStrength) {
   displayCtx.putImageData(sphereCache.output, 0, 0);
 }
 
+function updatePointerTarget(event) {
+  if (!controls.pointerTracking.checked) return;
+  const bounds = canvas.getBoundingClientRect();
+  if (bounds.width <= 0 || bounds.height <= 0) return;
+  state.pointerTargetX = Math.max(-1, Math.min(1, ((event.clientX - bounds.left) / bounds.width) * 2 - 1));
+  state.pointerTargetY = Math.max(-1, Math.min(1, ((event.clientY - bounds.top) / bounds.height) * 2 - 1));
+  state.pointerInside = true;
+  refreshPointerReadout();
+}
+
+function releasePointerTarget() {
+  if (!controls.pointerTracking.checked) return;
+  state.pointerInside = false;
+  state.pointerTargetX = 0;
+  state.pointerTargetY = 0;
+  refreshPointerReadout();
+}
+
+function updatePointerMotion(dt) {
+  if (!controls.pointerTracking.checked) return;
+  const smoothing = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ? 1
+    : 1 - Math.exp(-dt / POINTER_SMOOTHING_MS);
+  state.pointerX += (state.pointerTargetX - state.pointerX) * smoothing;
+  state.pointerY += (state.pointerTargetY - state.pointerY) * smoothing;
+  if (Math.abs(state.pointerTargetX - state.pointerX) < 0.001) state.pointerX = state.pointerTargetX;
+  if (Math.abs(state.pointerTargetY - state.pointerY) < 0.001) state.pointerY = state.pointerTargetY;
+}
+
+function maybeSyncPointerGaze(now) {
+  if (!controls.pointerTracking.checked || !state.active || state.sending ||
+      now - state.pointerLastSyncAt < POINTER_SYNC_INTERVAL_MS) return;
+  const gaze = effectiveGaze();
+  if (Number.isFinite(state.pointerLastSentX) &&
+      Math.abs(gaze.x - state.pointerLastSentX) < POINTER_SYNC_EPSILON &&
+      Math.abs(gaze.y - state.pointerLastSentY) < POINTER_SYNC_EPSILON) return;
+  state.pointerLastSyncAt = now;
+  state.pointerLastSentX = gaze.x;
+  state.pointerLastSentY = gaze.y;
+  sendExpressionUpdate({
+    gaze_x: Number(gaze.x.toFixed(3)),
+    gaze_y: Number(gaze.y.toFixed(3)),
+    transition_ms: POINTER_DEVICE_TRANSITION_MS,
+  });
+}
+
 function render(now) {
   // Leave a small tolerance for 60 Hz requestAnimationFrame timestamps. A strict
   // 50 ms gate can miss the third callback at 49.x ms and fall back to 15 FPS.
   if (now - state.lastFrame < 45) { requestAnimationFrame(render); return; }
   const dt = Math.min(100, now - state.lastFrame); state.lastFrame = now; state.phase += dt / 1000;
+  updatePointerMotion(dt);
   const p = values();
   let openness = p.openness;
   if (p.auto_blink) {
@@ -310,6 +387,8 @@ function render(now) {
   drawAccessory(p.accessory, "front", state.phase, p);
   drawTag(p.tag, p.color);
   presentFrame(p.sphere_strength);
+  refreshPointerReadout();
+  maybeSyncPointerGaze(now);
   byId("fpsReadout").textContent = `${(1000 / Math.max(1, dt)).toFixed(1)} FPS`;
   requestAnimationFrame(render);
 }
@@ -475,6 +554,10 @@ async function startExpression({ resume = false } = {}) {
     const snapshot = await api("./api/expression/start", values());
     state.intentActive = true;
     state.resumePending = false;
+    const gaze = effectiveGaze();
+    state.pointerLastSentX = gaze.x;
+    state.pointerLastSentY = gaze.y;
+    state.pointerLastSyncAt = performance.now();
     applyStatus(snapshot);
     toast(resume ? "连接恢复，代码表情已重新同步" : "Watcher 已切换到代码表情");
   }
@@ -497,21 +580,41 @@ async function stopExpression() {
   finally { state.sending = false; renderConnectionState(); }
 }
 
+function handleUpdateFailure(error) {
+  state.active = false;
+  state.resumePending = state.intentActive;
+  state.queuedUpdate = null;
+  byId("syncState").textContent = "SYNC ERROR";
+  renderConnectionState();
+  scheduleExpressionResume();
+  toast(error.message, "error");
+}
+
+async function sendExpressionUpdate(payload) {
+  if (!state.active) return;
+  if (state.updateBusy) {
+    state.queuedUpdate = { ...(state.queuedUpdate || {}), ...payload };
+    return;
+  }
+  state.updateBusy = true;
+  try {
+    await api("./api/expression/update", payload);
+    byId("syncState").textContent = "DEVICE SYNC";
+  } catch (error) {
+    handleUpdateFailure(error);
+  } finally {
+    state.updateBusy = false;
+    const queued = state.queuedUpdate;
+    state.queuedUpdate = null;
+    if (queued && state.active) sendExpressionUpdate(queued);
+  }
+}
+
 function queueUpdate() {
   refreshReadouts();
   if (!state.active) return;
   window.clearTimeout(state.debounce);
-  state.debounce = window.setTimeout(async () => {
-    try { await api("./api/expression/update", values()); byId("syncState").textContent = "DEVICE SYNC"; }
-    catch (error) {
-      state.active = false;
-      state.resumePending = state.intentActive;
-      byId("syncState").textContent = "SYNC ERROR";
-      renderConnectionState();
-      scheduleExpressionResume();
-      toast(error.message, "error");
-    }
-  }, 80);
+  state.debounce = window.setTimeout(() => sendExpressionUpdate(values()), 80);
 }
 
 document.querySelectorAll(".preset").forEach((button) => button.addEventListener("click", () => {
@@ -521,7 +624,22 @@ document.querySelectorAll(".preset").forEach((button) => button.addEventListener
   controls.openness.value = defaults.openness; controls.spacing.value = defaults.spacing; controls.tilt.value = defaults.tilt; controls.tag.value = defaults.tag;
   queueUpdate();
 }));
-Object.values(controls).forEach((control) => control.addEventListener("input", queueUpdate));
+Object.entries(controls).filter(([name]) => name !== "pointerTracking")
+  .forEach(([, control]) => control.addEventListener("input", queueUpdate));
+controls.pointerTracking.addEventListener("input", () => {
+  if (controls.pointerTracking.checked) {
+    state.pointerX = Number(controls.gazeX.value);
+    state.pointerY = Number(controls.gazeY.value);
+    state.pointerTargetX = 0;
+    state.pointerTargetY = 0;
+  } else {
+    state.pointerInside = false;
+  }
+  queueUpdate();
+});
+canvas.addEventListener("pointermove", updatePointerTarget);
+canvas.addEventListener("pointerleave", releasePointerTarget);
+canvas.addEventListener("pointercancel", releasePointerTarget);
 byId("startButton").addEventListener("click", startExpression);
 byId("stopButton").addEventListener("click", stopExpression);
 byId("pairingForm").addEventListener("submit", pairWatcher);
