@@ -1,6 +1,9 @@
 const byId = (id) => document.getElementById(id);
 const canvas = byId("faceCanvas");
-const ctx = canvas.getContext("2d", { alpha: false });
+const displayCtx = canvas.getContext("2d", { alpha: false });
+const flatCanvas = document.createElement("canvas");
+flatCanvas.width = canvas.width; flatCanvas.height = canvas.height;
+const ctx = flatCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
 const controls = {
   style: byId("style"), tag: byId("tag"), accessory: byId("accessory"),
   accessoryScale: byId("accessoryScale"), accessoryX: byId("accessoryX"),
@@ -13,6 +16,7 @@ const controls = {
   tilt: byId("tilt"), leftTilt: byId("leftTilt"), rightTilt: byId("rightTilt"),
   transition: byId("transition"), autoBlink: byId("autoBlink"),
   blinkInterval: byId("blinkInterval"), blinkDuration: byId("blinkDuration"), eyeColor: byId("eyeColor"),
+  sphereEnabled: byId("sphereEnabled"), sphereStrength: byId("sphereStrength"),
 };
 const state = {
   active: false, serviceReady: false, statusInitialized: false,
@@ -20,6 +24,13 @@ const state = {
   preset: "standby", sending: false, pairing: false, statusBusy: false,
   intentActive: false, resumePending: false, resumeTimer: 0,
   lastFrame: performance.now(), phase: 0, debounce: 0,
+};
+const sphereCache = {
+  strengthMilli: -1,
+  sourceIndices: new Int32Array(canvas.width * canvas.height),
+  shades: new Uint8Array(canvas.width * canvas.height),
+  shell: new Uint8Array(canvas.width * canvas.height),
+  output: displayCtx.createImageData(canvas.width, canvas.height),
 };
 const presetDefaults = {
   standby: { openness: 1, spacing: .85, tilt: 0, tag: "none" },
@@ -45,6 +56,7 @@ function values() {
     right_tilt_deg: Number(controls.rightTilt.value), transition_ms: Number(controls.transition.value),
     auto_blink: controls.autoBlink.checked, blink_interval_ms: Number(controls.blinkInterval.value),
     blink_duration_ms: Number(controls.blinkDuration.value), color: controls.eyeColor.value.toUpperCase(),
+    sphere_strength: controls.sphereEnabled.checked ? Number(controls.sphereStrength.value) : 0,
   };
 }
 
@@ -72,6 +84,10 @@ function refreshReadouts() {
   byId("blinkIntervalValue").value = `${controls.blinkInterval.value} ms`;
   byId("blinkDurationValue").value = `${controls.blinkDuration.value} ms`;
   byId("eyeColorValue").value = controls.eyeColor.value.toUpperCase();
+  byId("sphereStrengthValue").value = Number(controls.sphereStrength.value).toFixed(2);
+  byId("sphereModeState").textContent = controls.sphereEnabled.checked ? "已开启 · 预计算映射" : "平面模式";
+  controls.sphereStrength.disabled = !controls.sphereEnabled.checked;
+  document.querySelector(".sphere-control").dataset.enabled = String(controls.sphereEnabled.checked);
   byId("presetReadout").textContent = state.preset.toUpperCase();
   const args = values();
   const lines = Object.entries(args).map(([key, value]) => `    ${key}=${typeof value === "string" ? `"${value}"` : value},`);
@@ -166,8 +182,95 @@ function drawAccessory(accessory, layer, t, transform) {
   ctx.restore();
 }
 
+function buildSphereMap(strength) {
+  const strengthMilli = Math.round(strength * 1000);
+  if (sphereCache.strengthMilli === strengthMilli) return;
+  const size = canvas.width;
+  const centerTwice = size - 1;
+  const radiusSquared = centerTwice * centerTwice;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const destination = y * size + x;
+      const dxTwice = 2 * x - centerTwice;
+      const dyTwice = 2 * y - centerTwice;
+      const distanceSquared = dxTwice * dxTwice + dyTwice * dyTwice;
+      if (strengthMilli > 0 && distanceSquared > radiusSquared) {
+        sphereCache.sourceIndices[destination] = -1;
+        sphereCache.shades[destination] = 0;
+        sphereCache.shell[destination] = 0;
+        continue;
+      }
+      const bulgeMilli = Math.floor(strengthMilli * distanceSquared * 420 / (1000 * radiusSquared));
+      const sourceXTwice = Math.trunc(dxTwice * (1000 + bulgeMilli) / 1000) + centerTwice;
+      const sourceYTwice = Math.trunc(dyTwice * (1000 + bulgeMilli) / 1000) + centerTwice;
+      if (sourceXTwice < 0 || sourceYTwice < 0 || sourceXTwice > 2 * centerTwice || sourceYTwice > 2 * centerTwice) {
+        sphereCache.sourceIndices[destination] = -1;
+        sphereCache.shades[destination] = 0;
+        sphereCache.shell[destination] = 0;
+        continue;
+      }
+      const sourceX = Math.floor((sourceXTwice + 1) / 2);
+      const sourceY = Math.floor((sourceYTwice + 1) / 2);
+      sphereCache.sourceIndices[destination] = sourceY * size + sourceX;
+      sphereCache.shades[destination] = 63 - Math.floor(strengthMilli * distanceSquared * 14 / (1000 * radiusSquared));
+      const highlightX = dxTwice + Math.trunc(centerTwice / 3);
+      const highlightY = dyTwice + Math.trunc(centerTwice / 3);
+      const highlightRadiusSquared = Math.floor(radiusSquared / 9);
+      const highlightDistanceSquared = highlightX * highlightX + highlightY * highlightY;
+      const radialMilli = Math.floor(distanceSquared * 1000 / radiusSquared);
+      let shell = Math.floor(strengthMilli * 3 / 1000);
+      if (radialMilli > 700) shell += Math.floor(strengthMilli * (radialMilli - 700) * 10 / 300000);
+      if (highlightDistanceSquared < highlightRadiusSquared) {
+        shell += Math.floor(strengthMilli * (highlightRadiusSquared - highlightDistanceSquared) * 12 /
+          (1000 * highlightRadiusSquared));
+      }
+      sphereCache.shell[destination] = shell;
+    }
+  }
+  sphereCache.strengthMilli = strengthMilli;
+}
+
+function presentFrame(sphereStrength) {
+  if (sphereStrength <= 0) {
+    displayCtx.drawImage(flatCanvas, 0, 0);
+    return;
+  }
+  buildSphereMap(sphereStrength);
+  const sourceImage = ctx.getImageData(0, 0, flatCanvas.width, flatCanvas.height);
+  const source = new Uint32Array(sourceImage.data.buffer);
+  const output = new Uint32Array(sphereCache.output.data.buffer);
+  for (let index = 0; index < output.length; index += 1) {
+    const sourceIndex = sphereCache.sourceIndices[index];
+    if (sourceIndex < 0) {
+      output[index] = 0xff000000;
+      continue;
+    }
+    const color = source[sourceIndex];
+    const shade = sphereCache.shades[index];
+    const shell = sphereCache.shell[index];
+    if (color === 0xff000000) {
+      const red = Math.floor(shell * 255 / 310);
+      const green = Math.floor(shell * 255 / 189);
+      const blue = Math.floor(shell * 255 / 310);
+      output[index] = (0xff000000 | (blue << 16) | (green << 8) | red) >>> 0;
+      continue;
+    }
+    if (shade >= 63) {
+      output[index] = color;
+      continue;
+    }
+    const red = Math.floor((color & 0xff) * shade / 63);
+    const green = Math.floor(((color >>> 8) & 0xff) * shade / 63);
+    const blue = Math.floor(((color >>> 16) & 0xff) * shade / 63);
+    output[index] = (0xff000000 | (blue << 16) | (green << 8) | red) >>> 0;
+  }
+  displayCtx.putImageData(sphereCache.output, 0, 0);
+}
+
 function render(now) {
-  if (now - state.lastFrame < 50) { requestAnimationFrame(render); return; }
+  // Leave a small tolerance for 60 Hz requestAnimationFrame timestamps. A strict
+  // 50 ms gate can miss the third callback at 49.x ms and fall back to 15 FPS.
+  if (now - state.lastFrame < 45) { requestAnimationFrame(render); return; }
   const dt = Math.min(100, now - state.lastFrame); state.lastFrame = now; state.phase += dt / 1000;
   const p = values();
   let openness = p.openness;
@@ -206,6 +309,7 @@ function render(now) {
   });
   drawAccessory(p.accessory, "front", state.phase, p);
   drawTag(p.tag, p.color);
+  presentFrame(p.sphere_strength);
   byId("fpsReadout").textContent = `${(1000 / Math.max(1, dt)).toFixed(1)} FPS`;
   requestAnimationFrame(render);
 }

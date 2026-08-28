@@ -192,6 +192,7 @@ def test_expression_runtime_domain_builds_bounded_parameter_commands():
         blink_interval_ms=4200,
         blink_duration_ms=260,
         color="#A1F03C",
+        sphere_strength=0.68,
         transition_ms=180,
     )
     robot.expression_runtime.update(
@@ -203,6 +204,7 @@ def test_expression_runtime_domain_builds_bounded_parameter_commands():
         accessory_x=-0.3,
         accessory_y=0.1,
         accessory_rotation_deg=-22,
+        sphere_strength=0.4,
         transition_ms=240,
     )
     robot.expression_runtime.stop()
@@ -237,6 +239,7 @@ def test_expression_runtime_domain_builds_bounded_parameter_commands():
                 "blink_interval_ms": 4200,
                 "blink_duration_ms": 260,
                 "color_rgb565": 0xA787,
+                "sphere_strength_milli": 680,
                 "transition_ms": 180,
             },
         ),
@@ -251,6 +254,7 @@ def test_expression_runtime_domain_builds_bounded_parameter_commands():
                 "accessory_x_milli": -300,
                 "accessory_y_milli": 100,
                 "accessory_rotation_deg": -22,
+                "sphere_strength_milli": 400,
                 "transition_ms": 240,
             },
         ),
@@ -287,6 +291,7 @@ def test_expression_runtime_domain_builds_bounded_parameter_commands():
         ("update", {"blink_interval_ms": 1199}, "blink_interval_ms"),
         ("update", {"blink_duration_ms": 801}, "blink_duration_ms"),
         ("update", {"color": "green"}, "color"),
+        ("update", {"sphere_strength": 1.01}, "sphere_strength"),
         ("update", {"transition_ms": 2001}, "transition_ms"),
     ],
 )

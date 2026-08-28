@@ -167,6 +167,10 @@ input[type="range"] { width: 100%; height: 18px; margin: 8px 0 0; accent-color: 
 .toggle input:checked + span { background: var(--green-dim); }
 .toggle input:checked + span::after { transform: translateX(16px); background: #f3ffe8; }
 .toggle input:focus-visible + span { outline: 2px solid var(--green); outline-offset: 3px; }
+.sphere-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 4px 0 12px; }
+.sphere-switch-row .toggle { margin: 0; }
+.sphere-switch-row > small { color: var(--muted); text-align: right; }
+.sphere-control[data-enabled="false"] .slider-grid { opacity: .45; }
 
 .inspector pre { min-height: 270px; margin: 0; padding: 20px; overflow: auto; color: #b9c8b2; background: #0a0e0a; border-bottom: 1px solid var(--line); font: 12px/1.75 "Cascadia Code", monospace; white-space: pre-wrap; }
 .performance-strip { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); background: rgba(161, 240, 60, .025); }
