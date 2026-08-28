@@ -96,8 +96,8 @@ headroom, and final pixels must still be verified on physical hardware.
 The Expression Lab enables pointer gaze by default. Pointer coordinates inside
 the 412 × 412 preview are normalized to `gaze_x` and `gaze_y`, multiplied by a
 configurable `0.60`–`2.00` response gain (`1.45` by default), and damped locally.
-Device updates are coalesced using timing selected for the active flat or sphere
-renderer; leaving the preview returns the target to the neutral gaze. This
+The current Expression Lab fixes `sphere_strength` to `0` and coalesces pointer
+updates for the flat renderer; leaving the preview returns the target to the neutral gaze. This
 reuses the normal Application → Daemon → Device channel and never streams
 browser pixels to Watcher.
 
