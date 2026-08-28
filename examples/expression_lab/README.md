@@ -1,0 +1,45 @@
+# Watcher Expression Lab
+
+这是 KuroBlob 风格代码表情的 SDK 实验台。浏览器只负责预览和调参；真正显示在
+Watcher 屏幕上的画面由 ESP32 在本地生成，不传输逐帧图片，也不执行浏览器脚本。
+
+## 运行
+
+先启动 Expression Lab：
+
+```powershell
+watcherobot app run .\examples\expression_lab
+```
+
+macOS/Linux：
+
+```sh
+watcherobot app run ./examples/expression_lab
+```
+
+Application 会打开一个仅监听 `127.0.0.1` 随机端口的网页。点击“发送到 Watcher”
+启动代码表情；之后拖动参数会实时更新。点击“退出实验”或关闭 Application 后，设备
+会停止代码表情并恢复默认显示。
+
+如果页面显示“等待 Watcher”，在机器人上打开 **Desktop Link**，把屏幕显示的六位
+配对码输入网页顶部的“屏幕配对码”，再点击“连接”。配对由 SDK Runtime 的设备管理
+接口完成，网页不会直接访问串口或绕过当前 Application。
+
+也可以直接双击 `web/index.html` 查看和调整本地视觉预览；这种方式不会连接设备，
+页面会显示“仅本地预览”。需要把参数发送到 Watcher 时，必须使用上面的 SDK 命令启动。
+
+## 当前实验边界
+
+- 画布：设备端原生 412 × 412 RGB565，直接对应屏幕物理像素；不再对代码表情做 206 → 412 最近邻放大。
+- 目标刷新率：20 FPS。
+- 预设：`standby`、`thinking`、`speaking`。
+- 样式：Watcher 默认、紧凑、专注、开阔、脉冲。
+- 标签：无、思考、问号、爱心。
+- 装饰：无、天使光环、恶魔红角、忍者面罩、英雄面罩、海盗眼罩、UFO 天线。
+- 装饰可独立调整缩放（`0.25`–`2.0`）、横向/竖向位置（`-1.0`–`1.0`）与旋转（`-180°`–`180°`）。
+- 装饰由设备端白名单绘图实现，不向设备发送或执行任意 Canvas/JavaScript 代码。
+- 浏览器预览用于设计对照，最终性能和像素效果以真机为准。
+- 代码表情运行时不会读取 AnimPack；实验阶段仍保留旧接口作为回退，真机验收后再做正式移除。
+
+眼睛分段几何改编自 MIT 许可的 KuroBlob-AI Watcher renderer；许可证见
+`KUROBLOB_AI_LICENSE.txt`。

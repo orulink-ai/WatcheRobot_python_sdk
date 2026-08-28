@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import queue
 import re
 import threading
@@ -80,6 +81,303 @@ class AnimationDomain(_Domain):
 
     def stop(self) -> None:
         self._robot._command("ctrl.animation.stop", {})
+
+
+_EXPRESSION_RUNTIME_PRESETS = frozenset({"standby", "thinking", "speaking"})
+_EXPRESSION_RUNTIME_STYLES = frozenset(
+    {"watcher", "watcher_compact", "watcher_focus", "watcher_open", "watcher_pulse"}
+)
+_EXPRESSION_RUNTIME_TAGS = frozenset({"none", "thinking", "question", "love"})
+_EXPRESSION_RUNTIME_ACCESSORIES = frozenset(
+    {"none", "halo", "devil_horns", "ninja_mask", "hero_mask", "eyepatch", "antenna"}
+)
+
+
+def _expression_choice(name: str, value: str, allowed: frozenset[str]) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        choices = ", ".join(sorted(allowed))
+        raise ValueError(f"{name} must be one of: {choices}")
+    return value
+
+
+def _expression_scaled_number(name: str, value: float, minimum: float, maximum: float) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{name} must be a number")
+    numeric = float(value)
+    if not math.isfinite(numeric) or not minimum <= numeric <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return int(round(numeric * 1000.0))
+
+
+def _expression_color_rgb565(value: str) -> int:
+    if not isinstance(value, str) or len(value) != 7 or value[0] != "#":
+        raise ValueError("color must be a #RRGGBB value")
+    try:
+        red = int(value[1:3], 16)
+        green = int(value[3:5], 16)
+        blue = int(value[5:7], 16)
+    except ValueError as error:
+        raise ValueError("color must be a #RRGGBB value") from error
+    return ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)
+
+
+class ExpressionRuntimeDomain(_Domain):
+    """Control the negotiated device-side procedural Watcher expression runtime."""
+
+    @staticmethod
+    def _build_payload(
+        *,
+        preset: str | None = None,
+        style: str | None = None,
+        gaze_x: float | None = None,
+        gaze_y: float | None = None,
+        openness: float | None = None,
+        spacing: float | None = None,
+        scale: float | None = None,
+        scale_x: float | None = None,
+        scale_y: float | None = None,
+        stroke: float | None = None,
+        roundness: float | None = None,
+        left_openness: float | None = None,
+        right_openness: float | None = None,
+        tilt_deg: int | None = None,
+        left_tilt_deg: int | None = None,
+        right_tilt_deg: int | None = None,
+        tag: str | None = None,
+        accessory: str | None = None,
+        accessory_scale: float | None = None,
+        accessory_x: float | None = None,
+        accessory_y: float | None = None,
+        accessory_rotation_deg: int | None = None,
+        auto_blink: bool | None = None,
+        blink_interval_ms: int | None = None,
+        blink_duration_ms: int | None = None,
+        color: str | None = None,
+        transition_ms: int | None = None,
+        require_any: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if preset is not None:
+            payload["preset"] = _expression_choice("preset", preset, _EXPRESSION_RUNTIME_PRESETS)
+        if style is not None:
+            payload["style"] = _expression_choice("style", style, _EXPRESSION_RUNTIME_STYLES)
+        if gaze_x is not None:
+            payload["gaze_x_milli"] = _expression_scaled_number("gaze_x", gaze_x, -1.0, 1.0)
+        if gaze_y is not None:
+            payload["gaze_y_milli"] = _expression_scaled_number("gaze_y", gaze_y, -1.0, 1.0)
+        if openness is not None:
+            payload["openness_milli"] = _expression_scaled_number("openness", openness, 0.05, 1.2)
+        if spacing is not None:
+            payload["spacing_milli"] = _expression_scaled_number("spacing", spacing, 0.4, 1.6)
+        if scale is not None:
+            payload["scale_milli"] = _expression_scaled_number("scale", scale, 0.5, 1.5)
+        if scale_x is not None:
+            payload["scale_x_milli"] = _expression_scaled_number("scale_x", scale_x, 0.75, 2.2)
+        if scale_y is not None:
+            payload["scale_y_milli"] = _expression_scaled_number("scale_y", scale_y, 0.75, 2.2)
+        if stroke is not None:
+            payload["stroke_milli"] = _expression_scaled_number("stroke", stroke, 0.5, 2.0)
+        if roundness is not None:
+            payload["roundness_milli"] = _expression_scaled_number("roundness", roundness, 0.0, 1.0)
+        if left_openness is not None:
+            payload["left_openness_milli"] = _expression_scaled_number(
+                "left_openness", left_openness, 0.1, 1.5
+            )
+        if right_openness is not None:
+            payload["right_openness_milli"] = _expression_scaled_number(
+                "right_openness", right_openness, 0.1, 1.5
+            )
+        if tilt_deg is not None:
+            if isinstance(tilt_deg, bool) or not isinstance(tilt_deg, int) or not -30 <= tilt_deg <= 30:
+                raise ValueError("tilt_deg must be an integer between -30 and 30")
+            payload["tilt_deg"] = tilt_deg
+        for name, value in (("left_tilt_deg", left_tilt_deg), ("right_tilt_deg", right_tilt_deg)):
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int) or not -30 <= value <= 30:
+                    raise ValueError(f"{name} must be an integer between -30 and 30")
+                payload[name] = value
+        if tag is not None:
+            payload["tag"] = _expression_choice("tag", tag, _EXPRESSION_RUNTIME_TAGS)
+        if accessory is not None:
+            payload["accessory"] = _expression_choice(
+                "accessory", accessory, _EXPRESSION_RUNTIME_ACCESSORIES
+            )
+        if accessory_scale is not None:
+            payload["accessory_scale_milli"] = _expression_scaled_number(
+                "accessory_scale", accessory_scale, 0.25, 2.0
+            )
+        if accessory_x is not None:
+            payload["accessory_x_milli"] = _expression_scaled_number(
+                "accessory_x", accessory_x, -1.0, 1.0
+            )
+        if accessory_y is not None:
+            payload["accessory_y_milli"] = _expression_scaled_number(
+                "accessory_y", accessory_y, -1.0, 1.0
+            )
+        if accessory_rotation_deg is not None:
+            if (
+                isinstance(accessory_rotation_deg, bool)
+                or not isinstance(accessory_rotation_deg, int)
+                or not -180 <= accessory_rotation_deg <= 180
+            ):
+                raise ValueError("accessory_rotation_deg must be an integer between -180 and 180")
+            payload["accessory_rotation_deg"] = accessory_rotation_deg
+        if auto_blink is not None:
+            if not isinstance(auto_blink, bool):
+                raise TypeError("auto_blink must be a bool")
+            payload["auto_blink"] = auto_blink
+        for name, value, minimum, maximum in (
+            ("blink_interval_ms", blink_interval_ms, 1200, 10000),
+            ("blink_duration_ms", blink_duration_ms, 100, 800),
+        ):
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                    raise ValueError(f"{name} must be an integer between {minimum} and {maximum}")
+                payload[name] = value
+        if color is not None:
+            payload["color_rgb565"] = _expression_color_rgb565(color)
+        if transition_ms is not None:
+            if (
+                isinstance(transition_ms, bool)
+                or not isinstance(transition_ms, int)
+                or not 0 <= transition_ms <= 2000
+            ):
+                raise ValueError("transition_ms must be an integer between 0 and 2000")
+            payload["transition_ms"] = transition_ms
+        if require_any and not payload:
+            raise ValueError("at least one expression parameter is required")
+        return payload
+
+    def start(
+        self,
+        preset: str,
+        *,
+        style: str | None = None,
+        gaze_x: float | None = None,
+        gaze_y: float | None = None,
+        openness: float | None = None,
+        spacing: float | None = None,
+        scale: float | None = None,
+        scale_x: float | None = None,
+        scale_y: float | None = None,
+        stroke: float | None = None,
+        roundness: float | None = None,
+        left_openness: float | None = None,
+        right_openness: float | None = None,
+        tilt_deg: int | None = None,
+        left_tilt_deg: int | None = None,
+        right_tilt_deg: int | None = None,
+        tag: str | None = None,
+        accessory: str | None = None,
+        accessory_scale: float | None = None,
+        accessory_x: float | None = None,
+        accessory_y: float | None = None,
+        accessory_rotation_deg: int | None = None,
+        auto_blink: bool | None = None,
+        blink_interval_ms: int | None = None,
+        blink_duration_ms: int | None = None,
+        color: str | None = None,
+        transition_ms: int | None = None,
+    ) -> None:
+        payload = self._build_payload(
+            preset=preset,
+            style=style,
+            gaze_x=gaze_x,
+            gaze_y=gaze_y,
+            openness=openness,
+            spacing=spacing,
+            scale=scale,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            stroke=stroke,
+            roundness=roundness,
+            left_openness=left_openness,
+            right_openness=right_openness,
+            tilt_deg=tilt_deg,
+            left_tilt_deg=left_tilt_deg,
+            right_tilt_deg=right_tilt_deg,
+            tag=tag,
+            accessory=accessory,
+            accessory_scale=accessory_scale,
+            accessory_x=accessory_x,
+            accessory_y=accessory_y,
+            accessory_rotation_deg=accessory_rotation_deg,
+            auto_blink=auto_blink,
+            blink_interval_ms=blink_interval_ms,
+            blink_duration_ms=blink_duration_ms,
+            color=color,
+            transition_ms=transition_ms,
+        )
+        self._robot._require_capability("expression.runtime.v2")
+        self._robot._command("ctrl.expression.runtime.start", payload)
+
+    def update(
+        self,
+        *,
+        preset: str | None = None,
+        style: str | None = None,
+        gaze_x: float | None = None,
+        gaze_y: float | None = None,
+        openness: float | None = None,
+        spacing: float | None = None,
+        scale: float | None = None,
+        scale_x: float | None = None,
+        scale_y: float | None = None,
+        stroke: float | None = None,
+        roundness: float | None = None,
+        left_openness: float | None = None,
+        right_openness: float | None = None,
+        tilt_deg: int | None = None,
+        left_tilt_deg: int | None = None,
+        right_tilt_deg: int | None = None,
+        tag: str | None = None,
+        accessory: str | None = None,
+        accessory_scale: float | None = None,
+        accessory_x: float | None = None,
+        accessory_y: float | None = None,
+        accessory_rotation_deg: int | None = None,
+        auto_blink: bool | None = None,
+        blink_interval_ms: int | None = None,
+        blink_duration_ms: int | None = None,
+        color: str | None = None,
+        transition_ms: int | None = None,
+    ) -> None:
+        payload = self._build_payload(
+            preset=preset,
+            style=style,
+            gaze_x=gaze_x,
+            gaze_y=gaze_y,
+            openness=openness,
+            spacing=spacing,
+            scale=scale,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            stroke=stroke,
+            roundness=roundness,
+            left_openness=left_openness,
+            right_openness=right_openness,
+            tilt_deg=tilt_deg,
+            left_tilt_deg=left_tilt_deg,
+            right_tilt_deg=right_tilt_deg,
+            tag=tag,
+            accessory=accessory,
+            accessory_scale=accessory_scale,
+            accessory_x=accessory_x,
+            accessory_y=accessory_y,
+            accessory_rotation_deg=accessory_rotation_deg,
+            auto_blink=auto_blink,
+            blink_interval_ms=blink_interval_ms,
+            blink_duration_ms=blink_duration_ms,
+            color=color,
+            transition_ms=transition_ms,
+            require_any=True,
+        )
+        self._robot._require_capability("expression.runtime.v2")
+        self._robot._command("ctrl.expression.runtime.update", payload)
+
+    def stop(self) -> None:
+        self._robot._require_capability("expression.runtime.v2")
+        self._robot._command("ctrl.expression.runtime.stop", {})
 
 
 class ExpressionDomain(_Domain):
@@ -376,6 +674,7 @@ class WatcheRobot:
         self._closing = False
         self.behavior = BehaviorDomain(self)
         self.animation = AnimationDomain(self)
+        self.expression_runtime = ExpressionRuntimeDomain(self)
         self.motion = MotionDomain(self)
         self.audio = AudioDomain(self)
         self.expressions = ExpressionDomain(self)

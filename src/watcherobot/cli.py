@@ -751,7 +751,7 @@ def _print_robot_setup_failure(exc: BluetoothProvisioningError) -> int:
             "  1. Keep the robot on Settings > Wi-Fi.",
             "  2. Keep the robot near this computer.",
             "  3. Run watcherobot robot setup again.",
-            "Already on Wi-Fi? Open the robot's \"Python SDK\" app and run "
+            "Already on Wi-Fi? Open the robot's \"Desktop Link\" app and run "
             "watcherobot robot pair <code> instead.",
         )
     elif isinstance(exc, DeviceAmbiguityError):
@@ -855,7 +855,7 @@ def _print_robot_pairing_failure(exc: RobotPairingError) -> int:
         "setup; the Wi-Fi name or password may be incorrect.",
         file=sys.stderr,
     )
-    print('  3. Keep the robot\'s "Python SDK" app open.', file=sys.stderr)
+    print('  3. Keep the robot\'s "Desktop Link" app open.', file=sys.stderr)
     print("  4. Enter the latest 6-digit code and retry.", file=sys.stderr)
     return 2
 
@@ -915,7 +915,7 @@ async def _run_robot_setup(args: argparse.Namespace) -> int:
     print()
     print(_styled("Next, complete pairing on the robot:", "blue"))
     print("  1. Return to the robot launcher.")
-    print('  2. Open the "Python SDK" app.')
+    print('  2. Open the "Desktop Link" app.')
     print("  3. Read the 6-digit pairing code at the top of the screen.")
     pairing_code = args.pairing_code
     if pairing_code is None:
@@ -1000,7 +1000,7 @@ def _prepare_robot_for_setup(*, wait_for_confirmation: bool) -> None:
     print("  3. Keep that page open so the robot can advertise over Bluetooth.")
     print(
         "  4. Already on Wi-Fi? Press Ctrl+C, open the robot's "
-        '"Python SDK" app, and run watcherobot robot pair <code>.'
+        '"Desktop Link" app, and run watcherobot robot pair <code>.'
     )
     print()
     if not wait_for_confirmation:
@@ -1534,7 +1534,7 @@ def _print_application_robot_guidance(control_url: str) -> None:
     print("No robot is connected. This Application can still run offline.")
     print("First-time setup: watcherobot robot setup")
     print(
-        'Already on Wi-Fi: open the robot\'s "Python SDK" app, then run '
+        'Already on Wi-Fi: open the robot\'s "Desktop Link" app, then run '
         "watcherobot robot pair <code>"
     )
     print()
