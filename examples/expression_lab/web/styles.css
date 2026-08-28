@@ -138,6 +138,15 @@ body:not(.scanlines) .screen-scan { display: none; }
 
 .preset-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 18px 18px 10px; }
 .preset.active { color: var(--green); border-color: var(--green-dim); background: rgba(161, 240, 60, .08); }
+.emotion-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 14px 18px 8px; }
+.eye-shape.active { color: var(--green); border-color: var(--green-dim); background: rgba(161, 240, 60, .08); }
+.eyelid-module { border-color: rgba(161, 240, 60, .24); }
+.eyelid-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px 18px 18px; }
+.eyelid-grid fieldset { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: rgba(4, 6, 4, .34); }
+.eyelid-grid legend { padding: 0 6px; color: var(--green-dim); font: 10px "Cascadia Code", monospace; letter-spacing: .06em; }
+.eyelid-grid label { display: block; margin-top: 8px; }
+.eyelid-grid label:first-of-type { margin-top: 0; }
+.eyelid-grid label > span { display: flex; justify-content: space-between; gap: 10px; }
 .control-module { margin: 10px 12px 14px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: rgba(9, 13, 9, .34); }
 .module-heading { min-height: 48px; display: grid; grid-template-columns: 52px auto 1fr; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--line); background: rgba(23, 31, 23, .66); }
 .module-heading span { color: var(--green-dim); font: 10px "Cascadia Code", monospace; letter-spacing: .08em; }
@@ -229,7 +238,7 @@ body[data-layout="stage"] .inspector { grid-column: 2; }
   .screen-scan { inset: 14px; }
   .pointer-tracking-bar { grid-template-columns: auto 1fr; }
   .pointer-tracking-bar > span { grid-column: 1 / -1; }
-  .select-grid, .slider-grid, .motion-grid { grid-template-columns: 1fr; }
+  .select-grid, .slider-grid, .motion-grid, .eyelid-grid { grid-template-columns: 1fr; }
   .module-heading { grid-template-columns: 46px auto; }
   .module-heading small { grid-column: 2; justify-self: start; margin-top: -8px; padding-bottom: 10px; }
   .color-field { grid-column: 1; }

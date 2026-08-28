@@ -145,6 +145,14 @@ class ExpressionRuntimeDomain(_Domain):
         tilt_deg: int | None = None,
         left_tilt_deg: int | None = None,
         right_tilt_deg: int | None = None,
+        left_upper_lid_y: int | None = None,
+        left_upper_lid_rotation_deg: int | None = None,
+        right_upper_lid_y: int | None = None,
+        right_upper_lid_rotation_deg: int | None = None,
+        left_lower_lid_y: int | None = None,
+        left_lower_lid_rotation_deg: int | None = None,
+        right_lower_lid_y: int | None = None,
+        right_lower_lid_rotation_deg: int | None = None,
         tag: str | None = None,
         accessory: str | None = None,
         accessory_scale: float | None = None,
@@ -198,6 +206,26 @@ class ExpressionRuntimeDomain(_Domain):
             if value is not None:
                 if isinstance(value, bool) or not isinstance(value, int) or not -30 <= value <= 30:
                     raise ValueError(f"{name} must be an integer between -30 and 30")
+                payload[name] = value
+        for name, value in (
+            ("left_upper_lid_y", left_upper_lid_y),
+            ("right_upper_lid_y", right_upper_lid_y),
+            ("left_lower_lid_y", left_lower_lid_y),
+            ("right_lower_lid_y", right_lower_lid_y),
+        ):
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int) or not -80 <= value <= 80:
+                    raise ValueError(f"{name} must be an integer between -80 and 80")
+                payload[name] = value
+        for name, value in (
+            ("left_upper_lid_rotation_deg", left_upper_lid_rotation_deg),
+            ("right_upper_lid_rotation_deg", right_upper_lid_rotation_deg),
+            ("left_lower_lid_rotation_deg", left_lower_lid_rotation_deg),
+            ("right_lower_lid_rotation_deg", right_lower_lid_rotation_deg),
+        ):
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int) or not -45 <= value <= 45:
+                    raise ValueError(f"{name} must be an integer between -45 and 45")
                 payload[name] = value
         if tag is not None:
             payload["tag"] = _expression_choice("tag", tag, _EXPRESSION_RUNTIME_TAGS)
@@ -274,6 +302,14 @@ class ExpressionRuntimeDomain(_Domain):
         tilt_deg: int | None = None,
         left_tilt_deg: int | None = None,
         right_tilt_deg: int | None = None,
+        left_upper_lid_y: int | None = None,
+        left_upper_lid_rotation_deg: int | None = None,
+        right_upper_lid_y: int | None = None,
+        right_upper_lid_rotation_deg: int | None = None,
+        left_lower_lid_y: int | None = None,
+        left_lower_lid_rotation_deg: int | None = None,
+        right_lower_lid_y: int | None = None,
+        right_lower_lid_rotation_deg: int | None = None,
         tag: str | None = None,
         accessory: str | None = None,
         accessory_scale: float | None = None,
@@ -304,6 +340,14 @@ class ExpressionRuntimeDomain(_Domain):
             tilt_deg=tilt_deg,
             left_tilt_deg=left_tilt_deg,
             right_tilt_deg=right_tilt_deg,
+            left_upper_lid_y=left_upper_lid_y,
+            left_upper_lid_rotation_deg=left_upper_lid_rotation_deg,
+            right_upper_lid_y=right_upper_lid_y,
+            right_upper_lid_rotation_deg=right_upper_lid_rotation_deg,
+            left_lower_lid_y=left_lower_lid_y,
+            left_lower_lid_rotation_deg=left_lower_lid_rotation_deg,
+            right_lower_lid_y=right_lower_lid_y,
+            right_lower_lid_rotation_deg=right_lower_lid_rotation_deg,
             tag=tag,
             accessory=accessory,
             accessory_scale=accessory_scale,
@@ -317,7 +361,7 @@ class ExpressionRuntimeDomain(_Domain):
             sphere_strength=sphere_strength,
             transition_ms=transition_ms,
         )
-        self._robot._require_capability("expression.runtime.v2")
+        self._robot._require_capability("expression.runtime.v3")
         self._robot._command("ctrl.expression.runtime.start", payload)
 
     def update(
@@ -339,6 +383,14 @@ class ExpressionRuntimeDomain(_Domain):
         tilt_deg: int | None = None,
         left_tilt_deg: int | None = None,
         right_tilt_deg: int | None = None,
+        left_upper_lid_y: int | None = None,
+        left_upper_lid_rotation_deg: int | None = None,
+        right_upper_lid_y: int | None = None,
+        right_upper_lid_rotation_deg: int | None = None,
+        left_lower_lid_y: int | None = None,
+        left_lower_lid_rotation_deg: int | None = None,
+        right_lower_lid_y: int | None = None,
+        right_lower_lid_rotation_deg: int | None = None,
         tag: str | None = None,
         accessory: str | None = None,
         accessory_scale: float | None = None,
@@ -369,6 +421,14 @@ class ExpressionRuntimeDomain(_Domain):
             tilt_deg=tilt_deg,
             left_tilt_deg=left_tilt_deg,
             right_tilt_deg=right_tilt_deg,
+            left_upper_lid_y=left_upper_lid_y,
+            left_upper_lid_rotation_deg=left_upper_lid_rotation_deg,
+            right_upper_lid_y=right_upper_lid_y,
+            right_upper_lid_rotation_deg=right_upper_lid_rotation_deg,
+            left_lower_lid_y=left_lower_lid_y,
+            left_lower_lid_rotation_deg=left_lower_lid_rotation_deg,
+            right_lower_lid_y=right_lower_lid_y,
+            right_lower_lid_rotation_deg=right_lower_lid_rotation_deg,
             tag=tag,
             accessory=accessory,
             accessory_scale=accessory_scale,
@@ -383,11 +443,11 @@ class ExpressionRuntimeDomain(_Domain):
             transition_ms=transition_ms,
             require_any=True,
         )
-        self._robot._require_capability("expression.runtime.v2")
+        self._robot._require_capability("expression.runtime.v3")
         self._robot._command("ctrl.expression.runtime.update", payload)
 
     def stop(self) -> None:
-        self._robot._require_capability("expression.runtime.v2")
+        self._robot._require_capability("expression.runtime.v3")
         self._robot._command("ctrl.expression.runtime.stop", {})
 
 
