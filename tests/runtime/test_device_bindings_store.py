@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 
 from watcherobot.runtime.daemon.pairing.bindings_store import (
@@ -37,6 +39,8 @@ def test_load_creates_identity_file_on_first_use(tmp_path: Path) -> None:
     assert raw["version"] == 1
     assert raw["daemon_instance_id"] == snapshot.daemon_instance_id
     assert raw["device"] is None
+    if os.name != "nt":
+        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
 
 
 def test_load_is_idempotent_across_restarts(tmp_path: Path) -> None:
@@ -112,6 +116,36 @@ def test_device_entry_with_bad_secret_is_dropped_but_identity_kept(
     assert snapshot.device is None
 
 
+def test_device_entry_with_unsupported_mode_or_non_ipv4_peer_is_dropped(
+    tmp_path: Path,
+) -> None:
+    store = DeviceBindingsStore(tmp_path)
+    identity = store.load()
+    for overrides in (
+        {"target_mode": "unknown"},
+        {"last_peer_ip": "not-an-ip"},
+        {"last_peer_ip": "2001:db8::1"},
+    ):
+        device = {
+            "binding_secret": SECRET,
+            "target_mode": "desktop_link",
+            "last_peer_ip": "192.168.1.23",
+            "last_ws_port": 8765,
+            **overrides,
+        }
+        store.path.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "daemon_instance_id": identity.daemon_instance_id,
+                    "device": device,
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert store.load().device is None
+
+
 def test_clear_device_forgets_only_the_device(tmp_path: Path) -> None:
     store = DeviceBindingsStore(tmp_path)
     identity = store.load()
@@ -146,6 +180,21 @@ def test_write_rejects_non_hex_credentials(tmp_path: Path) -> None:
         pass
     else:
         raise AssertionError("expected ValueError for invalid instance id")
+
+    for invalid_binding in (
+        make_binding(target_mode="unknown"),
+        make_binding(last_peer_ip="not-an-ip"),
+        make_binding(last_peer_ip="2001:db8::1"),
+        make_binding(last_ws_port=0),
+    ):
+        try:
+            store.write(
+                DeviceBindingsSnapshot(identity.daemon_instance_id, invalid_binding)
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected ValueError for invalid binding metadata")
 
 
 def test_no_temp_file_left_behind(tmp_path: Path) -> None:

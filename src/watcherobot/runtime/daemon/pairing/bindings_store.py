@@ -17,15 +17,18 @@ identity with no remembered device; deleting the file forgets everything.
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import time
 from dataclasses import dataclass, replace
+from ipaddress import IPv4Address, AddressValueError
 from pathlib import Path
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _STORE_VERSION = 1
+_TARGET_MODES = frozenset({"desktop_link", "python_sdk"})
 
 
 @dataclass(frozen=True)
@@ -74,7 +77,7 @@ class DeviceBindingsStore:
             raise ValueError("daemon_instance_id must be 32 lowercase hex characters")
         self.root.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".json.tmp")
-        temporary.write_text(
+        serialized = (
             json.dumps(
                 {
                     "version": _STORE_VERSION,
@@ -84,9 +87,23 @@ class DeviceBindingsStore:
                 ensure_ascii=False,
                 indent=2,
             )
-            + "\n",
-            encoding="utf-8",
+            + "\n"
         )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(temporary, flags, 0o600)
+        try:
+            if os.name != "nt":
+                os.chmod(temporary, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+                descriptor = -1
+                handle.write(serialized)
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
         temporary.replace(self.path)
 
     def clear_device(self, *, now_ms: int | None = None) -> bool:
@@ -120,6 +137,8 @@ def _device_to_json(device: DeviceBinding | None) -> dict[str, object] | None:
         return None
     if _HEX64.fullmatch(device.binding_secret) is None:
         raise ValueError("binding_secret must be 64 lowercase hex characters")
+    if not _binding_metadata_valid(device.target_mode, device.last_peer_ip, device.last_ws_port):
+        raise ValueError("device binding metadata is invalid")
     return {
         "binding_secret": device.binding_secret,
         "target_mode": device.target_mode,
@@ -146,7 +165,7 @@ def _device_from_json(value: object) -> DeviceBinding | None:
         or not isinstance(target_mode, str)
         or not isinstance(peer_ip, str)
         or type(ws_port) is not int
-        or not 1 <= ws_port <= 65535
+        or not _binding_metadata_valid(target_mode, peer_ip, ws_port)
     ):
         return None
     return DeviceBinding(
@@ -161,6 +180,16 @@ def _device_from_json(value: object) -> DeviceBinding | None:
 
 def _optional_int(value: object) -> int | None:
     return value if type(value) is int else None
+
+
+def _binding_metadata_valid(target_mode: str, peer_ip: str, ws_port: int) -> bool:
+    if target_mode not in _TARGET_MODES or type(ws_port) is not int or not 1 <= ws_port <= 65535:
+        return False
+    try:
+        IPv4Address(peer_ip)
+    except (AddressValueError, ValueError):
+        return False
+    return True
 
 
 def utc_now_ms() -> int:

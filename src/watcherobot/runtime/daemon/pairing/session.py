@@ -287,10 +287,11 @@ class DevicePairingSession:
     ) -> None:
         """Verify the challenge MAC and move a reunite scan into CONNECTING."""
 
+        request = self._request
         if (
             self._state is not DevicePairingState.DISCOVERING
             or not self._reuniting
-            or self._request is None
+            or not isinstance(request, LinkReuniteRequest)
         ):
             raise PairingSessionError("invalid_state_transition")
         if (
@@ -298,18 +299,18 @@ class DevicePairingSession:
                 request_id=response.request_id,
                 daemon_instance_id=response.daemon_instance_id,
             )
-            or response.nonce != self._request.nonce  # noqa: E501 - attribute chains read better than one boolean
-            or response.target_mode != self._request.target_mode
+            or response.nonce != request.nonce
+            or response.target_mode != request.target_mode
             or not peer_ip
         ):
             raise PairingSessionError("pairing_credential_invalid")
         assert self._reunite_secret is not None
         expected_mac = reunite_response_mac(
             self._reunite_secret,
-            request_id=self._request.request_id,
-            nonce=self._request.nonce,
+            request_id=request.request_id,
+            nonce=request.nonce,
             daemon_instance_id=self.daemon_instance_id,
-            target_mode=self._request.target_mode,
+            target_mode=request.target_mode,
         )
         if not hmac.compare_digest(expected_mac, response.response_mac):
             raise PairingSessionError("pairing_credential_invalid")
