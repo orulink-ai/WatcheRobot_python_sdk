@@ -387,31 +387,41 @@ function roundedRect(x, y, width, height, radius, context = ctx) {
   context.beginPath(); context.roundRect(x, y, width, height, r); context.fill();
 }
 
-function tagCircle(x, y, radius) {
-  ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill();
+// The three silhouettes are the artist-supplied SVG paths. Web keeps them as
+// vectors; firmware uses masks generated from the same 1024-unit source paths.
+const TAG_SVG_PATHS = {
+  question: "M500.382 0.006c-177.646 19.719-276.341 96.721-296.085 230.93-3.949 43.437 17.757 67.13 65.143 71.066 23.667 3.961 43.411-13.808 59.207-53.296 23.692-82.9 80.862-124.35 171.735-124.35 110.479 7.885 169.698 63.156 177.671 165.8 0 94.759-64.313 110.202-99.248 138.774-44.267 36.218-73.217 72.952-108.655 135.216-29.779 52.314-34.91 164.227-34.91 164.227 0 47.373 21.655 71.066 65.143 71.066 39.413 0 61.194-23.693 65.155-71.066 0 0 5.219-125.594 55.925-181.129 57.472-62.942 194.749-107.071 198.698-268.922C804.365 108.561 697.772 15.789 500.382 0.006zM500.382 859.162c-45.524 0-82.409 36.91-82.409 82.41 0 45.523 36.885 82.422 82.409 82.422s82.422-36.898 82.422-82.422c0-45.5-36.898-82.41-82.422-82.41z",
+  love: "M533.504 268.288q33.792-41.984 71.68-75.776 32.768-27.648 74.24-50.176t86.528-19.456q63.488 5.12 105.984 30.208t67.584 63.488 34.304 87.04 6.144 99.84-17.92 97.792-36.864 87.04-48.64 74.752-53.248 61.952q-40.96 41.984-85.504 78.336t-84.992 62.464-73.728 41.472-51.712 15.36q-20.48 1.024-52.224-14.336t-69.632-41.472-79.872-61.952-82.944-75.776q-26.624-25.6-57.344-59.392t-57.856-74.24-46.592-87.552-21.504-100.352 11.264-99.84 39.936-83.456 65.536-61.952 88.064-35.328q24.576-5.12 49.152-1.536t48.128 12.288 45.056 22.016 40.96 27.648q45.056 33.792 86.016 80.896z",
+  thinking: "M480 179.2c12.8 6.4 25.6 12.8 32 32l6.4 44.8c12.8 64 44.8 121.6 89.6 166.4 44.8 44.8 102.4 76.8 166.4 89.6l44.8 12.8c6.4 0 12.8 6.4 19.2 12.8 6.4 6.4 6.4 12.8 6.4 25.6 0 6.4 0 19.2-6.4 25.6-6.4 6.4-12.8 12.8-19.2 12.8l-44.8 12.8c-64 12.8-121.6 44.8-166.4 89.6-44.8 44.8-76.8 102.4-89.6 166.4l-6.4 44.8c0 6.4-6.4 12.8-12.8 19.2-6.4 6.4-12.8 6.4-25.6 6.4-6.4 0-19.2 0-25.6-6.4-6.4-6.4-12.8-12.8-12.8-19.2l-12.8-44.8c-12.8-64-44.8-121.6-89.6-166.4a326.4 326.4 0 0 0-166.4-89.6l-51.2-12.8c-6.4 0-12.8-6.4-19.2-12.8-6.4-6.4-6.4-19.2-6.4-25.6 0-6.4 0-19.2 6.4-25.6 6.4-6.4 12.8-12.8 19.2-12.8l51.2-12.8c64-12.8 121.6-44.8 166.4-89.6C377.6 377.6 409.6 320 422.4 256l12.8-44.8c0-12.8 6.4-19.2 19.2-25.6 6.4-6.4 19.2-6.4 25.6-6.4z m-6.4 185.6c-44.8 89.6-115.2 153.6-198.4 198.4 83.2 38.4 153.6 108.8 192 192 38.4-83.2 108.8-153.6 192-192C582.4 518.4 512 454.4 473.6 364.8z m307.2-288c25.6 0 12.8 57.6 51.2 102.4 38.4 38.4 102.4 25.6 102.4 51.2s-64 25.6-96 57.6c-32 38.4-25.6 89.6-51.2 89.6s-12.8-57.6-57.6-96-96-25.6-96-57.6c0-25.6 57.6-12.8 96-51.2 38.4-32 25.6-96 51.2-96z",
+};
+
+const TAG_SVG_LAYOUTS = {
+  thinking: { x: 300, y: 56, width: 72, height: 72, sourceX: 89, sourceY: 76, sourceWidth: 846, sourceHeight: 865 },
+  question: { x: 312, y: 68, width: 48, height: 72, sourceX: 203, sourceY: 0, sourceWidth: 618, sourceHeight: 1024 },
+  love: { x: 308, y: 70, width: 64, height: 56, sourceX: 59, sourceY: 122, sourceWidth: 922, sourceHeight: 801 },
+};
+
+const tagSvgPathCache = new Map();
+
+function drawSvgTagPath(tag, color) {
+  const pathData = TAG_SVG_PATHS[tag];
+  const layout = TAG_SVG_LAYOUTS[tag];
+  if (!pathData || !layout) return;
+  if (!tagSvgPathCache.has(tag)) tagSvgPathCache.set(tag, new Path2D(pathData));
+  const scale = Math.min(layout.width / layout.sourceWidth, layout.height / layout.sourceHeight);
+  const offsetX = layout.x + (layout.width - layout.sourceWidth * scale) / 2;
+  const offsetY = layout.y + (layout.height - layout.sourceHeight * scale) / 2;
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.translate(offsetX, offsetY);
+  ctx.scale(scale, scale);
+  ctx.translate(-layout.sourceX, -layout.sourceY);
+  ctx.fill(tagSvgPathCache.get(tag));
+  ctx.restore();
 }
 
 function drawTag(tag, color) {
-  ctx.fillStyle = color;
-  if (tag === "thinking") {
-    tagCircle(151 * 2, 63 * 2, 3 * 2);
-    tagCircle(160 * 2, 53 * 2, 5 * 2);
-    tagCircle(173 * 2, 40 * 2, 8 * 2);
-  } else if (tag === "question") {
-    for (let y = 39; y <= 60; y += 1) {
-      const x = y < 46 ? 163 + (y - 39) : (y < 52 ? 170 - (y - 46) : 164);
-      tagCircle(x * 2, y * 2, 2 * 2);
-    }
-    tagCircle(164 * 2, 69 * 2, 3 * 2);
-  } else if (tag === "love") {
-    tagCircle(166 * 2, 48 * 2, 6 * 2);
-    tagCircle(176 * 2, 48 * 2, 6 * 2);
-    for (let row = 0; row < 12; row += 1) {
-      for (let x = 166 + Math.floor(row / 2); x <= 176 - Math.floor(row / 2); x += 1) {
-        ctx.fillRect(x * 2, (52 + row) * 2, 2, 2);
-      }
-    }
-  }
+  drawSvgTagPath(tag, color);
 }
 
 const accessoryColors = {
