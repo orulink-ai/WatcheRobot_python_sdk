@@ -1,6 +1,7 @@
 const byId = (id) => document.getElementById(id);
 const canvas = byId("faceCanvas");
 const GAZE_TRAVEL_PIXELS = 32;
+const SECONDARY_GAZE_FOLLOW = 0.5;
 const POINTER_SMOOTHING_MS = 90;
 const POINTER_GAZE_GAIN_DEFAULT = 1.45;
 const POINTER_FLAT_SYNC_INTERVAL_MS = 55;
@@ -403,14 +404,14 @@ const TAG_SVG_LAYOUTS = {
 
 const tagSvgPathCache = new Map();
 
-function drawSvgTagPath(tag, color) {
+function drawSvgTagPath(tag, color, gazeOffsetX = 0, gazeOffsetY = 0) {
   const pathData = TAG_SVG_PATHS[tag];
   const layout = TAG_SVG_LAYOUTS[tag];
   if (!pathData || !layout) return;
   if (!tagSvgPathCache.has(tag)) tagSvgPathCache.set(tag, new Path2D(pathData));
   const scale = Math.min(layout.width / layout.sourceWidth, layout.height / layout.sourceHeight);
-  const offsetX = layout.x + (layout.width - layout.sourceWidth * scale) / 2;
-  const offsetY = layout.y + (layout.height - layout.sourceHeight * scale) / 2;
+  const offsetX = layout.x + gazeOffsetX + (layout.width - layout.sourceWidth * scale) / 2;
+  const offsetY = layout.y + gazeOffsetY + (layout.height - layout.sourceHeight * scale) / 2;
   ctx.save();
   ctx.fillStyle = color;
   ctx.translate(offsetX, offsetY);
@@ -420,8 +421,8 @@ function drawSvgTagPath(tag, color) {
   ctx.restore();
 }
 
-function drawTag(tag, color) {
-  drawSvgTagPath(tag, color);
+function drawTag(tag, color, gazeOffsetX = 0, gazeOffsetY = 0) {
+  drawSvgTagPath(tag, color, gazeOffsetX, gazeOffsetY);
 }
 
 const accessoryColors = {
@@ -434,11 +435,14 @@ const accessoryAnchors = {
   hero_mask: [206, 206], eyepatch: [206, 160], antenna: [206, 80],
 };
 
-function drawAccessory(accessory, layer, t, transform) {
+function drawAccessory(accessory, layer, t, transform, gazeOffsetX = 0, gazeOffsetY = 0) {
   if (accessory === "none") return;
   ctx.save();
   const [anchorX, anchorY] = accessoryAnchors[accessory] || [206, 206];
-  ctx.translate(anchorX + transform.accessory_x * 206, anchorY + transform.accessory_y * 206);
+  ctx.translate(
+    anchorX + transform.accessory_x * 206 + gazeOffsetX,
+    anchorY + transform.accessory_y * 206 + gazeOffsetY,
+  );
   ctx.rotate(transform.accessory_rotation_deg * Math.PI / 180);
   ctx.scale(transform.accessory_scale, transform.accessory_scale);
   ctx.translate(-anchorX, -anchorY);
@@ -544,13 +548,15 @@ function render(now) {
   if (p.preset === "speaking" || p.style === "watcher_pulse") openness *= .83 + Math.sin(state.phase * 7.4) * .14;
   const styleScale = { watcher: 1, watcher_compact: .94, watcher_focus: .9, watcher_open: 1.12, watcher_pulse: 1 }[p.style];
   const gazeX = p.gaze_x * GAZE_TRAVEL_PIXELS; const gazeY = p.gaze_y * GAZE_TRAVEL_PIXELS;
+  const secondaryGazeX = gazeX * SECONDARY_GAZE_FOLLOW;
+  const secondaryGazeY = gazeY * SECONDARY_GAZE_FOLLOW;
   const segments = [
     [-30.75, 0, 5, 30], [-18.25, 0, 6, 58], [-6.25, -23.5, 6, 25], [-6.25, 24, 6, 24],
     [6.25, -23.5, 5, 25], [6.25, 23.5, 5, 25], [18.25, 0, 5, 58], [30.75, 0, 6, 30],
   ];
   const eyeSpacing = 88 * p.spacing;
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  drawAccessory(p.accessory, "back", state.phase, p);
+  drawAccessory(p.accessory, "back", state.phase, p, secondaryGazeX, secondaryGazeY);
   eyeCtx.clearRect(0, 0, eyeCanvas.width, eyeCanvas.height);
   eyeCtx.fillStyle = p.color;
   [-1, 1].forEach((side) => {
@@ -570,8 +576,8 @@ function render(now) {
   });
   drawEyelidMasks(p, eyeSpacing, gazeX, gazeY);
   ctx.drawImage(eyeCanvas, 0, 0);
-  drawAccessory(p.accessory, "front", state.phase, p);
-  drawTag(p.tag, p.color);
+  drawAccessory(p.accessory, "front", state.phase, p, secondaryGazeX, secondaryGazeY);
+  drawTag(p.tag, p.color, secondaryGazeX, secondaryGazeY);
   displayCtx.drawImage(flatCanvas, 0, 0);
   refreshPointerReadout();
   maybeSyncPointerGaze(now);
