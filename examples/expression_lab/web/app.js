@@ -33,6 +33,12 @@ const controls = {
   blinkInterval: byId("blinkInterval"), blinkDuration: byId("blinkDuration"), eyeColor: byId("eyeColor"),
   pointerTracking: byId("pointerTracking"), pointerGain: byId("pointerGain"),
 };
+const lidValueEditors = {
+  leftUpperLidY: byId("leftUpperLidYNumber"), leftUpperLidRotation: byId("leftUpperLidRotationNumber"),
+  rightUpperLidY: byId("rightUpperLidYNumber"), rightUpperLidRotation: byId("rightUpperLidRotationNumber"),
+  leftLowerLidY: byId("leftLowerLidYNumber"), leftLowerLidRotation: byId("leftLowerLidRotationNumber"),
+  rightLowerLidY: byId("rightLowerLidYNumber"), rightLowerLidRotation: byId("rightLowerLidRotationNumber"),
+};
 const state = {
   active: false, serviceReady: false, statusInitialized: false,
   deviceConnected: false, expressionSupported: false,
@@ -50,11 +56,11 @@ const presetDefaults = {
   speaking: { openness: .9, spacing: .88, tilt: 0, tag: "none" },
 };
 const eyeShapeDefaults = {
-  neutral: { leftUpperLidY: -65, leftUpperLidRotation: 0, rightUpperLidY: -65, rightUpperLidRotation: 0, leftLowerLidY: 65, leftLowerLidRotation: 0, rightLowerLidY: 65, rightLowerLidRotation: 0 },
-  happy: { leftUpperLidY: -65, leftUpperLidRotation: 0, rightUpperLidY: -65, rightUpperLidRotation: 0, leftLowerLidY: 22, leftLowerLidRotation: -14, rightLowerLidY: 22, rightLowerLidRotation: 14 },
-  sad: { leftUpperLidY: -30, leftUpperLidRotation: -14, rightUpperLidY: -30, rightUpperLidRotation: 14, leftLowerLidY: 65, leftLowerLidRotation: 0, rightLowerLidY: 65, rightLowerLidRotation: 0 },
-  unimpressed: { leftUpperLidY: -30, leftUpperLidRotation: 0, rightUpperLidY: -30, rightUpperLidRotation: 0, leftLowerLidY: 65, leftLowerLidRotation: 0, rightLowerLidY: 65, rightLowerLidRotation: 0 },
-  angry: { leftUpperLidY: -28, leftUpperLidRotation: 18, rightUpperLidY: -28, rightUpperLidRotation: -18, leftLowerLidY: 65, leftLowerLidRotation: 0, rightLowerLidY: 65, rightLowerLidRotation: 0 },
+  neutral: { leftUpperLidY: -80, leftUpperLidRotation: 0, rightUpperLidY: -80, rightUpperLidRotation: 0, leftLowerLidY: 80, leftLowerLidRotation: 0, rightLowerLidY: 80, rightLowerLidRotation: 0 },
+  happy: { leftUpperLidY: -80, leftUpperLidRotation: 0, rightUpperLidY: -80, rightUpperLidRotation: 0, leftLowerLidY: 22, leftLowerLidRotation: -14, rightLowerLidY: 22, rightLowerLidRotation: 14 },
+  sad: { leftUpperLidY: -30, leftUpperLidRotation: -14, rightUpperLidY: -30, rightUpperLidRotation: 14, leftLowerLidY: 80, leftLowerLidRotation: 0, rightLowerLidY: 80, rightLowerLidRotation: 0 },
+  unimpressed: { leftUpperLidY: -30, leftUpperLidRotation: 0, rightUpperLidY: -30, rightUpperLidRotation: 0, leftLowerLidY: 80, leftLowerLidRotation: 0, rightLowerLidY: 80, rightLowerLidRotation: 0 },
+  angry: { leftUpperLidY: -28, leftUpperLidRotation: 18, rightUpperLidY: -28, rightUpperLidRotation: -18, leftLowerLidY: 80, leftLowerLidRotation: 0, rightLowerLidY: 80, rightLowerLidRotation: 0 },
   sleepy: { leftUpperLidY: -24, leftUpperLidRotation: 4, rightUpperLidY: -24, rightUpperLidRotation: -4, leftLowerLidY: 48, leftLowerLidRotation: 0, rightLowerLidY: 48, rightLowerLidRotation: 0 },
 };
 const eyeControlDefaults = {
@@ -129,6 +135,8 @@ function refreshReadouts() {
   for (const lid of ["leftUpper", "rightUpper", "leftLower", "rightLower"]) {
     byId(`${lid}LidYValue`).value = controls[`${lid}LidY`].value;
     byId(`${lid}LidRotationValue`).value = `${controls[`${lid}LidRotation`].value}°`;
+    lidValueEditors[`${lid}LidY`].value = controls[`${lid}LidY`].value;
+    lidValueEditors[`${lid}LidRotation`].value = controls[`${lid}LidRotation`].value;
   }
   const shapeButton = document.querySelector(`.eye-shape[data-eye-shape="${state.eyeShape}"]`);
   byId("eyeShapeState").textContent = state.eyeShape === "custom"
@@ -669,14 +677,31 @@ const lidControlNames = new Set([
   "leftUpperLidY", "leftUpperLidRotation", "rightUpperLidY", "rightUpperLidRotation",
   "leftLowerLidY", "leftLowerLidRotation", "rightLowerLidY", "rightLowerLidRotation",
 ]);
+function markEyelidsCustom() {
+  state.eyeShape = "custom";
+  document.querySelectorAll(".eye-shape").forEach((candidate) => candidate.classList.remove("active"));
+}
+
+function syncLidValueFromEditor(name) {
+  const editor = lidValueEditors[name];
+  if (editor.value === "" || !Number.isFinite(Number(editor.value))) return;
+  controls[name].value = editor.value;
+  editor.value = controls[name].value;
+  markEyelidsCustom();
+  queueUpdate();
+}
+
 Object.entries(controls).filter(([name]) => name !== "pointerTracking" && name !== "pointerGain")
   .forEach(([name, control]) => control.addEventListener("input", () => {
     if (lidControlNames.has(name)) {
-      state.eyeShape = "custom";
-      document.querySelectorAll(".eye-shape").forEach((candidate) => candidate.classList.remove("active"));
+      markEyelidsCustom();
     }
     queueUpdate();
   }));
+Object.entries(lidValueEditors).forEach(([name, editor]) => {
+  editor.addEventListener("input", () => syncLidValueFromEditor(name));
+  editor.addEventListener("blur", () => { editor.value = controls[name].value; });
+});
 controls.pointerTracking.addEventListener("input", () => {
   if (controls.pointerTracking.checked) {
     state.pointerX = Number(controls.gazeX.value);
