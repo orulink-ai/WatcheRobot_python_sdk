@@ -278,6 +278,29 @@ def test_expression_runtime_domain_builds_bounded_parameter_commands():
     ]
 
 
+def test_expression_runtime_encodes_a_bounded_custom_pixel_accessory():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    mask = "80" + "00" * 325
+
+    robot.expression_runtime.start(
+        "standby",
+        accessory="custom_pixel",
+        custom_accessory_mask=mask,
+        custom_accessory_layer="front",
+    )
+
+    assert transport.commands[-1] == (
+        "ctrl.expression.runtime.start",
+        {
+            "preset": "standby",
+            "accessory": "custom_pixel",
+            "custom_accessory_mask": mask,
+            "custom_accessory_layer": "front",
+        },
+    )
+
+
 @pytest.mark.parametrize(
     ("method", "kwargs", "message"),
     [
@@ -303,6 +326,9 @@ def test_expression_runtime_domain_builds_bounded_parameter_commands():
         ("update", {"right_upper_lid_rotation_deg": 46}, "right_upper_lid_rotation_deg"),
         ("update", {"tag": "arbitrary_svg"}, "tag"),
         ("update", {"accessory": "arbitrary_canvas_js"}, "accessory"),
+        ("update", {"custom_accessory_mask": "00"}, "custom_accessory_mask"),
+        ("update", {"custom_accessory_mask": "gg" * 326}, "custom_accessory_mask"),
+        ("update", {"custom_accessory_layer": "middle"}, "custom_accessory_layer"),
         ("update", {"accessory_scale": 2.01}, "accessory_scale"),
         ("update", {"accessory_x": -1.01}, "accessory_x"),
         ("update", {"accessory_y": 1.01}, "accessory_y"),

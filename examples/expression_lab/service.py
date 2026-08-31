@@ -48,12 +48,14 @@ class ExpressionStartRequest(BaseModel):
     tag: str = Field(default="none", pattern="^(none|thinking|question|love)$")
     accessory: str = Field(
         default="none",
-        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna)$",
+        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna|custom_pixel)$",
     )
     accessory_scale: float = Field(default=1.0, ge=0.25, le=2.0)
     accessory_x: float = Field(default=0.0, ge=-1.0, le=1.0)
     accessory_y: float = Field(default=0.0, ge=-1.0, le=1.0)
     accessory_rotation_deg: int = Field(default=0, ge=-180, le=180)
+    custom_accessory_mask: str = Field(default="0" * 652, pattern="^[0-9A-Fa-f]{652}$")
+    custom_accessory_layer: str = Field(default="front", pattern="^(back|front)$")
     auto_blink: bool = True
     blink_interval_ms: int = Field(default=3600, ge=1200, le=10000)
     blink_duration_ms: int = Field(default=200, ge=100, le=800)
@@ -95,12 +97,14 @@ class ExpressionUpdateRequest(BaseModel):
     tag: str | None = Field(default=None, pattern="^(none|thinking|question|love)$")
     accessory: str | None = Field(
         default=None,
-        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna)$",
+        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna|custom_pixel)$",
     )
     accessory_scale: float | None = Field(default=None, ge=0.25, le=2.0)
     accessory_x: float | None = Field(default=None, ge=-1.0, le=1.0)
     accessory_y: float | None = Field(default=None, ge=-1.0, le=1.0)
     accessory_rotation_deg: int | None = Field(default=None, ge=-180, le=180)
+    custom_accessory_mask: str | None = Field(default=None, pattern="^[0-9A-Fa-f]{652}$")
+    custom_accessory_layer: str | None = Field(default=None, pattern="^(back|front)$")
     auto_blink: bool | None = None
     blink_interval_ms: int | None = Field(default=None, ge=1200, le=10000)
     blink_duration_ms: int | None = Field(default=None, ge=100, le=800)
@@ -149,6 +153,7 @@ class ExpressionLabService:
             device_info = dict(getattr(self._robot, "device_info", {}))
             device_connected = probe_succeeded and bool(capabilities or device_info)
             expression_supported = device_connected and "expression.runtime.v3" in capabilities
+            pixel_accessory_supported = device_connected and "expression.pixel_accessory.v1" in capabilities
             resource_snapshot = dict(getattr(self._robot, "resource_snapshot", {}))
             if not device_connected:
                 resource_snapshot = {}
@@ -165,6 +170,7 @@ class ExpressionLabService:
                 "active": self._active,
                 "device_connected": device_connected,
                 "expression_supported": expression_supported,
+                "pixel_accessory_supported": pixel_accessory_supported,
                 "parameters": dict(self._parameters),
                 "performance": {
                     "sample_valid": bool(animation.get("sample_valid", False)),

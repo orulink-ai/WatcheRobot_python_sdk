@@ -89,8 +89,10 @@ _EXPRESSION_RUNTIME_STYLES = frozenset(
 )
 _EXPRESSION_RUNTIME_TAGS = frozenset({"none", "thinking", "question", "love"})
 _EXPRESSION_RUNTIME_ACCESSORIES = frozenset(
-    {"none", "halo", "devil_horns", "ninja_mask", "hero_mask", "eyepatch", "antenna"}
+    {"none", "halo", "devil_horns", "ninja_mask", "hero_mask", "eyepatch", "antenna", "custom_pixel"}
 )
+_EXPRESSION_CUSTOM_ACCESSORY_MASK_HEX_LENGTH = 652
+_EXPRESSION_CUSTOM_ACCESSORY_LAYERS = frozenset({"back", "front"})
 
 
 def _expression_choice(name: str, value: str, allowed: frozenset[str]) -> str:
@@ -107,6 +109,16 @@ def _expression_scaled_number(name: str, value: float, minimum: float, maximum: 
     if not math.isfinite(numeric) or not minimum <= numeric <= maximum:
         raise ValueError(f"{name} must be between {minimum} and {maximum}")
     return int(round(numeric * 1000.0))
+
+
+def _expression_custom_accessory_mask(value: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(
+        rf"[0-9A-Fa-f]{{{_EXPRESSION_CUSTOM_ACCESSORY_MASK_HEX_LENGTH}}}", value
+    ) is None:
+        raise ValueError(
+            "custom_accessory_mask must contain exactly 652 hexadecimal characters"
+        )
+    return value.lower()
 
 
 def _expression_color_rgb565(value: str) -> int:
@@ -157,6 +169,8 @@ class ExpressionRuntimeDomain(_Domain):
         accessory_x: float | None = None,
         accessory_y: float | None = None,
         accessory_rotation_deg: int | None = None,
+        custom_accessory_mask: str | None = None,
+        custom_accessory_layer: str | None = None,
         auto_blink: bool | None = None,
         blink_interval_ms: int | None = None,
         blink_duration_ms: int | None = None,
@@ -251,6 +265,12 @@ class ExpressionRuntimeDomain(_Domain):
             ):
                 raise ValueError("accessory_rotation_deg must be an integer between -180 and 180")
             payload["accessory_rotation_deg"] = accessory_rotation_deg
+        if custom_accessory_mask is not None:
+            payload["custom_accessory_mask"] = _expression_custom_accessory_mask(custom_accessory_mask)
+        if custom_accessory_layer is not None:
+            payload["custom_accessory_layer"] = _expression_choice(
+                "custom_accessory_layer", custom_accessory_layer, _EXPRESSION_CUSTOM_ACCESSORY_LAYERS
+            )
         if auto_blink is not None:
             if not isinstance(auto_blink, bool):
                 raise TypeError("auto_blink must be a bool")
@@ -314,6 +334,8 @@ class ExpressionRuntimeDomain(_Domain):
         accessory_x: float | None = None,
         accessory_y: float | None = None,
         accessory_rotation_deg: int | None = None,
+        custom_accessory_mask: str | None = None,
+        custom_accessory_layer: str | None = None,
         auto_blink: bool | None = None,
         blink_interval_ms: int | None = None,
         blink_duration_ms: int | None = None,
@@ -352,6 +374,8 @@ class ExpressionRuntimeDomain(_Domain):
             accessory_x=accessory_x,
             accessory_y=accessory_y,
             accessory_rotation_deg=accessory_rotation_deg,
+            custom_accessory_mask=custom_accessory_mask,
+            custom_accessory_layer=custom_accessory_layer,
             auto_blink=auto_blink,
             blink_interval_ms=blink_interval_ms,
             blink_duration_ms=blink_duration_ms,
@@ -395,6 +419,8 @@ class ExpressionRuntimeDomain(_Domain):
         accessory_x: float | None = None,
         accessory_y: float | None = None,
         accessory_rotation_deg: int | None = None,
+        custom_accessory_mask: str | None = None,
+        custom_accessory_layer: str | None = None,
         auto_blink: bool | None = None,
         blink_interval_ms: int | None = None,
         blink_duration_ms: int | None = None,
@@ -433,6 +459,8 @@ class ExpressionRuntimeDomain(_Domain):
             accessory_x=accessory_x,
             accessory_y=accessory_y,
             accessory_rotation_deg=accessory_rotation_deg,
+            custom_accessory_mask=custom_accessory_mask,
+            custom_accessory_layer=custom_accessory_layer,
             auto_blink=auto_blink,
             blink_interval_ms=blink_interval_ms,
             blink_duration_ms=blink_duration_ms,

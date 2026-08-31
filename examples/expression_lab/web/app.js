@@ -13,6 +13,11 @@ const EYELID_PRESET_STORAGE_KEY = "watcher.expressionLab.eyelidPresets.v1";
 const EYELID_PRESET_COOKIE_KEY = "watcherExpressionEyelidsV1";
 const EYELID_PRESET_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 const MAX_EYELID_PRESETS = 12;
+const PIXEL_ACCESSORY_GRID_SIZE = 51;
+const PIXEL_ACCESSORY_MASK_BYTES = 326;
+const PIXEL_ACCESSORY_CELL_LOGICAL = 4;
+const PIXEL_ACCESSORY_STORAGE_KEY = "watcher.expressionLab.pixelAccessories.v1";
+const MAX_PIXEL_ACCESSORY_PRESETS = 12;
 const displayCtx = canvas.getContext("2d", { alpha: false });
 const flatCanvas = document.createElement("canvas");
 flatCanvas.width = canvas.width; flatCanvas.height = canvas.height;
@@ -20,6 +25,8 @@ const ctx = flatCanvas.getContext("2d", { alpha: false });
 const eyeCanvas = document.createElement("canvas");
 eyeCanvas.width = canvas.width; eyeCanvas.height = canvas.height;
 const eyeCtx = eyeCanvas.getContext("2d");
+const pixelAccessoryCanvas = byId("pixelAccessoryCanvas");
+const pixelAccessoryCtx = pixelAccessoryCanvas.getContext("2d", { alpha: false });
 const controls = {
   style: byId("style"), tag: byId("tag"), accessory: byId("accessory"),
   accessoryScale: byId("accessoryScale"), accessoryX: byId("accessoryX"),
@@ -45,7 +52,7 @@ const eyelidControlNames = [
 ];
 const state = {
   active: false, serviceReady: false, statusInitialized: false,
-  deviceConnected: false, expressionSupported: false,
+  deviceConnected: false, expressionSupported: false, pixelAccessorySupported: false,
   preset: "standby", activeEyelidPresetId: null, eyelidPresets: [], sending: false, pairing: false, statusBusy: false,
   intentActive: false, resumePending: false, resumeTimer: 0,
   lastFrame: performance.now(), phase: 0, debounce: 0,
@@ -53,6 +60,9 @@ const state = {
   pointerX: 0, pointerY: 0, pointerLastSyncAt: 0,
   pointerLastSentX: Number.NaN, pointerLastSentY: Number.NaN,
   updateBusy: false, queuedUpdate: null,
+  pixelAccessory: new Uint8Array(PIXEL_ACCESSORY_GRID_SIZE * PIXEL_ACCESSORY_GRID_SIZE),
+  pixelAccessoryLayer: "front", pixelTool: "brush", pixelDrawing: false, pixelDrawingChanged: false,
+  pixelLastCell: null, pixelUndo: [], pixelRedo: [], pixelAccessoryPresets: [],
 };
 const presetDefaults = {
   standby: { openness: 1, spacing: .85, tilt: 0, tag: "none" },
@@ -76,6 +86,170 @@ const accessoryControlDefaults = {
   tag: "none", accessory: "none", accessoryScale: 1,
   accessoryX: 0, accessoryY: 0, accessoryRotation: 0,
 };
+
+function encodePixelAccessoryMask() {
+  const bytes = new Uint8Array(PIXEL_ACCESSORY_MASK_BYTES);
+  state.pixelAccessory.forEach((value, index) => {
+    if (value) bytes[index >> 3] |= 0x80 >> (index & 7);
+  });
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function decodePixelAccessoryMask(mask) {
+  if (typeof mask !== "string" || !/^[0-9a-f]{652}$/i.test(mask)) return null;
+  const pixels = new Uint8Array(PIXEL_ACCESSORY_GRID_SIZE * PIXEL_ACCESSORY_GRID_SIZE);
+  for (let index = 0; index < pixels.length; index += 1) {
+    const byte = Number.parseInt(mask.slice((index >> 3) * 2, (index >> 3) * 2 + 2), 16);
+    pixels[index] = (byte & (0x80 >> (index & 7))) !== 0 ? 1 : 0;
+  }
+  return pixels;
+}
+
+function loadPixelAccessoryPresets() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PIXEL_ACCESSORY_STORAGE_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((preset) => (
+      preset && typeof preset.id === "string" && typeof preset.name === "string" &&
+      /^(front|back)$/.test(preset.layer) && /^[0-9a-f]{652}$/i.test(preset.mask)
+    )).slice(0, MAX_PIXEL_ACCESSORY_PRESETS);
+  } catch (_) {
+    return [];
+  }
+}
+
+function persistPixelAccessoryPresets() {
+  localStorage.setItem(PIXEL_ACCESSORY_STORAGE_KEY, JSON.stringify(state.pixelAccessoryPresets));
+}
+
+function renderPixelAccessoryPresets() {
+  const list = byId("pixelAccessoryPresetList");
+  list.replaceChildren();
+  if (state.pixelAccessoryPresets.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "pixel-preset-empty";
+    empty.textContent = "还没有个人装饰。画好后输入名称即可保存。";
+    list.append(empty);
+    return;
+  }
+  state.pixelAccessoryPresets.forEach((preset) => {
+    const item = document.createElement("div"); item.className = "pixel-preset-item";
+    const applyButton = document.createElement("button"); applyButton.type = "button";
+    applyButton.textContent = preset.name; applyButton.title = `调用个人装饰：${preset.name}`;
+    applyButton.addEventListener("click", () => applyPixelAccessoryPreset(preset.id));
+    const deleteButton = document.createElement("button"); deleteButton.type = "button";
+    deleteButton.textContent = "×"; deleteButton.setAttribute("aria-label", `删除个人装饰 ${preset.name}`);
+    deleteButton.addEventListener("click", () => deletePixelAccessoryPreset(preset.id));
+    item.append(applyButton, deleteButton); list.append(item);
+  });
+}
+
+function savePixelAccessoryPreset() {
+  const input = byId("pixelAccessoryName");
+  const name = input.value.trim();
+  if (!name) return;
+  const existing = state.pixelAccessoryPresets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+  const preset = existing || { id: `pixel-${Date.now()}` };
+  preset.name = name; preset.mask = encodePixelAccessoryMask(); preset.layer = state.pixelAccessoryLayer;
+  if (!existing) state.pixelAccessoryPresets.unshift(preset);
+  state.pixelAccessoryPresets = state.pixelAccessoryPresets.slice(0, MAX_PIXEL_ACCESSORY_PRESETS);
+  persistPixelAccessoryPresets(); renderPixelAccessoryPresets(); input.value = "";
+  byId("savePixelAccessory").disabled = true;
+  toast(`个人装饰“${name}”已保存`);
+}
+
+function applyPixelAccessoryPreset(presetId) {
+  const preset = state.pixelAccessoryPresets.find((candidate) => candidate.id === presetId);
+  const pixels = preset ? decodePixelAccessoryMask(preset.mask) : null;
+  if (!preset || !pixels) return;
+  pushPixelHistory(); state.pixelAccessory = pixels; state.pixelAccessoryLayer = preset.layer;
+  byId("pixelAccessoryLayer").value = preset.layer; controls.accessory.value = "custom_pixel";
+  renderPixelAccessoryEditor(); queueUpdate(); toast(`已调用个人装饰“${preset.name}”`);
+}
+
+function deletePixelAccessoryPreset(presetId) {
+  state.pixelAccessoryPresets = state.pixelAccessoryPresets.filter((preset) => preset.id !== presetId);
+  persistPixelAccessoryPresets(); renderPixelAccessoryPresets();
+}
+
+function pushPixelHistory() {
+  state.pixelUndo.push(state.pixelAccessory.slice());
+  if (state.pixelUndo.length > 30) state.pixelUndo.shift();
+  state.pixelRedo = [];
+  refreshPixelHistoryButtons();
+}
+
+function restorePixelHistory(source, destination) {
+  if (source.length === 0) return;
+  destination.push(state.pixelAccessory.slice()); state.pixelAccessory = source.pop();
+  renderPixelAccessoryEditor(); refreshPixelHistoryButtons(); activateCustomPixelAccessory();
+}
+
+function refreshPixelHistoryButtons() {
+  byId("pixelUndo").disabled = state.pixelUndo.length === 0;
+  byId("pixelRedo").disabled = state.pixelRedo.length === 0;
+}
+
+function renderPixelAccessoryEditor() {
+  const cell = pixelAccessoryCanvas.width / PIXEL_ACCESSORY_GRID_SIZE;
+  pixelAccessoryCtx.fillStyle = "#020302";
+  pixelAccessoryCtx.fillRect(0, 0, pixelAccessoryCanvas.width, pixelAccessoryCanvas.height);
+  pixelAccessoryCtx.save();
+  pixelAccessoryCtx.globalAlpha = .13; pixelAccessoryCtx.fillStyle = controls.eyeColor.value;
+  for (const centerX of [164, 346]) {
+    for (const offset of [-40, -24, -8, 8, 24, 40]) {
+      const height = 52 - Math.abs(offset) * .55;
+      pixelAccessoryCtx.fillRect(centerX + offset - 4, 255 - height / 2, 8, height);
+    }
+  }
+  pixelAccessoryCtx.restore();
+  pixelAccessoryCtx.fillStyle = controls.eyeColor.value;
+  state.pixelAccessory.forEach((value, index) => {
+    if (!value) return;
+    const x = index % PIXEL_ACCESSORY_GRID_SIZE; const y = Math.floor(index / PIXEL_ACCESSORY_GRID_SIZE);
+    pixelAccessoryCtx.fillRect(x * cell, y * cell, Math.ceil(cell), Math.ceil(cell));
+  });
+  pixelAccessoryCtx.strokeStyle = "rgba(161,240,60,.075)"; pixelAccessoryCtx.lineWidth = 1;
+  for (let line = 1; line < PIXEL_ACCESSORY_GRID_SIZE; line += 1) {
+    const position = Math.round(line * cell) + .5;
+    pixelAccessoryCtx.beginPath(); pixelAccessoryCtx.moveTo(position, 0); pixelAccessoryCtx.lineTo(position, 510); pixelAccessoryCtx.stroke();
+    pixelAccessoryCtx.beginPath(); pixelAccessoryCtx.moveTo(0, position); pixelAccessoryCtx.lineTo(510, position); pixelAccessoryCtx.stroke();
+  }
+}
+
+function paintPixelCell(x, y) {
+  const size = Number(byId("pixelBrushSize").value); const radius = Math.floor(size / 2);
+  const value = state.pixelTool === "brush" ? 1 : 0;
+  for (let offsetY = -radius; offsetY < size - radius; offsetY += 1) {
+    for (let offsetX = -radius; offsetX < size - radius; offsetX += 1) {
+      const pixelX = x + offsetX; const pixelY = y + offsetY;
+      if (pixelX < 0 || pixelY < 0 || pixelX >= PIXEL_ACCESSORY_GRID_SIZE || pixelY >= PIXEL_ACCESSORY_GRID_SIZE) continue;
+      const index = pixelY * PIXEL_ACCESSORY_GRID_SIZE + pixelX;
+      if (state.pixelAccessory[index] !== value) { state.pixelAccessory[index] = value; state.pixelDrawingChanged = true; }
+    }
+  }
+}
+
+function pixelCellFromPointer(event) {
+  const bounds = pixelAccessoryCanvas.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(PIXEL_ACCESSORY_GRID_SIZE - 1, Math.floor((event.clientX - bounds.left) / bounds.width * PIXEL_ACCESSORY_GRID_SIZE))),
+    y: Math.max(0, Math.min(PIXEL_ACCESSORY_GRID_SIZE - 1, Math.floor((event.clientY - bounds.top) / bounds.height * PIXEL_ACCESSORY_GRID_SIZE))),
+  };
+}
+
+function paintPixelLine(from, to) {
+  const steps = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y), 1);
+  for (let step = 0; step <= steps; step += 1) {
+    paintPixelCell(Math.round(from.x + (to.x - from.x) * step / steps), Math.round(from.y + (to.y - from.y) * step / steps));
+  }
+  renderPixelAccessoryEditor();
+}
+
+function activateCustomPixelAccessory() {
+  controls.accessory.value = "custom_pixel";
+  queueUpdate();
+}
 
 function rangeEditorLabel(range) {
   const source = range.getAttribute("aria-label") || range.id;
@@ -262,6 +436,10 @@ function effectiveGaze() {
 
 function values() {
   const gaze = effectiveGaze();
+  const customAccessory = controls.accessory.value === "custom_pixel" ? {
+    custom_accessory_mask: encodePixelAccessoryMask(),
+    custom_accessory_layer: state.pixelAccessoryLayer,
+  } : {};
   return {
     preset: state.preset, style: controls.style.value, tag: controls.tag.value,
     accessory: controls.accessory.value,
@@ -288,6 +466,7 @@ function values() {
     auto_blink: controls.autoBlink.checked, blink_interval_ms: Number(controls.blinkInterval.value),
     blink_duration_ms: Number(controls.blinkDuration.value), color: controls.eyeColor.value.toUpperCase(),
     sphere_strength: 0,
+    ...customAccessory,
   };
 }
 
@@ -347,7 +526,12 @@ function refreshPointerReadout() {
 function renderAccessoryModule() {
   const hasAccessory = controls.accessory.value !== "none";
   byId("accessoryControlsModule").dataset.active = String(hasAccessory);
-  byId("accessoryModuleState").textContent = hasAccessory ? "装饰可独立变换" : "先选择头部装饰";
+  byId("accessoryModuleState").textContent = controls.accessory.value === "custom_pixel"
+    ? "DIY 像素装饰 · 可独立变换"
+    : (hasAccessory ? "装饰可独立变换" : "先选择头部装饰");
+  byId("pixelAccessoryState").textContent = !state.deviceConnected || state.pixelAccessorySupported
+    ? "鼠标松开后同步一次；装饰复用上方变换与 50% 视线跟随。"
+    : "当前固件不支持 DIY 像素装饰，仅可在 Web 本地预览。";
   controls.accessoryScale.disabled = !hasAccessory;
   controls.accessoryX.disabled = !hasAccessory;
   controls.accessoryY.disabled = !hasAccessory;
@@ -432,8 +616,17 @@ const accessoryColors = {
 
 const accessoryAnchors = {
   halo: [206, 56], devil_horns: [206, 100], ninja_mask: [206, 206],
-  hero_mask: [206, 206], eyepatch: [206, 160], antenna: [206, 80],
+  hero_mask: [206, 206], eyepatch: [206, 160], antenna: [206, 80], custom_pixel: [206, 206],
 };
+
+function drawCustomPixelAccessory(color) {
+  ctx.fillStyle = color;
+  state.pixelAccessory.forEach((value, index) => {
+    if (!value) return;
+    const x = index % PIXEL_ACCESSORY_GRID_SIZE; const y = Math.floor(index / PIXEL_ACCESSORY_GRID_SIZE);
+    ctx.fillRect(2 + x * 8, 2 + y * 8, 8, 8);
+  });
+}
 
 function drawAccessory(accessory, layer, t, transform, gazeOffsetX = 0, gazeOffsetY = 0) {
   if (accessory === "none") return;
@@ -448,8 +641,8 @@ function drawAccessory(accessory, layer, t, transform, gazeOffsetX = 0, gazeOffs
   ctx.translate(-anchorX, -anchorY);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = accessoryColors[accessory];
-  ctx.fillStyle = accessoryColors[accessory];
+  ctx.strokeStyle = accessoryColors[accessory] || transform.color;
+  ctx.fillStyle = accessoryColors[accessory] || transform.color;
   ctx.lineWidth = 8;
   if (layer === "back" && accessory === "halo") {
     ctx.beginPath(); ctx.ellipse(206, 56, 108, 18, 0, 0, Math.PI * 2); ctx.stroke();
@@ -470,6 +663,8 @@ function drawAccessory(accessory, layer, t, transform, gazeOffsetX = 0, gazeOffs
     ctx.strokeStyle = accessoryColors.eyepatch; ctx.lineWidth = 10;
     ctx.beginPath(); ctx.moveTo(18, 160); ctx.lineTo(394, 100); ctx.stroke();
     ctx.fillStyle = "#050607"; ctx.beginPath(); ctx.arc(132, 206, 64, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  } else if (accessory === "custom_pixel" && layer === state.pixelAccessoryLayer) {
+    drawCustomPixelAccessory(transform.color);
   }
   ctx.restore();
 }
@@ -683,6 +878,7 @@ function applyStatus(snapshot) {
   state.serviceReady = true;
   state.deviceConnected = snapshotConnected;
   state.expressionSupported = Boolean(snapshot.expression_supported);
+  state.pixelAccessorySupported = Boolean(snapshot.pixel_accessory_supported);
   state.active = snapshotActive;
   if (snapshotActive) {
     state.intentActive = true;
@@ -717,6 +913,7 @@ async function refreshConnectionStatus() {
     state.serviceReady = false;
     state.deviceConnected = false;
     state.expressionSupported = false;
+    state.pixelAccessorySupported = false;
     state.active = false;
     renderConnectionState();
   } finally {
@@ -746,6 +943,10 @@ async function pairWatcher(event) {
 
 async function startExpression({ resume = false } = {}) {
   if (state.sending) return;
+  if (controls.accessory.value === "custom_pixel" && state.deviceConnected && !state.pixelAccessorySupported) {
+    toast("当前 Watcher 固件不支持 DIY 像素装饰，请先更新实验固件", "error");
+    return;
+  }
   state.sending = true; renderConnectionState();
   try {
     const snapshot = await api("./api/expression/start", values());
@@ -870,6 +1071,7 @@ Object.entries(controls).filter(([name]) => name !== "pointerTracking" && name !
     if (lidControlNames.has(name)) {
       markEyelidsCustom();
     }
+    if (name === "eyeColor") renderPixelAccessoryEditor();
     queueUpdate();
   }));
 controls.pointerTracking.addEventListener("input", () => {
@@ -899,6 +1101,48 @@ byId("eyelidPresetName").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && event.target.value.trim() !== "") saveCurrentEyelidPreset();
 });
 byId("saveEyelidPreset").addEventListener("click", saveCurrentEyelidPreset);
+byId("pixelBrush").addEventListener("click", () => {
+  state.pixelTool = "brush"; byId("pixelBrush").classList.add("active"); byId("pixelEraser").classList.remove("active");
+});
+byId("pixelEraser").addEventListener("click", () => {
+  state.pixelTool = "eraser"; byId("pixelEraser").classList.add("active"); byId("pixelBrush").classList.remove("active");
+});
+byId("pixelAccessoryLayer").addEventListener("input", (event) => {
+  state.pixelAccessoryLayer = event.target.value; activateCustomPixelAccessory();
+});
+byId("pixelUndo").addEventListener("click", () => restorePixelHistory(state.pixelUndo, state.pixelRedo));
+byId("pixelRedo").addEventListener("click", () => restorePixelHistory(state.pixelRedo, state.pixelUndo));
+byId("pixelClear").addEventListener("click", () => {
+  if (!state.pixelAccessory.some(Boolean)) return;
+  pushPixelHistory(); state.pixelAccessory.fill(0); renderPixelAccessoryEditor(); activateCustomPixelAccessory();
+});
+byId("applyPixelAccessory").addEventListener("click", () => {
+  activateCustomPixelAccessory(); toast("DIY 像素装饰已应用");
+});
+byId("pixelAccessoryName").addEventListener("input", (event) => {
+  byId("savePixelAccessory").disabled = event.target.value.trim() === "";
+});
+byId("pixelAccessoryName").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && event.target.value.trim()) savePixelAccessoryPreset();
+});
+byId("savePixelAccessory").addEventListener("click", savePixelAccessoryPreset);
+pixelAccessoryCanvas.addEventListener("pointerdown", (event) => {
+  event.preventDefault(); pixelAccessoryCanvas.setPointerCapture(event.pointerId);
+  pushPixelHistory(); state.pixelDrawing = true; state.pixelDrawingChanged = false;
+  state.pixelLastCell = pixelCellFromPointer(event); paintPixelLine(state.pixelLastCell, state.pixelLastCell);
+});
+pixelAccessoryCanvas.addEventListener("pointermove", (event) => {
+  if (!state.pixelDrawing) return;
+  const cell = pixelCellFromPointer(event); paintPixelLine(state.pixelLastCell, cell); state.pixelLastCell = cell;
+});
+function finishPixelDrawing() {
+  if (!state.pixelDrawing) return;
+  state.pixelDrawing = false; state.pixelLastCell = null;
+  if (state.pixelDrawingChanged) activateCustomPixelAccessory();
+  else { state.pixelUndo.pop(); refreshPixelHistoryButtons(); }
+}
+pixelAccessoryCanvas.addEventListener("pointerup", finishPixelDrawing);
+pixelAccessoryCanvas.addEventListener("pointercancel", finishPixelDrawing);
 canvas.addEventListener("pointermove", updatePointerTarget);
 canvas.addEventListener("pointerleave", releasePointerTarget);
 canvas.addEventListener("pointercancel", releasePointerTarget);
@@ -917,7 +1161,11 @@ window.addEventListener("pagehide", () => { if (state.active) navigator.sendBeac
 
 document.body.classList.add("scanlines");
 state.eyelidPresets = loadEyelidPresets();
+state.pixelAccessoryPresets = loadPixelAccessoryPresets();
 renderEyelidPresets();
+renderPixelAccessoryPresets();
+renderPixelAccessoryEditor();
+refreshPixelHistoryButtons();
 refreshReadouts();
 renderConnectionState();
 refreshConnectionStatus();

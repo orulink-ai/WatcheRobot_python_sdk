@@ -40,6 +40,20 @@ def test_expression_start_defaults_to_flat_rendering() -> None:
     assert request.right_lower_lid_y == 80
 
 
+def test_expression_request_accepts_the_fixed_size_pixel_accessory_payload() -> None:
+    mask = "80" + "00" * 325
+
+    request = ExpressionStartRequest(
+        preset="standby",
+        accessory="custom_pixel",
+        custom_accessory_mask=mask,
+        custom_accessory_layer="back",
+    )
+
+    assert request.custom_accessory_mask == mask
+    assert request.custom_accessory_layer == "back"
+
+
 def make_service(
     *,
     connected: bool = True,
@@ -385,8 +399,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         stylesheet = client.get("/styles.css")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-22"' in index.text
-    assert 'src="./app.js?v=expression-lab-22"' in index.text
+    assert 'href="./styles.css?v=expression-lab-23"' in index.text
+    assert 'src="./app.js?v=expression-lab-23"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -512,6 +526,19 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert "drawAccessory(p.accessory, \"back\", state.phase, p, secondaryGazeX, secondaryGazeY)" in script.text
     assert "drawAccessory(p.accessory, \"front\", state.phase, p, secondaryGazeX, secondaryGazeY)" in script.text
     assert "drawTag(p.tag, p.color, secondaryGazeX, secondaryGazeY)" in script.text
+    assert 'id="pixelAccessoryCanvas"' in index.text
+    assert 'id="pixelBrush"' in index.text
+    assert 'id="pixelEraser"' in index.text
+    assert 'id="pixelUndo"' in index.text
+    assert 'id="pixelRedo"' in index.text
+    assert 'id="pixelClear"' in index.text
+    assert 'id="savePixelAccessory"' in index.text
+    assert "const PIXEL_ACCESSORY_GRID_SIZE = 51" in script.text
+    assert "const PIXEL_ACCESSORY_MASK_BYTES = 326" in script.text
+    assert "function encodePixelAccessoryMask()" in script.text
+    assert "function drawCustomPixelAccessory" in script.text
+    assert "custom_accessory_mask: encodePixelAccessoryMask()" in script.text
+    assert "custom_accessory_layer: state.pixelAccessoryLayer" in script.text
     assert "intentActive" in script.text
     assert "scheduleExpressionResume" in script.text
     assert "连接恢复，代码表情已重新同步" in script.text
