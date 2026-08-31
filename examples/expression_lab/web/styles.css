@@ -150,6 +150,11 @@ body:not(.scanlines) .screen-scan { display: none; }
 .eyelid-grid label { display: block; margin-top: 8px; }
 .eyelid-grid label:first-of-type { margin-top: 0; }
 .eyelid-grid label > span { display: flex; justify-content: space-between; gap: 10px; }
+.eyelid-grid label > .range-with-number { display: grid; grid-template-columns: minmax(0, 1fr) 64px; align-items: center; gap: 8px; margin-top: 7px; }
+.range-with-number input[type="range"] { min-width: 0; margin: 0; }
+.number-editor { width: 100%; min-width: 0; height: 30px; padding: 0 5px; color: var(--green); background: var(--raised); border: 1px solid var(--line); border-radius: 5px; outline: none; font: 11px "Cascadia Code", monospace; text-align: right; }
+.number-editor:hover { border-color: var(--green-dim); }
+.number-editor:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(161, 240, 60, .1); }
 .control-module { margin: 10px 12px 14px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: rgba(9, 13, 9, .34); }
 .module-heading { min-height: 48px; display: grid; grid-template-columns: 52px auto 1fr; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--line); background: rgba(23, 31, 23, .66); }
 .module-heading span { color: var(--green-dim); font: 10px "Cascadia Code", monospace; letter-spacing: .08em; }
