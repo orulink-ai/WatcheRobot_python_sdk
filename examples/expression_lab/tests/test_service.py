@@ -385,8 +385,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         stylesheet = client.get("/styles.css")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-21"' in index.text
-    assert 'src="./app.js?v=expression-lab-21"' in index.text
+    assert 'href="./styles.css?v=expression-lab-22"' in index.text
+    assert 'src="./app.js?v=expression-lab-22"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -505,9 +505,13 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert "M533.504 268.288q33.792-41.984" in script.text
     assert "M480 179.2c12.8 6.4" in script.text
     assert "const TAG_SVG_LAYOUTS" in script.text
-    assert "function drawSvgTagPath(tag, color)" in script.text
+    assert "function drawSvgTagPath(tag, color, gazeOffsetX = 0, gazeOffsetY = 0)" in script.text
     assert "new Path2D(pathData)" in script.text
     assert "tagCircle(" not in script.text
+    assert "const SECONDARY_GAZE_FOLLOW = 0.5" in script.text
+    assert "drawAccessory(p.accessory, \"back\", state.phase, p, secondaryGazeX, secondaryGazeY)" in script.text
+    assert "drawAccessory(p.accessory, \"front\", state.phase, p, secondaryGazeX, secondaryGazeY)" in script.text
+    assert "drawTag(p.tag, p.color, secondaryGazeX, secondaryGazeY)" in script.text
     assert "intentActive" in script.text
     assert "scheduleExpressionResume" in script.text
     assert "连接恢复，代码表情已重新同步" in script.text
