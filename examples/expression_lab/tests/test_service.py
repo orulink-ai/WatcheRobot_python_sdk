@@ -34,6 +34,10 @@ def test_expression_start_defaults_to_flat_rendering() -> None:
     request = ExpressionStartRequest(preset="standby")
 
     assert request.sphere_strength == 0.0
+    assert request.left_upper_lid_y == -80
+    assert request.right_upper_lid_y == -80
+    assert request.left_lower_lid_y == 80
+    assert request.right_lower_lid_y == 80
 
 
 def make_service(
@@ -381,8 +385,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         stylesheet = client.get("/styles.css")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-18"' in index.text
-    assert 'src="./app.js?v=expression-lab-18"' in index.text
+    assert 'href="./styles.css?v=expression-lab-19"' in index.text
+    assert 'src="./app.js?v=expression-lab-19"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -467,6 +471,11 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         "rightLowerLidRotation",
     ):
         assert f'id="{lid_id}"' in index.text
+        assert f'id="{lid_id}Number"' in index.text
+        assert f'aria-label="{lid_id} 精确值"' in index.text
+    assert 'class="range-with-number"' in index.text
+    assert "const lidValueEditors" in script.text
+    assert "function syncLidValueFromEditor(name)" in script.text
     for shape in ("neutral", "happy", "sad", "unimpressed", "angry", "sleepy"):
         assert f'data-eye-shape="{shape}"' in index.text
     assert "const eyeShapeDefaults" in script.text
