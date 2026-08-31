@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Watcher Expression Lab</title>
-  <link rel="stylesheet" href="./styles.css?v=expression-lab-19">
+  <link rel="stylesheet" href="./styles.css?v=expression-lab-20">
   </head>
   <body data-layout="studio">
     <header class="masthead">
@@ -90,14 +90,14 @@
           </details>
         </section>
         <section id="eyelidControlsModule" class="control-module eyelid-module">
-          <header class="module-heading"><span>LID</span><b>眼皮与情绪</b><div class="module-actions"><small id="eyeShapeState">中性 · 四遮罩独立控制</small><button id="resetEyelidDefaults" class="module-reset" type="button">恢复默认</button></div></header>
-          <div class="emotion-strip" role="group" aria-label="眼睛情绪形态">
-            <button class="eye-shape active" data-eye-shape="neutral">中性</button>
-            <button class="eye-shape" data-eye-shape="happy">开心</button>
-            <button class="eye-shape" data-eye-shape="sad">伤心</button>
-            <button class="eye-shape" data-eye-shape="unimpressed">无语</button>
-            <button class="eye-shape" data-eye-shape="angry">愤怒</button>
-            <button class="eye-shape" data-eye-shape="sleepy">困倦</button>
+          <header class="module-heading"><span>LID</span><b>眼皮与用户预设</b><div class="module-actions"><small id="eyeShapeState">默认位置 · 四遮罩独立控制</small><button id="resetEyelidDefaults" class="module-reset" type="button">恢复默认</button></div></header>
+          <div class="eyelid-preset-studio">
+            <div class="eyelid-preset-save">
+              <label><span>预设名称</span><input id="eyelidPresetName" type="text" maxlength="16" autocomplete="off" placeholder="例如：微笑眼皮"></label>
+              <button id="saveEyelidPreset" type="button" disabled>保存当前眼皮</button>
+            </div>
+            <div id="eyelidPresetList" class="eyelid-preset-list" role="list" aria-label="用户保存的眼皮预设"></div>
+            <p id="eyelidPresetEmpty" class="eyelid-preset-empty">还没有保存眼皮预设。调整四块眼皮后，输入名称即可保存。</p>
           </div>
           <details class="advanced" open>
             <summary>四块眼皮遮罩 <small>位置为 206 逻辑画布像素</small></summary>
@@ -158,6 +158,6 @@
       <label class="toggle"><input id="scanlines" type="checkbox" checked><span></span>屏幕扫描纹理</label>
     </aside>
     <div id="toast" class="toast" role="alert"></div>
-  <script src="./app.js?v=expression-lab-19"></script>
+  <script src="./app.js?v=expression-lab-20"></script>
   </body>
 </html>
