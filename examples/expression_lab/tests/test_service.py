@@ -385,8 +385,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         stylesheet = client.get("/styles.css")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-19"' in index.text
-    assert 'src="./app.js?v=expression-lab-19"' in index.text
+    assert 'href="./styles.css?v=expression-lab-20"' in index.text
+    assert 'src="./app.js?v=expression-lab-20"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -474,11 +474,22 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         assert f'id="{lid_id}Number"' in index.text
         assert f'aria-label="{lid_id} 精确值"' in index.text
     assert 'class="range-with-number"' in index.text
-    assert "const lidValueEditors" in script.text
-    assert "function syncLidValueFromEditor(name)" in script.text
-    for shape in ("neutral", "happy", "sad", "unimpressed", "angry", "sleepy"):
-        assert f'data-eye-shape="{shape}"' in index.text
-    assert "const eyeShapeDefaults" in script.text
+    assert "const rangeNumberEditors" in script.text
+    assert "function initializeRangeNumberEditors()" in script.text
+    assert "function syncRangeValueFromEditor(range, editor)" in script.text
+    assert "document.querySelectorAll('input[type=\"range\"]')" in script.text
+    assert 'data-eye-shape=' not in index.text
+    assert "const eyeShapeDefaults" not in script.text
+    assert 'id="eyelidPresetName"' in index.text
+    assert 'id="saveEyelidPreset"' in index.text
+    assert 'id="eyelidPresetList"' in index.text
+    assert 'id="eyelidPresetEmpty"' in index.text
+    assert "const EYELID_PRESET_STORAGE_KEY" in script.text
+    assert "const EYELID_PRESET_COOKIE_KEY" in script.text
+    assert "document.cookie" in script.text
+    assert "function saveCurrentEyelidPreset()" in script.text
+    assert "function applyEyelidPreset(presetId)" in script.text
+    assert "function deleteEyelidPreset(presetId)" in script.text
     assert "drawEyelidMasks" in script.text
     assert "const LID_MASK_HALF_WIDTH_PIXELS = 112" in script.text
     assert "context.rect(clipLeft, 0, clipRight - clipLeft, canvas.height)" in script.text

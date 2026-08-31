@@ -8,6 +8,10 @@ const POINTER_FLAT_TRANSITION_MS = 90;
 const POINTER_SYNC_EPSILON = 0.015;
 const LID_MASK_HALF_WIDTH_PIXELS = 112;
 const LID_MASK_HALF_HEIGHT_PIXELS = 64;
+const EYELID_PRESET_STORAGE_KEY = "watcher.expressionLab.eyelidPresets.v1";
+const EYELID_PRESET_COOKIE_KEY = "watcherExpressionEyelidsV1";
+const EYELID_PRESET_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+const MAX_EYELID_PRESETS = 12;
 const displayCtx = canvas.getContext("2d", { alpha: false });
 const flatCanvas = document.createElement("canvas");
 flatCanvas.width = canvas.width; flatCanvas.height = canvas.height;
@@ -33,16 +37,15 @@ const controls = {
   blinkInterval: byId("blinkInterval"), blinkDuration: byId("blinkDuration"), eyeColor: byId("eyeColor"),
   pointerTracking: byId("pointerTracking"), pointerGain: byId("pointerGain"),
 };
-const lidValueEditors = {
-  leftUpperLidY: byId("leftUpperLidYNumber"), leftUpperLidRotation: byId("leftUpperLidRotationNumber"),
-  rightUpperLidY: byId("rightUpperLidYNumber"), rightUpperLidRotation: byId("rightUpperLidRotationNumber"),
-  leftLowerLidY: byId("leftLowerLidYNumber"), leftLowerLidRotation: byId("leftLowerLidRotationNumber"),
-  rightLowerLidY: byId("rightLowerLidYNumber"), rightLowerLidRotation: byId("rightLowerLidRotationNumber"),
-};
+const rangeNumberEditors = new Map();
+const eyelidControlNames = [
+  "leftUpperLidY", "leftUpperLidRotation", "rightUpperLidY", "rightUpperLidRotation",
+  "leftLowerLidY", "leftLowerLidRotation", "rightLowerLidY", "rightLowerLidRotation",
+];
 const state = {
   active: false, serviceReady: false, statusInitialized: false,
   deviceConnected: false, expressionSupported: false,
-  preset: "standby", eyeShape: "neutral", sending: false, pairing: false, statusBusy: false,
+  preset: "standby", activeEyelidPresetId: null, eyelidPresets: [], sending: false, pairing: false, statusBusy: false,
   intentActive: false, resumePending: false, resumeTimer: 0,
   lastFrame: performance.now(), phase: 0, debounce: 0,
   pointerInside: false, pointerRawX: 0, pointerRawY: 0, pointerTargetX: 0, pointerTargetY: 0,
@@ -55,13 +58,11 @@ const presetDefaults = {
   thinking: { openness: .72, spacing: .82, tilt: -7, tag: "thinking" },
   speaking: { openness: .9, spacing: .88, tilt: 0, tag: "none" },
 };
-const eyeShapeDefaults = {
-  neutral: { leftUpperLidY: -80, leftUpperLidRotation: 0, rightUpperLidY: -80, rightUpperLidRotation: 0, leftLowerLidY: 80, leftLowerLidRotation: 0, rightLowerLidY: 80, rightLowerLidRotation: 0 },
-  happy: { leftUpperLidY: -80, leftUpperLidRotation: 0, rightUpperLidY: -80, rightUpperLidRotation: 0, leftLowerLidY: 22, leftLowerLidRotation: -14, rightLowerLidY: 22, rightLowerLidRotation: 14 },
-  sad: { leftUpperLidY: -30, leftUpperLidRotation: -14, rightUpperLidY: -30, rightUpperLidRotation: 14, leftLowerLidY: 80, leftLowerLidRotation: 0, rightLowerLidY: 80, rightLowerLidRotation: 0 },
-  unimpressed: { leftUpperLidY: -30, leftUpperLidRotation: 0, rightUpperLidY: -30, rightUpperLidRotation: 0, leftLowerLidY: 80, leftLowerLidRotation: 0, rightLowerLidY: 80, rightLowerLidRotation: 0 },
-  angry: { leftUpperLidY: -28, leftUpperLidRotation: 18, rightUpperLidY: -28, rightUpperLidRotation: -18, leftLowerLidY: 80, leftLowerLidRotation: 0, rightLowerLidY: 80, rightLowerLidRotation: 0 },
-  sleepy: { leftUpperLidY: -24, leftUpperLidRotation: 4, rightUpperLidY: -24, rightUpperLidRotation: -4, leftLowerLidY: 48, leftLowerLidRotation: 0, rightLowerLidY: 48, rightLowerLidRotation: 0 },
+const eyelidControlDefaults = {
+  leftUpperLidY: -80, leftUpperLidRotation: 0,
+  rightUpperLidY: -80, rightUpperLidRotation: 0,
+  leftLowerLidY: 80, leftLowerLidRotation: 0,
+  rightLowerLidY: 80, rightLowerLidRotation: 0,
 };
 const eyeControlDefaults = {
   style: "watcher", gazeX: 0, gazeY: 0, openness: 1, spacing: .85,
@@ -74,6 +75,182 @@ const accessoryControlDefaults = {
   tag: "none", accessory: "none", accessoryScale: 1,
   accessoryX: 0, accessoryY: 0, accessoryRotation: 0,
 };
+
+function rangeEditorLabel(range) {
+  const source = range.getAttribute("aria-label") || range.id;
+  return `${source.replace(/滑杆$/, "")}精确值`;
+}
+
+function syncRangeValueFromEditor(range, editor) {
+  if (editor.value === "" || !Number.isFinite(Number(editor.value))) return;
+  range.value = editor.value;
+  editor.value = range.value;
+  range.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function initializeRangeNumberEditors() {
+  document.querySelectorAll('input[type="range"]').forEach((range) => {
+    let shell = range.parentElement?.classList.contains("range-with-number") ? range.parentElement : null;
+    if (!shell) {
+      shell = document.createElement("span");
+      shell.className = "range-with-number";
+      range.parentNode.insertBefore(shell, range);
+      shell.append(range);
+    }
+
+    let editor = byId(`${range.id}Number`);
+    if (!editor) {
+      editor = document.createElement("input");
+      editor.id = `${range.id}Number`;
+      editor.className = "number-editor";
+      editor.type = "number";
+      editor.setAttribute("aria-label", rangeEditorLabel(range));
+      for (const attribute of ["min", "max", "step"]) {
+        if (range.hasAttribute(attribute)) editor.setAttribute(attribute, range.getAttribute(attribute));
+      }
+      shell.append(editor);
+    }
+    editor.value = range.value;
+    rangeNumberEditors.set(range, editor);
+    range.addEventListener("input", () => { editor.value = range.value; });
+    editor.addEventListener("input", () => syncRangeValueFromEditor(range, editor));
+    editor.addEventListener("blur", () => { editor.value = range.value; });
+    editor.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") editor.blur();
+    });
+  });
+}
+
+function refreshRangeNumberEditors() {
+  rangeNumberEditors.forEach((editor, range) => {
+    if (document.activeElement !== editor || editor.value !== "") editor.value = range.value;
+    editor.disabled = range.disabled;
+  });
+}
+
+function readEyelidValues() {
+  return Object.fromEntries(eyelidControlNames.map((name) => [name, Number(controls[name].value)]));
+}
+
+function normalizeEyelidPresets(parsed) {
+  if (!Array.isArray(parsed)) return [];
+  const expanded = parsed.map((preset) => {
+    if (!Array.isArray(preset)) return preset;
+    const [id, name, compactValues] = preset;
+    if (!Array.isArray(compactValues)) return null;
+    return { id, name, values: Object.fromEntries(eyelidControlNames.map((key, index) => [key, compactValues[index]])) };
+  });
+  return expanded.filter((preset) => (
+    preset && typeof preset.id === "string" && typeof preset.name === "string" &&
+    preset.values && eyelidControlNames.every((name) => Number.isFinite(Number(preset.values[name])))
+  )).slice(0, MAX_EYELID_PRESETS);
+}
+
+function loadEyelidPresets() {
+  try {
+    const prefix = `${EYELID_PRESET_COOKIE_KEY}=`;
+    const cookie = document.cookie.split("; ").find((part) => part.startsWith(prefix));
+    if (cookie) return normalizeEyelidPresets(JSON.parse(decodeURIComponent(cookie.slice(prefix.length))));
+    return normalizeEyelidPresets(JSON.parse(localStorage.getItem(EYELID_PRESET_STORAGE_KEY) || "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function persistEyelidPresets() {
+  const compact = state.eyelidPresets.map((preset) => [
+    preset.id,
+    preset.name,
+    eyelidControlNames.map((name) => preset.values[name]),
+  ]);
+  document.cookie = `${EYELID_PRESET_COOKIE_KEY}=${encodeURIComponent(JSON.stringify(compact))}; Max-Age=${EYELID_PRESET_COOKIE_MAX_AGE_SECONDS}; Path=/; SameSite=Strict`;
+  localStorage.setItem(EYELID_PRESET_STORAGE_KEY, JSON.stringify(state.eyelidPresets));
+}
+
+function renderEyelidPresets() {
+  const list = byId("eyelidPresetList");
+  list.replaceChildren();
+  byId("eyelidPresetEmpty").hidden = state.eyelidPresets.length > 0;
+  state.eyelidPresets.forEach((preset) => {
+    const item = document.createElement("div");
+    item.className = "eyelid-preset-item";
+    item.setAttribute("role", "listitem");
+
+    const applyButton = document.createElement("button");
+    applyButton.type = "button";
+    applyButton.className = "user-eyelid-preset";
+    applyButton.classList.toggle("active", state.activeEyelidPresetId === preset.id);
+    applyButton.textContent = preset.name;
+    applyButton.title = `调用眼皮预设：${preset.name}`;
+    applyButton.addEventListener("click", () => applyEyelidPreset(preset.id));
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "delete-eyelid-preset";
+    deleteButton.textContent = "×";
+    deleteButton.setAttribute("aria-label", `删除眼皮预设 ${preset.name}`);
+    deleteButton.addEventListener("click", () => deleteEyelidPreset(preset.id));
+
+    item.append(applyButton, deleteButton);
+    list.append(item);
+  });
+}
+
+function saveCurrentEyelidPreset() {
+  const nameInput = byId("eyelidPresetName");
+  const name = nameInput.value.trim();
+  if (!name) {
+    toast("请先输入眼皮预设名称", "error");
+    return;
+  }
+  const existing = state.eyelidPresets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+  if (!existing && state.eyelidPresets.length >= MAX_EYELID_PRESETS) {
+    toast(`最多保存 ${MAX_EYELID_PRESETS} 个眼皮预设`, "error");
+    return;
+  }
+  const preset = existing || { id: `eyelid-${Date.now()}`, name, values: {} };
+  preset.name = name;
+  preset.values = readEyelidValues();
+  if (!existing) state.eyelidPresets.push(preset);
+  state.activeEyelidPresetId = preset.id;
+  try {
+    persistEyelidPresets();
+  } catch {
+    toast("浏览器无法保存眼皮预设", "error");
+    return;
+  }
+  nameInput.value = "";
+  byId("saveEyelidPreset").disabled = true;
+  renderEyelidPresets();
+  refreshReadouts();
+  toast(existing ? `眼皮预设“${name}”已更新` : `眼皮预设“${name}”已保存`);
+}
+
+function applyEyelidPreset(presetId) {
+  const preset = state.eyelidPresets.find((candidate) => candidate.id === presetId);
+  if (!preset) return;
+  applyControlDefaults(preset.values);
+  state.activeEyelidPresetId = preset.id;
+  renderEyelidPresets();
+  queueUpdate();
+  toast(`已调用眼皮预设“${preset.name}”`);
+}
+
+function deleteEyelidPreset(presetId) {
+  const preset = state.eyelidPresets.find((candidate) => candidate.id === presetId);
+  if (!preset) return;
+  state.eyelidPresets = state.eyelidPresets.filter((candidate) => candidate.id !== presetId);
+  if (state.activeEyelidPresetId === presetId) state.activeEyelidPresetId = null;
+  try {
+    persistEyelidPresets();
+  } catch {
+    toast("浏览器无法更新眼皮预设", "error");
+    return;
+  }
+  renderEyelidPresets();
+  refreshReadouts();
+  toast(`眼皮预设“${preset.name}”已删除`);
+}
 
 function effectiveGaze() {
   if (controls.pointerTracking.checked) {
@@ -116,6 +293,7 @@ function values() {
 function refreshReadouts() {
   renderAccessoryModule();
   refreshPointerReadout();
+  refreshRangeNumberEditors();
   byId("opennessValue").value = Number(controls.openness.value).toFixed(2);
   byId("spacingValue").value = Number(controls.spacing.value).toFixed(2);
   byId("scaleValue").value = Number(controls.scale.value).toFixed(2);
@@ -135,13 +313,11 @@ function refreshReadouts() {
   for (const lid of ["leftUpper", "rightUpper", "leftLower", "rightLower"]) {
     byId(`${lid}LidYValue`).value = controls[`${lid}LidY`].value;
     byId(`${lid}LidRotationValue`).value = `${controls[`${lid}LidRotation`].value}°`;
-    lidValueEditors[`${lid}LidY`].value = controls[`${lid}LidY`].value;
-    lidValueEditors[`${lid}LidRotation`].value = controls[`${lid}LidRotation`].value;
   }
-  const shapeButton = document.querySelector(`.eye-shape[data-eye-shape="${state.eyeShape}"]`);
-  byId("eyeShapeState").textContent = state.eyeShape === "custom"
-    ? "自定义 · 四遮罩独立控制"
-    : `${shapeButton.textContent} · 四遮罩独立控制`;
+  const activeEyelidPreset = state.eyelidPresets.find((preset) => preset.id === state.activeEyelidPresetId);
+  byId("eyeShapeState").textContent = activeEyelidPreset
+    ? `已加载：${activeEyelidPreset.name}`
+    : "自定义 · 四遮罩独立控制";
   byId("transitionValue").value = `${controls.transition.value} ms`;
   byId("blinkIntervalValue").value = `${controls.blinkInterval.value} ms`;
   byId("blinkDurationValue").value = `${controls.blinkDuration.value} ms`;
@@ -645,13 +821,11 @@ function resetEyeControls() {
 }
 
 function resetEyelidControls() {
-  state.eyeShape = "neutral";
-  applyControlDefaults(eyeShapeDefaults.neutral);
-  document.querySelectorAll(".eye-shape").forEach((button) => {
-    button.classList.toggle("active", button.dataset.eyeShape === state.eyeShape);
-  });
+  state.activeEyelidPresetId = null;
+  applyControlDefaults(eyelidControlDefaults);
+  renderEyelidPresets();
   queueUpdate();
-  toast("眼皮参数已恢复中性");
+  toast("眼皮参数已恢复默认");
 }
 
 function resetAccessoryControls() {
@@ -667,30 +841,14 @@ document.querySelectorAll(".preset").forEach((button) => button.addEventListener
   controls.openness.value = defaults.openness; controls.spacing.value = defaults.spacing; controls.tilt.value = defaults.tilt; controls.tag.value = defaults.tag;
   queueUpdate();
 }));
-document.querySelectorAll(".eye-shape").forEach((button) => button.addEventListener("click", () => {
-  state.eyeShape = button.dataset.eyeShape;
-  document.querySelectorAll(".eye-shape").forEach((candidate) => candidate.classList.toggle("active", candidate === button));
-  Object.entries(eyeShapeDefaults[state.eyeShape]).forEach(([name, value]) => { controls[name].value = value; });
-  queueUpdate();
-}));
-const lidControlNames = new Set([
-  "leftUpperLidY", "leftUpperLidRotation", "rightUpperLidY", "rightUpperLidRotation",
-  "leftLowerLidY", "leftLowerLidRotation", "rightLowerLidY", "rightLowerLidRotation",
-]);
+const lidControlNames = new Set(eyelidControlNames);
 function markEyelidsCustom() {
-  state.eyeShape = "custom";
-  document.querySelectorAll(".eye-shape").forEach((candidate) => candidate.classList.remove("active"));
+  if (state.activeEyelidPresetId === null) return;
+  state.activeEyelidPresetId = null;
+  renderEyelidPresets();
 }
 
-function syncLidValueFromEditor(name) {
-  const editor = lidValueEditors[name];
-  if (editor.value === "" || !Number.isFinite(Number(editor.value))) return;
-  controls[name].value = editor.value;
-  editor.value = controls[name].value;
-  markEyelidsCustom();
-  queueUpdate();
-}
-
+initializeRangeNumberEditors();
 Object.entries(controls).filter(([name]) => name !== "pointerTracking" && name !== "pointerGain")
   .forEach(([name, control]) => control.addEventListener("input", () => {
     if (lidControlNames.has(name)) {
@@ -698,10 +856,6 @@ Object.entries(controls).filter(([name]) => name !== "pointerTracking" && name !
     }
     queueUpdate();
   }));
-Object.entries(lidValueEditors).forEach(([name, editor]) => {
-  editor.addEventListener("input", () => syncLidValueFromEditor(name));
-  editor.addEventListener("blur", () => { editor.value = controls[name].value; });
-});
 controls.pointerTracking.addEventListener("input", () => {
   if (controls.pointerTracking.checked) {
     state.pointerX = Number(controls.gazeX.value);
@@ -722,6 +876,13 @@ controls.pointerGain.addEventListener("input", () => {
 byId("resetEyeDefaults").addEventListener("click", resetEyeControls);
 byId("resetEyelidDefaults").addEventListener("click", resetEyelidControls);
 byId("resetAccessoryDefaults").addEventListener("click", resetAccessoryControls);
+byId("eyelidPresetName").addEventListener("input", (event) => {
+  byId("saveEyelidPreset").disabled = event.target.value.trim() === "";
+});
+byId("eyelidPresetName").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && event.target.value.trim() !== "") saveCurrentEyelidPreset();
+});
+byId("saveEyelidPreset").addEventListener("click", saveCurrentEyelidPreset);
 canvas.addEventListener("pointermove", updatePointerTarget);
 canvas.addEventListener("pointerleave", releasePointerTarget);
 canvas.addEventListener("pointercancel", releasePointerTarget);
@@ -739,6 +900,8 @@ byId("openTweaks").addEventListener("click", () => { byId("tweaks").hidden = fal
 window.addEventListener("pagehide", () => { if (state.active) navigator.sendBeacon("./api/expression/stop"); });
 
 document.body.classList.add("scanlines");
+state.eyelidPresets = loadEyelidPresets();
+renderEyelidPresets();
 refreshReadouts();
 renderConnectionState();
 refreshConnectionStatus();
