@@ -89,10 +89,18 @@ _EXPRESSION_RUNTIME_STYLES = frozenset(
 )
 _EXPRESSION_RUNTIME_TAGS = frozenset({"none", "thinking", "question", "love"})
 _EXPRESSION_RUNTIME_ACCESSORIES = frozenset(
-    {"none", "halo", "devil_horns", "ninja_mask", "hero_mask", "eyepatch", "antenna", "custom_pixel"}
+    {
+        "none", "halo", "devil_horns", "ninja_mask", "hero_mask", "eyepatch", "antenna",
+        "custom_pixel", "custom_vector",
+    }
 )
 _EXPRESSION_CUSTOM_ACCESSORY_MASK_HEX_LENGTH = 652
 _EXPRESSION_CUSTOM_ACCESSORY_LAYERS = frozenset({"back", "front"})
+_EXPRESSION_VECTOR_MAX_STROKES = 12
+_EXPRESSION_VECTOR_MAX_POINTS_PER_STROKE = 48
+_EXPRESSION_VECTOR_MAX_POINTS = 192
+_EXPRESSION_VECTOR_MAX_WIDTH = 48
+_EXPRESSION_VECTOR_MAX_HEX_LENGTH = 1588
 
 
 def _expression_choice(name: str, value: str, allowed: frozenset[str]) -> str:
@@ -118,6 +126,48 @@ def _expression_custom_accessory_mask(value: str) -> str:
         raise ValueError(
             "custom_accessory_mask must contain exactly 652 hexadecimal characters"
         )
+    return value.lower()
+
+
+def _expression_custom_vector_path(value: str) -> str:
+    message = "custom_vector_path must be a valid bounded vector path"
+    if (
+        not isinstance(value, str)
+        or len(value) < 4
+        or len(value) > _EXPRESSION_VECTOR_MAX_HEX_LENGTH
+        or len(value) % 2 != 0
+        or re.fullmatch(r"[0-9A-Fa-f]+", value) is None
+    ):
+        raise ValueError(message)
+    encoded = bytes.fromhex(value)
+    if encoded[0] != 1 or encoded[1] > _EXPRESSION_VECTOR_MAX_STROKES:
+        raise ValueError(message)
+    offset = 2
+    total_points = 0
+    for _ in range(encoded[1]):
+        if offset + 2 > len(encoded):
+            raise ValueError(message)
+        width = encoded[offset]
+        point_count = encoded[offset + 1]
+        offset += 2
+        total_points += point_count
+        if (
+            width < 1
+            or width > _EXPRESSION_VECTOR_MAX_WIDTH
+            or point_count < 1
+            or point_count > _EXPRESSION_VECTOR_MAX_POINTS_PER_STROKE
+            or total_points > _EXPRESSION_VECTOR_MAX_POINTS
+            or offset + point_count * 4 > len(encoded)
+        ):
+            raise ValueError(message)
+        for point_offset in range(offset, offset + point_count * 4, 4):
+            x = int.from_bytes(encoded[point_offset : point_offset + 2], "big")
+            y = int.from_bytes(encoded[point_offset + 2 : point_offset + 4], "big")
+            if x >= 412 or y >= 412:
+                raise ValueError(message)
+        offset += point_count * 4
+    if offset != len(encoded):
+        raise ValueError(message)
     return value.lower()
 
 
@@ -170,6 +220,7 @@ class ExpressionRuntimeDomain(_Domain):
         accessory_y: float | None = None,
         accessory_rotation_deg: int | None = None,
         custom_accessory_mask: str | None = None,
+        custom_vector_path: str | None = None,
         custom_accessory_layer: str | None = None,
         auto_blink: bool | None = None,
         blink_interval_ms: int | None = None,
@@ -267,6 +318,8 @@ class ExpressionRuntimeDomain(_Domain):
             payload["accessory_rotation_deg"] = accessory_rotation_deg
         if custom_accessory_mask is not None:
             payload["custom_accessory_mask"] = _expression_custom_accessory_mask(custom_accessory_mask)
+        if custom_vector_path is not None:
+            payload["custom_vector_path"] = _expression_custom_vector_path(custom_vector_path)
         if custom_accessory_layer is not None:
             payload["custom_accessory_layer"] = _expression_choice(
                 "custom_accessory_layer", custom_accessory_layer, _EXPRESSION_CUSTOM_ACCESSORY_LAYERS
@@ -335,6 +388,7 @@ class ExpressionRuntimeDomain(_Domain):
         accessory_y: float | None = None,
         accessory_rotation_deg: int | None = None,
         custom_accessory_mask: str | None = None,
+        custom_vector_path: str | None = None,
         custom_accessory_layer: str | None = None,
         auto_blink: bool | None = None,
         blink_interval_ms: int | None = None,
@@ -375,6 +429,7 @@ class ExpressionRuntimeDomain(_Domain):
             accessory_y=accessory_y,
             accessory_rotation_deg=accessory_rotation_deg,
             custom_accessory_mask=custom_accessory_mask,
+            custom_vector_path=custom_vector_path,
             custom_accessory_layer=custom_accessory_layer,
             auto_blink=auto_blink,
             blink_interval_ms=blink_interval_ms,
@@ -420,6 +475,7 @@ class ExpressionRuntimeDomain(_Domain):
         accessory_y: float | None = None,
         accessory_rotation_deg: int | None = None,
         custom_accessory_mask: str | None = None,
+        custom_vector_path: str | None = None,
         custom_accessory_layer: str | None = None,
         auto_blink: bool | None = None,
         blink_interval_ms: int | None = None,
@@ -460,6 +516,7 @@ class ExpressionRuntimeDomain(_Domain):
             accessory_y=accessory_y,
             accessory_rotation_deg=accessory_rotation_deg,
             custom_accessory_mask=custom_accessory_mask,
+            custom_vector_path=custom_vector_path,
             custom_accessory_layer=custom_accessory_layer,
             auto_blink=auto_blink,
             blink_interval_ms=blink_interval_ms,

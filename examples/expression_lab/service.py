@@ -11,8 +11,50 @@ from typing import Any, AsyncIterator, Callable
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from watcherobot.errors import WatcheRobotError
+
+
+def _validate_custom_vector_path(value: str) -> str:
+    message = "custom_vector_path must be a valid bounded vector path"
+    if (
+        not isinstance(value, str)
+        or len(value) < 4
+        or len(value) > 1588
+        or len(value) % 2 != 0
+        or re.fullmatch(r"[0-9A-Fa-f]+", value) is None
+    ):
+        raise ValueError(message)
+    encoded = bytes.fromhex(value)
+    if encoded[0] != 1 or encoded[1] > 12:
+        raise ValueError(message)
+    offset = 2
+    total_points = 0
+    for _ in range(encoded[1]):
+        if offset + 2 > len(encoded):
+            raise ValueError(message)
+        width = encoded[offset]
+        point_count = encoded[offset + 1]
+        offset += 2
+        total_points += point_count
+        if (
+            width < 1
+            or width > 48
+            or point_count < 1
+            or point_count > 48
+            or total_points > 192
+            or offset + point_count * 4 > len(encoded)
+        ):
+            raise ValueError(message)
+        for point_offset in range(offset, offset + point_count * 4, 4):
+            x = int.from_bytes(encoded[point_offset : point_offset + 2], "big")
+            y = int.from_bytes(encoded[point_offset + 2 : point_offset + 4], "big")
+            if x >= 412 or y >= 412:
+                raise ValueError(message)
+        offset += point_count * 4
+    if offset != len(encoded):
+        raise ValueError(message)
+    return value.lower()
 
 
 class ExpressionStartRequest(BaseModel):
@@ -48,13 +90,14 @@ class ExpressionStartRequest(BaseModel):
     tag: str = Field(default="none", pattern="^(none|thinking|question|love)$")
     accessory: str = Field(
         default="none",
-        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna|custom_pixel)$",
+        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna|custom_pixel|custom_vector)$",
     )
     accessory_scale: float = Field(default=1.0, ge=0.25, le=2.0)
     accessory_x: float = Field(default=0.0, ge=-1.0, le=1.0)
     accessory_y: float = Field(default=0.0, ge=-1.0, le=1.0)
     accessory_rotation_deg: int = Field(default=0, ge=-180, le=180)
     custom_accessory_mask: str = Field(default="0" * 652, pattern="^[0-9A-Fa-f]{652}$")
+    custom_vector_path: str = "0100"
     custom_accessory_layer: str = Field(default="front", pattern="^(back|front)$")
     auto_blink: bool = True
     blink_interval_ms: int = Field(default=3600, ge=1200, le=10000)
@@ -62,6 +105,11 @@ class ExpressionStartRequest(BaseModel):
     color: str = Field(default="#A1F03C", pattern="^#[0-9A-Fa-f]{6}$")
     sphere_strength: float = Field(default=0.0, ge=0.0, le=1.0)
     transition_ms: int = Field(default=180, ge=0, le=2000)
+
+    @field_validator("custom_vector_path")
+    @classmethod
+    def validate_custom_vector_path(cls, value: str) -> str:
+        return _validate_custom_vector_path(value)
 
 
 class ExpressionUpdateRequest(BaseModel):
@@ -97,13 +145,14 @@ class ExpressionUpdateRequest(BaseModel):
     tag: str | None = Field(default=None, pattern="^(none|thinking|question|love)$")
     accessory: str | None = Field(
         default=None,
-        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna|custom_pixel)$",
+        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna|custom_pixel|custom_vector)$",
     )
     accessory_scale: float | None = Field(default=None, ge=0.25, le=2.0)
     accessory_x: float | None = Field(default=None, ge=-1.0, le=1.0)
     accessory_y: float | None = Field(default=None, ge=-1.0, le=1.0)
     accessory_rotation_deg: int | None = Field(default=None, ge=-180, le=180)
     custom_accessory_mask: str | None = Field(default=None, pattern="^[0-9A-Fa-f]{652}$")
+    custom_vector_path: str | None = None
     custom_accessory_layer: str | None = Field(default=None, pattern="^(back|front)$")
     auto_blink: bool | None = None
     blink_interval_ms: int | None = Field(default=None, ge=1200, le=10000)
@@ -111,6 +160,11 @@ class ExpressionUpdateRequest(BaseModel):
     color: str | None = Field(default=None, pattern="^#[0-9A-Fa-f]{6}$")
     sphere_strength: float | None = Field(default=None, ge=0.0, le=1.0)
     transition_ms: int | None = Field(default=None, ge=0, le=2000)
+
+    @field_validator("custom_vector_path")
+    @classmethod
+    def validate_custom_vector_path(cls, value: str | None) -> str | None:
+        return None if value is None else _validate_custom_vector_path(value)
 
 
 class PairWatcherRequest(BaseModel):
@@ -154,6 +208,7 @@ class ExpressionLabService:
             device_connected = probe_succeeded and bool(capabilities or device_info)
             expression_supported = device_connected and "expression.runtime.v3" in capabilities
             pixel_accessory_supported = device_connected and "expression.pixel_accessory.v1" in capabilities
+            vector_accessory_supported = device_connected and "expression.vector_accessory.v1" in capabilities
             resource_snapshot = dict(getattr(self._robot, "resource_snapshot", {}))
             if not device_connected:
                 resource_snapshot = {}
@@ -171,6 +226,7 @@ class ExpressionLabService:
                 "device_connected": device_connected,
                 "expression_supported": expression_supported,
                 "pixel_accessory_supported": pixel_accessory_supported,
+                "vector_accessory_supported": vector_accessory_supported,
                 "parameters": dict(self._parameters),
                 "performance": {
                     "sample_valid": bool(animation.get("sample_valid", False)),

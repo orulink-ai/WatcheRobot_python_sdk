@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Watcher Expression Lab</title>
-  <link rel="stylesheet" href="./styles.css?v=expression-lab-23">
+  <link rel="stylesheet" href="./styles.css?v=expression-lab-25">
   </head>
   <body data-layout="studio">
     <header class="masthead">
@@ -125,7 +125,7 @@
           <header class="module-heading"><span>DECOR</span><b>标签与装饰</b><div class="module-actions"><small id="accessoryModuleState">先选择头部装饰</small><button id="resetAccessoryDefaults" class="module-reset" type="button">恢复默认</button></div></header>
           <div class="select-grid">
             <label>表情标签<select id="tag"><option value="none">无</option><option value="thinking">思考点</option><option value="question">问号</option><option value="love">爱心</option></select></label>
-            <label>头部装饰<select id="accessory"><option value="none">无</option><option value="halo">天使光环</option><option value="devil_horns">恶魔红角</option><option value="ninja_mask">忍者面罩</option><option value="hero_mask">英雄面罩</option><option value="eyepatch">海盗眼罩</option><option value="antenna">UFO 天线</option><option value="custom_pixel">DIY 像素装饰</option></select></label>
+            <label>头部装饰<select id="accessory"><option value="none">无</option><option value="halo">天使光环</option><option value="devil_horns">恶魔红角</option><option value="ninja_mask">忍者面罩</option><option value="hero_mask">英雄面罩</option><option value="eyepatch">海盗眼罩</option><option value="antenna">UFO 天线</option><option value="custom_vector">DIY 矢量路径 V1</option><option value="custom_pixel">DIY 像素装饰（回退）</option></select></label>
           </div>
           <details class="advanced" open>
             <summary>装饰变换 <small>仅作用于头部装饰</small></summary>
@@ -136,8 +136,37 @@
               <label><span>装饰旋转 <output id="accessoryRotationValue">0°</output></span><input id="accessoryRotation" aria-label="装饰旋转滑杆" type="range" min="-180" max="180" step="1" value="0"></label>
             </div>
           </details>
+          <details class="advanced pixel-accessory-studio vector-accessory-studio" open>
+            <summary>DIY 矢量路径 V1 <small>412 × 412 坐标 · 松开后同步</small></summary>
+            <div class="pixel-editor-layout">
+              <div class="pixel-canvas-shell">
+                <canvas id="vectorAccessoryCanvas" width="510" height="510" aria-label="DIY 矢量装饰画板"></canvas>
+                <span>圆头路径接近实机单像素定位；眼睛仅作构图参考</span>
+              </div>
+              <div class="pixel-editor-controls">
+                <div class="pixel-tool-row" role="group" aria-label="矢量绘制工具">
+                  <button id="vectorBrush" class="active" type="button">画笔</button>
+                  <button id="vectorEraser" type="button">橡皮</button>
+                </div>
+                <label>线条粗细<select id="vectorBrushSize"><option value="4">4 px</option><option value="8" selected>8 px</option><option value="12">12 px</option><option value="18">18 px</option><option value="24">24 px</option></select></label>
+                <label>装饰图层<select id="vectorAccessoryLayer"><option value="front">眼睛前方</option><option value="back">眼睛后方</option></select></label>
+                <div class="pixel-history-row">
+                  <button id="vectorUndo" type="button">撤销</button>
+                  <button id="vectorRedo" type="button">重做</button>
+                  <button id="vectorClear" type="button">清空</button>
+                </div>
+                <button id="applyVectorAccessory" class="pixel-apply" type="button">应用矢量装饰</button>
+                <p id="vectorAccessoryState">最多 12 条笔画 / 192 个节点；会自动平滑和压缩。</p>
+              </div>
+            </div>
+            <div class="pixel-preset-studio">
+              <label><span>个人矢量装饰名称</span><input id="vectorAccessoryName" maxlength="18" placeholder="例如：流畅星星"></label>
+              <button id="saveVectorAccessory" type="button" disabled>保存个人装饰</button>
+              <div id="vectorAccessoryPresetList" class="pixel-preset-list" role="list" aria-label="个人矢量装饰预设"></div>
+            </div>
+          </details>
           <details class="advanced pixel-accessory-studio" open>
-            <summary>DIY 像素画板 <small>51 × 51 · 鼠标松开后同步一次</small></summary>
+            <summary>像素画板回退 <small>51 × 51 · 用于兼容和对比</small></summary>
             <div class="pixel-editor-layout">
               <div class="pixel-canvas-shell">
                 <canvas id="pixelAccessoryCanvas" width="510" height="510" aria-label="DIY 像素装饰画板"></canvas>
@@ -187,6 +216,6 @@
       <label class="toggle"><input id="scanlines" type="checkbox" checked><span></span>屏幕扫描纹理</label>
     </aside>
     <div id="toast" class="toast" role="alert"></div>
-  <script src="./app.js?v=expression-lab-23"></script>
+  <script src="./app.js?v=expression-lab-25"></script>
   </body>
 </html>
