@@ -1,5 +1,6 @@
 import { buildPreviewWebSocketUrl, parseVisionPacket } from "./preview-packet.mjs";
 import { deadZoneRect, scaleFace, targetPoint } from "./overlay-geometry.mjs";
+import { parseHttpResponseBody } from "./http-response.mjs";
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("visionCanvas");
@@ -30,7 +31,7 @@ async function request(path, options = {}) {
     ...options,
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
-  const payload = await response.json();
+  const payload = parseHttpResponseBody(await response.text());
   if (!response.ok) throw new Error(payload.message || payload.detail || "操作失败");
   return payload;
 }

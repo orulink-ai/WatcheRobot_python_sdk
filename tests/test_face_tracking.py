@@ -16,7 +16,9 @@ from watcherobot.robot import WatcheRobot
 class FakeTransport:
     def __init__(self, *, capable: bool = True) -> None:
         self.capabilities = (
-            ("face_tracking.preview.v1",) if capable else ()
+            ("face_tracking.preview.v1", "face_tracking.control.v1")
+            if capable
+            else ()
         )
         self.device_info = {"device_id": "watcher-face-preview-test"}
         self.commands: list[tuple[str, dict[str, object]]] = []
@@ -207,6 +209,40 @@ def test_preview_rejects_invalid_contract_and_concurrent_session() -> None:
     incapable = WatcheRobot._from_transport(FakeTransport(capable=False))
     with pytest.raises(WatcheRobotError, match="face_tracking.preview.v1"):
         incapable.face_tracking.open_preview()
+
+
+@pytest.mark.parametrize("capabilities", [
+    ("face_tracking.preview.v1", "face_tracking.control.v1"),
+    ("face_tracking.preview.v1",),
+])
+def test_domain_stop_closes_an_active_preview_before_reopening(
+    capabilities: tuple[str, ...], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = FakeTransport()
+    transport.capabilities = capabilities
+    robot = WatcheRobot._from_transport(transport)
+    preview = robot.face_tracking.open_preview()
+
+    send_command = transport.send_command
+    timeouts: list[float | None] = []
+
+    def record_timeout(message_type, data, timeout=None):
+        timeouts.append(timeout)
+        return send_command(message_type, data, timeout)
+
+    monkeypatch.setattr(transport, "send_command", record_timeout)
+
+    robot.face_tracking.stop(policy="hold", timeout=0.75)
+
+    assert timeouts == [0.75]
+    assert transport.commands[-1] == (
+        "ctrl.face_tracking.preview.stop",
+        {"policy": "hold"},
+    )
+    with pytest.raises(WatcheRobotError, match="preview closed"):
+        preview.read(timeout=0)
+    reopened = robot.face_tracking.open_preview()
+    reopened.close()
 
 
 def test_disconnect_wakes_blocked_preview_reader() -> None:

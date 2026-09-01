@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.websockets import WebSocketDisconnect
 from pydantic import BaseModel, Field
+from watcherobot.errors import CommandError, WatcheRobotError
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -803,6 +804,35 @@ def create_web_app(
             content={"error": error.code, "message": str(error)},
         )
 
+    @app.exception_handler(CommandError)
+    async def command_error_handler(
+        _request: Request,
+        error: CommandError,
+    ) -> JSONResponse:
+        message = f"机器人执行失败：{error.message_type}（{error.reason}）。请查看设备日志后重试。"
+        service._append_event("device", message, "error")
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": "device_command_rejected",
+                "message": message,
+                "command": error.message_type,
+                "reason": error.reason,
+            },
+        )
+
+    @app.exception_handler(WatcheRobotError)
+    async def sdk_error_handler(
+        _request: Request,
+        error: WatcheRobotError,
+    ) -> JSONResponse:
+        message = str(error)
+        service._append_event("sdk", message, "error")
+        return JSONResponse(
+            status_code=409,
+            content={"error": "sdk_state_error", "message": message},
+        )
+
     @app.get("/", response_class=HTMLResponse)
     async def index() -> HTMLResponse:
         return HTMLResponse(
@@ -828,6 +858,13 @@ def create_web_app(
     async def overlay_geometry_module() -> FileResponse:
         return FileResponse(
             web_root / "overlay-geometry.mjs",
+            media_type="text/javascript",
+        )
+
+    @app.get("/assets/http-response.mjs")
+    async def http_response_module() -> FileResponse:
+        return FileResponse(
+            web_root / "http-response.mjs",
             media_type="text/javascript",
         )
 

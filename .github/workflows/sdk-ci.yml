@@ -68,6 +68,13 @@ jobs:
           python -m pytest
           python -m mypy src/watcherobot
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate vision debug lab browser helpers
+        run: node --test tests/js/*.mjs
+
       - name: Validate BLE fake backend contract
         run: |
           python -c "from watcherobot.provisioning.bleak_backend import BleakBackend; print(BleakBackend)"

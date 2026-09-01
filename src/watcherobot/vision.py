@@ -400,6 +400,8 @@ class FaceTrackingDomain:
         if policy not in ("hold", "recenter"):
             raise ValueError("policy must be hold or recenter")
         _validate_timeout(timeout)
+        if self._robot._stop_face_tracking_preview(policy, timeout=timeout):
+            return
         if "face_tracking.control.v1" in self._robot.capabilities:
             self._robot._command(
                 "ctrl.face_tracking.stop",
@@ -407,7 +409,6 @@ class FaceTrackingDomain:
                 timeout=timeout,
             )
             return
-        self._robot._stop_face_tracking_preview(policy)
 
 
 def parse_face_tracking_image(packet: bytes) -> _PreviewImage | None:
