@@ -301,6 +301,29 @@ def test_expression_runtime_encodes_a_bounded_custom_pixel_accessory():
     )
 
 
+def test_expression_runtime_encodes_a_bounded_custom_vector_accessory():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    path = "010108020032001400460014"
+
+    robot.expression_runtime.start(
+        "standby",
+        accessory="custom_vector",
+        custom_vector_path=path,
+        custom_accessory_layer="front",
+    )
+
+    assert transport.commands[-1] == (
+        "ctrl.expression.runtime.start",
+        {
+            "preset": "standby",
+            "accessory": "custom_vector",
+            "custom_vector_path": path,
+            "custom_accessory_layer": "front",
+        },
+    )
+
+
 @pytest.mark.parametrize(
     ("method", "kwargs", "message"),
     [
@@ -329,6 +352,9 @@ def test_expression_runtime_encodes_a_bounded_custom_pixel_accessory():
         ("update", {"custom_accessory_mask": "00"}, "custom_accessory_mask"),
         ("update", {"custom_accessory_mask": "gg" * 326}, "custom_accessory_mask"),
         ("update", {"custom_accessory_layer": "middle"}, "custom_accessory_layer"),
+        ("update", {"custom_vector_path": ""}, "custom_vector_path"),
+        ("update", {"custom_vector_path": "0101080200320014"}, "custom_vector_path"),
+        ("update", {"custom_vector_path": "0200"}, "custom_vector_path"),
         ("update", {"accessory_scale": 2.01}, "accessory_scale"),
         ("update", {"accessory_x": -1.01}, "accessory_x"),
         ("update", {"accessory_y": 1.01}, "accessory_y"),
