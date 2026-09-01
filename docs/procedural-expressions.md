@@ -69,8 +69,8 @@ transport when a value is outside its supported range, and fail with
 
 Each eye has an upper and lower mask. The four `*_lid_y` values use logical
 coordinates from `-80` to `80`; each matching `*_lid_rotation_deg` accepts
-`-45` to `45`. Neutral values place upper masks at `-65` and lower masks at
-`65`. The masks follow their eye's gaze center, interpolate with
+`-45` to `45`. Neutral values place upper masks at `-80` and lower masks at
+`80`. The masks follow their eye's gaze center, interpolate with
 `transition_ms`, affect only eye-colored pixels, and are included before the
 sphere projection. This keeps tags and accessories on independent layers.
 
@@ -103,3 +103,12 @@ browser pixels to Watcher.
 
 At the normalized `gaze_x` / `gaze_y` limits, both renderers move the eye group
 by 32 physical pixels (16 logical pixels at the 2× native render scale).
+
+The current workbench exposes only the bounded vector accessory editor. A
+custom vector uses physical 412 × 412 coordinates and supports at most 12
+strokes, 48 points per stroke, and 192 points in total. The browser simplifies
+the path on pointer-up and sends it once; the device validates and renders the
+stored path locally. Arbitrary SVG, Canvas commands, JavaScript, filled paths,
+gradients, and textures are not executed on the device. The retired pixel
+editor is no longer shown by Expression Lab, although the firmware temporarily
+keeps its old protocol capability for backward compatibility.
