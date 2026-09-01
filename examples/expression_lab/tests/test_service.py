@@ -1,7 +1,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from watcherobot.errors import CommandError
 
 from service import ExpressionLabService, ExpressionStartRequest, create_web_app
@@ -40,18 +42,14 @@ def test_expression_start_defaults_to_flat_rendering() -> None:
     assert request.right_lower_lid_y == 80
 
 
-def test_expression_request_accepts_the_fixed_size_pixel_accessory_payload() -> None:
-    mask = "80" + "00" * 325
-
-    request = ExpressionStartRequest(
-        preset="standby",
-        accessory="custom_pixel",
-        custom_accessory_mask=mask,
-        custom_accessory_layer="back",
-    )
-
-    assert request.custom_accessory_mask == mask
-    assert request.custom_accessory_layer == "back"
+def test_expression_lab_rejects_the_retired_pixel_accessory_payload() -> None:
+    with pytest.raises(ValidationError):
+        ExpressionStartRequest(
+            preset="standby",
+            accessory="custom_pixel",
+            custom_accessory_mask="80" + "00" * 325,
+            custom_accessory_layer="back",
+        )
 
 
 def test_expression_request_accepts_the_bounded_vector_accessory_payload() -> None:
@@ -65,6 +63,16 @@ def test_expression_request_accepts_the_bounded_vector_accessory_payload() -> No
     )
 
     assert request.custom_vector_path == path
+
+
+@pytest.mark.parametrize("path", ("010", "00" * 795, "0101zz"))
+def test_expression_lab_rejects_unbounded_or_malformed_vector_paths(path: str) -> None:
+    with pytest.raises(ValidationError):
+        ExpressionStartRequest(
+            preset="standby",
+            accessory="custom_vector",
+            custom_vector_path=path,
+        )
 
 
 def make_service(
@@ -243,6 +251,34 @@ def test_status_tolerates_one_probe_timeout_but_discards_repeated_stale_capabili
     assert third["active"] is False
 
 
+def test_stop_releases_a_runtime_that_may_still_be_active_after_disconnect() -> None:
+    runtime = FakeExpressionRuntime()
+
+    def fail_refresh(*, timeout: float) -> dict[str, object]:
+        raise TimeoutError("device channel did not reply")
+
+    service = ExpressionLabService(
+        robot=SimpleNamespace(
+            expression_runtime=runtime,
+            capabilities=("expression.runtime.v3",),
+            device_info={"model": "Watcher"},
+            resource_snapshot={},
+            refresh_device_info=fail_refresh,
+        )
+    )
+    service._active = True
+    service._runtime_claimed = True
+
+    service.status()
+    service.status()
+    service.status()
+    assert service.status()["active"] is False
+
+    service.stop()
+
+    assert runtime.calls == [("stop", {})]
+
+
 def test_successful_device_probe_resets_the_consecutive_timeout_guard() -> None:
     runtime = FakeExpressionRuntime()
     outcomes = iter((TimeoutError("slow"), None, TimeoutError("slow"), TimeoutError("slow")))
@@ -267,6 +303,33 @@ def test_successful_device_probe_resets_the_consecutive_timeout_guard() -> None:
     assert service.status()["device_connected"] is True
     assert service.status()["device_connected"] is True
     assert service.status()["device_connected"] is True
+
+
+def test_expression_commands_do_not_repeat_the_expensive_device_probe() -> None:
+    runtime = FakeExpressionRuntime()
+    probe_count = 0
+
+    def refresh(*, timeout: float) -> dict[str, object]:
+        nonlocal probe_count
+        assert timeout <= 0.5
+        probe_count += 1
+        return {"model": "Watcher"}
+
+    service = ExpressionLabService(
+        robot=SimpleNamespace(
+            expression_runtime=runtime,
+            capabilities=("expression.runtime.v3", "expression.vector_accessory.v1"),
+            device_info={"model": "Watcher"},
+            resource_snapshot={},
+            refresh_device_info=refresh,
+        )
+    )
+
+    service.start(preset="standby", style="watcher")
+    service.update(gaze_x=0.25)
+    service.stop()
+
+    assert probe_count == 1
 
 
 def test_status_exposes_device_expression_performance_without_fabricating_samples() -> None:
@@ -410,10 +473,12 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     with TestClient(create_web_app(service, web_root=web_root)) as client:
         index = client.get("/")
         stylesheet = client.get("/styles.css")
+        vector_path = client.get("/vector-path.js")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-25"' in index.text
-    assert 'src="./app.js?v=expression-lab-25"' in index.text
+    assert 'href="./styles.css?v=expression-lab-27"' in index.text
+    assert 'src="./vector-path.js?v=expression-lab-27"' in index.text
+    assert 'src="./app.js?v=expression-lab-27"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -426,6 +491,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert ".controls { grid-column: 2 / -1; }" in stylesheet.text
     assert ".inspector { grid-column: 1 / -1; }" in stylesheet.text
     assert ".stage { position: sticky; top: 16px; }" in stylesheet.text
+    assert vector_path.status_code == 200
+    assert "function normalize(strokes)" in vector_path.text
     assert script.status_code == 200
     assert "javascript" in script.headers["content-type"]
     assert script.headers["cache-control"] == "no-store"
@@ -539,27 +606,21 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert "drawAccessory(p.accessory, \"back\", state.phase, p, secondaryGazeX, secondaryGazeY)" in script.text
     assert "drawAccessory(p.accessory, \"front\", state.phase, p, secondaryGazeX, secondaryGazeY)" in script.text
     assert "drawTag(p.tag, p.color, secondaryGazeX, secondaryGazeY)" in script.text
-    assert 'id="pixelAccessoryCanvas"' in index.text
-    assert 'id="pixelBrush"' in index.text
-    assert 'id="pixelEraser"' in index.text
-    assert 'id="pixelUndo"' in index.text
-    assert 'id="pixelRedo"' in index.text
-    assert 'id="pixelClear"' in index.text
-    assert 'id="savePixelAccessory"' in index.text
-    assert "const PIXEL_ACCESSORY_GRID_SIZE = 51" in script.text
-    assert "const PIXEL_ACCESSORY_MASK_BYTES = 326" in script.text
-    assert "function encodePixelAccessoryMask()" in script.text
-    assert "function drawCustomPixelAccessory" in script.text
-    assert "custom_accessory_mask: encodePixelAccessoryMask()" in script.text
-    assert "custom_accessory_layer: state.pixelAccessoryLayer" in script.text
+    assert 'value="custom_pixel"' not in index.text
+    assert 'id="pixelAccessoryCanvas"' not in index.text
+    assert "PIXEL_ACCESSORY_" not in script.text
+    assert "pixelAccessory" not in script.text
+    assert "custom_accessory_mask" not in script.text
     assert 'id="vectorAccessoryCanvas"' in index.text
     assert 'id="vectorBrush"' in index.text
     assert 'id="vectorEraser"' in index.text
     assert 'id="vectorUndo"' in index.text
     assert 'id="vectorRedo"' in index.text
     assert 'id="saveVectorAccessory"' in index.text
-    assert "const VECTOR_ACCESSORY_MAX_STROKES = 12" in script.text
-    assert "const VECTOR_ACCESSORY_MAX_POINTS = 192" in script.text
+    assert "const MAX_STROKES = 12" in vector_path.text
+    assert "const MAX_POINTS = 192" in vector_path.text
+    assert "while (total > MAX_POINTS)" in vector_path.text
+    assert "VectorPath.MAX_STROKES" in script.text
     assert "function encodeVectorAccessoryPath()" in script.text
     assert "function drawCustomVectorAccessory" in script.text
     assert "custom_vector_path: encodeVectorAccessoryPath()" in script.text

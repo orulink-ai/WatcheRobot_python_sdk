@@ -90,13 +90,12 @@ class ExpressionStartRequest(BaseModel):
     tag: str = Field(default="none", pattern="^(none|thinking|question|love)$")
     accessory: str = Field(
         default="none",
-        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna|custom_pixel|custom_vector)$",
+        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna|custom_vector)$",
     )
     accessory_scale: float = Field(default=1.0, ge=0.25, le=2.0)
     accessory_x: float = Field(default=0.0, ge=-1.0, le=1.0)
     accessory_y: float = Field(default=0.0, ge=-1.0, le=1.0)
     accessory_rotation_deg: int = Field(default=0, ge=-180, le=180)
-    custom_accessory_mask: str = Field(default="0" * 652, pattern="^[0-9A-Fa-f]{652}$")
     custom_vector_path: str = "0100"
     custom_accessory_layer: str = Field(default="front", pattern="^(back|front)$")
     auto_blink: bool = True
@@ -145,13 +144,12 @@ class ExpressionUpdateRequest(BaseModel):
     tag: str | None = Field(default=None, pattern="^(none|thinking|question|love)$")
     accessory: str | None = Field(
         default=None,
-        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna|custom_pixel|custom_vector)$",
+        pattern="^(none|halo|devil_horns|ninja_mask|hero_mask|eyepatch|antenna|custom_vector)$",
     )
     accessory_scale: float | None = Field(default=None, ge=0.25, le=2.0)
     accessory_x: float | None = Field(default=None, ge=-1.0, le=1.0)
     accessory_y: float | None = Field(default=None, ge=-1.0, le=1.0)
     accessory_rotation_deg: int | None = Field(default=None, ge=-180, le=180)
-    custom_accessory_mask: str | None = Field(default=None, pattern="^[0-9A-Fa-f]{652}$")
     custom_vector_path: str | None = None
     custom_accessory_layer: str | None = Field(default=None, pattern="^(back|front)$")
     auto_blink: bool | None = None
@@ -189,65 +187,77 @@ class ExpressionLabService:
         self._pair_watcher = pair_watcher
         self._lock = threading.RLock()
         self._active = False
+        # Connection probes describe what the browser can currently observe.
+        # Keep device ownership separately so a transient disconnect cannot
+        # make stop() forget to release an expression runtime it started.
+        self._runtime_claimed = False
         self._parameters: dict[str, object] = {}
         self._probe_failures = 0
 
     def status(self) -> dict[str, object]:
         with self._lock:
-            refresh_device_info = getattr(self._robot, "refresh_device_info", None)
-            probe_succeeded = True
-            if callable(refresh_device_info):
-                try:
-                    refresh_device_info(timeout=0.4)
-                    self._probe_failures = 0
-                except (TimeoutError, WatcheRobotError):
-                    self._probe_failures += 1
-                    probe_succeeded = self._probe_failures < self._PROBE_FAILURE_LIMIT
-            capabilities = tuple(getattr(self._robot, "capabilities", ()))
-            device_info = dict(getattr(self._robot, "device_info", {}))
-            device_connected = probe_succeeded and bool(capabilities or device_info)
-            expression_supported = device_connected and "expression.runtime.v3" in capabilities
-            pixel_accessory_supported = device_connected and "expression.pixel_accessory.v1" in capabilities
-            vector_accessory_supported = device_connected and "expression.vector_accessory.v1" in capabilities
-            resource_snapshot = dict(getattr(self._robot, "resource_snapshot", {}))
-            if not device_connected:
-                resource_snapshot = {}
-            animation = resource_snapshot.get("animation", {})
-            memory = resource_snapshot.get("memory", {})
-            psram = memory.get("psram", {}) if isinstance(memory, dict) else {}
-            if not isinstance(animation, dict):
-                animation = {}
-            if not isinstance(psram, dict):
-                psram = {}
-            if not device_connected:
-                self._active = False
-            return {
-                "active": self._active,
-                "device_connected": device_connected,
-                "expression_supported": expression_supported,
-                "pixel_accessory_supported": pixel_accessory_supported,
-                "vector_accessory_supported": vector_accessory_supported,
-                "parameters": dict(self._parameters),
-                "performance": {
-                    "sample_valid": bool(animation.get("sample_valid", False)),
-                    "measured_fps": float(animation.get("measured_fps_x100", 0)) / 100.0,
-                    "target_fps": float(animation.get("target_fps_x100", 0)) / 100.0,
-                    "draw_ms": float(animation.get("draw_ewma_us", 0)) / 1000.0,
-                    "frame_buffer_bytes": int(animation.get("frame_buffer_bytes", 0)),
-                    "psram_free_bytes": int(psram.get("free_bytes", 0)),
-                },
-            }
+            return self._status_locked(probe_device=True)
+
+    def _status_locked(self, *, probe_device: bool) -> dict[str, object]:
+        """Build a status snapshot while the service lock is held.
+
+        Command ACKs reuse cached device metadata; periodic browser status
+        polling remains responsible for the comparatively slow probe.
+        """
+        refresh_device_info = getattr(self._robot, "refresh_device_info", None)
+        probe_succeeded = self._probe_failures < self._PROBE_FAILURE_LIMIT
+        if probe_device and callable(refresh_device_info):
+            try:
+                refresh_device_info(timeout=0.4)
+                self._probe_failures = 0
+                probe_succeeded = True
+            except (TimeoutError, WatcheRobotError):
+                self._probe_failures += 1
+                probe_succeeded = self._probe_failures < self._PROBE_FAILURE_LIMIT
+        capabilities = tuple(getattr(self._robot, "capabilities", ()))
+        device_info = dict(getattr(self._robot, "device_info", {}))
+        device_connected = probe_succeeded and bool(capabilities or device_info)
+        expression_supported = device_connected and "expression.runtime.v3" in capabilities
+        vector_accessory_supported = device_connected and "expression.vector_accessory.v1" in capabilities
+        resource_snapshot = dict(getattr(self._robot, "resource_snapshot", {}))
+        if not device_connected:
+            resource_snapshot = {}
+        animation = resource_snapshot.get("animation", {})
+        memory = resource_snapshot.get("memory", {})
+        psram = memory.get("psram", {}) if isinstance(memory, dict) else {}
+        if not isinstance(animation, dict):
+            animation = {}
+        if not isinstance(psram, dict):
+            psram = {}
+        if not device_connected:
+            self._active = False
+        return {
+            "active": self._active,
+            "device_connected": device_connected,
+            "expression_supported": expression_supported,
+            "vector_accessory_supported": vector_accessory_supported,
+            "parameters": dict(self._parameters),
+            "performance": {
+                "sample_valid": bool(animation.get("sample_valid", False)),
+                "measured_fps": float(animation.get("measured_fps_x100", 0)) / 100.0,
+                "target_fps": float(animation.get("target_fps_x100", 0)) / 100.0,
+                "draw_ms": float(animation.get("draw_ewma_us", 0)) / 1000.0,
+                "frame_buffer_bytes": int(animation.get("frame_buffer_bytes", 0)),
+                "psram_free_bytes": int(psram.get("free_bytes", 0)),
+            },
+        }
 
     def start(self, *, preset: str, **parameters: object) -> dict[str, object]:
         with self._lock:
-            connection = self.status()
+            connection = self._status_locked(probe_device=True)
             if not connection["device_connected"]:
                 raise RuntimeError("Watcher is not connected")
             if not connection["expression_supported"]:
                 raise RuntimeError("connected firmware does not support expression.runtime.v3")
-            if self._active:
+            if self._runtime_claimed:
                 self._runtime.stop()
                 self._active = False
+                self._runtime_claimed = False
             try:
                 self._runtime.start(preset, **parameters)
             except Exception:
@@ -258,10 +268,12 @@ class ExpressionLabService:
                     self._runtime.stop()
                 except Exception:
                     pass
+                self._runtime_claimed = False
                 raise
             self._active = True
+            self._runtime_claimed = True
             self._parameters = {"preset": preset, **parameters}
-            return self.status()
+            return self._status_locked(probe_device=False)
 
     def pair(self, pairing_code: str) -> dict[str, object]:
         pair_watcher = self._pair_watcher
@@ -279,14 +291,17 @@ class ExpressionLabService:
                 raise RuntimeError("expression runtime is not active")
             self._runtime.update(**changes)
             self._parameters.update(changes)
-            return self.status()
+            return self._status_locked(probe_device=False)
 
     def stop(self) -> dict[str, object]:
         with self._lock:
-            if self._active:
-                self._runtime.stop()
-            self._active = False
-            return self.status()
+            try:
+                if self._runtime_claimed:
+                    self._runtime.stop()
+            finally:
+                self._active = False
+                self._runtime_claimed = False
+            return self._status_locked(probe_device=False)
 
 
 def create_web_app(service: ExpressionLabService, *, web_root: Path) -> FastAPI:
@@ -314,10 +329,14 @@ def create_web_app(service: ExpressionLabService, *, web_root: Path) -> FastAPI:
     async def script() -> FileResponse:
         return web_file("app.js")
 
+    @app.get("/vector-path.js")
+    async def vector_path_script() -> FileResponse:
+        return web_file("vector-path.js")
+
     # Retain the first PoC URLs for compatibility with already packaged copies.
     @app.get("/assets/{asset_name}")
     async def asset(asset_name: str) -> FileResponse:
-        if asset_name not in {"styles.css", "app.js"}:
+        if asset_name not in {"styles.css", "vector-path.js", "app.js"}:
             raise HTTPException(status_code=404, detail="asset not found")
         return web_file(asset_name)
 
