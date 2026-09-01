@@ -1,3 +1,5 @@
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -432,6 +434,89 @@ def test_web_api_validates_ranges_and_stops_on_shutdown(tmp_path: Path) -> None:
     assert runtime.calls[-1] == ("stop", {})
 
 
+def test_web_exposes_verified_firmware_bundle_for_incompatible_device(tmp_path: Path) -> None:
+    service, _ = make_service(expression_supported=False)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    (web_root / "index.html").write_text("<h1>lab</h1>", encoding="utf-8")
+    firmware_root = tmp_path / "firmware"
+    firmware_root.mkdir()
+    payload = b"firmware-package"
+    filename = "Watcher-Expression-Lab-Firmware-v0.1.1-esp32s3.zip"
+    digest = hashlib.sha256(payload).hexdigest()
+    (firmware_root / filename).write_bytes(payload)
+    (firmware_root / "firmware-package.json").write_text(
+        json.dumps(
+            {
+                "app_id": "com.orulink.expression_lab",
+                "app_version": "0.1.1",
+                "filename": filename,
+                "size_bytes": len(payload),
+                "sha256": digest,
+                "required_capability": "expression.runtime.v3",
+                "source": {"pull_request": 199, "commit": "c" * 40},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with TestClient(
+        create_web_app(service, web_root=web_root, firmware_root=firmware_root)
+    ) as client:
+        status = client.get("/api/status").json()["firmware_update"]
+        downloaded = client.get("/api/firmware/download")
+
+    assert status == {
+        "required": True,
+        "available": True,
+        "filename": filename,
+        "size_bytes": len(payload),
+        "sha256": digest,
+        "required_capability": "expression.runtime.v3",
+        "source_pull_request": 199,
+        "source_commit": "c" * 40,
+        "download_url": "./api/firmware/download",
+    }
+    assert downloaded.status_code == 200
+    assert downloaded.content == payload
+    assert downloaded.headers["content-type"] == "application/zip"
+    assert filename in downloaded.headers["content-disposition"]
+
+
+def test_web_refuses_tampered_firmware_bundle(tmp_path: Path) -> None:
+    service, _ = make_service(expression_supported=False)
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    (web_root / "index.html").write_text("<h1>lab</h1>", encoding="utf-8")
+    firmware_root = tmp_path / "firmware"
+    firmware_root.mkdir()
+    filename = "firmware.zip"
+    (firmware_root / filename).write_bytes(b"tampered")
+    (firmware_root / "firmware-package.json").write_text(
+        json.dumps(
+            {
+                "app_id": "com.orulink.expression_lab",
+                "app_version": "0.1.1",
+                "filename": filename,
+                "size_bytes": 8,
+                "sha256": "0" * 64,
+                "required_capability": "expression.runtime.v3",
+                "source": {"pull_request": 199, "commit": "c" * 40},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with TestClient(
+        create_web_app(service, web_root=web_root, firmware_root=firmware_root)
+    ) as client:
+        status = client.get("/api/status").json()["firmware_update"]
+        downloaded = client.get("/api/firmware/download")
+
+    assert status == {"required": True, "available": False}
+    assert downloaded.status_code == 404
+
+
 def test_web_pairing_accepts_only_a_six_digit_code(tmp_path: Path) -> None:
     pairing_codes: list[str] = []
     service, _ = make_service(connected=False, pair_watcher=pairing_codes.append)
@@ -476,9 +561,11 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         vector_path = client.get("/vector-path.js")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-27"' in index.text
-    assert 'src="./vector-path.js?v=expression-lab-27"' in index.text
-    assert 'src="./app.js?v=expression-lab-27"' in index.text
+    assert 'href="./styles.css?v=expression-lab-28"' in index.text
+    assert 'src="./vector-path.js?v=expression-lab-28"' in index.text
+    assert 'src="./app.js?v=expression-lab-28"' in index.text
+    assert 'id="firmwareUpdate"' in index.text
+    assert 'id="firmwareDownload"' in index.text
     assert 'id="connectionGuide"' in index.text
     assert 'id="pairingForm"' in index.text
     assert 'id="pairingCode"' in index.text
@@ -504,6 +591,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert "window.setInterval(refreshConnectionStatus, 1500)" in script.text
     assert "snapshot.device_connected" in script.text
     assert "snapshot.expression_supported" in script.text
+    assert "snapshot.firmware_update" in script.text
+    assert 'href="./api/firmware/download"' in index.text
     assert 'api("./api/pair", { pairing_code: pairingCode })' in script.text
     assert 'scale_x: Number(controls.scaleX.value)' in script.text
     assert 'scale: Number(controls.scale.value)' in script.text

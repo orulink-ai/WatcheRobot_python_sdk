@@ -32,7 +32,11 @@ async def main() -> None:
             service = ExpressionLabService(robot=app.robot, pair_watcher=pair_robot)
             server = uvicorn.Server(
                 uvicorn.Config(
-                    create_web_app(service, web_root=ROOT / "web"),
+                    create_web_app(
+                        service,
+                        web_root=ROOT / "web",
+                        firmware_root=ROOT / "firmware",
+                    ),
                     host=HOST,
                     port=port,
                     access_log=False,

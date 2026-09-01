@@ -106,6 +106,34 @@ button.primary:hover, button.primary:focus-visible { color: #050704; background:
 .runtime-status[data-active="true"] { color: var(--green); }
 .runtime-status[data-active="true"] span { background: var(--green); box-shadow: 0 0 16px rgba(161, 240, 60, .7); }
 
+.firmware-update {
+  width: min(1540px, calc(100% - 40px));
+  margin: 18px auto 0;
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border: 1px solid rgba(240, 108, 94, .5);
+  border-radius: var(--radius);
+  background: rgba(240, 108, 94, .07);
+}
+.firmware-update[hidden] { display: none; }
+.firmware-update__kicker { display: block; margin-bottom: 4px; color: var(--danger); font: 10px "Cascadia Code", monospace; letter-spacing: .08em; }
+.firmware-update strong { display: block; font-size: 15px; }
+.firmware-update p { margin: 5px 0; color: var(--muted); font-size: 12px; }
+.firmware-update small { color: var(--quiet); font: 10px "Cascadia Code", monospace; }
+.firmware-update__download {
+  flex: 0 0 auto;
+  padding: 11px 18px;
+  color: #130806;
+  background: var(--danger);
+  border-radius: 7px;
+  font-weight: 760;
+  text-decoration: none;
+}
+.firmware-update__download:hover, .firmware-update__download:focus-visible { background: #ff8a7e; }
+
 .workbench {
   width: min(1540px, calc(100% - 40px));
   margin: 20px auto 76px;
@@ -278,6 +306,8 @@ body[data-layout="stage"] .inspector { grid-column: 1 / -1; }
   .connection-copy small { white-space: normal; text-wrap: pretty; }
   .connection-guide { grid-template-columns: auto minmax(0, 1fr); }
   .pairing-form { grid-column: 2; width: min(100%, 240px); margin-top: 4px; }
+  .firmware-update { width: calc(100% - 20px); flex-direction: column; align-items: stretch; gap: 12px; }
+  .firmware-update__download { text-align: center; }
   .workbench, body[data-layout="compact"] .workbench, body[data-layout="stage"] .workbench { width: calc(100% - 20px); grid-template-columns: 1fr; margin-top: 10px; }
   .stage, .inspector, body[data-layout="stage"] .inspector { grid-column: 1; }
   .inspector { grid-template-columns: 1fr; }

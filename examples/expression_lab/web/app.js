@@ -53,6 +53,7 @@ const eyelidControlNames = [
 const state = {
   active: false, serviceReady: false, statusInitialized: false,
   deviceConnected: false, expressionSupported: false, vectorAccessorySupported: false,
+  firmwareUpdate: null,
   preset: "standby", activeEyelidPresetId: null, eyelidPresets: [], sending: false, pairing: false, statusBusy: false,
   intentActive: false, resumePending: false, resumeTimer: 0,
   lastFrame: performance.now(), phase: 0, debounce: 0,
@@ -900,6 +901,17 @@ function renderConnectionState() {
   pairingCode.disabled = state.pairing;
   pairingButton.disabled = state.pairing || !/^[0-9]{6}$/.test(pairingCode.value);
   pairingButton.textContent = state.pairing ? "连接中…" : "连接";
+  const firmwareUpdate = byId("firmwareUpdate");
+  const firmware = state.firmwareUpdate;
+  const showFirmwareUpdate = Boolean(
+    firmware?.required && firmware?.available && state.deviceConnected && !state.expressionSupported
+  );
+  firmwareUpdate.hidden = !showFirmwareUpdate;
+  if (showFirmwareUpdate) {
+    byId("firmwareDownload").href = firmware.download_url || "./api/firmware/download";
+    byId("firmwareDownload").download = firmware.filename || "Watcher-ESP32-Firmware.zip";
+    byId("firmwareMeta").textContent = `${firmware.filename} · ${(Number(firmware.size_bytes) / 1048576).toFixed(1)} MB · SHA-256 ${String(firmware.sha256).slice(0, 12)}…`;
+  }
   refreshReadouts();
 }
 
@@ -913,6 +925,7 @@ function applyStatus(snapshot) {
   state.deviceConnected = snapshotConnected;
   state.expressionSupported = Boolean(snapshot.expression_supported);
   state.vectorAccessorySupported = Boolean(snapshot.vector_accessory_supported);
+  state.firmwareUpdate = snapshot.firmware_update || null;
   state.active = snapshotActive;
   if (snapshotActive) {
     state.intentActive = true;
@@ -948,6 +961,7 @@ async function refreshConnectionStatus() {
     state.deviceConnected = false;
     state.expressionSupported = false;
     state.vectorAccessorySupported = false;
+    state.firmwareUpdate = null;
     state.active = false;
     renderConnectionState();
   } finally {

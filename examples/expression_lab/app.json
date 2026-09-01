@@ -2,7 +2,7 @@
   "schema_version": 2,
   "id": "com.orulink.expression_lab",
   "name": "Watcher Expression Lab",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "Orulink AI",
   "description": "Design, preview, and run procedural KuroBlob-style Watcher expressions and vector decorations.",
   "requires_watcherobot": ">=0.1.4,<0.2",
