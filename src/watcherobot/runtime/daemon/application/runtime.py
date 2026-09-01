@@ -300,6 +300,8 @@ class ApplicationRuntimeManager:
             {
                 "PYTHONNOUSERSITE": "1",
                 "PYTHONUNBUFFERED": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
                 "WATCHER_APP_ID": run.app_id,
                 "WATCHER_APP_RUN_CREDENTIAL": run.credential,
                 "WATCHER_APP_DESKTOP_WS_URL": self.bridge.channel_url(
