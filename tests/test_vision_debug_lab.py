@@ -10,6 +10,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from watcherobot.errors import CommandError, WatcheRobotError
 
 
 ROOT = Path(__file__).parents[1]
@@ -218,6 +219,62 @@ def test_preview_rejects_a_model_without_face_class(tmp_path: Path) -> None:
 
     with pytest.raises(module.VisionLabPreflightError, match="face class"):
         service.start_preview(width=416, height=416, frame_stride=1, stop_policy="hold")
+
+
+def test_preview_device_rejection_returns_json_and_allows_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_service_module()
+    robot = FakeRobot(_vision_status())
+    service = module.VisionDebugLabService(
+        robot=robot, artifacts_dir=tmp_path, device_status_provider=_device_status,
+    )
+    open_preview = robot.face_tracking.open_preview
+
+    def reject(**kwargs: object) -> FakePreview:
+        raise CommandError("ctrl.face_tracking.preview.start", "executor_failed")
+
+    monkeypatch.setattr(robot.face_tracking, "open_preview", reject)
+    headers = {"Host": "127.0.0.1:43210"}
+    with TestClient(module.create_web_app(service, web_root=LAB_ROOT / "web")) as client:
+        response = client.post("/api/preview/start", json={"width": 240, "height": 240}, headers=headers)
+        assert response.status_code == 502
+        assert response.json()["error"] == "device_command_rejected"
+        assert response.json()["reason"] == "executor_failed"
+        assert response.json()["command"] == "ctrl.face_tracking.preview.start"
+        assert service.status()["session"]["running"] is False
+        assert any("executor_failed" in str(event) for event in service.events())
+        monkeypatch.setattr(robot.face_tracking, "open_preview", open_preview)
+        retry = client.post("/api/preview/start", json={"width": 240, "height": 240}, headers=headers)
+        assert retry.status_code == 200
+        assert retry.json()["running"] is True
+
+
+def test_preview_sdk_state_error_returns_json_instead_of_plain_http_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_service_module()
+    robot = FakeRobot(_vision_status())
+    service = module.VisionDebugLabService(
+        robot=robot, artifacts_dir=tmp_path, device_status_provider=_device_status,
+    )
+
+    def reject(**kwargs: object) -> FakePreview:
+        raise WatcheRobotError("face tracking preview is already open")
+
+    monkeypatch.setattr(robot.face_tracking, "open_preview", reject)
+    with TestClient(module.create_web_app(service, web_root=LAB_ROOT / "web")) as client:
+        response = client.post(
+            "/api/preview/start",
+            json={"width": 240, "height": 240},
+            headers={"Host": "127.0.0.1:43210"},
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "error": "sdk_state_error",
+        "message": "face tracking preview is already open",
+    }
 
 
 def test_preview_publishes_same_sequence_binary_packet_and_metrics(tmp_path: Path) -> None:

@@ -875,13 +875,15 @@ class WatcheRobot:
         self,
         preview: FaceTrackingPreview,
         policy: FaceTrackingStopPolicy,
+        *,
+        timeout: float | None = None,
     ) -> None:
         with self._face_tracking_lock:
             if self._face_tracking_preview is not preview:
                 preview._mark_closed("closed")
                 return
         try:
-            self._command("ctrl.face_tracking.preview.stop", {"policy": policy})
+            self._command("ctrl.face_tracking.preview.stop", {"policy": policy}, timeout=timeout)
         finally:
             with self._face_tracking_lock:
                 if self._face_tracking_preview is preview:
@@ -891,12 +893,15 @@ class WatcheRobot:
     def _stop_face_tracking_preview(
         self,
         policy: FaceTrackingStopPolicy,
-    ) -> None:
+        *,
+        timeout: float | None = None,
+    ) -> bool:
         with self._face_tracking_lock:
             preview = self._face_tracking_preview
         if preview is None:
-            return
-        self._close_face_tracking_preview(preview, policy)
+            return False
+        self._close_face_tracking_preview(preview, policy, timeout=timeout)
+        return True
 
     def _on_message(self, message: dict[str, Any]) -> None:
         if message.get("type") == "evt.face_tracking.preview.frame":

@@ -22,6 +22,15 @@ watcherobot app run ./examples/vision_debug_lab
 
 Application 会在随机端口启动只监听 `127.0.0.1` 的网页，并默认打开浏览器。
 
+如果网页能打开但启动预览失败，请查看页面的诊断事件。设备拒绝命令时会返回
+JSON 错误，包含命令和原始原因，预览仍保持停止，可修复设备问题后重试。
+`executor_failed` 表示固件执行失败，需要结合 ESP32 日志定位；例如
+`FACE_TRACK: preview resources unavailable` 是预览任务的内存分配失败，
+不能通过重装模型或反复启动应用解决。
+
+停止预览会同时关闭 SDK 的本地预览句柄；再次启动会创建新会话。
+`face_tracking.stop(timeout=...)` 的超时同样用于活动预览的停止命令。
+
 ## 第一版能力
 
 - 查询设备连接、视觉后端、Himax、当前模型和能力健康状态；
