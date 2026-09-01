@@ -1,0 +1,14 @@
+{
+  "app_id": "com.orulink.expression_lab",
+  "app_version": "0.1.1",
+  "filename": "Watcher-Expression-Lab-Firmware-v0.1.1-esp32s3.zip",
+  "required_capability": "expression.runtime.v3",
+  "schema_version": 1,
+  "sha256": "212026ebb365458a99fbc8d8c1e914244ed05a2c7815bd16ed8918fee0b7bada",
+  "size_bytes": 4159343,
+  "source": {
+    "commit": "c4807d1a0b7d912ea05abcb578b10f5d7ea0a2e4",
+    "pull_request": 199,
+    "repository": "https://github.com/orulink-ai/WatcheRobot_esp32"
+  }
+}

@@ -42,6 +42,26 @@ Application 会打开一个仅监听 `127.0.0.1` 随机端口的网页。点击�
 也可以直接双击 `web/index.html` 查看和调整本地视觉预览；这种方式不会连接设备，
 页面会显示“仅本地预览”。需要把参数发送到 Watcher 时，必须使用上面的 SDK 命令启动。
 
+## 固件升级闭环
+
+Application `0.1.1` 内置了 ESP32 PR
+[`orulink-ai/WatcheRobot_esp32#199`](https://github.com/orulink-ai/WatcheRobot_esp32/pull/199)
+提交 `c4807d1a0b7d912ea05abcb578b10f5d7ea0a2e4` 的完整 32MB 分段固件包。
+页面检测到 Watcher 已连接、但缺少 `expression.runtime.v3` 时，会显示“下载固件包”按钮；
+正常固件不会显示升级卡片。
+
+升级步骤：
+
+1. 在 Expression Lab 下载固件 ZIP，不要解压。
+2. 打开 Watcher Desktop 的“创作者模式 → 固件与资源”。
+3. 把 ZIP 拖入 ESP32 固件的本地安装包区域（也可点击该区域选择文件）。
+4. 用数据线连接 Watcher、选择设备串口并开始安装。
+
+内置包大小为 `4,159,343` 字节，SHA-256 为
+`212026ebb365458a99fbc8d8c1e914244ed05a2c7815bd16ed8918fee0b7bada`。
+Application 启动时会同时核对文件大小和 SHA-256；校验失败时不会提供下载。Watcher
+Desktop 在安装前还会再次检查 ZIP 的 `flash_args.txt`、必要分段和 Flash 参数。
+
 ## 当前实验边界
 
 - 画布：设备端原生 412 × 412 RGB565，直接对应屏幕物理像素；不再对代码表情做 206 → 412 最近邻放大。

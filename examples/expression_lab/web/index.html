@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Watcher Expression Lab</title>
-    <link rel="stylesheet" href="./styles.css?v=expression-lab-27">
+    <link rel="stylesheet" href="./styles.css?v=expression-lab-28">
   </head>
   <body data-layout="studio">
     <header class="masthead">
@@ -24,6 +24,16 @@
       </div>
       <div class="runtime-status" role="status"><span id="statusLamp"></span><b id="statusText">设备未接管</b></div>
     </header>
+
+    <section id="firmwareUpdate" class="firmware-update" hidden aria-live="polite">
+      <div>
+        <span class="firmware-update__kicker">FIRMWARE UPDATE · PR #199</span>
+        <strong>当前 Watcher 缺少代码表情能力</strong>
+        <p>下载已校验的固件 ZIP，然后打开 Watcher Desktop「创作者模式 → 固件与资源」，把 ZIP 拖入 ESP32 固件区域并连接数据线安装。</p>
+        <small id="firmwareMeta"></small>
+      </div>
+      <a id="firmwareDownload" class="firmware-update__download" href="./api/firmware/download" download>下载固件包</a>
+    </section>
 
     <main class="workbench">
       <section class="stage panel">
@@ -187,7 +197,7 @@
       <label class="toggle"><input id="scanlines" type="checkbox" checked><span></span>屏幕扫描纹理</label>
     </aside>
     <div id="toast" class="toast" role="alert"></div>
-    <script src="./vector-path.js?v=expression-lab-27"></script>
-    <script src="./app.js?v=expression-lab-27"></script>
+    <script src="./vector-path.js?v=expression-lab-28"></script>
+    <script src="./app.js?v=expression-lab-28"></script>
   </body>
 </html>

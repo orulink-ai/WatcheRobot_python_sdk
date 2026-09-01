@@ -339,6 +339,26 @@ def test_flash_zip_requires_complete_layout(tmp_path: Path) -> None:
     assert [item[0] for item in segments] == [0, 0x8000, 0x20000]
 
 
+def test_flash_zip_accepts_esptool_hyphenated_flash_options(tmp_path: Path) -> None:
+    package = tmp_path / "firmware.zip"
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "flash_args.txt",
+            "--flash-mode dio --flash-freq 80m --flash-size 32MB\n"
+            "0x0 bootloader.bin\n"
+            "0x8000 partition-table.bin\n"
+            "0x20000 WatcheRobot-S3.bin\n",
+        )
+        archive.writestr("bootloader.bin", b"boot")
+        archive.writestr("partition-table.bin", b"part")
+        archive.writestr("WatcheRobot-S3.bin", b"app")
+
+    flags, segments = _parse_flash_zip(package)
+
+    assert flags == {"flash_mode": "dio", "flash_freq": "80m", "flash_size": "32MB"}
+    assert [item[0] for item in segments] == [0, 0x8000, 0x20000]
+
+
 def test_sd_package_is_inspected_without_extracting_to_disk(tmp_path: Path) -> None:
     package = tmp_path / "resources.tar.gz"
     manifest = json.dumps({"schema_version": 2, "layout_revision": 2, "bundle_version": "v0.0.2"}).encode()
