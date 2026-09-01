@@ -1,10 +1,17 @@
 {
-  "schema_version": 1,
-  "id": "example.expression_lab",
+  "schema_version": 2,
+  "id": "com.orulink.expression_lab",
   "name": "Watcher Expression Lab",
   "version": "0.1.0",
   "author": "Orulink AI",
-  "description": "Tune and preview device-side procedural Watcher expressions from a local web workbench.",
+  "description": "Design, preview, and run procedural KuroBlob-style Watcher expressions and vector decorations.",
   "requires_watcherobot": ">=0.1.4,<0.2",
-  "dependencies": []
+  "dependencies": [
+    "fastapi>=0.129,<1",
+    "uvicorn>=0.30,<1"
+  ],
+  "supported_host_platforms": [
+    "windows"
+  ],
+  "icon": "icon.svg"
 }

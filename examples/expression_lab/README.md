@@ -3,6 +3,12 @@
 这是 KuroBlob 风格代码表情的 SDK 实验台。浏览器只负责预览和调参；真正显示在
 Watcher 屏幕上的画面由 ESP32 在本地生成，不传输逐帧图片，也不执行浏览器脚本。
 
+正式 Application ID 为 `com.orulink.expression_lab`。当前应用广场版本只声明已经完成
+真机验收的 Windows；macOS 在完成同等安装、启动、配对和真机渲染验证前不会标记为支持。
+Watcher 固件必须提供 `expression.runtime.v3` 能力，DIY 矢量装饰还需要
+`expression.vector_accessory.v1`。旧固件仍可安装 Application，但页面会明确提示先通过
+Watcher Desktop 更新固件，不会静默黑屏或回退到 AnimPack。
+
 ## 运行
 
 先启动 Expression Lab：
