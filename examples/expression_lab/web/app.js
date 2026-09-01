@@ -13,14 +13,9 @@ const EYELID_PRESET_STORAGE_KEY = "watcher.expressionLab.eyelidPresets.v1";
 const EYELID_PRESET_COOKIE_KEY = "watcherExpressionEyelidsV1";
 const EYELID_PRESET_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 const MAX_EYELID_PRESETS = 12;
-const PIXEL_ACCESSORY_GRID_SIZE = 51;
-const PIXEL_ACCESSORY_MASK_BYTES = 326;
-const PIXEL_ACCESSORY_CELL_LOGICAL = 4;
-const PIXEL_ACCESSORY_STORAGE_KEY = "watcher.expressionLab.pixelAccessories.v1";
-const MAX_PIXEL_ACCESSORY_PRESETS = 12;
-const VECTOR_ACCESSORY_MAX_STROKES = 12;
-const VECTOR_ACCESSORY_MAX_POINTS_PER_STROKE = 48;
-const VECTOR_ACCESSORY_MAX_POINTS = 192;
+const VECTOR_ACCESSORY_MAX_STROKES = VectorPath.MAX_STROKES;
+const VECTOR_ACCESSORY_MAX_POINTS_PER_STROKE = VectorPath.MAX_POINTS_PER_STROKE;
+const VECTOR_ACCESSORY_MAX_POINTS = VectorPath.MAX_POINTS;
 const VECTOR_ACCESSORY_STORAGE_KEY = "watcher.expressionLab.vectorAccessories.v1";
 const MAX_VECTOR_ACCESSORY_PRESETS = 12;
 const displayCtx = canvas.getContext("2d", { alpha: false });
@@ -30,8 +25,6 @@ const ctx = flatCanvas.getContext("2d", { alpha: false });
 const eyeCanvas = document.createElement("canvas");
 eyeCanvas.width = canvas.width; eyeCanvas.height = canvas.height;
 const eyeCtx = eyeCanvas.getContext("2d");
-const pixelAccessoryCanvas = byId("pixelAccessoryCanvas");
-const pixelAccessoryCtx = pixelAccessoryCanvas.getContext("2d", { alpha: false });
 const vectorAccessoryCanvas = byId("vectorAccessoryCanvas");
 const vectorAccessoryCtx = vectorAccessoryCanvas.getContext("2d", { alpha: false });
 const controls = {
@@ -59,7 +52,7 @@ const eyelidControlNames = [
 ];
 const state = {
   active: false, serviceReady: false, statusInitialized: false,
-  deviceConnected: false, expressionSupported: false, pixelAccessorySupported: false, vectorAccessorySupported: false,
+  deviceConnected: false, expressionSupported: false, vectorAccessorySupported: false,
   preset: "standby", activeEyelidPresetId: null, eyelidPresets: [], sending: false, pairing: false, statusBusy: false,
   intentActive: false, resumePending: false, resumeTimer: 0,
   lastFrame: performance.now(), phase: 0, debounce: 0,
@@ -67,9 +60,6 @@ const state = {
   pointerX: 0, pointerY: 0, pointerLastSyncAt: 0,
   pointerLastSentX: Number.NaN, pointerLastSentY: Number.NaN,
   updateBusy: false, queuedUpdate: null,
-  pixelAccessory: new Uint8Array(PIXEL_ACCESSORY_GRID_SIZE * PIXEL_ACCESSORY_GRID_SIZE),
-  pixelAccessoryLayer: "front", pixelTool: "brush", pixelDrawing: false, pixelDrawingChanged: false,
-  pixelLastCell: null, pixelUndo: [], pixelRedo: [], pixelAccessoryPresets: [],
   vectorStrokes: [], vectorAccessoryLayer: "front", vectorTool: "brush", vectorDrawing: false,
   vectorDraft: null, vectorUndo: [], vectorRedo: [], vectorAccessoryPresets: [], vectorEraseChanged: false,
 };
@@ -96,237 +86,55 @@ const accessoryControlDefaults = {
   accessoryX: 0, accessoryY: 0, accessoryRotation: 0,
 };
 
-function encodePixelAccessoryMask() {
-  const bytes = new Uint8Array(PIXEL_ACCESSORY_MASK_BYTES);
-  state.pixelAccessory.forEach((value, index) => {
-    if (value) bytes[index >> 3] |= 0x80 >> (index & 7);
-  });
-  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
-}
-
-function decodePixelAccessoryMask(mask) {
-  if (typeof mask !== "string" || !/^[0-9a-f]{652}$/i.test(mask)) return null;
-  const pixels = new Uint8Array(PIXEL_ACCESSORY_GRID_SIZE * PIXEL_ACCESSORY_GRID_SIZE);
-  for (let index = 0; index < pixels.length; index += 1) {
-    const byte = Number.parseInt(mask.slice((index >> 3) * 2, (index >> 3) * 2 + 2), 16);
-    pixels[index] = (byte & (0x80 >> (index & 7))) !== 0 ? 1 : 0;
-  }
-  return pixels;
-}
-
-function loadPixelAccessoryPresets() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(PIXEL_ACCESSORY_STORAGE_KEY) || "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((preset) => (
-      preset && typeof preset.id === "string" && typeof preset.name === "string" &&
-      /^(front|back)$/.test(preset.layer) && /^[0-9a-f]{652}$/i.test(preset.mask)
-    )).slice(0, MAX_PIXEL_ACCESSORY_PRESETS);
-  } catch (_) {
-    return [];
-  }
-}
-
-function persistPixelAccessoryPresets() {
-  localStorage.setItem(PIXEL_ACCESSORY_STORAGE_KEY, JSON.stringify(state.pixelAccessoryPresets));
-}
-
-function renderPixelAccessoryPresets() {
-  const list = byId("pixelAccessoryPresetList");
-  list.replaceChildren();
-  if (state.pixelAccessoryPresets.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "pixel-preset-empty";
-    empty.textContent = "还没有个人装饰。画好后输入名称即可保存。";
-    list.append(empty);
-    return;
-  }
-  state.pixelAccessoryPresets.forEach((preset) => {
-    const item = document.createElement("div"); item.className = "pixel-preset-item";
-    const applyButton = document.createElement("button"); applyButton.type = "button";
-    applyButton.textContent = preset.name; applyButton.title = `调用个人装饰：${preset.name}`;
-    applyButton.addEventListener("click", () => applyPixelAccessoryPreset(preset.id));
-    const deleteButton = document.createElement("button"); deleteButton.type = "button";
-    deleteButton.textContent = "×"; deleteButton.setAttribute("aria-label", `删除个人装饰 ${preset.name}`);
-    deleteButton.addEventListener("click", () => deletePixelAccessoryPreset(preset.id));
-    item.append(applyButton, deleteButton); list.append(item);
-  });
-}
-
-function savePixelAccessoryPreset() {
-  const input = byId("pixelAccessoryName");
-  const name = input.value.trim();
-  if (!name) return;
-  const existing = state.pixelAccessoryPresets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
-  const preset = existing || { id: `pixel-${Date.now()}` };
-  preset.name = name; preset.mask = encodePixelAccessoryMask(); preset.layer = state.pixelAccessoryLayer;
-  if (!existing) state.pixelAccessoryPresets.unshift(preset);
-  state.pixelAccessoryPresets = state.pixelAccessoryPresets.slice(0, MAX_PIXEL_ACCESSORY_PRESETS);
-  persistPixelAccessoryPresets(); renderPixelAccessoryPresets(); input.value = "";
-  byId("savePixelAccessory").disabled = true;
-  toast(`个人装饰“${name}”已保存`);
-}
-
-function applyPixelAccessoryPreset(presetId) {
-  const preset = state.pixelAccessoryPresets.find((candidate) => candidate.id === presetId);
-  const pixels = preset ? decodePixelAccessoryMask(preset.mask) : null;
-  if (!preset || !pixels) return;
-  pushPixelHistory(); state.pixelAccessory = pixels; state.pixelAccessoryLayer = preset.layer;
-  byId("pixelAccessoryLayer").value = preset.layer; controls.accessory.value = "custom_pixel";
-  renderPixelAccessoryEditor(); queueUpdate(); toast(`已调用个人装饰“${preset.name}”`);
-}
-
-function deletePixelAccessoryPreset(presetId) {
-  state.pixelAccessoryPresets = state.pixelAccessoryPresets.filter((preset) => preset.id !== presetId);
-  persistPixelAccessoryPresets(); renderPixelAccessoryPresets();
-}
-
-function pushPixelHistory() {
-  state.pixelUndo.push(state.pixelAccessory.slice());
-  if (state.pixelUndo.length > 30) state.pixelUndo.shift();
-  state.pixelRedo = [];
-  refreshPixelHistoryButtons();
-}
-
-function restorePixelHistory(source, destination) {
-  if (source.length === 0) return;
-  destination.push(state.pixelAccessory.slice()); state.pixelAccessory = source.pop();
-  renderPixelAccessoryEditor(); refreshPixelHistoryButtons(); activateCustomPixelAccessory();
-}
-
-function refreshPixelHistoryButtons() {
-  byId("pixelUndo").disabled = state.pixelUndo.length === 0;
-  byId("pixelRedo").disabled = state.pixelRedo.length === 0;
-}
-
-function renderPixelAccessoryEditor() {
-  const cell = pixelAccessoryCanvas.width / PIXEL_ACCESSORY_GRID_SIZE;
-  pixelAccessoryCtx.fillStyle = "#020302";
-  pixelAccessoryCtx.fillRect(0, 0, pixelAccessoryCanvas.width, pixelAccessoryCanvas.height);
-  pixelAccessoryCtx.save();
-  pixelAccessoryCtx.globalAlpha = .13; pixelAccessoryCtx.fillStyle = controls.eyeColor.value;
-  for (const centerX of [164, 346]) {
-    for (const offset of [-40, -24, -8, 8, 24, 40]) {
-      const height = 52 - Math.abs(offset) * .55;
-      pixelAccessoryCtx.fillRect(centerX + offset - 4, 255 - height / 2, 8, height);
-    }
-  }
-  pixelAccessoryCtx.restore();
-  pixelAccessoryCtx.fillStyle = controls.eyeColor.value;
-  state.pixelAccessory.forEach((value, index) => {
-    if (!value) return;
-    const x = index % PIXEL_ACCESSORY_GRID_SIZE; const y = Math.floor(index / PIXEL_ACCESSORY_GRID_SIZE);
-    pixelAccessoryCtx.fillRect(x * cell, y * cell, Math.ceil(cell), Math.ceil(cell));
-  });
-  pixelAccessoryCtx.strokeStyle = "rgba(161,240,60,.075)"; pixelAccessoryCtx.lineWidth = 1;
-  for (let line = 1; line < PIXEL_ACCESSORY_GRID_SIZE; line += 1) {
-    const position = Math.round(line * cell) + .5;
-    pixelAccessoryCtx.beginPath(); pixelAccessoryCtx.moveTo(position, 0); pixelAccessoryCtx.lineTo(position, 510); pixelAccessoryCtx.stroke();
-    pixelAccessoryCtx.beginPath(); pixelAccessoryCtx.moveTo(0, position); pixelAccessoryCtx.lineTo(510, position); pixelAccessoryCtx.stroke();
-  }
-}
-
-function paintPixelCell(x, y) {
-  const size = Number(byId("pixelBrushSize").value); const radius = Math.floor(size / 2);
-  const value = state.pixelTool === "brush" ? 1 : 0;
-  for (let offsetY = -radius; offsetY < size - radius; offsetY += 1) {
-    for (let offsetX = -radius; offsetX < size - radius; offsetX += 1) {
-      const pixelX = x + offsetX; const pixelY = y + offsetY;
-      if (pixelX < 0 || pixelY < 0 || pixelX >= PIXEL_ACCESSORY_GRID_SIZE || pixelY >= PIXEL_ACCESSORY_GRID_SIZE) continue;
-      const index = pixelY * PIXEL_ACCESSORY_GRID_SIZE + pixelX;
-      if (state.pixelAccessory[index] !== value) { state.pixelAccessory[index] = value; state.pixelDrawingChanged = true; }
-    }
-  }
-}
-
-function pixelCellFromPointer(event) {
-  const bounds = pixelAccessoryCanvas.getBoundingClientRect();
-  return {
-    x: Math.max(0, Math.min(PIXEL_ACCESSORY_GRID_SIZE - 1, Math.floor((event.clientX - bounds.left) / bounds.width * PIXEL_ACCESSORY_GRID_SIZE))),
-    y: Math.max(0, Math.min(PIXEL_ACCESSORY_GRID_SIZE - 1, Math.floor((event.clientY - bounds.top) / bounds.height * PIXEL_ACCESSORY_GRID_SIZE))),
-  };
-}
-
-function paintPixelLine(from, to) {
-  const steps = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y), 1);
-  for (let step = 0; step <= steps; step += 1) {
-    paintPixelCell(Math.round(from.x + (to.x - from.x) * step / steps), Math.round(from.y + (to.y - from.y) * step / steps));
-  }
-  renderPixelAccessoryEditor();
-}
-
-function activateCustomPixelAccessory() {
-  controls.accessory.value = "custom_pixel";
-  queueUpdate();
-}
-
 function cloneVectorStrokes(strokes = state.vectorStrokes) {
-  return strokes.map((stroke) => ({
-    width: stroke.width,
-    points: stroke.points.map((point) => ({ x: point.x, y: point.y })),
-  }));
+  return VectorPath.clone(strokes);
 }
 
 function vectorPointCount(strokes = state.vectorStrokes) {
-  return strokes.reduce((total, stroke) => total + stroke.points.length, 0);
+  return VectorPath.pointCount(strokes);
 }
 
 function encodeVectorAccessoryPath() {
-  const bytes = [1, state.vectorStrokes.length];
-  state.vectorStrokes.forEach((stroke) => {
-    bytes.push(stroke.width, stroke.points.length);
-    stroke.points.forEach((point) => {
-      bytes.push((point.x >> 8) & 0xff, point.x & 0xff, (point.y >> 8) & 0xff, point.y & 0xff);
-    });
-  });
-  return bytes.map((value) => value.toString(16).padStart(2, "0")).join("");
+  return VectorPath.encode(state.vectorStrokes);
 }
 
 function decodeVectorAccessoryPath(path) {
-  if (typeof path !== "string" || path.length < 4 || path.length > 1588 || path.length % 2 || !/^[0-9a-f]+$/i.test(path)) return null;
-  const bytes = new Uint8Array(path.match(/../g).map((value) => Number.parseInt(value, 16)));
-  if (bytes[0] !== 1 || bytes[1] > VECTOR_ACCESSORY_MAX_STROKES) return null;
-  const strokes = []; let offset = 2; let total = 0;
-  for (let index = 0; index < bytes[1]; index += 1) {
-    if (offset + 2 > bytes.length) return null;
-    const width = bytes[offset]; const count = bytes[offset + 1]; offset += 2; total += count;
-    if (width < 1 || width > 48 || count < 1 || count > VECTOR_ACCESSORY_MAX_POINTS_PER_STROKE || total > VECTOR_ACCESSORY_MAX_POINTS || offset + count * 4 > bytes.length) return null;
-    const points = [];
-    for (let point = 0; point < count; point += 1) {
-      const x = bytes[offset] * 256 + bytes[offset + 1]; const y = bytes[offset + 2] * 256 + bytes[offset + 3]; offset += 4;
-      if (x >= 412 || y >= 412) return null;
-      points.push({ x, y });
-    }
-    strokes.push({ width, points });
-  }
-  return offset === bytes.length ? strokes : null;
+  return VectorPath.decode(path);
 }
 
 function loadVectorAccessoryPresets() {
   try {
     const parsed = JSON.parse(localStorage.getItem(VECTOR_ACCESSORY_STORAGE_KEY) || "[]");
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((preset) => (
-      preset && typeof preset.id === "string" && typeof preset.name === "string" &&
-      /^(front|back)$/.test(preset.layer) && decodeVectorAccessoryPath(preset.path)
-    )).slice(0, MAX_VECTOR_ACCESSORY_PRESETS);
+    return parsed.flatMap((preset) => {
+      if (!preset || typeof preset.id !== "string" || typeof preset.name !== "string") return [];
+      const name = preset.name.trim().slice(0, 18);
+      if (!name || !/^(front|back)$/.test(preset.layer) || !decodeVectorAccessoryPath(preset.path)) return [];
+      return [{ id: preset.id.slice(0, 64), name, layer: preset.layer, path: preset.path }];
+    }).slice(0, MAX_VECTOR_ACCESSORY_PRESETS);
   } catch (_) {
     return [];
   }
 }
 
-function persistVectorAccessoryPresets() {
-  localStorage.setItem(VECTOR_ACCESSORY_STORAGE_KEY, JSON.stringify(state.vectorAccessoryPresets));
+function persistVectorAccessoryPresets(presets) {
+  try {
+    localStorage.setItem(VECTOR_ACCESSORY_STORAGE_KEY, JSON.stringify(presets));
+    return true;
+  } catch (_) {
+    toast("浏览器无法保存矢量装饰，请检查隐私或存储设置", "error");
+    return false;
+  }
 }
 
 function renderVectorAccessoryPresets() {
   const list = byId("vectorAccessoryPresetList"); list.replaceChildren();
   if (state.vectorAccessoryPresets.length === 0) {
-    const empty = document.createElement("p"); empty.className = "pixel-preset-empty";
+    const empty = document.createElement("p"); empty.className = "accessory-preset-empty";
     empty.textContent = "还没有矢量装饰。画好后输入名称即可保存。"; list.append(empty); return;
   }
   state.vectorAccessoryPresets.forEach((preset) => {
-    const item = document.createElement("div"); item.className = "pixel-preset-item";
+    const item = document.createElement("div"); item.className = "accessory-preset-item";
     const applyButton = document.createElement("button"); applyButton.type = "button"; applyButton.textContent = preset.name;
     applyButton.addEventListener("click", () => applyVectorAccessoryPreset(preset.id));
     const deleteButton = document.createElement("button"); deleteButton.type = "button"; deleteButton.textContent = "×";
@@ -340,11 +148,17 @@ function saveVectorAccessoryPreset() {
   const input = byId("vectorAccessoryName"); const name = input.value.trim();
   if (!name || state.vectorStrokes.length === 0) return;
   const existing = state.vectorAccessoryPresets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
-  const preset = existing || { id: `vector-${Date.now()}` };
-  preset.name = name; preset.path = encodeVectorAccessoryPath(); preset.layer = state.vectorAccessoryLayer;
-  if (!existing) state.vectorAccessoryPresets.unshift(preset);
-  state.vectorAccessoryPresets = state.vectorAccessoryPresets.slice(0, MAX_VECTOR_ACCESSORY_PRESETS);
-  persistVectorAccessoryPresets(); renderVectorAccessoryPresets(); input.value = "";
+  const preset = {
+    id: existing?.id || `vector-${Date.now()}`,
+    name: name.slice(0, 18),
+    path: encodeVectorAccessoryPath(),
+    layer: state.vectorAccessoryLayer,
+  };
+  const nextPresets = existing
+    ? state.vectorAccessoryPresets.map((candidate) => candidate.id === existing.id ? preset : candidate)
+    : [preset, ...state.vectorAccessoryPresets].slice(0, MAX_VECTOR_ACCESSORY_PRESETS);
+  if (!persistVectorAccessoryPresets(nextPresets)) return;
+  state.vectorAccessoryPresets = nextPresets; renderVectorAccessoryPresets(); input.value = "";
   byId("saveVectorAccessory").disabled = true; toast(`矢量装饰“${name}”已保存`);
 }
 
@@ -358,8 +172,9 @@ function applyVectorAccessoryPreset(presetId) {
 }
 
 function deleteVectorAccessoryPreset(presetId) {
-  state.vectorAccessoryPresets = state.vectorAccessoryPresets.filter((preset) => preset.id !== presetId);
-  persistVectorAccessoryPresets(); renderVectorAccessoryPresets();
+  const nextPresets = state.vectorAccessoryPresets.filter((preset) => preset.id !== presetId);
+  if (!persistVectorAccessoryPresets(nextPresets)) return;
+  state.vectorAccessoryPresets = nextPresets; renderVectorAccessoryPresets();
 }
 
 function pushVectorHistory() {
@@ -427,49 +242,19 @@ function vectorPointFromPointer(event) {
 }
 
 function pointDistance(first, second) {
-  return Math.hypot(first.x - second.x, first.y - second.y);
-}
-
-function pointSegmentDistance(point, start, end) {
-  const dx = end.x - start.x; const dy = end.y - start.y;
-  if (dx === 0 && dy === 0) return pointDistance(point, start);
-  const amount = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)));
-  return Math.hypot(point.x - (start.x + dx * amount), point.y - (start.y + dy * amount));
+  return VectorPath.pointDistance(first, second);
 }
 
 function simplifyVectorPoints(points, tolerance = 1.4) {
-  if (points.length <= 2) return points.map((point) => ({ ...point }));
-  let maxDistance = 0; let splitIndex = 0;
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const distance = pointSegmentDistance(points[index], points[0], points[points.length - 1]);
-    if (distance > maxDistance) { maxDistance = distance; splitIndex = index; }
-  }
-  if (maxDistance <= tolerance) return [{ ...points[0] }, { ...points[points.length - 1] }];
-  const left = simplifyVectorPoints(points.slice(0, splitIndex + 1), tolerance);
-  const right = simplifyVectorPoints(points.slice(splitIndex), tolerance);
-  return left.slice(0, -1).concat(right);
+  return VectorPath.simplify(points, tolerance);
 }
 
 function downsampleVectorPoints(points, maximum) {
-  if (points.length <= maximum) return points;
-  if (maximum <= 1) return [{ ...points[0] }];
-  return Array.from({ length: maximum }, (_, index) => ({ ...points[Math.round(index * (points.length - 1) / (maximum - 1))] }));
+  return VectorPath.downsample(points, maximum);
 }
 
 function normalizeVectorStrokes(strokes) {
-  let normalized = strokes.filter((stroke) => stroke.points.length > 0).map((stroke) => ({
-    width: Math.max(1, Math.min(48, Math.round(stroke.width))),
-    points: downsampleVectorPoints(simplifyVectorPoints(stroke.points), VECTOR_ACCESSORY_MAX_POINTS_PER_STROKE),
-  }));
-  if (normalized.length > VECTOR_ACCESSORY_MAX_STROKES) {
-    normalized = normalized.sort((a, b) => b.points.length - a.points.length).slice(0, VECTOR_ACCESSORY_MAX_STROKES);
-  }
-  const total = vectorPointCount(normalized);
-  if (total > VECTOR_ACCESSORY_MAX_POINTS) {
-    const ratio = VECTOR_ACCESSORY_MAX_POINTS / total;
-    normalized = normalized.map((stroke) => ({ ...stroke, points: downsampleVectorPoints(stroke.points, Math.max(1, Math.floor(stroke.points.length * ratio))) }));
-  }
-  return normalized;
+  return VectorPath.normalize(strokes);
 }
 
 function eraseVectorAt(point) {
@@ -692,12 +477,9 @@ function effectiveGaze() {
 
 function values() {
   const gaze = effectiveGaze();
-  let customAccessory = {};
-  if (controls.accessory.value === "custom_pixel") {
-    customAccessory = { custom_accessory_mask: encodePixelAccessoryMask(), custom_accessory_layer: state.pixelAccessoryLayer };
-  } else if (controls.accessory.value === "custom_vector") {
-    customAccessory = { custom_vector_path: encodeVectorAccessoryPath(), custom_accessory_layer: state.vectorAccessoryLayer };
-  }
+  const customAccessory = controls.accessory.value === "custom_vector"
+    ? { custom_vector_path: encodeVectorAccessoryPath(), custom_accessory_layer: state.vectorAccessoryLayer }
+    : {};
   return {
     preset: state.preset, style: controls.style.value, tag: controls.tag.value,
     accessory: controls.accessory.value,
@@ -786,11 +568,7 @@ function renderAccessoryModule() {
   byId("accessoryControlsModule").dataset.active = String(hasAccessory);
   byId("accessoryModuleState").textContent = controls.accessory.value === "custom_vector"
     ? "DIY 矢量路径 V1 · 可独立变换"
-    : controls.accessory.value === "custom_pixel" ? "DIY 像素装饰 · 可独立变换"
     : (hasAccessory ? "装饰可独立变换" : "先选择头部装饰");
-  byId("pixelAccessoryState").textContent = !state.deviceConnected || state.pixelAccessorySupported
-    ? "鼠标松开后同步一次；装饰复用上方变换与 50% 视线跟随。"
-    : "当前固件不支持 DIY 像素装饰，仅可在 Web 本地预览。";
   renderVectorAccessoryStatus();
   controls.accessoryScale.disabled = !hasAccessory;
   controls.accessoryX.disabled = !hasAccessory;
@@ -876,17 +654,8 @@ const accessoryColors = {
 
 const accessoryAnchors = {
   halo: [206, 56], devil_horns: [206, 100], ninja_mask: [206, 206],
-  hero_mask: [206, 206], eyepatch: [206, 160], antenna: [206, 80], custom_pixel: [206, 206], custom_vector: [206, 206],
+  hero_mask: [206, 206], eyepatch: [206, 160], antenna: [206, 80], custom_vector: [206, 206],
 };
-
-function drawCustomPixelAccessory(color) {
-  ctx.fillStyle = color;
-  state.pixelAccessory.forEach((value, index) => {
-    if (!value) return;
-    const x = index % PIXEL_ACCESSORY_GRID_SIZE; const y = Math.floor(index / PIXEL_ACCESSORY_GRID_SIZE);
-    ctx.fillRect(2 + x * 8, 2 + y * 8, 8, 8);
-  });
-}
 
 function drawCustomVectorAccessory(color) {
   ctx.strokeStyle = color; ctx.fillStyle = color;
@@ -928,8 +697,6 @@ function drawAccessory(accessory, layer, t, transform, gazeOffsetX = 0, gazeOffs
     ctx.strokeStyle = accessoryColors.eyepatch; ctx.lineWidth = 10;
     ctx.beginPath(); ctx.moveTo(18, 160); ctx.lineTo(394, 100); ctx.stroke();
     ctx.fillStyle = "#050607"; ctx.beginPath(); ctx.arc(132, 206, 64, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  } else if (accessory === "custom_pixel" && layer === state.pixelAccessoryLayer) {
-    drawCustomPixelAccessory(transform.color);
   } else if (accessory === "custom_vector" && layer === state.vectorAccessoryLayer) {
     drawCustomVectorAccessory(transform.color);
   }
@@ -1145,7 +912,6 @@ function applyStatus(snapshot) {
   state.serviceReady = true;
   state.deviceConnected = snapshotConnected;
   state.expressionSupported = Boolean(snapshot.expression_supported);
-  state.pixelAccessorySupported = Boolean(snapshot.pixel_accessory_supported);
   state.vectorAccessorySupported = Boolean(snapshot.vector_accessory_supported);
   state.active = snapshotActive;
   if (snapshotActive) {
@@ -1181,7 +947,6 @@ async function refreshConnectionStatus() {
     state.serviceReady = false;
     state.deviceConnected = false;
     state.expressionSupported = false;
-    state.pixelAccessorySupported = false;
     state.vectorAccessorySupported = false;
     state.active = false;
     renderConnectionState();
@@ -1212,10 +977,6 @@ async function pairWatcher(event) {
 
 async function startExpression({ resume = false } = {}) {
   if (state.sending) return;
-  if (controls.accessory.value === "custom_pixel" && state.deviceConnected && !state.pixelAccessorySupported) {
-    toast("当前 Watcher 固件不支持 DIY 像素装饰，请先更新实验固件", "error");
-    return;
-  }
   if (controls.accessory.value === "custom_vector" && state.deviceConnected && !state.vectorAccessorySupported) {
     toast("当前 Watcher 固件不支持矢量路径，请先更新实验固件", "error");
     return;
@@ -1285,7 +1046,6 @@ function queueUpdate() {
   refreshReadouts();
   if (!state.active) return;
   if (controls.accessory.value === "custom_vector" && state.deviceConnected && !state.vectorAccessorySupported) return;
-  if (controls.accessory.value === "custom_pixel" && state.deviceConnected && !state.pixelAccessorySupported) return;
   window.clearTimeout(state.debounce);
   state.debounce = window.setTimeout(() => sendExpressionUpdate(values()), 80);
 }
@@ -1346,7 +1106,7 @@ Object.entries(controls).filter(([name]) => name !== "pointerTracking" && name !
     if (lidControlNames.has(name)) {
       markEyelidsCustom();
     }
-    if (name === "eyeColor") { renderPixelAccessoryEditor(); renderVectorAccessoryEditor(); }
+    if (name === "eyeColor") renderVectorAccessoryEditor();
     queueUpdate();
   }));
 controls.pointerTracking.addEventListener("input", () => {
@@ -1376,31 +1136,6 @@ byId("eyelidPresetName").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && event.target.value.trim() !== "") saveCurrentEyelidPreset();
 });
 byId("saveEyelidPreset").addEventListener("click", saveCurrentEyelidPreset);
-byId("pixelBrush").addEventListener("click", () => {
-  state.pixelTool = "brush"; byId("pixelBrush").classList.add("active"); byId("pixelEraser").classList.remove("active");
-});
-byId("pixelEraser").addEventListener("click", () => {
-  state.pixelTool = "eraser"; byId("pixelEraser").classList.add("active"); byId("pixelBrush").classList.remove("active");
-});
-byId("pixelAccessoryLayer").addEventListener("input", (event) => {
-  state.pixelAccessoryLayer = event.target.value; activateCustomPixelAccessory();
-});
-byId("pixelUndo").addEventListener("click", () => restorePixelHistory(state.pixelUndo, state.pixelRedo));
-byId("pixelRedo").addEventListener("click", () => restorePixelHistory(state.pixelRedo, state.pixelUndo));
-byId("pixelClear").addEventListener("click", () => {
-  if (!state.pixelAccessory.some(Boolean)) return;
-  pushPixelHistory(); state.pixelAccessory.fill(0); renderPixelAccessoryEditor(); activateCustomPixelAccessory();
-});
-byId("applyPixelAccessory").addEventListener("click", () => {
-  activateCustomPixelAccessory(); toast("DIY 像素装饰已应用");
-});
-byId("pixelAccessoryName").addEventListener("input", (event) => {
-  byId("savePixelAccessory").disabled = event.target.value.trim() === "";
-});
-byId("pixelAccessoryName").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && event.target.value.trim()) savePixelAccessoryPreset();
-});
-byId("savePixelAccessory").addEventListener("click", savePixelAccessoryPreset);
 byId("vectorBrush").addEventListener("click", () => {
   state.vectorTool = "brush"; byId("vectorBrush").classList.add("active"); byId("vectorEraser").classList.remove("active");
 });
@@ -1466,23 +1201,6 @@ function finishVectorDrawing() {
 }
 vectorAccessoryCanvas.addEventListener("pointerup", finishVectorDrawing);
 vectorAccessoryCanvas.addEventListener("pointercancel", finishVectorDrawing);
-pixelAccessoryCanvas.addEventListener("pointerdown", (event) => {
-  event.preventDefault(); pixelAccessoryCanvas.setPointerCapture(event.pointerId);
-  pushPixelHistory(); state.pixelDrawing = true; state.pixelDrawingChanged = false;
-  state.pixelLastCell = pixelCellFromPointer(event); paintPixelLine(state.pixelLastCell, state.pixelLastCell);
-});
-pixelAccessoryCanvas.addEventListener("pointermove", (event) => {
-  if (!state.pixelDrawing) return;
-  const cell = pixelCellFromPointer(event); paintPixelLine(state.pixelLastCell, cell); state.pixelLastCell = cell;
-});
-function finishPixelDrawing() {
-  if (!state.pixelDrawing) return;
-  state.pixelDrawing = false; state.pixelLastCell = null;
-  if (state.pixelDrawingChanged) activateCustomPixelAccessory();
-  else { state.pixelUndo.pop(); refreshPixelHistoryButtons(); }
-}
-pixelAccessoryCanvas.addEventListener("pointerup", finishPixelDrawing);
-pixelAccessoryCanvas.addEventListener("pointercancel", finishPixelDrawing);
 canvas.addEventListener("pointermove", updatePointerTarget);
 canvas.addEventListener("pointerleave", releasePointerTarget);
 canvas.addEventListener("pointercancel", releasePointerTarget);
@@ -1501,14 +1219,10 @@ window.addEventListener("pagehide", () => { if (state.active) navigator.sendBeac
 
 document.body.classList.add("scanlines");
 state.eyelidPresets = loadEyelidPresets();
-state.pixelAccessoryPresets = loadPixelAccessoryPresets();
 state.vectorAccessoryPresets = loadVectorAccessoryPresets();
 renderEyelidPresets();
-renderPixelAccessoryPresets();
 renderVectorAccessoryPresets();
-renderPixelAccessoryEditor();
 renderVectorAccessoryEditor();
-refreshPixelHistoryButtons();
 refreshVectorHistoryButtons();
 refreshReadouts();
 renderConnectionState();
