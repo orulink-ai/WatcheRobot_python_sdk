@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import re
 import threading
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
@@ -13,6 +16,87 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from watcherobot.errors import WatcheRobotError
+
+
+APPLICATION_ID = "com.orulink.expression_lab"
+APPLICATION_VERSION = "0.1.1"
+REQUIRED_FIRMWARE_CAPABILITY = "expression.runtime.v3"
+
+
+@dataclass(frozen=True)
+class FirmwareBundle:
+    """One immutable, locally bundled firmware package exposed to the browser."""
+
+    path: Path
+    filename: str
+    size_bytes: int
+    sha256: str
+    required_capability: str
+    source_pull_request: int
+    source_commit: str
+
+    @classmethod
+    def load(cls, root: Path | None) -> FirmwareBundle | None:
+        if root is None:
+            return None
+        try:
+            document = json.loads(
+                (root / "firmware-package.json").read_text(encoding="utf-8")
+            )
+            if document["app_id"] != APPLICATION_ID:
+                return None
+            if document["app_version"] != APPLICATION_VERSION:
+                return None
+            filename = str(document["filename"])
+            if (
+                filename != Path(filename).name
+                or not filename.lower().endswith(".zip")
+            ):
+                return None
+            path = root / filename
+            payload = path.read_bytes()
+            expected_size = int(document["size_bytes"])
+            expected_sha256 = str(document["sha256"]).lower()
+            if len(payload) != expected_size:
+                return None
+            if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+                return None
+            if hashlib.sha256(payload).hexdigest() != expected_sha256:
+                return None
+            required_capability = str(document["required_capability"])
+            if required_capability != REQUIRED_FIRMWARE_CAPABILITY:
+                return None
+            source = document["source"]
+            source_pull_request = int(source["pull_request"])
+            source_commit = str(source["commit"])
+            if source_pull_request < 1 or not re.fullmatch(
+                r"[0-9a-f]{40}", source_commit
+            ):
+                return None
+            return cls(
+                path=path,
+                filename=filename,
+                size_bytes=expected_size,
+                sha256=expected_sha256,
+                required_capability=required_capability,
+                source_pull_request=source_pull_request,
+                source_commit=source_commit,
+            )
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def status(self, *, required: bool) -> dict[str, object]:
+        return {
+            "required": required,
+            "available": True,
+            "filename": self.filename,
+            "size_bytes": self.size_bytes,
+            "sha256": self.sha256,
+            "required_capability": self.required_capability,
+            "source_pull_request": self.source_pull_request,
+            "source_commit": self.source_commit,
+            "download_url": "./api/firmware/download",
+        }
 
 
 def _validate_custom_vector_path(value: str) -> str:
@@ -304,7 +388,14 @@ class ExpressionLabService:
             return self._status_locked(probe_device=False)
 
 
-def create_web_app(service: ExpressionLabService, *, web_root: Path) -> FastAPI:
+def create_web_app(
+    service: ExpressionLabService,
+    *,
+    web_root: Path,
+    firmware_root: Path | None = None,
+) -> FastAPI:
+    firmware_bundle = FirmwareBundle.load(firmware_root)
+
     def web_file(name: str) -> FileResponse:
         return FileResponse(web_root / name, headers={"Cache-Control": "no-store"})
 
@@ -342,7 +433,27 @@ def create_web_app(service: ExpressionLabService, *, web_root: Path) -> FastAPI:
 
     @app.get("/api/status")
     async def status() -> dict[str, object]:
-        return service.status()
+        snapshot = service.status()
+        required = bool(
+            snapshot["device_connected"] and not snapshot["expression_supported"]
+        )
+        snapshot["firmware_update"] = (
+            firmware_bundle.status(required=required)
+            if firmware_bundle is not None
+            else {"required": required, "available": False}
+        )
+        return snapshot
+
+    @app.get("/api/firmware/download")
+    async def download_firmware() -> FileResponse:
+        if firmware_bundle is None:
+            raise HTTPException(status_code=404, detail="firmware package unavailable")
+        return FileResponse(
+            firmware_bundle.path,
+            media_type="application/zip",
+            filename=firmware_bundle.filename,
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.post("/api/pair")
     async def pair(request: PairWatcherRequest) -> dict[str, object]:

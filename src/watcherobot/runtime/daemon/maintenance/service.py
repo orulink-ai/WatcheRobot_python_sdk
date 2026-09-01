@@ -580,8 +580,9 @@ def _parse_flash_zip(path: Path) -> tuple[dict[str, str], list[tuple[int, str, b
             flags = {"flash_mode": "dio", "flash_freq": "80m", "flash_size": "16MB"}
             tokens = shlex.split(lines[0])
             for key in tuple(flags):
-                option = f"--{key}"
-                if option in tokens and tokens.index(option) + 1 < len(tokens):
+                options = (f"--{key}", f"--{key.replace('_', '-')}")
+                option = next((candidate for candidate in options if candidate in tokens), None)
+                if option is not None and tokens.index(option) + 1 < len(tokens):
                     flags[key] = tokens[tokens.index(option) + 1]
             normalized = {name.replace("\\", "/").lstrip("./"): name for name in names}
             segments: list[tuple[int, str, bytes]] = []
