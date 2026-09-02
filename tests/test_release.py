@@ -224,6 +224,21 @@ def test_release_version_pr_runs_the_full_supported_compatibility_matrix() -> No
     assert "python -m twine check dist/*" in release
 
 
+def test_development_ci_pins_node_and_runs_media_browser_contracts() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+    development = workflow.split("  development:", maxsplit=1)[1].split(
+        "  release-compatibility:", maxsplit=1
+    )[0]
+
+    assert (
+        "uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4"
+        in development
+    )
+    assert 'node-version: "22.14.0"' in development
+    assert "name: Validate SDK media and vision browser helpers" in development
+    assert "node --test tests/js/*.mjs" in development
+
+
 def test_fake_ble_tests_run_in_development_ci_on_self_hosted_linux() -> None:
     workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
 
