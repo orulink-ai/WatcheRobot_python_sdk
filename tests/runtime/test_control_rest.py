@@ -611,6 +611,34 @@ def test_control_status_identifies_the_daemon_control_protocol() -> None:
     }
 
 
+def test_control_status_exposes_verified_runtime_discovery_metadata() -> None:
+    controller = _ControllerStub()
+    client = TestClient(
+        DaemonControlAPI(
+            controller=controller,
+            runtime_metadata=lambda: {
+                "control_protocol": 999,
+                "sdk_version": "untrusted-override",
+                "instance_group": "default",
+                "instance_id": "sha256:test",
+                "external_url": "ws://127.0.0.1:18765",
+                "pid": 123,
+                "started_at": 42.0,
+            },
+        ).create_app()
+    )
+
+    runtime = client.get("/daemon/status").json()["runtime"]
+
+    assert runtime["control_protocol"] == 3
+    assert runtime["sdk_version"] == __version__
+    assert runtime["instance_group"] == "default"
+    assert runtime["instance_id"] == "sha256:test"
+    assert runtime["external_url"] == "ws://127.0.0.1:18765"
+    assert runtime["pid"] == 123
+    assert runtime["started_at"] == 42.0
+
+
 def test_control_rest_rejects_legacy_or_arbitrary_launcher_requests() -> None:
     controller = _ControllerStub()
     client = TestClient(DaemonControlAPI(controller=controller).create_app())

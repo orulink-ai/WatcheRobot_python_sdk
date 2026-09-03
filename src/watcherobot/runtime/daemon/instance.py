@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass
@@ -14,6 +15,14 @@ IS_WINDOWS = os.name == "nt"
 
 class RuntimeAlreadyRunningError(RuntimeError):
     """Raised when another process owns the current user's Runtime lock."""
+
+
+def runtime_instance_id(root: Path) -> str:
+    """Return a stable, non-sensitive identity for one coordination root."""
+
+    normalized = os.path.normcase(os.fspath(Path(root).expanduser().resolve()))
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
 
 
 @dataclass(frozen=True)
@@ -110,6 +119,12 @@ def default_runtime_state_root() -> Path:
     configured = os.environ.get("WATCHER_RUNTIME_STATE_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
+    return system_runtime_state_root()
+
+
+def system_runtime_state_root() -> Path:
+    """Return the platform default without applying launcher overrides."""
+
     if IS_WINDOWS:
         local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
         if local_app_data:
@@ -127,6 +142,12 @@ def default_runtime_instance_root() -> Path:
     configured = os.environ.get("WATCHER_RUNTIME_INSTANCE_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
+    return system_runtime_instance_root()
+
+
+def system_runtime_instance_root() -> Path:
+    """Return the default coordination group without applying isolation overrides."""
+
     if IS_WINDOWS:
         local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
         if local_app_data:

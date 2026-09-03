@@ -7,9 +7,9 @@ import asyncio
 import os
 import signal
 import sys
-import time
 from pathlib import Path
 
+from watcherobot.runtime.daemon.control.rest import RuntimeInstanceGroup
 from watcherobot.runtime.daemon.instance import (
     RuntimeAlreadyRunningError,
     RuntimeInstanceLock,
@@ -17,6 +17,9 @@ from watcherobot.runtime.daemon.instance import (
     RuntimeStateStore,
     default_runtime_instance_root,
     default_runtime_state_root,
+    runtime_instance_id,
+    system_runtime_instance_root,
+    system_runtime_state_root,
 )
 from watcherobot.runtime.daemon.pairing.bindings_store import DeviceBindingsStore
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
@@ -80,27 +83,54 @@ async def run_runtime(args: argparse.Namespace) -> int:
     _validate_source_default_options(args)
     state_root = Path(args.state_root).resolve()
     instance_root = Path(args.instance_root).resolve()
-    default_instance_root = default_runtime_instance_root().resolve()
-    if instance_root == default_instance_root:
+    system_instance_root = system_runtime_instance_root().resolve()
+    if instance_root == system_instance_root:
+        # The shared coordination lock must remain first for every default-group
+        # launcher.  Acquiring it before compatibility locks prevents cycles
+        # between launchers that use different private state roots.
         lock_roots = tuple(
             dict.fromkeys(
-                (instance_root, default_runtime_state_root().resolve(), state_root)
+                (instance_root, system_runtime_state_root().resolve(), state_root)
             )
         )
     else:
         lock_roots = (instance_root,)
-    state_roots = tuple(dict.fromkeys((*lock_roots, state_root)))
+    instance_group: RuntimeInstanceGroup = (
+        "default" if instance_root == system_instance_root else "isolated"
+    )
+    instance_id = runtime_instance_id(instance_root)
+    state_roots = (
+        tuple(dict.fromkeys((*lock_roots, state_root)))
+        if instance_group == "default"
+        else (instance_root,)
+    )
     instance_locks = [
         RuntimeInstanceLock(root / "runtime.lock") for root in lock_roots
     ]
     state_stores = [RuntimeStateStore(root) for root in state_roots]
+    acquired_locks: list[RuntimeInstanceLock] = []
+
+    def release_acquired_locks() -> list[BaseException]:
+        errors: list[BaseException] = []
+        for acquired_lock in reversed(acquired_locks):
+            try:
+                acquired_lock.release()
+            except BaseException as exc:
+                errors.append(exc)
+        return errors
+
     try:
         for instance_lock in instance_locks:
             instance_lock.acquire()
+            acquired_locks.append(instance_lock)
     except RuntimeAlreadyRunningError:
-        for instance_lock in reversed(instance_locks):
-            instance_lock.release()
+        release_errors = release_acquired_locks()
+        if release_errors:
+            raise release_errors[0]
         return 3
+    except BaseException:
+        release_acquired_locks()
+        raise
 
     runtime: DaemonRuntime | None = None
     try:
@@ -136,6 +166,8 @@ async def run_runtime(args: argparse.Namespace) -> int:
                 if args.source_default_launcher is not None
                 else None
             ),
+            instance_group=instance_group,
+            instance_id=instance_id,
         )
         loop = asyncio.get_running_loop()
 
@@ -159,23 +191,33 @@ async def run_runtime(args: argparse.Namespace) -> int:
                 f"Daemon Runtime startup failed ({type(exc).__name__}: {exc})"
             )
             raise
+        runtime_metadata = runtime.runtime_metadata()
         state = RuntimeProcessState(
-            pid=os.getpid(),
+            pid=int(runtime_metadata["pid"]),
             control_url=runtime.control_server.base_url,
-            external_url=runtime.external_server.url,
-            started_at=time.time(),
+            external_url=str(runtime_metadata["external_url"]),
+            started_at=float(runtime_metadata["started_at"]),
         )
         for state_store in state_stores:
             state_store.write(state)
         await runtime.wait_for_shutdown()
         return 0
     finally:
+        original_error = sys.exc_info()[1]
+        cleanup_errors: list[BaseException] = []
         for state_store in state_stores:
-            state_store.remove()
+            try:
+                state_store.remove()
+            except BaseException as exc:
+                cleanup_errors.append(exc)
         if runtime is not None:
-            await runtime.stop()
-        for instance_lock in reversed(instance_locks):
-            instance_lock.release()
+            try:
+                await runtime.stop()
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+        cleanup_errors.extend(release_acquired_locks())
+        if original_error is None and cleanup_errors:
+            raise cleanup_errors[0]
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import re
 import subprocess
@@ -59,11 +60,15 @@ from watcherobot.provisioning import (
     WifiStatus,
 )
 from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
+from watcherobot.runtime.daemon.control.rest import DAEMON_CONTROL_PROTOCOL_VERSION
 from watcherobot.runtime.daemon.instance import (
     RuntimeProcessState,
     RuntimeStateStore,
     default_runtime_instance_root,
     default_runtime_state_root,
+    system_runtime_instance_root,
+    system_runtime_state_root,
+    runtime_instance_id,
 )
 from watcherobot.vision import VisionStatus
 
@@ -1658,47 +1663,120 @@ def _wait_for_application_completion(control_url: str) -> int:
 def _live_runtime_state(
     state_root: Path | None = None,
 ) -> RuntimeProcessState | None:
-    roots = tuple(
-        dict.fromkeys(
-            (
-                default_runtime_instance_root(),
+    instance_root = default_runtime_instance_root()
+    if instance_root == system_runtime_instance_root():
+        expected_group = "default"
+        roots = tuple(
+            dict.fromkeys(
                 (
-                    Path(state_root).resolve()
-                    if state_root is not None
-                    else default_runtime_state_root()
-                ),
-                default_runtime_state_root(),
+                    instance_root,
+                    (
+                        Path(state_root).resolve()
+                        if state_root is not None
+                        else default_runtime_state_root()
+                    ),
+                    system_runtime_state_root(),
+                )
             )
         )
-    )
+    else:
+        expected_group = "isolated"
+        roots = (instance_root,)
+    expected_instance_id = runtime_instance_id(instance_root)
     for root in roots:
         state = RuntimeStateStore(root).read()
         if state is None:
             continue
         try:
-            _request_json(state.control_url, "/daemon/status", timeout=0.5)
+            status = _request_json(state.control_url, "/daemon/status", timeout=0.5)
         except CliError:
             continue
-        return state
+        discovered = _runtime_state_from_status(
+            state.control_url,
+            status,
+            expected_group=expected_group,
+            expected_instance_id=expected_instance_id,
+        )
+        if discovered is not None:
+            return discovered
 
-    # Migration fallback for an older Desktop-owned Daemon that writes only
-    # its private state directory.  The fixed local control endpoint is still
-    # sufficient to discover and reuse it without starting a competing process.
-    control_port = int(os.environ.get("WATCHER_RUNTIME_CONTROL_PORT", "8767"))
-    external_port = int(os.environ.get("WATCHER_RUNTIME_EXTERNAL_PORT", "8765"))
+    # Recovery fallback for a compatible default-group Daemon whose state file
+    # cannot be read. Identity and endpoints come from the Daemon itself; never
+    # infer them from this launcher's configuration.
+    raw_control_port = os.environ.get("WATCHER_RUNTIME_CONTROL_PORT", "8767")
+    try:
+        control_port = int(raw_control_port)
+    except ValueError as exc:
+        raise CliError(
+            "WATCHER_RUNTIME_CONTROL_PORT must be 0 or an integer between 1 and 65535"
+        ) from exc
+    if control_port == 0:
+        return None
+    if not 1 <= control_port <= 65535:
+        raise CliError(
+            "WATCHER_RUNTIME_CONTROL_PORT must be 0 or an integer between 1 and 65535"
+        )
     control_url = f"http://127.0.0.1:{control_port}"
     try:
         status = _request_json(control_url, "/daemon/status", timeout=0.5)
     except CliError:
         return None
+    return _runtime_state_from_status(
+        control_url,
+        status,
+        expected_group=expected_group,
+        expected_instance_id=expected_instance_id,
+    )
+
+
+def _runtime_state_from_status(
+    control_url: str,
+    status: dict[str, Any],
+    *,
+    expected_group: str,
+    expected_instance_id: str,
+) -> RuntimeProcessState | None:
     runtime = status.get("runtime")
-    if not isinstance(runtime, dict) or not runtime.get("control_protocol"):
+    if not isinstance(runtime, dict):
+        return None
+    protocol = runtime.get("control_protocol")
+    if protocol != DAEMON_CONTROL_PROTOCOL_VERSION:
+        if isinstance(protocol, int):
+            raise CliError(
+                "An incompatible WatcheRobot Daemon is already running "
+                f"(control protocol {protocol}; expected "
+                f"{DAEMON_CONTROL_PROTOCOL_VERSION}). Stop or restart it before continuing."
+            )
+        return None
+    if (
+        runtime.get("instance_group") != expected_group
+        or runtime.get("instance_id") != expected_instance_id
+    ):
+        return None
+    external_url = runtime.get("external_url")
+    if not isinstance(external_url, str):
+        return None
+    parsed_external_url = urlsplit(external_url)
+    try:
+        external_port = parsed_external_url.port
+        pid = int(runtime.get("pid", 0))
+        started_at = float(runtime.get("started_at", 0.0))
+    except (TypeError, ValueError):
+        return None
+    if (
+        parsed_external_url.scheme not in {"ws", "wss"}
+        or parsed_external_url.hostname is None
+        or external_port is None
+        or pid <= 0
+        or not math.isfinite(started_at)
+        or started_at <= 0
+    ):
         return None
     return RuntimeProcessState(
-        pid=0,
+        pid=pid,
         control_url=control_url,
-        external_url=f"ws://127.0.0.1:{external_port}",
-        started_at=0.0,
+        external_url=external_url,
+        started_at=started_at,
     )
 
 
