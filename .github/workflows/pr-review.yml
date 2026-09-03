@@ -32,7 +32,7 @@ jobs:
           PR_DELETIONS: ${{ github.event.pull_request.deletions }}
           PR_FILES: ${{ github.event.pull_request.changed_files }}
         run: |
-          python3 /home/runner-ci/scripts/luxiao-review.py \
+          python3 "${GITHUB_WORKSPACE}/.github/scripts/luxiao_review.py" \
             "${DIFF_FILE}" \
             "${RUNNER_TEMP}/review_result.md"
 

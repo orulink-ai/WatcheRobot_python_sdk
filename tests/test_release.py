@@ -241,6 +241,8 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     assert "/tmp/review_result.md" not in workflow
     assert "PR_BODY: ${{ github.event.pull_request.body }}" in workflow
     assert '"${{ github.event.pull_request.body }}" \\' not in workflow
+    assert 'python3 "${GITHUB_WORKSPACE}/.github/scripts/luxiao_review.py" \\' in workflow
+    assert "/home/runner-ci/scripts/luxiao-review.py" not in workflow
     bridge = (ROOT / ".github" / "scripts" / "luxiao_review.py").read_text(encoding="utf-8")
     assert "os.environ.get('PR_BODY', '')" in bridge
     assert "NamedTemporaryFile" in bridge
