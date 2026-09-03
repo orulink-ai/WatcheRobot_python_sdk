@@ -261,6 +261,8 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     assert "审查结论必须注明未覆盖范围" in bridge
     assert "runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review, luxiao-hermes]" in workflow
     assert "gh pr comment ${{ github.event.pull_request.number }} \\" in workflow
+    assert "for attempt in 1 2 3; do" in workflow
+    assert "连续 3 次发布审查评论失败，保留门禁失败状态" in workflow
     assert "-R ${{ github.repository }} \\" in workflow
 
 

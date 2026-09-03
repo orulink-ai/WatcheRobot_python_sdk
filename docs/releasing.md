@@ -45,7 +45,8 @@ BLE fake backend 按公司自托管 Runner 策略在 Linux 执行契约测试；
 
 PR 语义审查只调度到同时带有 `pr-review` 与 `luxiao-hermes` 能力标签的 Runner。审查 bridge 从 PR
 基础提交下载到任务级临时目录，既不依赖 Runner 私有绝对路径，也不执行待审 PR 自己修改过的 bridge；
-具备 Hermes SSH 凭据的 Runner 变更时，必须同步迁移该能力标签。
+具备 Hermes SSH 凭据的 Runner 变更时，必须同步迁移该能力标签。发布审查评论遇到 GitHub API
+瞬时网络错误时最多重试三次；连续失败仍保持门禁失败，不能静默跳过审查结果。
 
 带 `release:version` 标签的版本 PR 才会切换到发布门禁，在自托管 `sdk-ci` Runner 上执行 Python 3.10、
 3.11、3.12 与最低/最新依赖的完整兼容矩阵，并在 Python 3.12 + 最新依赖组合中额外构建、安装候选制品。

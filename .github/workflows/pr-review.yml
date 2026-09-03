@@ -60,6 +60,16 @@ jobs:
             echo "" >> "${review_file}"
             echo "⚠️ Review agent did not produce output." >> "${review_file}"
           fi
-          gh pr comment ${{ github.event.pull_request.number }} \
-            -R ${{ github.repository }} \
-            --body "$(cat "${review_file}")"
+          for attempt in 1 2 3; do
+            if gh pr comment ${{ github.event.pull_request.number }} \
+              -R ${{ github.repository }} \
+              --body "$(cat "${review_file}")"; then
+              exit 0
+            fi
+            if [ "${attempt}" -lt 3 ]; then
+              echo "GitHub API 暂时不可用，准备重试发布审查评论（${attempt}/3）"
+              sleep $((attempt * 3))
+            fi
+          done
+          echo "连续 3 次发布审查评论失败，保留门禁失败状态"
+          exit 1
