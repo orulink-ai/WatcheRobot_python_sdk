@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   review:
-    runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review]
+    runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review, luxiao-hermes]
     if: github.event.pull_request.draft == false
     steps:
       - name: Get PR Diff via API
