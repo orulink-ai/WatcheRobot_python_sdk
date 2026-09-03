@@ -185,8 +185,11 @@ another Daemon; desktop uses this same Runtime/Daemon implementation.
 The Daemon enforces one instance per OS user with a runtime-instance lock that
 is independent from `--state-root`. This lets the SDK CLI and Watcher Desktop
 use their own data directories while safely discovering and reusing the same
-Daemon process. Integrations that need explicit isolation for tests may set
-`--instance-root` or `WATCHER_RUNTIME_INSTANCE_ROOT`.
+Daemon process. The shared coordination state and the legacy SDK state location
+are both published during migration, and the fixed local control endpoint can
+discover an older Desktop-owned Daemon. Only isolated tests should set
+`--instance-root` or `WATCHER_RUNTIME_INSTANCE_ROOT`; changing either value
+deliberately leaves the default single-instance group.
 
 ```text
 Your Application

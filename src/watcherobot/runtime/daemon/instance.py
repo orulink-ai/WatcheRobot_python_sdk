@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import BinaryIO
 
 
+IS_WINDOWS = os.name == "nt"
+
+
 class RuntimeAlreadyRunningError(RuntimeError):
     """Raised when another process owns the current user's Runtime lock."""
 
@@ -107,9 +110,10 @@ def default_runtime_state_root() -> Path:
     configured = os.environ.get("WATCHER_RUNTIME_STATE_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-    if local_app_data:
-        return Path(local_app_data).resolve() / "WatcheRobot" / "runtime"
+    if IS_WINDOWS:
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            return Path(local_app_data).resolve() / "WatcheRobot" / "runtime"
     return Path.home() / ".watcherobot" / "runtime"
 
 
@@ -123,9 +127,10 @@ def default_runtime_instance_root() -> Path:
     configured = os.environ.get("WATCHER_RUNTIME_INSTANCE_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-    if local_app_data:
-        return Path(local_app_data).resolve() / "WatcheRobot" / "runtime-instance"
+    if IS_WINDOWS:
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            return Path(local_app_data).resolve() / "WatcheRobot" / "runtime-instance"
     return Path.home() / ".watcherobot" / "runtime-instance"
 
 

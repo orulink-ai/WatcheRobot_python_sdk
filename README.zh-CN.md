@@ -168,6 +168,11 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 
 你的 Application 只写产品逻辑；Runtime 处理配对、连接、生命周期、日志和传输。桌面端也使用同一份 Runtime/Daemon 实现——Watcher Desktop 不会内嵌另一份 Daemon。
 
+Daemon 使用与 `--state-root` 无关的用户级协调目录保证单实例。迁移期间，
+运行状态会同时发布到共享协调目录和旧版 SDK 默认目录；对于只把状态写入桌面端私有目录的
+旧版 Daemon，也会通过固定的本地管理端点发现并复用。只有隔离测试才应设置
+`--instance-root` 或 `WATCHER_RUNTIME_INSTANCE_ROOT`；修改它们会有意脱离默认单实例组。
+
 ```text
 你的 Application
   └─ ApplicationContext / ApplicationChannels

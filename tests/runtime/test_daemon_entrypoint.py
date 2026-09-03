@@ -25,6 +25,124 @@ def _write_application(root: Path) -> Path:
     return root.resolve()
 
 
+def test_runtime_publishes_shared_and_legacy_coordination_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock_events: list[tuple[str, Path]] = []
+    store_events: list[tuple[str, Path, object | None]] = []
+
+    class FakeLock:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        def acquire(self) -> None:
+            lock_events.append(("acquire", self.path))
+
+        def release(self) -> None:
+            lock_events.append(("release", self.path))
+
+    class FakeStore:
+        def __init__(self, root: Path) -> None:
+            self.root = root
+
+        def write(self, state: object) -> None:
+            store_events.append(("write", self.root, state))
+
+        def remove(self) -> None:
+            store_events.append(("remove", self.root, None))
+
+    class FakeRuntime:
+        def __init__(self, **_kwargs: object) -> None:
+            self.control_server = type("Control", (), {"base_url": "http://127.0.0.1:18767"})()
+            self.external_server = type("External", (), {"url": "ws://127.0.0.1:18765"})()
+
+        async def start(self) -> None:
+            return None
+
+        async def wait_for_shutdown(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    private_root = (tmp_path / "desktop-private").resolve()
+    shared_root = (tmp_path / "shared-instance").resolve()
+    legacy_root = (tmp_path / "sdk-default").resolve()
+    monkeypatch.setattr(daemon_entrypoint, "RuntimeInstanceLock", FakeLock)
+    monkeypatch.setattr(daemon_entrypoint, "RuntimeStateStore", FakeStore)
+    monkeypatch.setattr(daemon_entrypoint, "DaemonRuntime", FakeRuntime)
+    monkeypatch.setattr(
+        daemon_entrypoint, "default_runtime_instance_root", lambda: shared_root
+    )
+    monkeypatch.setattr(daemon_entrypoint, "default_runtime_state_root", lambda: legacy_root)
+    args = daemon_entrypoint.build_parser().parse_args(
+        ["--state-root", str(private_root), "--instance-root", str(shared_root)]
+    )
+
+    assert asyncio.run(daemon_entrypoint.run_runtime(args)) == 0
+
+    acquired = [path for event, path in lock_events if event == "acquire"]
+    assert acquired == [
+        shared_root / "runtime.lock",
+        legacy_root / "runtime.lock",
+        private_root / "runtime.lock",
+    ]
+    writes = [(root, state) for event, root, state in store_events if event == "write"]
+    assert [root for root, _state in writes] == [shared_root, legacy_root, private_root]
+    assert {state.control_url for _root, state in writes} == {"http://127.0.0.1:18767"}
+
+
+def test_runtime_explicit_instance_root_stays_isolated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock_paths: list[Path] = []
+
+    class FakeLock:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        def acquire(self) -> None:
+            lock_paths.append(self.path)
+
+        def release(self) -> None:
+            return None
+
+    class FakeRuntime:
+        def __init__(self, **_kwargs: object) -> None:
+            self.control_server = type("Control", (), {"base_url": "http://127.0.0.1:18767"})()
+            self.external_server = type("External", (), {"url": "ws://127.0.0.1:18765"})()
+
+        async def start(self) -> None:
+            return None
+
+        async def wait_for_shutdown(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+    default_root = (tmp_path / "default-instance").resolve()
+    isolated_root = (tmp_path / "isolated-instance").resolve()
+    monkeypatch.setattr(daemon_entrypoint, "RuntimeInstanceLock", FakeLock)
+    monkeypatch.setattr(daemon_entrypoint, "DaemonRuntime", FakeRuntime)
+    monkeypatch.setattr(
+        daemon_entrypoint, "default_runtime_instance_root", lambda: default_root
+    )
+    args = daemon_entrypoint.build_parser().parse_args(
+        [
+            "--state-root",
+            str(tmp_path / "isolated-state"),
+            "--instance-root",
+            str(isolated_root),
+        ]
+    )
+
+    assert asyncio.run(daemon_entrypoint.run_runtime(args)) == 0
+    assert lock_paths == [isolated_root / "runtime.lock"]
+
+
 @pytest.mark.parametrize(
     "option,value",
     [

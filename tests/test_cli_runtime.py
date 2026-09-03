@@ -10,6 +10,7 @@ import pytest
 from watcherobot import cli as watcherobot_cli
 from watcherobot.cli import main
 from watcherobot.distribution.install import InstalledApplication
+from watcherobot.runtime.daemon.instance import RuntimeProcessState, RuntimeStateStore
 
 
 COMPLETING_APPLICATION = """
@@ -28,6 +29,60 @@ asyncio.run(main())
 """
 
 TEST_BENCH_URL = "http://127.0.0.1:54321"
+
+
+def test_ensure_runtime_reuses_shared_instance_state_across_private_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared_root = tmp_path / "shared-instance"
+    private_root = tmp_path / "desktop-private"
+    state = RuntimeProcessState(
+        pid=42,
+        control_url="http://127.0.0.1:18767",
+        external_url="ws://127.0.0.1:18765",
+        started_at=1.0,
+    )
+    RuntimeStateStore(shared_root).write(state)
+    monkeypatch.setattr(watcherobot_cli, "default_runtime_instance_root", lambda: shared_root)
+    monkeypatch.setattr(watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "sdk-private")
+    monkeypatch.setattr(watcherobot_cli, "_request_json", lambda *_args, **_kwargs: {"runtime": {}})
+    monkeypatch.setattr(
+        watcherobot_cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("a shared Daemon must not start a second process"),
+    )
+
+    discovered, reused = watcherobot_cli.ensure_runtime(state_root=private_root)
+
+    assert reused is True
+    assert discovered == state
+
+
+def test_live_runtime_state_discovers_legacy_desktop_by_control_endpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(watcherobot_cli, "default_runtime_instance_root", lambda: tmp_path / "shared")
+    monkeypatch.setattr(watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "sdk")
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "18767")
+    monkeypatch.setenv("WATCHER_RUNTIME_EXTERNAL_PORT", "18765")
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda base_url, path, **_kwargs: {
+            "runtime": {"control_protocol": "1", "sdk_version": "0.1.6"}
+        }
+        if (base_url, path) == ("http://127.0.0.1:18767", "/daemon/status")
+        else pytest.fail("unexpected Daemon endpoint"),
+    )
+
+    state = watcherobot_cli._live_runtime_state(tmp_path / "desktop-private")
+
+    assert state is not None
+    assert state.pid == 0
+    assert state.control_url == "http://127.0.0.1:18767"
+    assert state.external_url == "ws://127.0.0.1:18765"
 
 URL_APPLICATION = f"""
 import asyncio

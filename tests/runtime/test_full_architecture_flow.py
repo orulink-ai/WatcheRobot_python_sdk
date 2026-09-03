@@ -119,7 +119,7 @@ def test_complete_daemon_application_vertical_flow(tmp_path: Path) -> None:
                 == direct_before_start
             )
 
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 started = await client.post(
                     f"{runtime.control_server.base_url}"
                     "/daemon/application/start"
@@ -179,7 +179,7 @@ def test_complete_daemon_application_vertical_flow(tmp_path: Path) -> None:
                 == b"\x50\x60"
             )
 
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 stopped = await client.post(
                     f"{runtime.control_server.base_url}"
                     "/daemon/application/stop"

@@ -62,6 +62,7 @@ from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 from watcherobot.runtime.daemon.instance import (
     RuntimeProcessState,
     RuntimeStateStore,
+    default_runtime_instance_root,
     default_runtime_state_root,
 )
 from watcherobot.vision import VisionStatus
@@ -1657,15 +1658,48 @@ def _wait_for_application_completion(control_url: str) -> int:
 def _live_runtime_state(
     state_root: Path | None = None,
 ) -> RuntimeProcessState | None:
-    store = RuntimeStateStore(state_root or default_runtime_state_root())
-    state = store.read()
-    if state is None:
-        return None
+    roots = tuple(
+        dict.fromkeys(
+            (
+                default_runtime_instance_root(),
+                (
+                    Path(state_root).resolve()
+                    if state_root is not None
+                    else default_runtime_state_root()
+                ),
+                default_runtime_state_root(),
+            )
+        )
+    )
+    for root in roots:
+        state = RuntimeStateStore(root).read()
+        if state is None:
+            continue
+        try:
+            _request_json(state.control_url, "/daemon/status", timeout=0.5)
+        except CliError:
+            continue
+        return state
+
+    # Migration fallback for an older Desktop-owned Daemon that writes only
+    # its private state directory.  The fixed local control endpoint is still
+    # sufficient to discover and reuse it without starting a competing process.
+    control_port = int(os.environ.get("WATCHER_RUNTIME_CONTROL_PORT", "8767"))
+    external_port = int(os.environ.get("WATCHER_RUNTIME_EXTERNAL_PORT", "8765"))
+    control_url = f"http://127.0.0.1:{control_port}"
     try:
-        _request_json(state.control_url, "/daemon/status", timeout=0.5)
+        status = _request_json(control_url, "/daemon/status", timeout=0.5)
     except CliError:
         return None
-    return state
+    runtime = status.get("runtime")
+    if not isinstance(runtime, dict) or not runtime.get("control_protocol"):
+        return None
+    return RuntimeProcessState(
+        pid=0,
+        control_url=control_url,
+        external_url=f"ws://127.0.0.1:{external_port}",
+        started_at=0.0,
+    )
 
 
 def _request_json(

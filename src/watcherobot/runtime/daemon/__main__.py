@@ -33,7 +33,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--instance-root",
         type=Path,
         default=default_runtime_instance_root(),
-        help="per-user coordination directory shared by all Runtime launchers",
+        help=(
+            "per-user coordination directory shared by all Runtime launchers; "
+            "changing it bypasses the default single-instance group"
+        ),
     )
     parser.add_argument(
         "--control-port",
@@ -77,60 +80,78 @@ async def run_runtime(args: argparse.Namespace) -> int:
     _validate_source_default_options(args)
     state_root = Path(args.state_root).resolve()
     instance_root = Path(args.instance_root).resolve()
-    instance_lock = RuntimeInstanceLock(instance_root / "runtime.lock")
-    state_store = RuntimeStateStore(state_root)
+    default_instance_root = default_runtime_instance_root().resolve()
+    if instance_root == default_instance_root:
+        lock_roots = tuple(
+            dict.fromkeys(
+                (instance_root, default_runtime_state_root().resolve(), state_root)
+            )
+        )
+    else:
+        lock_roots = (instance_root,)
+    state_roots = tuple(dict.fromkeys((*lock_roots, state_root)))
+    instance_locks = [
+        RuntimeInstanceLock(root / "runtime.lock") for root in lock_roots
+    ]
+    state_stores = [RuntimeStateStore(root) for root in state_roots]
     try:
-        instance_lock.acquire()
+        for instance_lock in instance_locks:
+            instance_lock.acquire()
     except RuntimeAlreadyRunningError:
+        for instance_lock in reversed(instance_locks):
+            instance_lock.release()
         return 3
 
-    state_store.remove()
-    runtime = DaemonRuntime(
-        application_dir=state_root / "unselected",
-        current_app=None,
-        external_port=args.external_port,
-        control_port=args.control_port,
-        pairing_udp_port=args.pairing_port,
-        preview_udp_port=args.preview_udp_port,
-        application_log_dir=state_root / "logs" / "applications",
-        daemon_log_path=state_root / "logs" / "daemon.jsonl",
-        device_bindings_store=DeviceBindingsStore(state_root),
-        managed_app_root=(
-            Path(args.managed_app_root).resolve()
-            if args.managed_app_root is not None
-            else state_root / "application-store"
-        ),
-        bundled_resource_root=(
-            Path(args.bundled_resource_root).resolve()
-            if args.bundled_resource_root is not None
-            else state_root / "bundled-resources"
-        ),
-        source_default_application_root=(
-            Path(args.source_default_application_root).resolve()
-            if args.source_default_application_root is not None
-            else None
-        ),
-        source_default_launcher_executable=(
-            Path(os.path.abspath(args.source_default_launcher))
-            if args.source_default_launcher is not None
-            else None
-        ),
-    )
-    loop = asyncio.get_running_loop()
-
-    def request_shutdown() -> None:
-        loop.call_soon_threadsafe(runtime.request_shutdown)
-
-    for signal_number in (signal.SIGINT, signal.SIGTERM):
-        try:
-            signal.signal(
-                signal_number,
-                lambda _signum, _frame: request_shutdown(),
-            )
-        except (OSError, ValueError):
-            pass
-
+    runtime: DaemonRuntime | None = None
     try:
+        for state_store in state_stores:
+            state_store.remove()
+        runtime = DaemonRuntime(
+            application_dir=state_root / "unselected",
+            current_app=None,
+            external_port=args.external_port,
+            control_port=args.control_port,
+            pairing_udp_port=args.pairing_port,
+            preview_udp_port=args.preview_udp_port,
+            application_log_dir=state_root / "logs" / "applications",
+            daemon_log_path=state_root / "logs" / "daemon.jsonl",
+            device_bindings_store=DeviceBindingsStore(state_root),
+            managed_app_root=(
+                Path(args.managed_app_root).resolve()
+                if args.managed_app_root is not None
+                else state_root / "application-store"
+            ),
+            bundled_resource_root=(
+                Path(args.bundled_resource_root).resolve()
+                if args.bundled_resource_root is not None
+                else state_root / "bundled-resources"
+            ),
+            source_default_application_root=(
+                Path(args.source_default_application_root).resolve()
+                if args.source_default_application_root is not None
+                else None
+            ),
+            source_default_launcher_executable=(
+                Path(os.path.abspath(args.source_default_launcher))
+                if args.source_default_launcher is not None
+                else None
+            ),
+        )
+        loop = asyncio.get_running_loop()
+
+        def request_shutdown() -> None:
+            if runtime is not None:
+                loop.call_soon_threadsafe(runtime.request_shutdown)
+
+        for signal_number in (signal.SIGINT, signal.SIGTERM):
+            try:
+                signal.signal(
+                    signal_number,
+                    lambda _signum, _frame: request_shutdown(),
+                )
+            except (OSError, ValueError):
+                pass
+
         try:
             await runtime.start()
         except Exception as exc:
@@ -138,20 +159,23 @@ async def run_runtime(args: argparse.Namespace) -> int:
                 f"Daemon Runtime startup failed ({type(exc).__name__}: {exc})"
             )
             raise
-        state_store.write(
-            RuntimeProcessState(
-                pid=os.getpid(),
-                control_url=runtime.control_server.base_url,
-                external_url=runtime.external_server.url,
-                started_at=time.time(),
-            )
+        state = RuntimeProcessState(
+            pid=os.getpid(),
+            control_url=runtime.control_server.base_url,
+            external_url=runtime.external_server.url,
+            started_at=time.time(),
         )
+        for state_store in state_stores:
+            state_store.write(state)
         await runtime.wait_for_shutdown()
         return 0
     finally:
-        state_store.remove()
-        await runtime.stop()
-        instance_lock.release()
+        for state_store in state_stores:
+            state_store.remove()
+        if runtime is not None:
+            await runtime.stop()
+        for instance_lock in reversed(instance_locks):
+            instance_lock.release()
 
 
 def main(argv: list[str] | None = None) -> int:

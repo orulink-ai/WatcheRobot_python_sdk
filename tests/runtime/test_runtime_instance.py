@@ -4,8 +4,10 @@ from pathlib import Path
 
 import pytest
 
+from watcherobot.runtime.daemon import instance as instance_module
 from watcherobot.runtime.daemon.instance import (
     default_runtime_instance_root,
+    default_runtime_state_root,
     RuntimeAlreadyRunningError,
     RuntimeInstanceLock,
     RuntimeProcessState,
@@ -20,6 +22,7 @@ def test_runtime_instance_root_is_independent_from_data_root(
     monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
     monkeypatch.setenv("WATCHER_RUNTIME_STATE_ROOT", str(tmp_path / "desktop-data"))
     monkeypatch.delenv("WATCHER_RUNTIME_INSTANCE_ROOT", raising=False)
+    monkeypatch.setattr(instance_module, "IS_WINDOWS", True)
 
     assert default_runtime_instance_root() == (
         local_app_data / "WatcheRobot" / "runtime-instance"
@@ -33,6 +36,26 @@ def test_runtime_instance_root_can_be_isolated_explicitly(
     monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(expected))
 
     assert default_runtime_instance_root() == expected.resolve()
+
+
+def test_runtime_instance_root_ignores_windows_environment_on_posix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(instance_module, "IS_WINDOWS", False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "unexpected-windows-root"))
+    monkeypatch.delenv("WATCHER_RUNTIME_INSTANCE_ROOT", raising=False)
+
+    assert default_runtime_instance_root() == Path.home() / ".watcherobot" / "runtime-instance"
+
+
+def test_runtime_state_root_ignores_windows_environment_on_posix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(instance_module, "IS_WINDOWS", False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "unexpected-windows-root"))
+    monkeypatch.delenv("WATCHER_RUNTIME_STATE_ROOT", raising=False)
+
+    assert default_runtime_state_root() == Path.home() / ".watcherobot" / "runtime"
 
 
 def test_runtime_instance_lock_rejects_a_second_owner(tmp_path: Path) -> None:

@@ -526,7 +526,7 @@ def test_control_server_binds_and_serves_status() -> None:
         )
         await server.start()
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 response = await client.get(f"{server.base_url}/daemon/status")
             assert response.status_code == 200
             assert response.json()["application"]["state"] == "not_running"
@@ -552,7 +552,7 @@ def test_slow_maintenance_io_does_not_block_daemon_status() -> None:
         )
         await server.start()
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 started = time.monotonic()
                 works_request = asyncio.create_task(client.post(
                     f"{server.base_url}/daemon/maintenance/works/list",
