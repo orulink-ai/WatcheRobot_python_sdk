@@ -23,6 +23,19 @@ jobs:
           echo "DIFF_FILE=${diff_file}" >> "${GITHUB_ENV}"
           echo "Diff lines: $(wc -l < "${diff_file}")"
 
+      - name: Download trusted review bridge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          review_script="${RUNNER_TEMP}/luxiao_review.py"
+          gh api \
+            --header "Accept: application/vnd.github.raw+json" \
+            "repos/${{ github.repository }}/contents/.github/scripts/luxiao_review.py?ref=${BASE_SHA}" \
+            > "${review_script}"
+          test -s "${review_script}"
+          echo "REVIEW_SCRIPT=${review_script}" >> "${GITHUB_ENV}"
+
       - name: Run Luxiao Review
         env:
           LUXIAO_HERMES_HOST: ${{ vars.LUXIAO_HERMES_HOST }}
@@ -32,7 +45,7 @@ jobs:
           PR_DELETIONS: ${{ github.event.pull_request.deletions }}
           PR_FILES: ${{ github.event.pull_request.changed_files }}
         run: |
-          python3 "${GITHUB_WORKSPACE}/.github/scripts/luxiao_review.py" \
+          python3 "${REVIEW_SCRIPT}" \
             "${DIFF_FILE}" \
             "${RUNNER_TEMP}/review_result.md"
 
