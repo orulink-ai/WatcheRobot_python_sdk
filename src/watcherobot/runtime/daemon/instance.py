@@ -113,6 +113,22 @@ def default_runtime_state_root() -> Path:
     return Path.home() / ".watcherobot" / "runtime"
 
 
+def default_runtime_instance_root() -> Path:
+    """Return the per-user coordination root shared by every Runtime launcher.
+
+    Runtime data may live in a launcher-specific ``state_root``.  The process
+    lock must not: otherwise Desktop and an SDK program can each acquire a
+    different lock and race to become the user's Daemon.
+    """
+    configured = os.environ.get("WATCHER_RUNTIME_INSTANCE_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+    if local_app_data:
+        return Path(local_app_data).resolve() / "WatcheRobot" / "runtime-instance"
+    return Path.home() / ".watcherobot" / "runtime-instance"
+
+
 if os.name == "nt":
     import msvcrt
 

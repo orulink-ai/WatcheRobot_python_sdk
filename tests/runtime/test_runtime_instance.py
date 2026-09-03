@@ -5,11 +5,34 @@ from pathlib import Path
 import pytest
 
 from watcherobot.runtime.daemon.instance import (
+    default_runtime_instance_root,
     RuntimeAlreadyRunningError,
     RuntimeInstanceLock,
     RuntimeProcessState,
     RuntimeStateStore,
 )
+
+
+def test_runtime_instance_root_is_independent_from_data_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local_app_data = tmp_path / "local-app-data"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setenv("WATCHER_RUNTIME_STATE_ROOT", str(tmp_path / "desktop-data"))
+    monkeypatch.delenv("WATCHER_RUNTIME_INSTANCE_ROOT", raising=False)
+
+    assert default_runtime_instance_root() == (
+        local_app_data / "WatcheRobot" / "runtime-instance"
+    ).resolve()
+
+
+def test_runtime_instance_root_can_be_isolated_explicitly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = tmp_path / "isolated-instance"
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(expected))
+
+    assert default_runtime_instance_root() == expected.resolve()
 
 
 def test_runtime_instance_lock_rejects_a_second_owner(tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ from watcherobot.runtime.daemon.instance import (
     RuntimeInstanceLock,
     RuntimeProcessState,
     RuntimeStateStore,
+    default_runtime_instance_root,
     default_runtime_state_root,
 )
 from watcherobot.runtime.daemon.pairing.bindings_store import DeviceBindingsStore
@@ -27,6 +28,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--state-root",
         type=Path,
         default=default_runtime_state_root(),
+    )
+    parser.add_argument(
+        "--instance-root",
+        type=Path,
+        default=default_runtime_instance_root(),
+        help="per-user coordination directory shared by all Runtime launchers",
     )
     parser.add_argument(
         "--control-port",
@@ -69,7 +76,8 @@ async def run_runtime(args: argparse.Namespace) -> int:
     # Keep programmatic callers subject to the same invariant as the CLI.
     _validate_source_default_options(args)
     state_root = Path(args.state_root).resolve()
-    instance_lock = RuntimeInstanceLock(state_root / "runtime.lock")
+    instance_root = Path(args.instance_root).resolve()
+    instance_lock = RuntimeInstanceLock(instance_root / "runtime.lock")
     state_store = RuntimeStateStore(state_root)
     try:
         instance_lock.acquire()
