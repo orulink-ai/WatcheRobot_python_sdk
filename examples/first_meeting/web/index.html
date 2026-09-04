@@ -10,6 +10,7 @@
 <div class="timeline"><span>01 <b>睡觉 · 苏醒</b></span><span>02 <b>抬头 · 看看</b></span><span>03 <b>认识 · 聊天</b></span></div>
 <div class="controls"><button class="primary" id="start">开始开机流程 <span>↗</span></button><button id="gaze">只测左右看</button><button id="chat">直接对话</button><button id="stop" class="stop">停止</button></div>
 <p class="hint">动作与音频均由机器人执行。说完一句，等它回答后再继续。</p>
+<p class="hint" id="microphone-status" aria-live="polite">麦克风未开启</p>
 <div class="conversation-title"><h2>我们的对话</h2><span id="person">还没认识你</span></div>
 <div id="conversation" class="conversation" aria-live="polite"><div class="empty">第一次见面，就从“我叫……”开始吧。</div></div>
 <form id="text-form" class="text-form"><label class="sr-only" for="message">输入对话</label><input id="message" maxlength="500" placeholder="也可以打字告诉它：我叫小明" autocomplete="off"><button type="submit" id="send">发送 ↑</button></form>
