@@ -241,6 +241,10 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     assert "/tmp/review_result.md" not in workflow
     assert "PR_BODY: ${{ github.event.pull_request.body }}" in workflow
     assert '"${{ github.event.pull_request.body }}" \\' not in workflow
+    assert '"repos/${{ github.repository }}/contents/.github/scripts/luxiao_review.py?ref=${BASE_SHA}"' in workflow
+    assert 'python3 "${REVIEW_SCRIPT}" \\' in workflow
+    assert "BASE_SHA: ${{ github.event.pull_request.base.sha }}" in workflow
+    assert "/home/runner-ci/scripts/luxiao-review.py" not in workflow
     bridge = (ROOT / ".github" / "scripts" / "luxiao_review.py").read_text(encoding="utf-8")
     assert "os.environ.get('PR_BODY', '')" in bridge
     assert "NamedTemporaryFile" in bridge
@@ -255,8 +259,12 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     assert "LUXIAO_HERMES_HOST: ${{ vars.LUXIAO_HERMES_HOST }}" in workflow
     assert 'HERMES_HOST = "hermesadmin@192.168.1.116"' not in bridge
     assert "审查结论必须注明未覆盖范围" in bridge
-    assert "runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review]" in workflow
+    assert "runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review, luxiao-hermes]" in workflow
     assert "gh pr comment ${{ github.event.pull_request.number }} \\" in workflow
+    assert "for attempt in 1 2 3; do" in workflow
+    assert "missing_review=1" in workflow
+    assert "审查结果为空，已发布故障评论并保留门禁失败状态" in workflow
+    assert "连续 3 次发布审查评论失败，保留门禁失败状态" in workflow
     assert "-R ${{ github.repository }} \\" in workflow
 
 

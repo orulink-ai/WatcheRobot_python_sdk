@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import suppress
 from ipaddress import IPv4Address
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol, TypedDict
 
 import uvicorn
 from fastapi import FastAPI
@@ -27,7 +28,15 @@ from watcherobot.runtime.daemon.pairing.session import PairingSessionError
 from watcherobot.runtime.daemon.maintenance import MaintenanceError
 
 
-DAEMON_CONTROL_PROTOCOL_VERSION = 2
+RuntimeInstanceGroup = Literal["default", "isolated"]
+
+
+class RuntimeDiscoveryMetadata(TypedDict):
+    instance_group: RuntimeInstanceGroup
+    instance_id: str
+    external_url: str
+    pid: int
+    started_at: float
 
 
 class PairDeviceRequest(BaseModel):
@@ -228,8 +237,14 @@ class ApplicationController(Protocol):
 class DaemonControlAPI:
     """Expose lifecycle management without carrying business traffic."""
 
-    def __init__(self, *, controller: ApplicationController) -> None:
+    def __init__(
+        self,
+        *,
+        controller: ApplicationController,
+        runtime_metadata: Callable[[], RuntimeDiscoveryMetadata] | None = None,
+    ) -> None:
         self._controller = controller
+        self._runtime_metadata = runtime_metadata
 
     def create_app(self) -> FastAPI:
         app = FastAPI(title="Watcher Daemon Control API")
@@ -573,13 +588,20 @@ class DaemonControlAPI:
         return {"job": job}
 
     def _status_response(self) -> dict[str, Any]:
-        return {
-            "runtime": {
-                "control_protocol": DAEMON_CONTROL_PROTOCOL_VERSION,
-                "sdk_version": __version__,
-            },
+        response: dict[str, Any] = {
             "application": self._controller.application_status(),
         }
+        if self._runtime_metadata is not None:
+            metadata = self._runtime_metadata()
+            response["runtime"] = {
+                "sdk_version": __version__,
+                "instance_group": metadata["instance_group"],
+                "instance_id": metadata["instance_id"],
+                "external_url": metadata["external_url"],
+                "pid": metadata["pid"],
+                "started_at": metadata["started_at"],
+            }
+        return response
 
 
 class DaemonControlServer:
@@ -593,11 +615,15 @@ class DaemonControlServer:
         controller: ApplicationController,
         host: str = "127.0.0.1",
         port: int = 8767,
+        runtime_metadata: Callable[[], RuntimeDiscoveryMetadata] | None = None,
     ) -> None:
         self._host = host
         self._requested_port = port
         self._bound_port: int | None = None
-        self._api = DaemonControlAPI(controller=controller)
+        self._api = DaemonControlAPI(
+            controller=controller,
+            runtime_metadata=runtime_metadata,
+        )
         self._server: uvicorn.Server | None = None
         self._server_task: asyncio.Task[None] | None = None
 

@@ -1,35 +1,53 @@
-# Daemon 控制协议
+# Daemon 管理接口身份合同
 
 本文档定义 Desktop 与 SDK Daemon 之间的本机管理接口兼容合同。该接口只负责 Daemon、Application 和设备连接的生命周期管理，不承载或解析 Desktop、Application、Device 之间的业务帧。
 
-## 协议版本 2
+## 当前身份结构
 
 `GET /daemon/status` 在既有 `application` 字段之外，增加只读的 `runtime` 身份：
 
 ```json
 {
   "runtime": {
-    "control_protocol": 2,
-    "sdk_version": "<watcherobot.__version__>"
+    "sdk_version": "<watcherobot.__version__>",
+    "instance_group": "default",
+    "instance_id": "sha256:<协调目录身份摘要>",
+    "external_url": "ws://127.0.0.1:8765",
+    "pid": 1234,
+    "started_at": 1788422400.0
   },
   "application": {}
 }
 ```
 
-- `control_protocol` 是管理接口合同版本，不是业务路由版本。
 - `sdk_version` 来自 `watcherobot.__version__`，仅用于诊断随包 SDK 身份。
-- 两个字段均为固定、非敏感元数据，不包含本机路径、环境变量、命令输出或 traceback。
-- Desktop 复用已运行的 Daemon 前必须验证 `control_protocol`；缺失或不匹配时，不得把该进程当作当前随包 Runtime 使用。
+- `instance_group` 用于区分默认协调组和显式隔离组；默认启动器不得复用 `isolated` 实例。
+- `instance_id` 是协调目录规范化路径的 SHA-256 摘要，不暴露本机绝对路径；启动器必须精确验证，禁止不同隔离目录交叉复用。
+- `external_url` 是 Daemon 实际监听的业务通道地址，发现方不得根据本地配置自行猜测端口。
+- `pid` 与 `started_at` 让无法读取状态文件的同机启动器仍可构造真实的运行状态。
+- 这些字段均为非敏感元数据，不包含本机路径、环境变量、命令输出或 traceback。
+- Desktop 或 SDK 复用已运行的 Daemon 前，必须验证上述身份字段全部存在、类型和格式正确，再比较实例组和实例标识。
 
-协议版本 2 的唯一升级原因是增加上述显式身份握手。它不改变 Application 分发命令，不改变业务帧路由，也不新增 Application 日志读取接口。
+`instance_id` 的唯一算法是：对协调根目录先执行用户目录展开和绝对路径解析，再使用当前平台的 `normcase` 规范化大小写与分隔符，对结果的 UTF-8 字节计算 SHA-256，最后加上 `sha256:` 前缀。Desktop 不重复实现该路径算法，而是验证 Daemon 发布的结构和默认实例组，避免跨语言规范化分叉。
+
+管理接口不再维护 `v2`、`v3` 一类数字控制协议。当前结构本身就是唯一合同：上述身份与发现元数据均为必填字段；新增可选诊断字段时，旧调用方应安全忽略。缺少任何必填字段、字段类型错误或格式无效时均不得复用。它不改变 Application 分发命令，不改变业务帧路由，也不新增 Application 日志读取接口。
+
+仅用于测试或嵌入调用、且未提供 `runtime_metadata` 的 `DaemonControlAPI` 不发布 `runtime` 身份，因此不会冒充可发现的生产 Daemon。正式 `DaemonRuntime` 始终注入完整元数据，并且全项目只维护这一份当前身份合同。
 
 ## 兼容策略
 
 | Desktop | Daemon | 行为 |
 | --- | --- | --- |
-| 旧版 Desktop | 协议 2 | `runtime` 是附加字段；按既有 JSON 宽松解析继续工作 |
-| 协议 2 Desktop | 协议 2 Daemon | 身份校验通过，可以复用 Daemon |
-| 协议 2 Desktop | 未声明或其他版本 Daemon | 身份校验失败；停止复用并按 Desktop 生命周期策略启动随包 Daemon |
+| Desktop/SDK | 当前 Daemon | 完整身份校验通过，可以复用 Daemon |
+| Desktop/SDK | 身份缺失、无效或不匹配的 Daemon | 明确提示合同不兼容，不猜测端点、不继续抢锁、不启动第二个进程，也不删除在线实例的状态文件；更新后应统一重启启动方与 Daemon |
+
+SDK 启动器通过固定管理端点恢复发现时要求身份完整、`instance_group=default`、`instance_id` 匹配，并直接采用
+Daemon 返回的 `external_url`。缺少这些元数据时不得猜测端口，也不得把隔离实例当作默认实例复用。
+
+旧版 Daemon 即使仍返回历史 `control_protocol` 字段，也不能仅凭该数字认定兼容。若在线响应缺少当前完整身份，`status`、`start` 和 `stop` 都必须明确报告兼容性错误：状态不能误报为未运行，启动不能创建第二个 Daemon，停止不能误删旧状态文件。完整且属于其他隔离实例的状态文件可以在扫描时跳过，但固定默认管理端点上的其他实例必须作为端口冲突报告。
+
+默认组兼容迁移锁始终在共享协调锁之后获取；所有启动器必须先获取共享协调锁，再获取旧状态目录锁，避免不同私有状态目录之间形成环形等待。
+Daemon 只有在管理接口和业务端口均启动成功后才发布状态文件；退出时先关闭管理接口和业务端口，再仅删除内容仍与本进程所发布状态完全一致的文件。CLI 停止流程会同时观察原始 PID、状态快照和管理端口，不复用启动冲突判定；若在可配置等待时间内尚未完全退出，仅返回 `stopping` 表示关闭已接受且仍在继续，不删状态、不结束进程，也不误报失败。端口冲突或部分启动失败不得预先删除、覆盖或在清理阶段移除其他在线实例的状态。
 
 ## 启动失败与日志安全边界
 

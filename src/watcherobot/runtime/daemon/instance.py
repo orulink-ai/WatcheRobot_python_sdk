@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass
@@ -9,8 +10,19 @@ from pathlib import Path
 from typing import BinaryIO
 
 
+IS_WINDOWS = os.name == "nt"
+
+
 class RuntimeAlreadyRunningError(RuntimeError):
     """Raised when another process owns the current user's Runtime lock."""
+
+
+def runtime_instance_id(root: Path) -> str:
+    """Return a stable, non-sensitive identity for one coordination root."""
+
+    normalized = os.path.normcase(os.fspath(Path(root).expanduser().resolve()))
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
 
 
 @dataclass(frozen=True)
@@ -52,6 +64,17 @@ class RuntimeStateStore:
             self.path.unlink()
         except FileNotFoundError:
             pass
+
+    def remove_if_matches(self, state: RuntimeProcessState) -> bool:
+        """Remove only state that is still owned by the expected Runtime."""
+
+        if self.read() != state:
+            return False
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            return False
+        return True
 
 
 class RuntimeInstanceLock:
@@ -107,10 +130,40 @@ def default_runtime_state_root() -> Path:
     configured = os.environ.get("WATCHER_RUNTIME_STATE_ROOT", "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
-    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-    if local_app_data:
-        return Path(local_app_data).resolve() / "WatcheRobot" / "runtime"
+    return system_runtime_state_root()
+
+
+def system_runtime_state_root() -> Path:
+    """Return the platform default without applying launcher overrides."""
+
+    if IS_WINDOWS:
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            return Path(local_app_data).resolve() / "WatcheRobot" / "runtime"
     return Path.home() / ".watcherobot" / "runtime"
+
+
+def default_runtime_instance_root() -> Path:
+    """Return the per-user coordination root shared by every Runtime launcher.
+
+    Runtime data may live in a launcher-specific ``state_root``.  The process
+    lock must not: otherwise Desktop and an SDK program can each acquire a
+    different lock and race to become the user's Daemon.
+    """
+    configured = os.environ.get("WATCHER_RUNTIME_INSTANCE_ROOT", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return system_runtime_instance_root()
+
+
+def system_runtime_instance_root() -> Path:
+    """Return the default coordination group without applying isolation overrides."""
+
+    if IS_WINDOWS:
+        local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app_data:
+            return Path(local_app_data).resolve() / "WatcheRobot" / "runtime-instance"
+    return Path.home() / ".watcherobot" / "runtime-instance"
 
 
 if os.name == "nt":

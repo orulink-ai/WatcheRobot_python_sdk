@@ -230,10 +230,6 @@ def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None
     client = TestClient(DaemonControlAPI(controller=controller).create_app())
 
     assert client.get("/daemon/status").json() == {
-        "runtime": {
-            "control_protocol": 2,
-            "sdk_version": __version__,
-        },
         "application": {
             "current_app": "watcher_default",
             "state": "not_running",
@@ -526,7 +522,7 @@ def test_control_server_binds_and_serves_status() -> None:
         )
         await server.start()
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 response = await client.get(f"{server.base_url}/daemon/status")
             assert response.status_code == 200
             assert response.json()["application"]["state"] == "not_running"
@@ -552,7 +548,7 @@ def test_slow_maintenance_io_does_not_block_daemon_status() -> None:
         )
         await server.start()
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 started = time.monotonic()
                 works_request = asyncio.create_task(client.post(
                     f"{server.base_url}/daemon/maintenance/works/list",
@@ -598,17 +594,41 @@ def test_control_rest_selects_application_and_requests_runtime_shutdown() -> Non
     assert controller.shutdown_requested is True
 
 
-def test_control_status_identifies_the_daemon_control_protocol() -> None:
+def test_control_status_omits_runtime_identity_without_runtime_metadata() -> None:
     controller = _ControllerStub()
     client = TestClient(DaemonControlAPI(controller=controller).create_app())
 
     response = client.get("/daemon/status")
 
     assert response.status_code == 200
-    assert response.json()["runtime"] == {
-        "control_protocol": 2,
-        "sdk_version": __version__,
-    }
+    assert "runtime" not in response.json()
+
+
+def test_control_status_exposes_verified_runtime_discovery_metadata() -> None:
+    controller = _ControllerStub()
+    client = TestClient(
+        DaemonControlAPI(
+            controller=controller,
+            runtime_metadata=lambda: {
+                "sdk_version": "untrusted-override",
+                "instance_group": "default",
+                "instance_id": "sha256:test",
+                "external_url": "ws://127.0.0.1:18765",
+                "pid": 123,
+                "started_at": 42.0,
+            },
+        ).create_app()
+    )
+
+    runtime = client.get("/daemon/status").json()["runtime"]
+
+    assert "control_protocol" not in runtime
+    assert runtime["sdk_version"] == __version__
+    assert runtime["instance_group"] == "default"
+    assert runtime["instance_id"] == "sha256:test"
+    assert runtime["external_url"] == "ws://127.0.0.1:18765"
+    assert runtime["pid"] == 123
+    assert runtime["started_at"] == 42.0
 
 
 def test_control_rest_rejects_legacy_or_arbitrary_launcher_requests() -> None:
