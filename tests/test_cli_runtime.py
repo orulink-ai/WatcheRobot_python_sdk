@@ -333,6 +333,36 @@ def test_live_runtime_state_rejects_incompatible_control_protocol(
         watcherobot_cli._live_runtime_state(tmp_path / "desktop-private")
 
 
+@pytest.mark.parametrize(
+    "status",
+    [
+        {"application": {"state": "not_selected"}},
+        {"runtime": {"instance_group": "default"}},
+        {"runtime": {"control_protocol": "2", "instance_group": "default"}},
+    ],
+)
+def test_live_runtime_state_rejects_daemon_without_current_protocol_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: dict[str, object],
+) -> None:
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "default_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "sdk")
+    monkeypatch.setattr(watcherobot_cli, "_request_json", lambda *_args, **_kwargs: status)
+
+    with pytest.raises(watcherobot_cli.CliError, match="Stop or restart"):
+        watcherobot_cli._live_runtime_state(tmp_path / "desktop-private")
+
+
 @pytest.mark.parametrize("value", ["invalid", "-1", "65536"])
 def test_live_runtime_state_rejects_invalid_control_port(
     tmp_path: Path,

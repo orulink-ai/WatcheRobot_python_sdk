@@ -1738,16 +1738,19 @@ def _runtime_state_from_status(
 ) -> RuntimeProcessState | None:
     runtime = status.get("runtime")
     if not isinstance(runtime, dict):
+        if isinstance(status.get("application"), dict):
+            raise CliError(
+                "An incompatible WatcheRobot Daemon is already running "
+                "(runtime identity is missing). Stop or restart it before continuing."
+            )
         return None
     protocol = runtime.get("control_protocol")
     if protocol != DAEMON_CONTROL_PROTOCOL_VERSION:
-        if isinstance(protocol, int):
-            raise CliError(
-                "An incompatible WatcheRobot Daemon is already running "
-                f"(control protocol {protocol}; expected "
-                f"{DAEMON_CONTROL_PROTOCOL_VERSION}). Stop or restart it before continuing."
-            )
-        return None
+        raise CliError(
+            "An incompatible WatcheRobot Daemon is already running "
+            f"(control protocol {protocol!r}; expected "
+            f"{DAEMON_CONTROL_PROTOCOL_VERSION}). Stop or restart it before continuing."
+        )
     if (
         runtime.get("instance_group") != expected_group
         or runtime.get("instance_id") != expected_instance_id
