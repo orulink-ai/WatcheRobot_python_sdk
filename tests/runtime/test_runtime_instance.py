@@ -155,3 +155,25 @@ def test_runtime_state_store_round_trips_and_removes_state(
     assert store.read() == state
     store.remove()
     assert store.read() is None
+
+
+def test_runtime_state_store_removes_only_matching_owner_state(tmp_path: Path) -> None:
+    store = RuntimeStateStore(tmp_path)
+    owned = RuntimeProcessState(
+        pid=42,
+        control_url="http://127.0.0.1:8767",
+        external_url="ws://127.0.0.1:8765",
+        started_at=1.0,
+    )
+    replacement = RuntimeProcessState(
+        pid=43,
+        control_url="http://127.0.0.1:8767",
+        external_url="ws://127.0.0.1:8765",
+        started_at=2.0,
+    )
+    store.write(replacement)
+
+    assert store.remove_if_matches(owned) is False
+    assert store.read() == replacement
+    assert store.remove_if_matches(replacement) is True
+    assert store.read() is None

@@ -398,6 +398,64 @@ def test_legacy_daemon_blocks_status_start_and_stop_without_side_effects(
     assert RuntimeStateStore(state_root).read() == state
 
 
+def test_stop_runtime_waits_for_owned_state_and_control_endpoint_to_close(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = RuntimeProcessState(
+        pid=42,
+        control_url="http://127.0.0.1:18767",
+        external_url="ws://127.0.0.1:18765",
+        started_at=1.0,
+    )
+    instance_root = tmp_path / "instance"
+    store = RuntimeStateStore(instance_root)
+    store.write(state)
+    requests: list[tuple[str, str]] = []
+    checks = iter([True, False])
+
+    monkeypatch.setattr(watcherobot_cli, "_live_runtime_state", lambda: state)
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda base_url, path, **_kwargs: requests.append((base_url, path)) or {},
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_instance_root", lambda: instance_root
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "_local_tcp_port_is_open", lambda _port: next(checks)
+    )
+    monkeypatch.setattr(watcherobot_cli.time, "sleep", lambda _seconds: store.remove())
+
+    watcherobot_cli.stop_runtime()
+
+    assert requests == [(state.control_url, "/daemon/stop")]
+    assert store.read() is None
+
+
+def test_stop_runtime_does_not_remove_unverified_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_root = tmp_path / "instance"
+    foreign = RuntimeProcessState(
+        pid=43,
+        control_url="http://127.0.0.1:18767",
+        external_url="ws://127.0.0.1:18765",
+        started_at=2.0,
+    )
+    RuntimeStateStore(instance_root).write(foreign)
+    monkeypatch.setattr(watcherobot_cli, "_live_runtime_state", lambda: None)
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_instance_root", lambda: instance_root
+    )
+
+    watcherobot_cli.stop_runtime()
+
+    assert RuntimeStateStore(instance_root).read() == foreign
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

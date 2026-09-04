@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from watcherobot.runtime.daemon import __main__ as daemon_entrypoint
+from watcherobot.runtime.daemon.instance import RuntimeProcessState, RuntimeStateStore
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
 
 
@@ -31,6 +32,7 @@ def test_runtime_publishes_shared_and_legacy_coordination_state(
 ) -> None:
     lock_events: list[tuple[str, Path]] = []
     store_events: list[tuple[str, Path, object | None]] = []
+    shutdown_events: list[str] = []
 
     class FakeLock:
         def __init__(self, path: Path) -> None:
@@ -49,8 +51,10 @@ def test_runtime_publishes_shared_and_legacy_coordination_state(
         def write(self, state: object) -> None:
             store_events.append(("write", self.root, state))
 
-        def remove(self) -> None:
-            store_events.append(("remove", self.root, None))
+        def remove_if_matches(self, state: object) -> bool:
+            store_events.append(("remove_if_matches", self.root, state))
+            shutdown_events.append(f"remove:{self.root.name}")
+            return True
 
     class FakeRuntime:
         def __init__(self, **_kwargs: object) -> None:
@@ -73,7 +77,7 @@ def test_runtime_publishes_shared_and_legacy_coordination_state(
             return None
 
         async def stop(self) -> None:
-            return None
+            shutdown_events.append("runtime.stop")
 
     private_root = (tmp_path / "desktop-private").resolve()
     shared_root = (tmp_path / "shared-instance").resolve()
@@ -100,6 +104,12 @@ def test_runtime_publishes_shared_and_legacy_coordination_state(
     writes = [(root, state) for event, root, state in store_events if event == "write"]
     assert [root for root, _state in writes] == [shared_root, legacy_root, private_root]
     assert {state.control_url for _root, state in writes} == {"http://127.0.0.1:18767"}
+    assert shutdown_events == [
+        "runtime.stop",
+        "remove:shared-instance",
+        "remove:sdk-default",
+        "remove:desktop-private",
+    ]
 
 
 def test_runtime_explicit_instance_root_stays_isolated(
@@ -184,11 +194,11 @@ def test_runtime_instance_root_environment_creates_isolated_group(
             self.root = root
             state_roots.append(root)
 
-        def remove(self) -> None:
-            return None
-
         def write(self, _state: object) -> None:
             return None
+
+        def remove_if_matches(self, _state: object) -> bool:
+            return True
 
     class FakeRuntime:
         def __init__(self, **kwargs: object) -> None:
@@ -275,6 +285,61 @@ def test_runtime_releases_acquired_locks_when_later_lock_errors(
     ]
 
 
+def test_runtime_start_failure_preserves_state_owned_by_another_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeLock:
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def acquire(self) -> None:
+            return None
+
+        def release(self) -> None:
+            return None
+
+    class FakeRuntime:
+        def __init__(self, **_kwargs: object) -> None:
+            self.logs = type("Logs", (), {"record": lambda _self, _message: None})()
+
+        async def start(self) -> None:
+            raise OSError("control port is already occupied")
+
+        async def stop(self) -> None:
+            return None
+
+    shared_root = (tmp_path / "shared-instance").resolve()
+    legacy_root = (tmp_path / "sdk-default").resolve()
+    private_root = (tmp_path / "desktop-private").resolve()
+    existing = RuntimeProcessState(
+        pid=42,
+        control_url="http://127.0.0.1:18767",
+        external_url="ws://127.0.0.1:18765",
+        started_at=1.0,
+    )
+    for root in (shared_root, legacy_root, private_root):
+        RuntimeStateStore(root).write(existing)
+
+    monkeypatch.setattr(daemon_entrypoint, "RuntimeInstanceLock", FakeLock)
+    monkeypatch.setattr(daemon_entrypoint, "DaemonRuntime", FakeRuntime)
+    monkeypatch.setattr(
+        daemon_entrypoint, "system_runtime_instance_root", lambda: shared_root
+    )
+    monkeypatch.setattr(
+        daemon_entrypoint, "system_runtime_state_root", lambda: legacy_root
+    )
+    args = daemon_entrypoint.build_parser().parse_args(
+        ["--state-root", str(private_root), "--instance-root", str(shared_root)]
+    )
+
+    with pytest.raises(OSError, match="control port is already occupied"):
+        asyncio.run(daemon_entrypoint.run_runtime(args))
+
+    for root in (shared_root, legacy_root, private_root):
+        assert RuntimeStateStore(root).read() == existing
+
+
 def test_runtime_cleans_up_after_compatibility_state_write_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -297,11 +362,12 @@ def test_runtime_cleans_up_after_compatibility_state_write_failure(
         def __init__(self, root: Path) -> None:
             self.root = root
 
-        def remove(self) -> None:
-            events.append(("remove", self.root))
+        def remove_if_matches(self, _state: object) -> bool:
+            events.append(("remove_if_matches", self.root))
             remove_counts[self.root] = remove_counts.get(self.root, 0) + 1
-            if self.root.name == "shared-instance" and remove_counts[self.root] == 2:
+            if self.root.name == "shared-instance":
                 raise PermissionError("shared cleanup is read-only")
+            return True
 
         def write(self, _state: object) -> None:
             events.append(("write", self.root))
@@ -349,9 +415,9 @@ def test_runtime_cleans_up_after_compatibility_state_write_failure(
         asyncio.run(daemon_entrypoint.run_runtime(args))
 
     assert runtime_stopped is True
-    assert ("remove", shared_root) in events
-    assert ("remove", legacy_root) in events
-    assert ("remove", private_root) in events
+    assert ("remove_if_matches", shared_root) in events
+    assert ("remove_if_matches", legacy_root) not in events
+    assert ("remove_if_matches", private_root) not in events
     assert events[-3:] == [
         ("release", private_root / "runtime.lock"),
         ("release", legacy_root / "runtime.lock"),
@@ -380,11 +446,12 @@ def test_runtime_cleanup_attempts_every_resource_when_cleanup_steps_fail(
         def __init__(self, root: Path) -> None:
             self.root = root
 
-        def remove(self) -> None:
-            events.append(("remove", self.root))
+        def remove_if_matches(self, _state: object) -> bool:
+            events.append(("remove_if_matches", self.root))
             remove_counts[self.root] = remove_counts.get(self.root, 0) + 1
-            if self.root.name == "shared-instance" and remove_counts[self.root] == 2:
+            if self.root.name == "shared-instance":
                 raise PermissionError("first cleanup failed")
+            return True
 
         def write(self, _state: object) -> None:
             events.append(("write", self.root))
@@ -428,10 +495,10 @@ def test_runtime_cleanup_attempts_every_resource_when_cleanup_steps_fail(
         ["--state-root", str(private_root), "--instance-root", str(shared_root)]
     )
 
-    with pytest.raises(PermissionError, match="first cleanup failed"):
+    with pytest.raises(RuntimeError, match="runtime cleanup failed"):
         asyncio.run(daemon_entrypoint.run_runtime(args))
 
-    assert remove_counts == {shared_root: 2, legacy_root: 2, private_root: 2}
+    assert remove_counts == {shared_root: 1, legacy_root: 1, private_root: 1}
     assert ("stop", None) in events
     assert events[-3:] == [
         ("release", private_root / "runtime.lock"),

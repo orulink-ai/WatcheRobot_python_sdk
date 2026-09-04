@@ -1451,15 +1451,17 @@ def _canonical_launcher_path(executable: Path) -> Path:
 def stop_runtime() -> None:
     state = _live_runtime_state()
     if state is None:
-        RuntimeStateStore(default_runtime_state_root()).remove()
         return
     _request_json(state.control_url, "/daemon/stop", method="POST")
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        if _live_runtime_state() is None:
+    control_port = urlsplit(state.control_url).port
+    state_store = RuntimeStateStore(default_runtime_instance_root())
+    while True:
+        published_state = state_store.read()
+        state_is_gone = published_state is None or published_state != state
+        control_is_closed = control_port is None or not _local_tcp_port_is_open(control_port)
+        if state_is_gone and control_is_closed:
             return
         time.sleep(0.05)
-    raise CliError("Runtime did not stop within 10 seconds")
 
 
 def run_application(application: Path) -> int:

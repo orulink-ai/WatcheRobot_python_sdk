@@ -65,6 +65,17 @@ class RuntimeStateStore:
         except FileNotFoundError:
             pass
 
+    def remove_if_matches(self, state: RuntimeProcessState) -> bool:
+        """Remove only state that is still owned by the expected Runtime."""
+
+        if self.read() != state:
+            return False
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            return False
+        return True
+
 
 class RuntimeInstanceLock:
     """Hold one byte locked for the lifetime of the Runtime process."""

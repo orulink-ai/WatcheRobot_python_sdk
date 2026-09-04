@@ -133,9 +133,9 @@ async def run_runtime(args: argparse.Namespace) -> int:
         raise
 
     runtime: DaemonRuntime | None = None
+    published_state: RuntimeProcessState | None = None
+    published_stores: list[RuntimeStateStore] = []
     try:
-        for state_store in state_stores:
-            state_store.remove()
         runtime = DaemonRuntime(
             application_dir=state_root / "unselected",
             current_app=None,
@@ -198,23 +198,26 @@ async def run_runtime(args: argparse.Namespace) -> int:
             external_url=str(runtime_metadata["external_url"]),
             started_at=float(runtime_metadata["started_at"]),
         )
+        published_state = state
         for state_store in state_stores:
             state_store.write(state)
+            published_stores.append(state_store)
         await runtime.wait_for_shutdown()
         return 0
     finally:
         original_error = sys.exc_info()[1]
         cleanup_errors: list[BaseException] = []
-        for state_store in state_stores:
-            try:
-                state_store.remove()
-            except BaseException as exc:
-                cleanup_errors.append(exc)
         if runtime is not None:
             try:
                 await runtime.stop()
             except BaseException as exc:
                 cleanup_errors.append(exc)
+        if published_state is not None:
+            for state_store in published_stores:
+                try:
+                    state_store.remove_if_matches(published_state)
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
         cleanup_errors.extend(release_acquired_locks())
         if original_error is None and cleanup_errors:
             raise cleanup_errors[0]
