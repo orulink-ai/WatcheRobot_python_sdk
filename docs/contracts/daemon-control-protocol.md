@@ -2,14 +2,14 @@
 
 本文档定义 Desktop 与 SDK Daemon 之间的本机管理接口兼容合同。该接口只负责 Daemon、Application 和设备连接的生命周期管理，不承载或解析 Desktop、Application、Device 之间的业务帧。
 
-## 协议版本 3
+## 当前唯一控制协议
 
 `GET /daemon/status` 在既有 `application` 字段之外，增加只读的 `runtime` 身份：
 
 ```json
 {
   "runtime": {
-    "control_protocol": 3,
+    "control_protocol": 2,
     "sdk_version": "<watcherobot.__version__>",
     "instance_group": "default",
     "instance_id": "sha256:<协调目录身份摘要>",
@@ -30,18 +30,16 @@
 - 这些字段均为非敏感元数据，不包含本机路径、环境变量、命令输出或 traceback。
 - Desktop 复用已运行的 Daemon 前必须验证 `control_protocol`；缺失或不匹配时，不得把该进程当作当前随包 Runtime 使用。
 
-协议版本 3 将上述身份与发现元数据定义为必填合同。缺少任何字段或协议版本不匹配时均不得复用。它不改变 Application 分发命令，不改变业务帧路由，也不新增 Application 日志读取接口。
+当前控制协议将上述身份与发现元数据定义为完整必填合同。缺少任何字段或协议值不匹配时均不得复用。它不改变 Application 分发命令，不改变业务帧路由，也不新增 Application 日志读取接口。
 
-仅用于测试或嵌入调用、且未提供 `runtime_metadata` 的 `DaemonControlAPI` 会明确声明兼容协议 2；它不是可发现的协议 3 生产 Daemon。正式 `DaemonRuntime` 始终注入完整元数据并声明协议 3。
+仅用于测试或嵌入调用、且未提供 `runtime_metadata` 的 `DaemonControlAPI` 不发布 `runtime` 身份，因此不会冒充可发现的生产 Daemon。正式 `DaemonRuntime` 始终注入完整元数据，并且全项目只维护这一份当前协议合同。
 
 ## 兼容策略
 
 | Desktop | Daemon | 行为 |
 | --- | --- | --- |
-| 协议 3 Desktop/SDK | 协议 3 Daemon | 完整身份校验通过，可以复用 Daemon |
-| 协议 3 Desktop/SDK | 协议 2 Daemon | 明确提示停止或重启旧 Daemon，不继续启动第二个实例 |
-| 协议 3 Desktop/SDK | 未声明或其他版本 Daemon | 明确提示版本不兼容，不猜测端点、不继续抢锁 |
-| 旧版 Desktop/SDK | 协议 3 Daemon | 旧启动器无法验证新合同；升级后应重启 Daemon，并统一更新启动方 |
+| Desktop/SDK | 当前 Daemon | 完整身份校验通过，可以复用 Daemon |
+| Desktop/SDK | 未声明或不匹配的 Daemon | 明确提示合同不兼容，不猜测端点、不继续抢锁；更新后应统一重启启动方与 Daemon |
 
 SDK 启动器通过固定管理端点恢复发现时要求协议版本匹配、`instance_group=default`、`instance_id` 匹配，并直接采用
 Daemon 返回的 `external_url`。缺少这些元数据时不得猜测端口，也不得把隔离实例当作默认实例复用。

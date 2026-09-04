@@ -35,6 +35,20 @@ asyncio.run(main())
 TEST_BENCH_URL = "http://127.0.0.1:54321"
 
 
+@pytest.fixture(autouse=True)
+def isolate_system_runtime_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep real Desktop/SDK state files out of CLI discovery tests."""
+
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_state_root",
+        lambda: tmp_path / "system-runtime-state",
+    )
+
+
 def test_ensure_runtime_reuses_shared_instance_state_across_private_roots(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -60,7 +74,7 @@ def test_ensure_runtime_reuses_shared_instance_state_across_private_roots(
         "_request_json",
         lambda *_args, **_kwargs: {
             "runtime": {
-                "control_protocol": 3,
+                "control_protocol": 2,
                 "instance_group": "default",
                 "instance_id": runtime_instance_id(shared_root),
                 "external_url": "ws://127.0.0.1:28765",
@@ -111,7 +125,7 @@ def test_ensure_runtime_reuses_environment_isolated_instance(
         "_request_json",
         lambda *_args, **_kwargs: {
             "runtime": {
-                "control_protocol": 3,
+                "control_protocol": 2,
                 "instance_group": "isolated",
                 "instance_id": runtime_instance_id(isolated_root),
                 "external_url": state.external_url,
@@ -160,7 +174,7 @@ def test_live_runtime_state_does_not_cross_reuse_isolated_instances(
         "_request_json",
         lambda *_args, **_kwargs: {
             "runtime": {
-                "control_protocol": 3,
+                "control_protocol": 2,
                 "instance_group": "isolated",
                 "instance_id": runtime_instance_id(other_root),
                 "external_url": "ws://127.0.0.1:28765",
@@ -200,9 +214,9 @@ def test_live_runtime_state_validates_identity_from_state_file(
         "_request_json",
         lambda *_args, **_kwargs: {
             "runtime": {
-                    "control_protocol": 3,
-                    "instance_group": "isolated",
-                    "instance_id": runtime_instance_id(shared_root),
+                "control_protocol": 2,
+                "instance_group": "isolated",
+                "instance_id": runtime_instance_id(shared_root),
                 "external_url": "ws://127.0.0.1:8765",
                 "pid": 123,
                 "started_at": 42.0,
@@ -235,7 +249,7 @@ def test_live_runtime_state_discovers_default_group_by_control_endpoint(
         "_request_json",
         lambda base_url, path, **_kwargs: {
             "runtime": {
-                "control_protocol": 3,
+                "control_protocol": 2,
                 "sdk_version": "0.1.6",
                 "instance_group": "default",
                 "instance_id": runtime_instance_id(tmp_path / "shared"),
@@ -277,7 +291,7 @@ def test_live_runtime_state_does_not_reuse_isolated_control_endpoint(
         "_request_json",
         lambda *_args, **_kwargs: {
             "runtime": {
-                "control_protocol": 3,
+                "control_protocol": 2,
                 "instance_group": "isolated",
                 "instance_id": runtime_instance_id(tmp_path / "shared"),
                 "external_url": "ws://127.0.0.1:8765",

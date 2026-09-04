@@ -230,10 +230,6 @@ def test_control_rest_manages_application_lifecycle_and_device_pairing() -> None
     client = TestClient(DaemonControlAPI(controller=controller).create_app())
 
     assert client.get("/daemon/status").json() == {
-        "runtime": {
-            "control_protocol": 2,
-            "sdk_version": __version__,
-        },
         "application": {
             "current_app": "watcher_default",
             "state": "not_running",
@@ -605,10 +601,7 @@ def test_control_status_identifies_the_daemon_control_protocol() -> None:
     response = client.get("/daemon/status")
 
     assert response.status_code == 200
-    assert response.json()["runtime"] == {
-        "control_protocol": 2,
-        "sdk_version": __version__,
-    }
+    assert "runtime" not in response.json()
 
 
 def test_control_status_exposes_verified_runtime_discovery_metadata() -> None:
@@ -630,7 +623,7 @@ def test_control_status_exposes_verified_runtime_discovery_metadata() -> None:
 
     runtime = client.get("/daemon/status").json()["runtime"]
 
-    assert runtime["control_protocol"] == 3
+    assert runtime["control_protocol"] == 2
     assert runtime["sdk_version"] == __version__
     assert runtime["instance_group"] == "default"
     assert runtime["instance_id"] == "sha256:test"

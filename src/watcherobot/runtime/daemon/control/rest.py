@@ -28,8 +28,7 @@ from watcherobot.runtime.daemon.pairing.session import PairingSessionError
 from watcherobot.runtime.daemon.maintenance import MaintenanceError
 
 
-DAEMON_CONTROL_PROTOCOL_VERSION = 3
-_DAEMON_CONTROL_EMBEDDED_PROTOCOL_VERSION = 2
+DAEMON_CONTROL_PROTOCOL_VERSION = 2
 
 
 RuntimeInstanceGroup = Literal["default", "isolated"]
@@ -592,29 +591,21 @@ class DaemonControlAPI:
         return {"job": job}
 
     def _status_response(self) -> dict[str, Any]:
-        runtime: dict[str, Any] = {
-            "control_protocol": (
-                DAEMON_CONTROL_PROTOCOL_VERSION
-                if self._runtime_metadata is not None
-                else _DAEMON_CONTROL_EMBEDDED_PROTOCOL_VERSION
-            ),
-            "sdk_version": __version__,
+        response: dict[str, Any] = {
+            "application": self._controller.application_status(),
         }
         if self._runtime_metadata is not None:
             metadata = self._runtime_metadata()
-            runtime.update(
-                {
-                    "instance_group": metadata["instance_group"],
-                    "instance_id": metadata["instance_id"],
-                    "external_url": metadata["external_url"],
-                    "pid": metadata["pid"],
-                    "started_at": metadata["started_at"],
-                }
-            )
-        return {
-            "runtime": runtime,
-            "application": self._controller.application_status(),
-        }
+            response["runtime"] = {
+                "control_protocol": DAEMON_CONTROL_PROTOCOL_VERSION,
+                "sdk_version": __version__,
+                "instance_group": metadata["instance_group"],
+                "instance_id": metadata["instance_id"],
+                "external_url": metadata["external_url"],
+                "pid": metadata["pid"],
+                "started_at": metadata["started_at"],
+            }
+        return response
 
 
 class DaemonControlServer:
