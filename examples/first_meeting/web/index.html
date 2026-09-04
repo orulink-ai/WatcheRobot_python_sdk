@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="meeting-token" content="__API_TOKEN__"><title>初次见面 · Watcher</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<header><a class="brand" href="/">w<span>●</span>tcher <small>实验室 / 01</small></a><div id="connection" class="connection">正在连接控制台…</div></header>
+<main>
+<section class="intro"><div><div class="eyebrow">FIRST MEETING</div><h1>世界，你好呀。</h1><p>从一个懒懒的哈欠，到我们的第一段对话。</p></div><div class="version">PYTHON SDK <b id="version">—</b><span>初次见面 / 基础应用</span></div></section>
+<div class="workspace">
+<section class="experience">
+<div class="robot-stage"><div class="stage-label"><span class="dot"></span><span id="phase" aria-live="polite">准备就绪</span></div><div class="robot-face" aria-hidden="true"><i></i><i></i><div class="mouth"></div></div><div class="stage-caption" id="caption">给这个世界一个好奇的眼神。</div><div class="orbit" aria-hidden="true"></div></div>
+<div class="timeline"><span>01 <b>睡觉 · 苏醒</b></span><span>02 <b>抬头 · 看看</b></span><span>03 <b>认识 · 聊天</b></span></div>
+<div class="controls"><button class="primary" id="start">开始开机流程 <span>↗</span></button><button id="gaze">只测左右看</button><button id="chat">直接对话</button><button id="stop" class="stop">停止</button></div>
+<p class="hint">动作与音频均由机器人执行。说完一句，等它回答后再继续。</p>
+<div class="conversation-title"><h2>我们的对话</h2><span id="person">还没认识你</span></div>
+<div id="conversation" class="conversation" aria-live="polite"><div class="empty">第一次见面，就从“我叫……”开始吧。</div></div>
+<form id="text-form" class="text-form"><label class="sr-only" for="message">输入对话</label><input id="message" maxlength="500" placeholder="也可以打字告诉它：我叫小明" autocomplete="off"><button type="submit" id="send">发送 ↑</button></form>
+<div id="photo-wrap" hidden><h3>第一次见面的照片</h3><img id="photo" alt="征得同意后，机器人拍摄的照片"><p class="hint">姓名和照片保存在本机，尚未接入人脸识别。</p></div>
+</section>
+<aside>
+<section class="panel"><div class="panel-heading"><h2>连接状态</h2><button class="text-button" id="check">检测云服务 ↗</button></div><div class="health"><div><span>机器人</span><b id="device-state">未连接</b></div><div><span>语音合成 · 火山</span><b id="tts-state">未检测</b></div><div><span>语音识别 · 火山</span><b id="stt-state">未检测</b></div><div><span>大语言模型</span><b id="llm-state">未检测</b></div></div><div id="check-details"></div><details><summary>连接机器人</summary><p class="hint">打开机器人上的 Python SDK 应用，输入它显示的六位配对码。</p><form id="pair-form" class="pair"><input id="pair-code" aria-label="六位配对码" placeholder="六位配对码" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required><button>配对</button></form></details></section>
+<section class="panel config-panel"><div class="panel-heading"><h2>应用配置</h2><span class="local-tag">仅本机</span></div><form id="settings">
+<details open><summary>对话与声音</summary><div class="fields">
+<label>大语言模型<select name="llm_provider"><option value="aliyun">阿里云百炼</option><option value="volcengine">火山方舟</option></select></label>
+<label>模型 ID / 接入点<input name="llm_model" placeholder="qwen-flash"></label>
+<label>LLM API Key<input name="llm_key" type="password" autocomplete="new-password"></label>
+<label class="toggle"><input type="checkbox" name="voice_enabled"><span>使用机器人麦克风，自动识别停顿</span></label>
+<label>火山音色<input name="tts_voice"></label>
+</div></details>
+<details><summary>火山 TTS / STT 密钥</summary><div class="fields">
+<label>TTS APP ID<input name="tts_app_id"></label><label>TTS Access Token<input name="tts_token" type="password" autocomplete="new-password"></label><label>TTS 资源 ID<input name="tts_resource"></label>
+<label>STT APP ID<input name="stt_app_id"></label><label>STT Access Token<input name="stt_token" type="password" autocomplete="new-password"></label><label>STT 接口<select name="stt_mode"><option value="stream">流式语音识别</option><option value="flash">录音文件极速识别</option></select></label><label>STT 资源 ID<input name="stt_resource"></label><label>Speech Secret Key（保留项）<input name="speech_secret" type="password" autocomplete="new-password"></label>
+<p class="hint">这些接口使用 APP ID + Access Token。Secret Key 保留在配置中，不参与请求。</p></div></details>
+<details><summary>动画与运动</summary><div class="fields two">
+<label>睡觉动画<input name="sleep_animation" list="animations"></label><label>苏醒动画<input name="wake_animation" list="animations"></label><label>左看 · 3.6 秒<input name="left_animation" readonly></label><label>右看 · 2.4 秒<input name="right_animation" readonly></label><label>眨眼表情<input name="blink_animation" list="animations"></label>
+<label>睡觉停留 / 秒<input name="sleep_seconds" type="number" min="0" max="30" step="0.1"></label><label>两段之间停留 / 秒<input name="look_seconds" type="number" min="0" max="10" step="0.1"></label><label>抬头时长 / 毫秒<input name="move_ms" type="number" min="600" max="5000" step="100"></label>
+<label>低头 / 度<input name="tilt_down" type="number" min="100" max="130"></label><label>抬头 / 度<input name="tilt_up" type="number" min="100" max="130"></label><label>左转 / 度<input name="pan_left" type="number" min="30" max="150"></label><label>右转 / 度<input name="pan_right" type="number" min="30" max="150"></label><label>回中 / 度<input name="pan_center" type="number" min="30" max="150"></label>
+</div><p class="hint">左右以机器人自身为准。已按 standby3 / standby4 的转眼、停留和回中帧编排动作；更换动画需要重新标定时间轴。</p><datalist id="animations"></datalist></details>
+<details><summary>聆听、跟随与自动开始</summary><div class="fields"><label>说话音量阈值<input name="vad_threshold" type="number" min="50" max="10000"></label><label>停顿多久算说完 / 秒<input name="silence_seconds" type="number" min="0.3" max="3" step="0.1"></label><label>单句最长 / 秒<input name="max_utterance_seconds" type="number" min="3" max="45"></label><label class="toggle"><input name="face_tracking_enabled" type="checkbox"><span>端侧人脸跟随（拍照时暂停，需可用的人脸模型）</span></label><label class="toggle"><input name="auto_boot" type="checkbox"><span>应用启动后，机器人连接时自动开场一次</span></label></div></details>
+<button class="save" type="submit">保存配置</button><p class="hint">已保存的密钥不会回显；留空保留原值。修改前请先停止流程。</p></form></section>
+</aside></div>
+<section class="logs"><div class="panel-heading"><h2>运行日志 <small>LIVE LOG</small></h2><button class="text-button" id="download">下载日志 ↓</button></div><pre id="logs">等待应用事件…</pre></section>
+</main><footer><span>WATCHER · FIRST MEETING</span><span>认识你，是今天的第一件小事。</span></footer><div id="toast" role="status" hidden></div>
+</body></html>
