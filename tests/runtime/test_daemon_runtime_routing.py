@@ -165,6 +165,33 @@ def _expected_application_python(executable: Path) -> Path:
     return executable
 
 
+def test_default_runtime_metadata_uses_a_valid_structural_instance_identity(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        runtime = DaemonRuntime(
+            application_dir=tmp_path / "unselected",
+            current_app="unselected",
+            external_port=0,
+            control_port=0,
+            pairing_udp_port=0,
+            preview_udp_port=0,
+        )
+        await runtime.start()
+        try:
+            metadata = runtime.runtime_metadata()
+
+            assert metadata["instance_group"] == "default"
+            instance_id = metadata["instance_id"]
+            assert isinstance(instance_id, str)
+            assert instance_id.startswith("sha256:")
+            assert len(instance_id) == len("sha256:") + 64
+        finally:
+            await runtime.stop()
+
+    asyncio.run(scenario())
+
+
 def test_same_daemon_switches_between_two_real_python_environments(
     tmp_path: Path,
     monkeypatch,

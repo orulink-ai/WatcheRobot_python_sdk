@@ -426,9 +426,10 @@ def test_stop_runtime_waits_for_owned_state_and_control_endpoint_to_close(
     monkeypatch.setattr(
         watcherobot_cli, "_local_tcp_port_is_open", lambda _port: next(checks)
     )
+    monkeypatch.setattr(watcherobot_cli.psutil, "pid_exists", lambda _pid: True)
     monkeypatch.setattr(watcherobot_cli.time, "sleep", lambda _seconds: store.remove())
 
-    watcherobot_cli.stop_runtime()
+    assert watcherobot_cli.stop_runtime() is True
 
     assert requests == [(state.control_url, "/daemon/stop")]
     assert store.read() is None
@@ -451,9 +452,32 @@ def test_stop_runtime_does_not_remove_unverified_state(
         watcherobot_cli, "default_runtime_instance_root", lambda: instance_root
     )
 
-    watcherobot_cli.stop_runtime()
+    assert watcherobot_cli.stop_runtime() is True
 
     assert RuntimeStateStore(instance_root).read() == foreign
+
+
+def test_stop_runtime_reports_async_stopping_without_killing_or_deleting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = RuntimeProcessState(
+        pid=44,
+        control_url="http://127.0.0.1:18767",
+        external_url="ws://127.0.0.1:18765",
+        started_at=3.0,
+    )
+    instance_root = tmp_path / "instance"
+    RuntimeStateStore(instance_root).write(state)
+    monkeypatch.setenv("WATCHER_RUNTIME_STOP_WAIT_SECONDS", "0")
+    monkeypatch.setattr(watcherobot_cli, "_live_runtime_state", lambda: state)
+    monkeypatch.setattr(watcherobot_cli, "_request_json", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_instance_root", lambda: instance_root
+    )
+
+    assert watcherobot_cli.stop_runtime() is False
+    assert RuntimeStateStore(instance_root).read() == state
 
 
 @pytest.mark.parametrize(

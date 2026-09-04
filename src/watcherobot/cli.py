@@ -21,6 +21,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+import psutil
 from colorama import just_fix_windows_console  # type: ignore[import-untyped]
 from websockets.asyncio.client import connect
 
@@ -343,8 +344,12 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(status)
                 return 0 if status["running"] else 1
             if args.daemon_command == "stop":
-                stop_runtime()
-                _print_json({"running": False})
+                stopped = stop_runtime()
+                _print_json(
+                    {"running": not stopped, "stopping": not stopped}
+                    if not stopped
+                    else {"running": False}
+                )
                 return 0
         if args.command == "app" and args.app_command == "run":
             return run_application(args.application)
@@ -1448,20 +1453,25 @@ def _canonical_launcher_path(executable: Path) -> Path:
     return requested.parent.resolve(strict=True) / requested.name
 
 
-def stop_runtime() -> None:
+def stop_runtime() -> bool:
     state = _live_runtime_state()
     if state is None:
-        return
+        return True
     _request_json(state.control_url, "/daemon/stop", method="POST")
     control_port = urlsplit(state.control_url).port
     state_store = RuntimeStateStore(default_runtime_instance_root())
-    while True:
+    wait_seconds = float(os.environ.get("WATCHER_RUNTIME_STOP_WAIT_SECONDS", "30"))
+    deadline = time.monotonic() + max(wait_seconds, 0.0)
+    while time.monotonic() < deadline:
+        if not psutil.pid_exists(state.pid):
+            return True
         published_state = state_store.read()
         state_is_gone = published_state is None or published_state != state
         control_is_closed = control_port is None or not _local_tcp_port_is_open(control_port)
         if state_is_gone and control_is_closed:
-            return
+            return True
         time.sleep(0.05)
+    return False
 
 
 def run_application(application: Path) -> int:

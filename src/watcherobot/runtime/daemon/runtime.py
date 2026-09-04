@@ -34,11 +34,14 @@ from watcherobot.runtime.daemon.control.rest import (
     RuntimeDiscoveryMetadata,
     RuntimeInstanceGroup,
 )
+from watcherobot.runtime.daemon.instance import (
+    default_runtime_instance_root,
+    runtime_instance_id,
+)
 from watcherobot.runtime.daemon.logging import DaemonLogService
 from watcherobot.runtime.daemon.maintenance import MaintenanceError, MaintenanceService
 from watcherobot.runtime.daemon.pairing.bindings_store import (
     DeviceBinding,
-    DeviceBindingsSnapshot,
     DeviceBindingsStore,
 )
 from watcherobot.runtime.daemon.pairing.protocol import (
@@ -90,7 +93,7 @@ class DaemonRuntime:
         source_default_application_root: Path | None = None,
         source_default_launcher_executable: Path | None = None,
         instance_group: RuntimeInstanceGroup = "default",
-        instance_id: str = "default",
+        instance_id: str | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         connection_registry = ExternalConnectionRegistry()
@@ -144,7 +147,9 @@ class DaemonRuntime:
         )
         self._clock = clock
         self._instance_group = instance_group
-        self._instance_id = instance_id
+        if instance_id is None and instance_group != "default":
+            raise ValueError("isolated DaemonRuntime requires an explicit instance_id")
+        self._instance_id = instance_id or runtime_instance_id(default_runtime_instance_root())
         self._started_at = time.time()
         self.connection_registry = connection_registry
         self.face_tracking_preview = FaceTrackingPreviewBroker(connection_registry)
