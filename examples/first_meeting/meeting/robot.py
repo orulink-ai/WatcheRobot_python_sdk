@@ -25,6 +25,7 @@ class SDKRobot:
         self.stopped = stopped
         self.animation_job = None
         self.microphone_stats = {}
+        self.microphone_session = None
         self.tracking_active = False
         self.tracking_resume_error: Exception | None = None
 
@@ -73,6 +74,15 @@ class SDKRobot:
         if self.tracking_active:
             return
         status = await asyncio.to_thread(self.sdk.vision.status, timeout=8)
+        # A released SSCMA camera occasionally times out during reconnect.
+        # Query once more after HAL cleanup; never switch the user's model.
+        if getattr(status, 'status_code', 0) == 0x107 or getattr(status, 'health', '') == 'busy':
+            await asyncio.sleep(0.2)
+            if self.stopped.is_set():
+                raise InterruptedError('已停止')
+            status = await asyncio.to_thread(self.sdk.vision.status, timeout=8)
+        if getattr(status, 'health', 'ready') in ('error', 'busy', 'degraded'):
+            raise WatcheRobotError(f'视觉模块尚未就绪：health={status.health}, code={status.status_code}')
         if status.model is None or not status.model.contains_face_class:
             raise WatcheRobotError('端侧跟随需要可用的人脸检测模型，请检查视觉固件和当前模型')
         if self.stopped.is_set():
@@ -110,14 +120,25 @@ class SDKRobot:
         return await asyncio.to_thread(self._record_utterance, settings, interrupt)
 
     def _record_utterance(self, settings: Settings, interrupt: threading.Event) -> bytes:
+        self.microphone_stats = {'frames': 0, 'pcm_bytes': 0, 'peak_rms': 0, 'current_rms': 0,
+                                 'decode_failures': 0, 'dropped_frames': 0, 'speech_detected': False,
+                                 'state': 'opening', 'end_reason': 'waiting', 'threshold': settings.vad_threshold}
+        try:
+            return self._read_utterance(settings, interrupt)
+        except Exception:
+            self.microphone_stats.update(state='error', end_reason='error')
+            raise
+
+    def _read_utterance(self, settings: Settings, interrupt: threading.Event) -> bytes:
         pre_roll: deque[bytes] = deque(maxlen=5)
         chunks = []
         started = False
         voiced = silence = duration = 0.0
         deadline = time.monotonic() + settings.max_utterance_seconds + 10
         last_frame = time.monotonic()
-        self.microphone_stats = {'frames': 0, 'pcm_bytes': 0, 'peak_rms': 0, 'decode_failures': 0, 'dropped_frames': 0}
         with self.sdk.microphone.open_pcm(queue_size=64) as microphone:
+            self.microphone_session = microphone
+            self.microphone_stats.update(state='waiting_speech', session_id=getattr(microphone, 'id', None))
             while not self.stopped.is_set() and not interrupt.is_set() and time.monotonic() < deadline:
                 try:
                     frame = microphone.read(timeout=0.2)
@@ -132,6 +153,7 @@ class SDKRobot:
                 self.microphone_stats['frames'] += 1
                 self.microphone_stats['pcm_bytes'] += len(pcm)
                 self.microphone_stats['peak_rms'] = max(self.microphone_stats['peak_rms'], round(volume))
+                self.microphone_stats.update(current_rms=round(volume), last_frame_at=time.time())
                 self.microphone_stats['decode_failures'] = microphone.decode_failures
                 self.microphone_stats['dropped_frames'] = microphone.dropped_frames
                 active = volume >= settings.vad_threshold
@@ -141,21 +163,36 @@ class SDKRobot:
                     if voiced < 0.12:
                         continue
                     started = True
+                    self.microphone_stats.update(speech_detected=True, state='recording')
                     chunks.extend(pre_roll)
                 else:
                     chunks.append(pcm)
                 duration += seconds
                 silence = 0 if active else silence + seconds
                 if silence >= settings.silence_seconds or duration >= settings.max_utterance_seconds:
+                    self.microphone_stats['end_reason'] = 'silence' if silence >= settings.silence_seconds else 'max_duration'
                     break
             if microphone.dropped_frames or microphone.decode_failures:
                 raise RuntimeError('麦克风音频丢帧或解码失败，请重试本句话')
+            self.microphone_stats['state'] = 'closing'
+        self.microphone_session = None
+        self.microphone_stats['state'] = 'closed'
         if self.stopped.is_set() or interrupt.is_set():
+            self.microphone_stats['end_reason'] = 'interrupted'
             return b''
+        if not started:
+            self.microphone_stats['end_reason'] = 'no_speech'
         return b''.join(chunks) if started else b''
 
     async def stop(self) -> None:
         failures = []
+        if self.microphone_session is not None:
+            try:
+                await asyncio.to_thread(self.microphone_session.close)
+                self.microphone_session = None
+                self.microphone_stats['state'] = 'closed'
+            except Exception as error:
+                failures.append('microphone.close:' + type(error).__name__)
         try:
             await self.stop_tracking()
         except Exception as error:

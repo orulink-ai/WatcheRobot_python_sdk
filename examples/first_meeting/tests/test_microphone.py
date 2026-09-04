@@ -27,3 +27,6 @@ def test_recording_closes_microphone_before_returning_and_reports_frames():
     assert robot.microphone_stats['frames'] == 9
     assert robot.microphone_stats['peak_rms'] == 2000
     assert robot.microphone_stats['decode_failures'] == 0
+    assert robot.microphone_stats['speech_detected']
+    assert robot.microphone_stats['end_reason'] == 'silence'
+    assert robot.microphone_stats['state'] == 'closed'

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+import traceback
 import uuid
 from collections import deque
 from pathlib import Path
@@ -48,12 +49,20 @@ class MeetingService:
         from watcherobot.errors import WatcheRobotError
         from .cloud import CloudError
         detail = str(error) if isinstance(error, (CloudError, WatcheRobotError, TimeoutError)) else type(error).__name__
+        if type(error) is RuntimeError and str(error) == 'microphone session is closed':
+            detail = 'microphone session is closed：设备音频会话提前结束，请重新开始对话'
         detail = detail or type(error).__name__
         for name in SECRETS:
             value = getattr(self.settings, name)
             if value:
                 detail = detail.replace(value, '[已隐藏]')
         return detail[:1000]
+
+    def log_exception(self, error: Exception) -> None:
+        # Locations only: traceback source lines/locals may contain credentials.
+        locations = ' -> '.join(f'{Path(f.filename).name}:{f.lineno}:{f.name}'
+                                for f in traceback.extract_tb(error.__traceback__))
+        self.log('error', self.error_detail(error) + '；位置：' + locations)
 
     async def pause(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds
@@ -205,13 +214,15 @@ class MeetingService:
                     self.phase = 'listening'
                     pcm = await self.robot.listen(self.settings, self.interrupt)
                     stats = getattr(self.robot, 'microphone_stats', {})
-                    self.log('audio', f"麦克风 {stats.get('frames', 0)} 帧 / {stats.get('pcm_bytes', 0)} 字节；丢帧 {stats.get('dropped_frames', 0)}，解码错误 {stats.get('decode_failures', 0)}")
+                    self.log('audio', f"麦克风 {stats.get('frames', 0)} 帧 / {stats.get('pcm_bytes', 0)} 字节；丢帧 {stats.get('dropped_frames', 0)}，解码错误 {stats.get('decode_failures', 0)}；峰值 {stats.get('peak_rms', 0)} / 阈值 {self.settings.vad_threshold}；结束 {stats.get('end_reason', 'unknown')}")
                     self.check_stop()
                     if not self.inputs.empty():
                         text = self.inputs.get_nowait()
                     elif pcm:
                         self.phase = 'recognizing'
                         text = await self.cloud_call(self.cloud.stt(pcm))
+                        if not text.strip():
+                            self.log('audio', '语音识别返回空文本，请再说一次')
                     else:
                         continue
                 else:
@@ -226,7 +237,8 @@ class MeetingService:
             self.log('stage', '流程已停止')
         except Exception as error:
             self.phase = 'error'
-            self.log('error', self.error_detail(error))
+            self.log('audio', '异常时麦克风状态：' + str(getattr(self.robot, 'microphone_stats', {})))
+            self.log_exception(error)
         finally:
             try:
                 await self.robot.stop()

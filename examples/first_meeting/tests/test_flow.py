@@ -118,6 +118,22 @@ def test_device_errors_keep_action_and_reason_but_hide_secrets(tmp_path):
     assert s.error_detail(ValueError('unexpected secret')) == 'ValueError'
 
 
+def test_microphone_closed_error_has_actionable_detail(tmp_path):
+    s = service(tmp_path)
+    assert 'microphone session is closed' in s.error_detail(RuntimeError('microphone session is closed'))
+
+
+def test_error_trace_records_location_without_exception_payload(tmp_path):
+    s = service(tmp_path)
+    try:
+        raise RuntimeError('private-provider-payload')
+    except RuntimeError as error:
+        s.log_exception(error)
+    text = str(list(s.events))
+    assert 'test_error_trace_records_location' in text
+    assert 'private-provider-payload' not in text
+
+
 def test_secret_masking_and_blank_preserves_existing(tmp_path):
     store = ConfigStore(tmp_path / 'settings.json')
     store.update({'tts_token': 'private-token'})

@@ -45,6 +45,17 @@ def test_photo_pauses_and_resumes_only_owned_tracking(tmp_path):
     assert robot.tracking_active
 
 
+def test_tracking_retries_transient_camera_timeout_without_changing_model():
+    robot = adapter([])
+    statuses = iter([
+        SimpleNamespace(health='error', status_code=263, model=None),
+        SimpleNamespace(health='ready', status_code=0, model=SimpleNamespace(contains_face_class=True)),
+    ])
+    robot.sdk.vision.status = lambda **kw: next(statuses)
+    asyncio.run(robot.start_tracking())
+    assert robot.tracking_active
+
+
 def test_failed_stop_never_starts_camera(tmp_path):
     events = []
     robot = adapter(events, fail_stop=True)

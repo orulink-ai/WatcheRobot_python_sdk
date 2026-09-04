@@ -625,6 +625,26 @@ def test_camera_rejects_non_positive_timeout(timeout):
         robot.camera.capture(timeout=timeout)
 
 
+def test_robot_close_releases_microphone_after_remote_end():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    microphone = robot.microphone.open()
+    microphone._mark_remote_closed()
+    robot.close()
+    assert ("ctrl.microphone.close", {"session_id": microphone.id}) in transport.commands
+
+
+def test_remote_end_requires_device_release_before_next_microphone():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    microphone = robot.microphone.open()
+    microphone._mark_remote_closed()
+    with pytest.raises(WatcheRobotError):
+        robot.microphone.open()
+    microphone.close()
+    assert robot.microphone.open().id != microphone.id
+
+
 def test_camera_reassembles_fragmented_jpeg_before_returning_it():
     class FragmentedCameraTransport(FakeTransport):
         def send_command(self, message_type, data, timeout=None):

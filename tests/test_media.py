@@ -43,6 +43,29 @@ def test_microphone_context_closes_session_once():
     assert robot.closed_sessions == [12]
 
 
+def test_remote_end_still_releases_device_microphone_once():
+    robot = FakeRobot()
+    session = MicrophoneSession(robot, session_id=12)
+    session._mark_remote_closed()
+    session.close()
+    session.close()
+    assert robot.closed_sessions == [12]
+
+
+def test_failed_device_close_can_be_retried_after_decoder_closed():
+    robot = FakeRobot()
+    def fail_once(session_id):
+        robot.closed_sessions.append(session_id)
+        if len(robot.closed_sessions) == 1:
+            raise TimeoutError('close not acknowledged')
+    robot._close_microphone = fail_once
+    session = MicrophoneSession(robot, session_id=12)
+    with pytest.raises(TimeoutError):
+        session.close()
+    session.close()
+    assert robot.closed_sessions == [12, 12]
+
+
 def test_microphone_read_timeout_is_plain_timeout_error():
     with pytest.raises(TimeoutError):
         MicrophoneSession(FakeRobot(), session_id=2).read(timeout=0)

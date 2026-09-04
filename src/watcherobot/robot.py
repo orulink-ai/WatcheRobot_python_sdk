@@ -461,7 +461,7 @@ class WatcheRobot:
                 return
             self._closing = True
             microphone = self._microphone
-        if microphone is not None and not microphone.closed:
+        if microphone is not None:
             try:
                 microphone.close()
             except Exception:
@@ -700,11 +700,7 @@ class WatcheRobot:
         with self._media_lock:
             if self._closed or self._closing:
                 raise WatcheRobotError("robot connection is closed")
-            if (
-                self._microphone_opening
-                or self._microphone is not None
-                and not self._microphone.closed
-            ):
+            if self._microphone_opening or self._microphone is not None:
                 raise WatcheRobotError("microphone session is already open or opening")
             self._microphone_opening = True
             self._pending_audio_frames.clear()

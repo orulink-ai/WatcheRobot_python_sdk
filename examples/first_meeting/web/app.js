@@ -14,6 +14,10 @@ async function action(fn){try{await fn()}catch(e){toast(e.message)}}
 function fillConfig(data){config=data;for(const field of $('settings').elements){if(!field.name)continue;if(field.type==='checkbox')field.checked=!!data[field.name];else{field.value=data[field.name]??'';if(field.type==='password')field.placeholder=data[field.name+'_configured']?'已配置 · 留空保留':'尚未配置'}}}
 function render(s){
   state=s;$('version').textContent=s.sdk_version;$('phase').textContent=phaseNames[s.phase]||s.phase;
+  const mic=s.microphone||{};
+  const micNames={opening:'正在打开麦克风',waiting_speech:'正在收音，等待讲话',recording:'已检测到讲话',closing:'正在关闭麦克风',closed:'麦克风已关闭',error:'录音异常'};
+  const fresh=mic.last_frame_at&&Date.now()/1000-mic.last_frame_at<3;
+  $('microphone-status').textContent=(s.phase==='error'?'对话已中断 · ':s.phase==='recognizing'?'正在识别 · ':'')+(micNames[mic.state]||'麦克风未开启')+` · 收到 ${mic.frames||0} 帧`+(fresh?` · 音量 ${mic.current_rms||0} / 阈值 ${mic.threshold||0}`:'');
   const online=!!s.device.online;$('connection').textContent=online?'● 机器人已连接':'○ 控制台在线 · 机器人未连接';$('device-state').textContent=online?'已连接':'未连接';$('device-state').className=online?'ok':'';
   $('person').textContent=s.name?'你好，'+s.name:'还没认识你';
   $('caption').textContent=s.phase==='listening'?'我在听，慢慢说。':s.phase==='speaking'?'轮到我说啦。':s.phase==='capturing'?'谢谢你愿意让我认识你。':'给这个世界一个好奇的眼神。';
