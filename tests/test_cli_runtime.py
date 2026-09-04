@@ -10,6 +10,11 @@ import pytest
 from watcherobot import cli as watcherobot_cli
 from watcherobot.cli import main
 from watcherobot.distribution.install import InstalledApplication
+from watcherobot.runtime.daemon.instance import (
+    RuntimeProcessState,
+    RuntimeStateStore,
+    runtime_instance_id,
+)
 
 
 COMPLETING_APPLICATION = """
@@ -28,6 +33,524 @@ asyncio.run(main())
 """
 
 TEST_BENCH_URL = "http://127.0.0.1:54321"
+
+
+@pytest.fixture(autouse=True)
+def isolate_system_runtime_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep real Desktop/SDK state files out of CLI discovery tests."""
+
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_state_root",
+        lambda: tmp_path / "system-runtime-state",
+    )
+
+
+def test_ensure_runtime_reuses_shared_instance_state_across_private_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared_root = tmp_path / "shared-instance"
+    private_root = tmp_path / "desktop-private"
+    state = RuntimeProcessState(
+        pid=42,
+        control_url="http://127.0.0.1:18767",
+        external_url="ws://127.0.0.1:18765",
+        started_at=1.0,
+    )
+    RuntimeStateStore(shared_root).write(state)
+    monkeypatch.setattr(watcherobot_cli, "default_runtime_instance_root", lambda: shared_root)
+    monkeypatch.setattr(watcherobot_cli, "system_runtime_instance_root", lambda: shared_root)
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "default_runtime_state_root",
+        lambda: tmp_path / "sdk-private",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "runtime": {
+                "sdk_version": "0.1.8",
+                "instance_group": "default",
+                "instance_id": runtime_instance_id(shared_root),
+                "external_url": "ws://127.0.0.1:28765",
+                "pid": 43,
+                "started_at": 2.0,
+            },
+            "application": {"state": "not_selected"},
+        },
+    )
+    monkeypatch.setattr(
+        watcherobot_cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("a shared Daemon must not start a second process"),
+    )
+
+    discovered, reused = watcherobot_cli.ensure_runtime(state_root=private_root)
+
+    assert reused is True
+    assert discovered == RuntimeProcessState(
+        pid=43,
+        control_url=state.control_url,
+        external_url="ws://127.0.0.1:28765",
+        started_at=2.0,
+    )
+
+
+def test_ensure_runtime_reuses_environment_isolated_instance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    isolated_root = tmp_path / "isolated-instance"
+    state = RuntimeProcessState(
+        pid=55,
+        control_url="http://127.0.0.1:28767",
+        external_url="ws://127.0.0.1:28765",
+        started_at=3.0,
+    )
+    RuntimeStateStore(isolated_root).write(state)
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_instance_root", lambda: isolated_root
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_instance_root",
+        lambda: tmp_path / "system-instance",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "runtime": {
+                "sdk_version": "0.1.8",
+                "instance_group": "isolated",
+                "instance_id": runtime_instance_id(isolated_root),
+                "external_url": state.external_url,
+                "pid": state.pid,
+                "started_at": state.started_at,
+            },
+            "application": {"state": "not_selected"},
+        },
+    )
+    monkeypatch.setattr(
+        watcherobot_cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("the isolated Daemon must be reused"),
+    )
+
+    discovered, reused = watcherobot_cli.ensure_runtime(state_root=tmp_path / "data")
+
+    assert reused is True
+    assert discovered == state
+
+
+def test_live_runtime_state_does_not_cross_reuse_isolated_instances(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested_root = tmp_path / "isolated-a"
+    other_root = tmp_path / "isolated-b"
+    RuntimeStateStore(requested_root).write(
+        RuntimeProcessState(
+            pid=55,
+            control_url="http://127.0.0.1:28767",
+            external_url="ws://127.0.0.1:28765",
+            started_at=3.0,
+        )
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_instance_root", lambda: requested_root
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_instance_root",
+        lambda: tmp_path / "system-instance",
+    )
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "runtime": {
+                "sdk_version": "0.1.8",
+                "instance_group": "isolated",
+                "instance_id": runtime_instance_id(other_root),
+                "external_url": "ws://127.0.0.1:28765",
+                "pid": 55,
+                "started_at": 3.0,
+            },
+            "application": {"state": "not_selected"},
+        },
+    )
+
+    assert watcherobot_cli._live_runtime_state(tmp_path / "data") is None
+
+
+def test_live_runtime_state_validates_identity_from_state_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared_root = tmp_path / "shared-instance"
+    RuntimeStateStore(shared_root).write(
+        RuntimeProcessState(
+            pid=42,
+            control_url="http://127.0.0.1:18767",
+            external_url="ws://127.0.0.1:18765",
+            started_at=1.0,
+        )
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_instance_root", lambda: shared_root
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "system_runtime_instance_root", lambda: shared_root
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "sdk"
+    )
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "runtime": {
+                "sdk_version": "0.1.8",
+                "instance_group": "isolated",
+                "instance_id": runtime_instance_id(shared_root),
+                "external_url": "ws://127.0.0.1:8765",
+                "pid": 123,
+                "started_at": 42.0,
+            },
+            "application": {"state": "not_selected"},
+        },
+    )
+
+    assert watcherobot_cli._live_runtime_state(tmp_path / "private") is None
+
+
+def test_live_runtime_state_discovers_default_group_by_control_endpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "default_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "sdk")
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "18767")
+    monkeypatch.setenv("WATCHER_RUNTIME_EXTERNAL_PORT", "18765")
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda base_url, path, **_kwargs: {
+            "runtime": {
+                "sdk_version": "0.1.6",
+                "instance_group": "default",
+                "instance_id": runtime_instance_id(tmp_path / "shared"),
+                "external_url": "ws://127.0.0.1:28765",
+                "pid": 123,
+                "started_at": 42.0,
+            },
+            "application": {"state": "not_selected"},
+        }
+        if (base_url, path) == ("http://127.0.0.1:18767", "/daemon/status")
+        else pytest.fail("unexpected Daemon endpoint"),
+    )
+
+    state = watcherobot_cli._live_runtime_state(tmp_path / "desktop-private")
+
+    assert state is not None
+    assert state.pid == 123
+    assert state.control_url == "http://127.0.0.1:18767"
+    assert state.external_url == "ws://127.0.0.1:28765"
+    assert state.started_at == 42.0
+
+
+def test_live_runtime_state_rejects_other_instance_on_fixed_control_endpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "default_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "sdk")
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "runtime": {
+                "sdk_version": "0.1.8",
+                "instance_group": "isolated",
+                "instance_id": runtime_instance_id(tmp_path / "shared"),
+                "external_url": "ws://127.0.0.1:8765",
+                "pid": 123,
+                "started_at": 42.0,
+            },
+            "application": {"state": "not_selected"},
+        },
+    )
+
+    with pytest.raises(watcherobot_cli.CliError, match="different WatcheRobot Daemon"):
+        watcherobot_cli._live_runtime_state(tmp_path / "desktop-private")
+
+
+def test_live_runtime_state_rejects_legacy_daemon_without_runtime_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "default_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "sdk")
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda *_args, **_kwargs: {
+            "runtime": {
+                "control_protocol": 2,
+                "sdk_version": "0.1.7",
+            },
+            "application": {"state": "not_selected"},
+        },
+    )
+
+    with pytest.raises(watcherobot_cli.CliError, match="Stop or restart"):
+        watcherobot_cli._live_runtime_state(tmp_path / "desktop-private")
+
+
+def test_legacy_daemon_blocks_status_start_and_stop_without_side_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared_root = tmp_path / "shared"
+    state_root = tmp_path / "state"
+    state = RuntimeProcessState(
+        pid=42,
+        control_url="http://127.0.0.1:18767",
+        external_url="ws://127.0.0.1:18765",
+        started_at=1.0,
+    )
+    RuntimeStateStore(state_root).write(state)
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_instance_root", lambda: shared_root
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "system_runtime_instance_root", lambda: shared_root
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_state_root", lambda: state_root
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda _base_url, _path, *, method="GET", **_kwargs: (
+            pytest.fail("an incompatible Daemon must not receive a stop request")
+            if method == "POST"
+            else {
+                "runtime": {
+                    "control_protocol": 2,
+                    "sdk_version": "0.1.7",
+                },
+                "application": {"state": "not_selected"},
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        watcherobot_cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail(
+            "an incompatible Daemon must block a second process"
+        ),
+    )
+
+    for operation in (
+        watcherobot_cli.runtime_status,
+        lambda: watcherobot_cli.ensure_runtime(state_root=state_root),
+        watcherobot_cli.stop_runtime,
+    ):
+        with pytest.raises(watcherobot_cli.CliError, match="runtime identity"):
+            operation()
+
+    assert RuntimeStateStore(state_root).read() == state
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sdk_version", None),
+        ("instance_group", "unknown"),
+        ("instance_id", "sha256:short"),
+        ("external_url", "http://127.0.0.1:8765"),
+        ("pid", True),
+        ("started_at", float("nan")),
+    ],
+)
+def test_runtime_state_rejects_incomplete_or_invalid_identity_field(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    instance_root = tmp_path / "shared"
+    runtime: dict[str, object] = {
+        "sdk_version": "0.1.8",
+        "instance_group": "default",
+        "instance_id": runtime_instance_id(instance_root),
+        "external_url": "ws://127.0.0.1:8765",
+        "pid": 123,
+        "started_at": 42.0,
+    }
+    runtime[field] = value
+
+    with pytest.raises(watcherobot_cli.CliError, match="runtime identity"):
+        watcherobot_cli._runtime_state_from_status(
+            "http://127.0.0.1:8767",
+            {"runtime": runtime},
+            expected_group="default",
+            expected_instance_id=runtime_instance_id(instance_root),
+            allow_other_instance=False,
+        )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        {"application": {"state": "not_selected"}},
+        {"runtime": {"instance_group": "default"}},
+        {"runtime": {"sdk_version": "0.1.8", "instance_group": "default"}},
+    ],
+)
+def test_live_runtime_state_rejects_daemon_without_complete_runtime_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: dict[str, object],
+) -> None:
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "default_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "sdk")
+    monkeypatch.setattr(watcherobot_cli, "_request_json", lambda *_args, **_kwargs: status)
+
+    with pytest.raises(watcherobot_cli.CliError, match="Stop or restart"):
+        watcherobot_cli._live_runtime_state(tmp_path / "desktop-private")
+
+
+@pytest.mark.parametrize("value", ["invalid", "-1", "65536"])
+def test_live_runtime_state_rejects_invalid_control_port(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "default_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "sdk"
+    )
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", value)
+
+    with pytest.raises(
+        watcherobot_cli.CliError,
+        match="WATCHER_RUNTIME_CONTROL_PORT must be 0 or an integer",
+    ):
+        watcherobot_cli._live_runtime_state(tmp_path / "desktop-private")
+
+
+def test_live_runtime_state_skips_fixed_endpoint_for_ephemeral_control_port(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "default_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "system_runtime_instance_root",
+        lambda: tmp_path / "shared",
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "sdk"
+    )
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda *_args, **_kwargs: pytest.fail("port 0 has no fixed discovery endpoint"),
+    )
+
+    assert watcherobot_cli._live_runtime_state(tmp_path / "desktop-private") is None
+
+
+def test_occupied_unrecognized_control_port_blocks_a_second_daemon(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shared_root = tmp_path / "shared"
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_instance_root", lambda: shared_root
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "system_runtime_instance_root", lambda: shared_root
+    )
+    monkeypatch.setattr(
+        watcherobot_cli, "default_runtime_state_root", lambda: tmp_path / "state"
+    )
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "18767")
+    monkeypatch.setattr(
+        watcherobot_cli,
+        "_request_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            watcherobot_cli.CliError("invalid HTTP response")
+        ),
+    )
+    monkeypatch.setattr(watcherobot_cli, "_local_tcp_port_is_open", lambda _port: True)
+    monkeypatch.setattr(
+        watcherobot_cli.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("an occupied port must block startup"),
+    )
+
+    with pytest.raises(watcherobot_cli.CliError, match="Refusing to start"):
+        watcherobot_cli.ensure_runtime(state_root=tmp_path / "state")
 
 URL_APPLICATION = f"""
 import asyncio

@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -62,7 +64,11 @@ from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 from watcherobot.runtime.daemon.instance import (
     RuntimeProcessState,
     RuntimeStateStore,
+    default_runtime_instance_root,
     default_runtime_state_root,
+    system_runtime_instance_root,
+    system_runtime_state_root,
+    runtime_instance_id,
 )
 from watcherobot.vision import VisionStatus
 
@@ -1657,15 +1663,168 @@ def _wait_for_application_completion(control_url: str) -> int:
 def _live_runtime_state(
     state_root: Path | None = None,
 ) -> RuntimeProcessState | None:
-    store = RuntimeStateStore(state_root or default_runtime_state_root())
-    state = store.read()
-    if state is None:
-        return None
+    instance_root = default_runtime_instance_root()
+    if instance_root == system_runtime_instance_root():
+        expected_group = "default"
+        roots = tuple(
+            dict.fromkeys(
+                (
+                    instance_root,
+                    (
+                        Path(state_root).resolve()
+                        if state_root is not None
+                        else default_runtime_state_root()
+                    ),
+                    system_runtime_state_root(),
+                )
+            )
+        )
+    else:
+        expected_group = "isolated"
+        roots = (instance_root,)
+    expected_instance_id = runtime_instance_id(instance_root)
+    for root in roots:
+        state = RuntimeStateStore(root).read()
+        if state is None:
+            continue
+        try:
+            status = _request_json(state.control_url, "/daemon/status", timeout=0.5)
+        except CliError:
+            continue
+        discovered = _runtime_state_from_status(
+            state.control_url,
+            status,
+            expected_group=expected_group,
+            expected_instance_id=expected_instance_id,
+            allow_other_instance=True,
+        )
+        if discovered is not None:
+            return discovered
+
+    # Recovery fallback for a compatible default-group Daemon whose state file
+    # cannot be read. Identity and endpoints come from the Daemon itself; never
+    # infer them from this launcher's configuration.
+    raw_control_port = os.environ.get("WATCHER_RUNTIME_CONTROL_PORT", "8767")
     try:
-        _request_json(state.control_url, "/daemon/status", timeout=0.5)
-    except CliError:
+        control_port = int(raw_control_port)
+    except ValueError as exc:
+        raise CliError(
+            "WATCHER_RUNTIME_CONTROL_PORT must be 0 or an integer between 1 and 65535"
+        ) from exc
+    if control_port == 0:
         return None
-    return state
+    if not 1 <= control_port <= 65535:
+        raise CliError(
+            "WATCHER_RUNTIME_CONTROL_PORT must be 0 or an integer between 1 and 65535"
+        )
+    control_url = f"http://127.0.0.1:{control_port}"
+    try:
+        status = _request_json(control_url, "/daemon/status", timeout=0.5)
+    except CliError as exc:
+        if _local_tcp_port_is_open(control_port):
+            raise CliError(
+                f"Port {control_port} is occupied by a service that cannot be "
+                "verified as the current WatcheRobot Daemon. Refusing to start "
+                "a second process."
+            ) from exc
+        return None
+    discovered = _runtime_state_from_status(
+        control_url,
+        status,
+        expected_group=expected_group,
+        expected_instance_id=expected_instance_id,
+        allow_other_instance=False,
+    )
+    if discovered is None:
+        raise CliError(
+            f"Port {control_port} is occupied by an unrecognized control service. "
+            "Refusing to start a second WatcheRobot Daemon."
+        )
+    return discovered
+
+
+def _local_tcp_port_is_open(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return True
+    except OSError:
+        return False
+
+
+def _runtime_state_from_status(
+    control_url: str,
+    status: dict[str, Any],
+    *,
+    expected_group: str,
+    expected_instance_id: str,
+    allow_other_instance: bool,
+) -> RuntimeProcessState | None:
+    runtime = status.get("runtime")
+    if not isinstance(runtime, dict):
+        if isinstance(status.get("application"), dict):
+            raise CliError(
+                "An incompatible WatcheRobot Daemon is already running "
+                "(runtime identity is missing). Stop or restart it before continuing."
+            )
+        return None
+    if not isinstance(status.get("application"), dict):
+        raise _incompatible_runtime_identity_error()
+    sdk_version = runtime.get("sdk_version")
+    instance_group = runtime.get("instance_group")
+    instance_id = runtime.get("instance_id")
+    external_url = runtime.get("external_url")
+    pid_value = runtime.get("pid")
+    started_at_value = runtime.get("started_at")
+    if (
+        not isinstance(sdk_version, str)
+        or not sdk_version.strip()
+        or instance_group not in {"default", "isolated"}
+        or not isinstance(instance_id, str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", instance_id)
+        or not isinstance(external_url, str)
+        or isinstance(pid_value, bool)
+        or not isinstance(pid_value, int)
+        or isinstance(started_at_value, bool)
+        or not isinstance(started_at_value, (int, float))
+    ):
+        raise _incompatible_runtime_identity_error()
+    parsed_external_url = urlsplit(external_url)
+    try:
+        external_port = parsed_external_url.port
+    except ValueError as exc:
+        raise _incompatible_runtime_identity_error() from exc
+    pid = pid_value
+    started_at = float(started_at_value)
+    if (
+        parsed_external_url.scheme not in {"ws", "wss"}
+        or parsed_external_url.hostname is None
+        or external_port is None
+        or pid <= 0
+        or not math.isfinite(started_at)
+        or started_at <= 0
+    ):
+        raise _incompatible_runtime_identity_error()
+    if instance_group != expected_group or instance_id != expected_instance_id:
+        if allow_other_instance:
+            return None
+        raise CliError(
+            "A different WatcheRobot Daemon instance is already using the default "
+            "control endpoint. Stop or restart it before continuing."
+        )
+    return RuntimeProcessState(
+        pid=pid,
+        control_url=control_url,
+        external_url=external_url,
+        started_at=started_at,
+    )
+
+
+def _incompatible_runtime_identity_error() -> CliError:
+    return CliError(
+        "An incompatible WatcheRobot Daemon is already running "
+        "(runtime identity is incomplete or invalid). Stop or restart it "
+        "before continuing."
+    )
 
 
 def _request_json(

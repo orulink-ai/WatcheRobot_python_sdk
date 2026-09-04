@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   review:
-    runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review]
+    runs-on: [self-hosted, Linux, X64, sdk-ci, pr-review, luxiao-hermes]
     if: github.event.pull_request.draft == false
     steps:
       - name: Get PR Diff via API
@@ -23,6 +23,19 @@ jobs:
           echo "DIFF_FILE=${diff_file}" >> "${GITHUB_ENV}"
           echo "Diff lines: $(wc -l < "${diff_file}")"
 
+      - name: Download trusted review bridge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          review_script="${RUNNER_TEMP}/luxiao_review.py"
+          gh api \
+            --header "Accept: application/vnd.github.raw+json" \
+            "repos/${{ github.repository }}/contents/.github/scripts/luxiao_review.py?ref=${BASE_SHA}" \
+            > "${review_script}"
+          test -s "${review_script}"
+          echo "REVIEW_SCRIPT=${review_script}" >> "${GITHUB_ENV}"
+
       - name: Run Luxiao Review
         env:
           LUXIAO_HERMES_HOST: ${{ vars.LUXIAO_HERMES_HOST }}
@@ -32,7 +45,7 @@ jobs:
           PR_DELETIONS: ${{ github.event.pull_request.deletions }}
           PR_FILES: ${{ github.event.pull_request.changed_files }}
         run: |
-          python3 /home/runner-ci/scripts/luxiao-review.py \
+          python3 "${REVIEW_SCRIPT}" \
             "${DIFF_FILE}" \
             "${RUNNER_TEMP}/review_result.md"
 
@@ -42,11 +55,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           review_file="${RUNNER_TEMP}/review_result.md"
+          missing_review=0
           if [ ! -s "${review_file}" ]; then
             echo "## 🤖 Luxiao PR 审查报告" > "${review_file}"
             echo "" >> "${review_file}"
             echo "⚠️ Review agent did not produce output." >> "${review_file}"
+            missing_review=1
           fi
-          gh pr comment ${{ github.event.pull_request.number }} \
-            -R ${{ github.repository }} \
-            --body "$(cat "${review_file}")"
+          for attempt in 1 2 3; do
+            if gh pr comment ${{ github.event.pull_request.number }} \
+              -R ${{ github.repository }} \
+              --body "$(cat "${review_file}")"; then
+              if [ "${missing_review}" -eq 1 ]; then
+                echo "审查结果为空，已发布故障评论并保留门禁失败状态"
+                exit 1
+              fi
+              exit 0
+            fi
+            if [ "${attempt}" -lt 3 ]; then
+              echo "GitHub API 暂时不可用，准备重试发布审查评论（${attempt}/3）"
+              sleep $((attempt * 3))
+            fi
+          done
+          echo "连续 3 次发布审查评论失败，保留门禁失败状态"
+          exit 1

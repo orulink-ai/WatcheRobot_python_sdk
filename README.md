@@ -182,6 +182,17 @@ Your Application focuses on product behavior; the Runtime handles pairing,
 connections, lifecycle, logs, and transport. Watcher Desktop does not embed
 another Daemon; desktop uses this same Runtime/Daemon implementation.
 
+The Daemon enforces one instance per OS user with a runtime-instance lock that
+is independent from `--state-root`. This lets the SDK CLI and Watcher Desktop
+use their own data directories while safely discovering and reusing the same
+Daemon process. The shared coordination state and the legacy SDK state location
+are both published during migration. As a recovery path, the fixed local control
+endpoint reports its actual instance group and external channel URL, so launchers
+never guess an address or reuse an explicitly isolated Daemon. Only tests or
+development sessions that deliberately need isolation should set `--instance-root`
+or `WATCHER_RUNTIME_INSTANCE_ROOT`; changing either value
+deliberately leaves the default single-instance group.
+
 ```text
 Your Application
   └─ ApplicationContext / ApplicationChannels
