@@ -161,7 +161,7 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 | --- | --- |
 | Make the robot act / speak / light up | [Quick start](#quick-start) and the [SDK Application guide](docs/application-marketplace/sdk-application-usage.md) |
 | Read the source and understand how it works | [Source and repository boundaries](#source-boundaries) and [How it works](#runtime-daemon) |
-| Use the camera / microphone / face tracking | [Vision diagnostics](docs/vision-diagnostics.md), [face-tracking preview](docs/face-tracking-preview.md), [microphone audio](docs/microphone-audio.md) |
+| Use the camera / microphone / face tracking | [Vision diagnostics](docs/vision-diagnostics.md), [face-tracking preview](docs/face-tracking-preview.md), [tracking cleanup (Chinese)](docs/face-tracking-lifecycle.md), [microphone audio](docs/microphone-audio.md) |
 | Provision Wi-Fi over Bluetooth | [Bluetooth provisioning](docs/bluetooth-provisioning.md) |
 | Publish an app to the Marketplace | [Marketplace documentation](docs/application-marketplace/README.md) |
 | Pairing or connection problems | [Troubleshooting](docs/troubleshooting.md) |

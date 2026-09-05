@@ -150,7 +150,7 @@ watcherobot app init my_app --id com.example.my_app --author "Example Team"
 | --- | --- |
 | 让机器人做动作 / 说话 / 亮灯 | [快速开始](#quick-start-zh) 和 [SDK Application 指南](docs/application-marketplace/sdk-application-usage.zh-CN.md) |
 | 看源码、理解核心运行机制 | [源码与仓库边界](#source-boundaries-zh)和[运行架构](#runtime-daemon-zh) |
-| 用摄像头 / 麦克风 / 人脸跟踪 | [视觉诊断](docs/vision-diagnostics.zh-CN.md)、[人脸跟踪预览（英文）](docs/face-tracking-preview.md)、[麦克风音频（英文）](docs/microphone-audio.md) |
+| 用摄像头 / 麦克风 / 人脸跟踪 | [视觉诊断](docs/vision-diagnostics.zh-CN.md)、[人脸跟踪预览（英文）](docs/face-tracking-preview.md)、[跟随退出清理](docs/face-tracking-lifecycle.md)、[麦克风音频（英文）](docs/microphone-audio.md) |
 | 蓝牙配网 Wi-Fi | [蓝牙配网指南（英文）](docs/bluetooth-provisioning.md) |
 | 发布应用到 Marketplace | [Marketplace 文档（英文）](docs/application-marketplace/README.md) |
 | 配对 / 连接出问题了 | [故障排查（英文）](docs/troubleshooting.md) |

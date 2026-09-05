@@ -4,7 +4,7 @@ import asyncio
 import json
 import struct
 import threading
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 
 import pytest
 
@@ -266,3 +266,177 @@ def test_disconnect_wakes_blocked_preview_reader() -> None:
     assert len(errors) == 1
     assert isinstance(errors[0], WatcheRobotError)
     assert "disconnected" in str(errors[0])
+
+
+def test_robot_close_stops_owned_tracking_before_closing_transport() -> None:
+    transport = FakeTransport()
+    with WatcheRobot._from_transport(transport) as robot:
+        robot.face_tracking.start()
+    robot.close()
+    assert transport.commands == [
+        ("ctrl.face_tracking.start", {}),
+        ("ctrl.face_tracking.stop", {"policy": "hold"}),
+    ]
+    assert transport.closed
+
+
+def test_robot_close_does_not_stop_unowned_or_already_stopped_tracking() -> None:
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.close()
+    assert transport.commands == []
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.face_tracking.start()
+    robot.face_tracking.stop()
+    robot.close()
+    assert transport.commands == [
+        ("ctrl.face_tracking.start", {}),
+        ("ctrl.face_tracking.stop", {"policy": "hold"}),
+    ]
+
+
+def test_robot_close_releases_transport_when_tracking_stop_fails(monkeypatch, caplog) -> None:
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.face_tracking.start()
+    attempted = []
+
+    def fail_stop(message_type, data, timeout=None):
+        assert not transport.closed
+        attempted.append((message_type, timeout))
+        raise TimeoutError("device unavailable")
+
+    monkeypatch.setattr(transport, "send_command", fail_stop)
+    robot.close()
+    assert attempted == [("ctrl.face_tracking.stop", 2.0)]
+    assert transport.closed
+    assert "Face tracking cleanup failed while closing robot" in caplog.text
+
+
+def test_concurrent_start_finishes_before_close_stops_tracking(monkeypatch) -> None:
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    started, release_start, closing = threading.Event(), threading.Event(), threading.Event()
+    send = transport.send_command
+    cleanup = robot.face_tracking._close
+
+    def blocked_start(message_type, data, timeout=None):
+        assert not transport.closed
+        if message_type == "ctrl.face_tracking.start":
+            started.set()
+            assert release_start.wait(2)
+        return send(message_type, data, timeout=timeout)
+
+    def observed_cleanup():
+        closing.set()
+        cleanup()
+
+    monkeypatch.setattr(transport, "send_command", blocked_start)
+    monkeypatch.setattr(robot.face_tracking, "_close", observed_cleanup)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        start = executor.submit(robot.face_tracking.start)
+        try:
+            assert started.wait(2)
+            close = executor.submit(robot.close)
+            assert closing.wait(2)
+            assert not close.done()
+        finally:
+            release_start.set()
+        start.result(timeout=2)
+        close.result(timeout=2)
+    assert transport.commands == [
+        ("ctrl.face_tracking.start", {}),
+        ("ctrl.face_tracking.stop", {"policy": "hold"}),
+    ]
+    assert transport.closed
+
+
+def test_start_is_rejected_after_close_begins(monkeypatch) -> None:
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    closing, release_close = threading.Event(), threading.Event()
+    cleanup = robot.face_tracking._close
+
+    def blocked_cleanup():
+        closing.set()
+        assert release_close.wait(2)
+        cleanup()
+
+    monkeypatch.setattr(robot.face_tracking, "_close", blocked_cleanup)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        close = executor.submit(robot.close)
+        try:
+            assert closing.wait(2)
+            with pytest.raises(WatcheRobotError, match="closed"):
+                robot.face_tracking.start()
+            assert not transport.closed
+        finally:
+            release_close.set()
+        close.result(timeout=2)
+    assert transport.commands == []
+    assert transport.closed
+
+
+def test_failed_start_does_not_claim_tracking_ownership(monkeypatch) -> None:
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    attempted = []
+
+    def fail_start(message_type, data, timeout=None):
+        attempted.append(message_type)
+        raise TimeoutError("start acknowledgement missing")
+
+    monkeypatch.setattr(transport, "send_command", fail_start)
+    with pytest.raises(TimeoutError):
+        robot.face_tracking.start()
+    robot.close()
+    assert attempted == ["ctrl.face_tracking.start"]
+    assert transport.closed
+
+
+def test_camera_preview_stop_releases_shared_tracking_on_robot_close() -> None:
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.face_tracking.start()
+    preview = robot.face_tracking.open_preview()
+    robot.close()
+    robot.close()
+    assert [command for command, _ in transport.commands] == [
+        "ctrl.face_tracking.start",
+        "ctrl.face_tracking.preview.start",
+        "ctrl.face_tracking.preview.stop",
+    ]
+    assert transport.commands[-1][1] == {"policy": "hold"}
+    assert preview.closed and transport.closed
+
+
+def test_close_interrupts_a_start_that_does_not_return(monkeypatch, caplog) -> None:
+    from watcherobot import vision
+
+    monkeypatch.setattr(vision, "_CLOSE_CONTROL_WAIT_SECONDS", 0.02, raising=False)
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    started, closed = threading.Event(), threading.Event()
+
+    def blocked_start(message_type, data, timeout=None):
+        started.set()
+        if not closed.wait(1):
+            raise TimeoutError("start was not interrupted by transport closure")
+        raise WatcheRobotError("transport closed")
+
+    def close_transport():
+        transport.closed = True
+        closed.set()
+
+    monkeypatch.setattr(transport, "send_command", blocked_start)
+    monkeypatch.setattr(transport, "close", close_transport)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        start = executor.submit(robot.face_tracking.start)
+        assert started.wait(1)
+        close = executor.submit(robot.close)
+        close.result(timeout=0.5)
+        with pytest.raises(WatcheRobotError, match="transport closed"):
+            start.result(timeout=0.5)
+    assert transport.closed
+    assert "Face tracking cleanup failed while closing robot" in caplog.text

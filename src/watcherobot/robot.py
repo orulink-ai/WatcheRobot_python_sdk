@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import queue
 import re
 import threading
@@ -35,6 +36,7 @@ from .vision import (
 
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -461,6 +463,10 @@ class WatcheRobot:
                 return
             self._closing = True
             microphone = self._microphone
+        try:
+            self.face_tracking._close()
+        except Exception:
+            _LOGGER.warning("Face tracking cleanup failed while closing robot", exc_info=True)
         if microphone is not None and not microphone.closed:
             try:
                 microphone.close()
