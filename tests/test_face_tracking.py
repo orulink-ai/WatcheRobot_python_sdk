@@ -409,3 +409,34 @@ def test_camera_preview_stop_releases_shared_tracking_on_robot_close() -> None:
     ]
     assert transport.commands[-1][1] == {"policy": "hold"}
     assert preview.closed and transport.closed
+
+
+def test_close_interrupts_a_start_that_does_not_return(monkeypatch, caplog) -> None:
+    from watcherobot import vision
+
+    monkeypatch.setattr(vision, "_CLOSE_CONTROL_WAIT_SECONDS", 0.02, raising=False)
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    started, closed = threading.Event(), threading.Event()
+
+    def blocked_start(message_type, data, timeout=None):
+        started.set()
+        if not closed.wait(1):
+            raise TimeoutError("start was not interrupted by transport closure")
+        raise WatcheRobotError("transport closed")
+
+    def close_transport():
+        transport.closed = True
+        closed.set()
+
+    monkeypatch.setattr(transport, "send_command", blocked_start)
+    monkeypatch.setattr(transport, "close", close_transport)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        start = executor.submit(robot.face_tracking.start)
+        assert started.wait(1)
+        close = executor.submit(robot.close)
+        close.result(timeout=0.5)
+        with pytest.raises(WatcheRobotError, match="transport closed"):
+            start.result(timeout=0.5)
+    assert transport.closed
+    assert "Face tracking cleanup failed while closing robot" in caplog.text

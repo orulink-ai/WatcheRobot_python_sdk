@@ -355,6 +355,9 @@ class FaceTrackingPreview:
             self._queue.put_nowait(_CLOSED)
 
 
+_CLOSE_CONTROL_WAIT_SECONDS = 2.0
+
+
 class FaceTrackingDomain:
     """Own device-side face tracking and typed preview sessions."""
 
@@ -396,6 +399,8 @@ class FaceTrackingDomain:
                 raise WatcheRobotError("robot connection is closed")
             self._robot._require_capability("face_tracking.control.v1")
             self._robot._command("ctrl.face_tracking.start", {}, timeout=timeout)
+            if self._robot._closed:
+                raise WatcheRobotError("robot connection closed while starting face tracking")
             self._tracking_owned = True
 
     def stop(
@@ -423,9 +428,13 @@ class FaceTrackingDomain:
     def _close(self) -> None:
         # Stop while the Application's Device channel is still usable. Merely
         # closing that channel does not release the firmware motion owner.
-        with self._control_lock:
+        if not self._control_lock.acquire(timeout=_CLOSE_CONTROL_WAIT_SECONDS):
+            raise TimeoutError("face tracking control did not become idle before connection close")
+        try:
             if self._tracking_owned:
                 self.stop(policy="hold", timeout=2.0)
+        finally:
+            self._control_lock.release()
 
 
 def parse_face_tracking_image(packet: bytes) -> _PreviewImage | None:
