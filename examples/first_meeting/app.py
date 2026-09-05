@@ -90,6 +90,7 @@ async def main() -> None:
                 check_task.cancel()
                 await asyncio.gather(check_task, return_exceptions=True)
             await cloud.close()
+            await web.state.close_device_client()
             context.logger.removeHandler(log_file)
             log_file.close()
             listener.close()
