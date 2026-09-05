@@ -461,6 +461,10 @@ class WatcheRobot:
                 return
             self._closing = True
             microphone = self._microphone
+        try:
+            self.face_tracking._close()
+        except Exception:
+            pass
         if microphone is not None and not microphone.closed:
             try:
                 microphone.close()

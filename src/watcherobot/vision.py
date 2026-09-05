@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import queue
 import struct
+import threading
 import time
 from dataclasses import dataclass, field
 from math import isfinite
@@ -355,10 +356,12 @@ class FaceTrackingPreview:
 
 
 class FaceTrackingDomain:
-    """Start a typed face-following preview session."""
+    """Own device-side face tracking and typed preview sessions."""
 
     def __init__(self, robot: WatcheRobot) -> None:
         self._robot = robot
+        self._control_lock = threading.RLock()
+        self._tracking_owned = False
 
     def open_preview(
         self,
@@ -388,8 +391,12 @@ class FaceTrackingDomain:
         """Start device-side face tracking without opening a host preview."""
 
         _validate_timeout(timeout)
-        self._robot._require_capability("face_tracking.control.v1")
-        self._robot._command("ctrl.face_tracking.start", {}, timeout=timeout)
+        with self._control_lock:
+            if self._robot._closed or self._robot._closing:
+                raise WatcheRobotError("robot connection is closed")
+            self._robot._require_capability("face_tracking.control.v1")
+            self._robot._command("ctrl.face_tracking.start", {}, timeout=timeout)
+            self._tracking_owned = True
 
     def stop(
         self,
@@ -400,15 +407,24 @@ class FaceTrackingDomain:
         if policy not in ("hold", "recenter"):
             raise ValueError("policy must be hold or recenter")
         _validate_timeout(timeout)
-        if self._robot._stop_face_tracking_preview(policy, timeout=timeout):
-            return
-        if "face_tracking.control.v1" in self._robot.capabilities:
-            self._robot._command(
-                "ctrl.face_tracking.stop",
-                {"policy": policy},
-                timeout=timeout,
-            )
-            return
+        with self._control_lock:
+            if self._robot._stop_face_tracking_preview(policy, timeout=timeout):
+                self._tracking_owned = False
+                return
+            if "face_tracking.control.v1" in self._robot.capabilities:
+                self._robot._command(
+                    "ctrl.face_tracking.stop",
+                    {"policy": policy},
+                    timeout=timeout,
+                )
+                self._tracking_owned = False
+
+    def _close(self) -> None:
+        # Stop while the Application's Device channel is still usable. Merely
+        # closing that channel does not release the firmware motion owner.
+        with self._control_lock:
+            if self._tracking_owned:
+                self.stop(policy="hold", timeout=2.0)
 
 
 def parse_face_tracking_image(packet: bytes) -> _PreviewImage | None:

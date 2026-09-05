@@ -266,3 +266,45 @@ def test_disconnect_wakes_blocked_preview_reader() -> None:
     assert len(errors) == 1
     assert isinstance(errors[0], WatcheRobotError)
     assert "disconnected" in str(errors[0])
+
+
+def test_robot_close_stops_owned_tracking_before_closing_transport() -> None:
+    transport = FakeTransport()
+    with WatcheRobot._from_transport(transport) as robot:
+        robot.face_tracking.start()
+    robot.close()
+    assert transport.commands == [
+        ("ctrl.face_tracking.start", {}),
+        ("ctrl.face_tracking.stop", {"policy": "hold"}),
+    ]
+    assert transport.closed
+
+
+def test_robot_close_does_not_stop_unowned_or_already_stopped_tracking() -> None:
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.close()
+    assert transport.commands == []
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.face_tracking.start()
+    robot.face_tracking.stop()
+    robot.close()
+    assert len(transport.commands) == 2
+
+
+def test_robot_close_releases_transport_when_tracking_stop_fails(monkeypatch) -> None:
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.face_tracking.start()
+    attempted = []
+
+    def fail_stop(message_type, data, timeout=None):
+        assert not transport.closed
+        attempted.append((message_type, timeout))
+        raise TimeoutError("device unavailable")
+
+    monkeypatch.setattr(transport, "send_command", fail_stop)
+    robot.close()
+    assert attempted == [("ctrl.face_tracking.stop", 2.0)]
+    assert transport.closed
