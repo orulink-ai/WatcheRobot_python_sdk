@@ -72,6 +72,12 @@ class MaintenanceDeviceInfoRequest(BaseModel):
     port: str
 
 
+class MaintenanceVolumeFormatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    volume_id: str
+
+
 class MaintenancePackageValidationRequest(BaseModel):
     kind: str
     package_path: str
@@ -162,6 +168,9 @@ class ApplicationController(Protocol):
 
     def maintenance_volumes(self) -> list[dict[str, Any]]:
         """List writable Windows SD-card reader volumes."""
+
+    def format_maintenance_volume_as_fat32(self, volume_id: str) -> dict[str, Any]:
+        """Start formatting one explicitly confirmed removable SD-card volume as FAT32."""
 
     def validate_maintenance_package(self, kind: str, package_path: str) -> dict[str, Any]:
         """Validate a local firmware or SD resource package."""
@@ -450,6 +459,17 @@ class DaemonControlAPI:
         async def maintenance_volumes() -> dict[str, Any]:
             volumes = await asyncio.to_thread(self._controller.maintenance_volumes)
             return {"volumes": volumes}
+
+        @app.post("/daemon/maintenance/volumes/format-fat32", status_code=202)
+        async def format_maintenance_volume_as_fat32(request: MaintenanceVolumeFormatRequest) -> Any:
+            try:
+                job = await asyncio.to_thread(
+                    self._controller.format_maintenance_volume_as_fat32,
+                    request.volume_id,
+                )
+                return {"job": job}
+            except MaintenanceError as exc:
+                return JSONResponse(status_code=409, content={"error": "format_failed", "message": str(exc)})
 
         @app.post("/daemon/maintenance/packages/validate")
         async def validate_maintenance_package(request: MaintenancePackageValidationRequest) -> Any:
