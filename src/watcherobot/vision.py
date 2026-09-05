@@ -409,6 +409,7 @@ class FaceTrackingDomain:
         _validate_timeout(timeout)
         with self._control_lock:
             if self._robot._stop_face_tracking_preview(policy, timeout=timeout):
+                # Camera preview.stop also stops the shared device tracking service.
                 self._tracking_owned = False
                 return
             if "face_tracking.control.v1" in self._robot.capabilities:

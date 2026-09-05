@@ -393,3 +393,19 @@ def test_failed_start_does_not_claim_tracking_ownership(monkeypatch) -> None:
     robot.close()
     assert attempted == ["ctrl.face_tracking.start"]
     assert transport.closed
+
+
+def test_camera_preview_stop_releases_shared_tracking_on_robot_close() -> None:
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.face_tracking.start()
+    preview = robot.face_tracking.open_preview()
+    robot.close()
+    robot.close()
+    assert [command for command, _ in transport.commands] == [
+        "ctrl.face_tracking.start",
+        "ctrl.face_tracking.preview.start",
+        "ctrl.face_tracking.preview.stop",
+    ]
+    assert transport.commands[-1][1] == {"policy": "hold"}
+    assert preview.closed and transport.closed

@@ -1,10 +1,11 @@
 # 人脸跟随的连接退出清理
 
-通过 `robot.face_tracking.start()` 启动且应答成功的普通端侧跟随，由该 `WatcheRobot` 实例持有。退出上下文或调用 `robot.close()` 时，在 Device channel 关闭前发送一次 `ctrl.face_tracking.stop`，使用 `hold` 策略保留当前位置。
+通过 `robot.face_tracking.start()` 启动且应答成功的普通端侧跟随，由该 `WatcheRobot` 实例持有。退出上下文或调用 `robot.close()` 时，在 Device channel 关闭前停止跟随，使用 `hold` 策略保留当前位置。
 
 - 未启动、未收到成功启动应答或已经显式停止的跟随，不在退出时再次停止。启动应答超时并不证明设备没有执行；此时设备状态不确定，当前所有权策略不会补发停止。
 - 停止请求最多等待 2 秒；设备失联或停止失败会记录带异常信息的警告，仍继续关闭连接。该清理属于尽力释放，失联时不能保证设备已经停止。
 - 启动与清理由同一控制锁串行化；连接进入关闭状态后拒绝新启动。已经持锁执行的启动会先完成，再进行退出清理；2 秒仅限制停止请求，关闭的总耗时还包含等待启动完成的时间，取决于启动调用的超时设置和传输实现。
+- 普通跟随与摄像头预览共用设备上的跟随服务。存在活动预览时，发送 `ctrl.face_tracking.preview.stop`，固件同时停止跟随和预览；无活动预览时发送 `ctrl.face_tracking.stop`。`start → open_preview → close` 因而无需重复发送两种停止命令。此处指公开 `open_preview()` 的摄像头模式，不包含底层网络探针协议。
 - 预览会话继续复用原有清理路径。Daemon 不解析跟随命令，业务消息仍经 Application 的 Device channel。
 
 使用前应检查设备能力上报。未提供 `face_tracking.control.v1` 的固件不支持普通端侧跟随。
