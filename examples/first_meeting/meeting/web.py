@@ -23,6 +23,23 @@ def create_web_app(service: MeetingService, store: ConfigStore, web_root: Path,
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
     app.state.device = {'online': False, 'state': 'unknown'}
     app.state.check_task = None
+    device_client_task = None
+
+    async def device_client():
+        nonlocal device_client_task
+        if device_client_task is None:
+            # TLS setup can take hundreds of milliseconds on Windows, even for
+            # a local HTTP URL. Keep it off the motion loop and reuse the pool.
+            device_client_task = asyncio.create_task(asyncio.to_thread(
+                httpx.AsyncClient, timeout=1.5, trust_env=False))
+        return await asyncio.shield(device_client_task)
+
+    async def close_device_client():
+        if device_client_task is not None:
+            client = await device_client_task
+            await client.aclose()
+
+    app.state.close_device_client = close_device_client
 
     @app.middleware('http')
     async def protect(request: Request, call_next):
@@ -46,10 +63,10 @@ def create_web_app(service: MeetingService, store: ConfigStore, web_root: Path,
         if not device_status_url:
             return {'online': False, 'state': 'unavailable'}
         try:
-            async with httpx.AsyncClient(timeout=1.5, trust_env=False) as client:
-                response = await client.get(device_status_url)
-                response.raise_for_status()
-                device = response.json()['device']
+            client = await device_client()
+            response = await client.get(device_status_url)
+            response.raise_for_status()
+            device = response.json()['device']
             app.state.device = {k: device.get(k) for k in ('online', 'state', 'device_id', 'device_ip')}
         except Exception:
             app.state.device = {'online': False, 'state': 'unavailable'}
