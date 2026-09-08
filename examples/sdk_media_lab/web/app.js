@@ -3,6 +3,7 @@ import { createDisplayAudit } from "./display-audit.mjs";
 import { createMjpegTransport } from "./mjpeg-transport.mjs";
 let displayAudit = createDisplayAudit();
 let displayAuditPublishedAt = 0;
+let faceRequestPending = false;
 import { evaluateAnimationConfirmation } from "./animation-confirmation.mjs";
 import {
   clampAnimationIntervalMs,
@@ -190,6 +191,12 @@ const elements = {
   playAudioButton: document.querySelector("#playAudioButton"),
   stopAudioButton: document.querySelector("#stopAudioButton"),
   capturePhotoButton: document.querySelector("#capturePhotoButton"),
+  queryVisionButton: document.querySelector("#queryVisionButton"),
+  startFaceTrackingButton: document.querySelector("#startFaceTrackingButton"),
+  stopFaceTrackingButton: document.querySelector("#stopFaceTrackingButton"),
+  faceTrackingCapability: document.querySelector("#faceTrackingCapability"),
+  faceTrackingResult: document.querySelector("#faceTrackingResult"),
+  faceVisionStatus: document.querySelector("#faceVisionStatus"),
   liveVideoPanel: document.querySelector("#liveVideoPanel"),
   liveVideoCapability: document.querySelector("#liveVideoCapability"),
   startLiveVideoButton: document.querySelector("#startLiveVideoButton"),
@@ -583,6 +590,17 @@ function renderStatus(status) {
   elements.playAudioButton.disabled = !availability.speaker || !hasCapability("audio.stream");
   elements.stopAudioButton.disabled = !status.connected || !hasCapability("audio.stream");
   elements.capturePhotoButton.disabled = !availability.camera || !hasCapability("camera.capture");
+  const faceState = status.face_tracking?.state || "idle";
+  const faceSupported = hasCapability("face_tracking.control.v1");
+  elements.faceTrackingCapability.textContent = !status.connected ? "Device Offline"
+    : !faceSupported ? "Current firmware does not support face tracking"
+      : faceState === "running" ? "Face tracking is running"
+        : faceState === "stop_required" ? "Tracking stop is unconfirmed; retry stop"
+          : "Face tracking is available";
+  elements.queryVisionButton.disabled = faceRequestPending || !status.connected || !hasCapability("vision.status.v1");
+  elements.startFaceTrackingButton.disabled = faceRequestPending || !status.connected || !faceSupported
+    || faceState !== "idle" || !availability.camera || !availability.motion;
+  elements.stopFaceTrackingButton.disabled = faceRequestPending || !status.connected || faceState === "idle";
   elements.recordMicrophoneButton.disabled = !availability.microphone || !hasCapability("microphone");
   elements.applyMotionButton.disabled = !availability.motion;
   elements.stopMotionButton.disabled = !status.connected || !hasCapability("motion");
@@ -1948,6 +1966,27 @@ elements.stopAudioButton.addEventListener("click", () => {
   }).catch(() => {});
 });
 elements.capturePhotoButton.addEventListener("click", () => { capturePhoto().catch(() => {}); });
+
+async function faceTrackingAction(action) {
+  if (faceRequestPending) return;
+  faceRequestPending = true;
+  if (state.status) renderStatus(state.status);
+  try {
+    const result = await api(action === "status" ? "/api/vision/status" : `/api/face-tracking/${action}`,
+      { method: action === "status" ? "GET" : "POST" });
+    if (action === "status") elements.faceVisionStatus.textContent = JSON.stringify(result, null, 2);
+    setResult(elements.faceTrackingResult, action === "status" ? "Vision status updated"
+      : action === "start" ? "Face tracking is running" : "Face tracking stopped; position held", "ok");
+  } catch (error) {
+    setResult(elements.faceTrackingResult, error.message, "error");
+  } finally {
+    faceRequestPending = false;
+    await refreshStatus();
+  }
+}
+elements.queryVisionButton.addEventListener("click", () => { faceTrackingAction("status").catch(() => {}); });
+elements.startFaceTrackingButton.addEventListener("click", () => { faceTrackingAction("start").catch(() => {}); });
+elements.stopFaceTrackingButton.addEventListener("click", () => { faceTrackingAction("stop").catch(() => {}); });
 elements.startLiveVideoButton.addEventListener("click", () => { startLiveVideo(); });
 elements.stopLiveVideoButton.addEventListener("click", () => { stopRtcSession(); });
 elements.startRtcAudioButton.addEventListener("click", () => { startRtcAudio(); });

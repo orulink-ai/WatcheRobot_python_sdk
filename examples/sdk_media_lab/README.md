@@ -12,6 +12,30 @@ contained inside this directory; generated photos and recordings stay under
 the ignored `artifacts/` directory and are never included in a published
 source snapshot.
 
+## Face tracking test
+
+The Edge Vision panel queries `robot.vision.status()` and exposes
+`robot.face_tracking.start()` / `stop(policy="hold")`. Tracking runs on the device
+without uploading a preview. Start reserves both camera and motion until stop is
+confirmed; stop timeouts keep those resources reserved and allow retry. Application
+shutdown stops owned tracking, and a disconnected tracking session is stopped on
+reconnection instead of automatically resumed. Closing only the browser tab does
+not exit the Application: use Stop Face Tracking to end an intentionally headless run.
+
+The panel requires `face_tracking.control.v1`. Current PTL preview firmware lacks
+inference, so Start is disabled with an explicit explanation; vision status remains
+queryable. A button or an existing SDK API does not add inference to that firmware.
+The SDK also provides `robot.face_tracking.open_preview()` for optional diagnostic
+frames, but this panel currently tests headless start/stop, not diagnostic images.
+See [the SDK lifecycle contract](../../docs/face-tracking-lifecycle.md) and
+[preview API](../../docs/face-tracking-preview.md).
+
+Validation on 2026-09-08: 81 Test Bench Python tests, 30 SDK vision/tracking tests,
+and 86 JavaScript tests passed. A real browser queried the connected PTL device
+through its Application channel and displayed `inference=false`; unsupported
+tracking controls were disabled. Physical face-following motion remains untested
+on this PTL firmware. English and Chinese panel text were verified in the browser.
+
 Start the Runtime, then run:
 
 ```powershell

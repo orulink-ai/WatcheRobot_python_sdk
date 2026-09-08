@@ -4,6 +4,18 @@ const SUPPORTED_LOCALES = new Set(["en-US", "zh-CN"]);
 // legacy Chinese diagnostics from the device/service and powers the optional Chinese
 // presentation without putting Chinese literals back into the page or controller.
 const ENGLISH_PHRASES = new Map([
+  ["人脸跟随测试", "Face Tracking Test"],
+  ["查询视觉状态", "Query Vision Status"],
+  ["开始人脸跟随", "Start Face Tracking"],
+  ["停止人脸跟随", "Stop Face Tracking"],
+  ["等待设备能力信息", "Waiting for device capabilities"],
+  ["当前固件不支持人脸跟随", "Current firmware does not support face tracking"],
+  ["人脸跟随运行中", "Face tracking is running"],
+  ["人脸跟随可用", "Face tracking is available"],
+  ["尚未确认跟随已停止，请重试停止", "Tracking stop is unconfirmed; retry stop"],
+  ["视觉状态已更新", "Vision status updated"],
+  ["人脸跟随已停止，保持当前位置", "Face tracking stopped; position held"],
+  ["在机器人端运行，不向电脑传输视频。开始跟随会转动云台，停止后保持当前位置。请先停止实时视频再开始跟随。", "Runs on the robot without sending video to the computer. Starting tracking moves the gimbal; stopping holds its current position. Stop live video before starting tracking."],
   ["基础全检将移动云台、点亮灯光、播放声音、拍照并录制麦克风。请确保机器人周围无遮挡，是否继续？", "The basic check moves the gimbal, lights the body, plays audio, captures a photo, and records the microphone. Make sure the robot has clear space. Continue?"],
   ["输入设备屏幕上的六位配对码。配对请求由本机 SDK Daemon 管理，配对码不会保存在测试台日志中。", "Enter the six-digit pairing code shown on the device. The local SDK Daemon handles pairing, and the code is never stored in Test Bench logs."],
   ["从运动、灯光到相机和全双工音频，所有测试均由当前 Python Application 调用公开 SDK API，", "From motion and lighting to camera and full-duplex audio, every test uses public SDK APIs from the current Python Application"],

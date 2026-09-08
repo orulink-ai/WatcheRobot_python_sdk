@@ -199,6 +199,20 @@
         </article>
       </section>
 
+      <section class="rtc-audio-panel" id="faceTrackingPanel" aria-labelledby="faceTrackingTitle">
+        <p class="eyebrow">02.8 / Edge Vision</p>
+        <h2 id="faceTrackingTitle">Face Tracking Test</h2>
+        <p>Runs on the robot without sending video to the computer. Starting tracking moves the gimbal; stopping holds its current position. Stop live video before starting tracking.</p>
+        <p id="faceTrackingCapability">Waiting for device capabilities</p>
+        <div class="button-row">
+          <button class="station-action" id="queryVisionButton" type="button" disabled>Query Vision Status</button>
+          <button class="station-action" id="startFaceTrackingButton" type="button" disabled>Start Face Tracking</button>
+          <button class="quiet-action" id="stopFaceTrackingButton" type="button" disabled>Stop Face Tracking</button>
+        </div>
+        <p id="faceTrackingResult" role="status">Awaiting Test</p>
+        <pre id="faceVisionStatus" style="white-space:pre-wrap;overflow-wrap:anywhere">—</pre>
+      </section>
+
       <section class="live-video-panel" id="liveVideoPanel" data-available="false" aria-labelledby="liveVideoTitle">
         <div class="live-video-copy">
           <div class="station-head">
