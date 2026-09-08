@@ -46,6 +46,26 @@ class FakeTransport:
         self.closed = True
 
 
+def test_default_start_allows_cold_model_catalog_validation(monkeypatch) -> None:
+    transport = FakeTransport()
+    send_command = transport.send_command
+
+    def cold_start(message_type, data, timeout=None):
+        # Simulate the measured six-second cold startup without a wall-clock sleep.
+        deadline = 5.0 if timeout is None else timeout
+        if message_type == "ctrl.face_tracking.start" and deadline < 6.0:
+            raise TimeoutError("model catalog validation still running")
+        return send_command(message_type, data, timeout)
+
+    monkeypatch.setattr(transport, "send_command", cold_start)
+    robot = WatcheRobot._from_transport(transport)
+    robot.face_tracking.start()
+    robot.face_tracking.stop()
+    with pytest.raises(TimeoutError, match="catalog validation"):
+        robot.face_tracking.start(timeout=0.25)
+    robot.close()
+
+
 def telemetry(sequence: int, *, error_x: float = 4.0) -> dict[str, object]:
     return {
         "v": 1,

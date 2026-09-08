@@ -22,9 +22,11 @@ class FakeFaceTracking:
         self.stops = 0
         self.fail_stop = False
         self.fail_start = False
+        self.start_timeout = None
 
     def start(self, **kwargs):
         self.starts += 1
+        self.start_timeout = kwargs.get("timeout")
         if self.fail_start:
             raise TimeoutError("start unconfirmed")
 
@@ -45,6 +47,8 @@ def test_face_tracking_controls_hold_camera_and_motion_until_stop(tmp_path):
     assert client.post("/api/face-tracking/start").status_code == 200
     assert client.post("/api/face-tracking/start").status_code == 200
     assert robot.face_tracking.starts == 1
+    # A cold device verifies its model catalog before starting the camera.
+    assert robot.face_tracking.start_timeout == 10.0
     assert service.status()["resource_owners"]["camera"] == "face_tracking"
     with pytest.raises(module.MediaLabBusyError):
         service.capture_photo()

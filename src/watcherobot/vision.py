@@ -390,8 +390,12 @@ class FaceTrackingDomain:
             queue_size=queue_size,
         )
 
-    def start(self, *, timeout: float | None = None) -> None:
-        """Start device-side face tracking without opening a host preview."""
+    def start(self, *, timeout: float | None = 10.0) -> None:
+        """Start device-side tracking; allow cold model validation by default.
+
+        An explicit timeout overrides the ten-second startup budget. Pass None
+        to use the Application transport's configured command timeout.
+        """
 
         _validate_timeout(timeout)
         with self._control_lock:

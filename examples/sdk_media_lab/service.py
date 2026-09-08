@@ -346,7 +346,8 @@ class MediaLabService:
             self._face_lease = lease
             self._set_face_state("starting")
             try:
-                self._robot.face_tracking.start(timeout=3.0)
+                # Cold startup includes validating the four on-device model slots.
+                self._robot.face_tracking.start(timeout=10.0)
             except Exception:
                 # A timeout does not prove the motors never started.
                 self._set_face_state("stop_required")
