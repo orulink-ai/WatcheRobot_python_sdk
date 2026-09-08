@@ -1,5 +1,6 @@
 import { evaluateRtcAudioHealth } from "./rtc-audio-health.mjs";
 import { createDisplayAudit } from "./display-audit.mjs";
+import { createMjpegTransport } from "./mjpeg-transport.mjs";
 let displayAudit = createDisplayAudit();
 let displayAuditPublishedAt = 0;
 import { evaluateAnimationConfirmation } from "./animation-confirmation.mjs";
@@ -81,7 +82,7 @@ const state = {
     mode: null,
     peer: null,
     channel: null,
-    videoSocket: null,
+    videoTransport: null,
     localStream: null,
     diagnosticAudio: null,
     remoteStream: null,
@@ -1423,32 +1424,13 @@ function createMjpegVideoTransport(peer, generation) {
   state.rtc.channel = peer ? peer.createDataChannel("rtc-control", { ordered: true }) : null;
   const url = state.status?.connection?.mjpeg_websocket_url;
   if (!url) throw new Error("Device did not provide a direct live-video URL");
-  const socket = new WebSocket(url);
-  state.rtc.videoSocket = socket;
-  socket.binaryType = "arraybuffer";
-  socket.addEventListener("open", () => {
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.videoSocket !== socket) return;
-    socket.send("ready");
-    setLiveVideoState("connecting");
-    setResult(
-      elements.liveVideoResult,
-      "Video channel connected; waiting for a decoded frame",
-      "running",
-    );
-  });
-  socket.addEventListener("message", (event) => {
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.videoSocket !== socket) return;
-    enqueueMjpegPacket(event.data, generation);
-  });
-  socket.addEventListener("close", () => {
-    if (
-      isCurrentRtcGeneration(state.rtc.generation, generation)
-      && state.rtc.videoSocket === socket
-      && state.rtc.peer === peer
-      && !state.rtc.teardownInProgress
-    ) {
-      failRtcSession("Live-video channel closed");
-    }
+  state.rtc.videoTransport = createMjpegTransport({
+    url,
+    isActive: () => isCurrentRtcGeneration(state.rtc.generation, generation)
+      && state.rtc.peer === peer && !state.rtc.teardownInProgress,
+    onPacket: (packet, displayed, current) => enqueueMjpegPacket(packet, generation, { displayed, current }),
+    onConnecting: () => setLiveVideoState("connecting", "Video connection interrupted; reconnecting"),
+    onFailure: message => failRtcSession(message),
   });
 }
 
@@ -1703,6 +1685,8 @@ function cleanupRtcSession() {
     elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(performance.now()));
   }
   state.rtc.generation += 1;
+  state.rtc.videoTransport?.stop();
+  state.rtc.videoTransport = null;
   state.localResources.delete("media");
   window.clearTimeout(state.rtc.pollTimer);
   window.clearInterval(state.rtc.heartbeatTimer);
@@ -1711,13 +1695,11 @@ function cleanupRtcSession() {
   state.rtc.heartbeatTimer = null;
   state.rtc.feedbackTimer = null;
   const channel = state.rtc.channel;
-  const videoSocket = state.rtc.videoSocket;
   const peer = state.rtc.peer;
   const localStream = state.rtc.localStream;
   const diagnosticAudio = state.rtc.diagnosticAudio;
   const mode = state.rtc.mode;
   state.rtc.channel = null;
-  state.rtc.videoSocket = null;
   state.rtc.peer = null;
   state.rtc.localStream = null;
   state.rtc.diagnosticAudio = null;
@@ -1735,9 +1717,6 @@ function cleanupRtcSession() {
   if (channel) {
     channel.onclose = null;
     try { channel.close(); } catch (_) {}
-  }
-  if (videoSocket) {
-    try { videoSocket.close(); } catch (_) {}
   }
   if (peer) {
     peer.onconnectionstatechange = null;
@@ -1768,14 +1747,15 @@ function cleanupRtcSession() {
   state.rtc.mode = null;
 }
 
-async function enqueueMjpegPacket(value, generation) {
+async function enqueueMjpegPacket(value, generation, transport = null) {
   let admission = { ownsDecoder: false, replacedPending: false };
   try {
     const packet = value instanceof ArrayBuffer ? value : await value.arrayBuffer();
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || (transport && !transport.current())) return;
     const completePacket = acceptMjpegTransportPacket(state.rtc.mjpegChunkReassembler, packet);
     if (!completePacket) return;
     const frame = parseWjpgPacket(completePacket);
+    frame.transport = transport;
     state.rtc.receivedFrames += 1;
     if (state.rtc.lastSequence !== null) {
       const expected = (state.rtc.lastSequence + 1) >>> 0;
@@ -1831,7 +1811,8 @@ function parseWjpgPacket(packet) {
 async function drawMjpegFrame(frame, generation) {
   const bitmap = await createImageBitmap(new Blob([frame.jpeg], { type: "image/jpeg" }));
   try {
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!isCurrentRtcGeneration(state.rtc.generation, generation)
+      || (frame.transport && !frame.transport.current())) return;
     const canvas = elements.liveVideoCanvas;
     if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
       canvas.width = bitmap.width;
@@ -1843,7 +1824,10 @@ async function drawMjpegFrame(frame, generation) {
     bitmap.close();
   }
   const now = performance.now();
-  if (state.rtc.displayedFrames === 0) setResult(elements.liveVideoResult, "Live camera frames received", "ok");
+  frame.transport?.displayed();
+  if (state.rtc.displayedFrames === 0 || elements.liveVideoStage.dataset.state !== "live") {
+    setResult(elements.liveVideoResult, "Live camera frames received", "ok");
+  }
   state.rtc.lastFrameAt = now;
   displayAudit.record(frame.sequence, now, elements.liveVideoCanvas.width, elements.liveVideoCanvas.height);
   if (now - displayAuditPublishedAt >= 1000) {
