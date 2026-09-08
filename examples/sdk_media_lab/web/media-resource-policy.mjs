@@ -59,3 +59,8 @@ export function controlAvailability({
     stopRtc: Boolean(connected) && Boolean(rtcActive),
   };
 }
+
+export function rtcTransportPlan(mode) {
+  if (!["video", "audio", "av"].includes(mode)) throw new Error("Invalid RTC mode");
+  return { peer: rtcModeHasAudio(mode), jpegSocket: rtcModeHasVideo(mode) };
+}

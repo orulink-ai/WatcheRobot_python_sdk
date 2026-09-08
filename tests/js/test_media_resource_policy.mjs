@@ -5,6 +5,7 @@ import {
   controlAvailability,
   isCurrentRtcGeneration,
   resolveRtcMode,
+  rtcTransportPlan,
   rtcModeHasAudio,
   rtcModeHasVideo,
 } from "../../examples/sdk_media_lab/web/media-resource-policy.mjs";
@@ -199,4 +200,11 @@ test("late events from a previous browser RTC generation are rejected", () => {
   assert.equal(isCurrentRtcGeneration(4, 4), true);
   assert.equal(isCurrentRtcGeneration(5, 4), false);
   assert.equal(isCurrentRtcGeneration(4, null), false);
+});
+
+test("LAN preview uses JPEG socket without a peer; audio modes retain WebRTC", () => {
+  assert.deepEqual(rtcTransportPlan("video"), { peer: false, jpegSocket: true });
+  assert.deepEqual(rtcTransportPlan("audio"), { peer: true, jpegSocket: false });
+  assert.deepEqual(rtcTransportPlan("av"), { peer: true, jpegSocket: true });
+  assert.throws(() => rtcTransportPlan("invalid"), /mode/);
 });

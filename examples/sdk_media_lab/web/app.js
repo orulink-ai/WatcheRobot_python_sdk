@@ -1,4 +1,7 @@
 import { evaluateRtcAudioHealth } from "./rtc-audio-health.mjs";
+import { createDisplayAudit } from "./display-audit.mjs";
+let displayAudit = createDisplayAudit();
+let displayAuditPublishedAt = 0;
 import { evaluateAnimationConfirmation } from "./animation-confirmation.mjs";
 import {
   clampAnimationIntervalMs,
@@ -21,6 +24,7 @@ import {
   isCurrentRtcGeneration,
   resolveRtcMode,
   rtcModeHasAudio,
+  rtcTransportPlan,
   rtcModeHasVideo,
 } from "./media-resource-policy.mjs";
 import {
@@ -795,6 +799,9 @@ function drawEmptyWaveform() {
 }
 
 function resetLiveVideoMetrics() {
+  displayAudit = createDisplayAudit();
+  displayAuditPublishedAt = 0;
+  elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(performance.now()));
   Object.assign(state.rtc, {
     eventCursor: 0,
     remoteCandidates: [],
@@ -1316,6 +1323,13 @@ async function startRtcSession(mode) {
       try { await api(`${startPath.slice(0, -5)}stop`, { method: "POST" }); } catch (_) {}
       return;
     }
+    const transport = rtcTransportPlan(mode);
+    if (!transport.peer) {
+      createMjpegVideoTransport(null, generation);
+      startRtcControlLoops(generation);
+      await refreshStatus();
+      return;
+    }
     const peer = new RTCPeerConnection({ iceServers: [] });
     state.rtc.peer = peer;
     if (wantsAudio && localStream) {
@@ -1406,8 +1420,7 @@ function setLiveVideoState(value, message = null) {
 }
 
 function createMjpegVideoTransport(peer, generation) {
-  const controlChannel = peer.createDataChannel("rtc-control", { ordered: true });
-  state.rtc.channel = controlChannel;
+  state.rtc.channel = peer ? peer.createDataChannel("rtc-control", { ordered: true }) : null;
   const url = state.status?.connection?.mjpeg_websocket_url;
   if (!url) throw new Error("Device did not provide a direct live-video URL");
   const socket = new WebSocket(url);
@@ -1416,11 +1429,11 @@ function createMjpegVideoTransport(peer, generation) {
   socket.addEventListener("open", () => {
     if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.videoSocket !== socket) return;
     socket.send("ready");
-    setLiveVideoState("connected");
+    setLiveVideoState("connecting");
     setResult(
       elements.liveVideoResult,
-      rtcModeHasAudio(state.rtc.mode) ? "Audio/video channel connected" : "Live-video channel connected",
-      "ok",
+      "Video channel connected; waiting for a decoded frame",
+      "running",
     );
   });
   socket.addEventListener("message", (event) => {
@@ -1450,7 +1463,7 @@ async function startRtcAudio() {
 function startRtcControlLoops(generation) {
   pollRtcEvents(generation);
   state.rtc.heartbeatTimer = window.setInterval(async () => {
-    if (!state.rtc.peer || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!state.rtc.mode || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
     const browserSendUs = Math.round((performance.timeOrigin + performance.now()) * 1000);
     try {
       await api(rtcEndpoint("clock-ping"), {
@@ -1458,14 +1471,14 @@ function startRtcControlLoops(generation) {
         body: JSON.stringify({ browser_send_us: browserSendUs }),
       });
     } catch (error) {
-      if (state.rtc.peer && isCurrentRtcGeneration(state.rtc.generation, generation)) {
+      if (state.rtc.mode && isCurrentRtcGeneration(state.rtc.generation, generation)) {
         failRtcSession(error.message);
       }
     }
   }, 1500);
   state.rtc.feedbackTimer = window.setInterval(async () => {
     const peer = state.rtc.peer;
-    if (!peer || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!state.rtc.mode || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
     const fps = currentDisplayFps();
     const frameAgeMs = state.rtc.lastFrameAt > 0
       ? Math.max(0, performance.now() - state.rtc.lastFrameAt)
@@ -1557,17 +1570,17 @@ async function collectRtcAudioStats(peer, generation) {
 }
 
 async function pollRtcEvents(generation) {
-  if (!state.rtc.peer || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+  if (!state.rtc.mode || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
   try {
     const payload = await api(`${rtcEndpoint("events")}?after=${state.rtc.eventCursor}`);
-    if (!state.rtc.peer || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!state.rtc.mode || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
     for (const event of payload.events || []) {
       state.rtc.eventCursor = Math.max(state.rtc.eventCursor, event.id || 0);
       await handleRtcEvent(event.message || {}, generation);
-      if (!state.rtc.peer || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+      if (!state.rtc.mode || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
     }
   } catch (error) {
-    if (state.rtc.peer && isCurrentRtcGeneration(state.rtc.generation, generation)) {
+    if (state.rtc.mode && isCurrentRtcGeneration(state.rtc.generation, generation)) {
       await failRtcSession(error.message);
     }
     return;
@@ -1589,9 +1602,10 @@ async function handleRtcEvent(message, generation) {
     return;
   }
   if (message.type === "evt.rtc.state") {
-    setRtcSessionState(data.state || "connecting");
+    setRtcSessionState(data.state === "connected" && rtcModeHasVideo(state.rtc.mode) && !state.rtc.lastFrameAt
+      ? "connecting" : data.state || "connecting");
     if (data.state === "failed") await failRtcSession(localizeError(data.reason || "Device RTC session failed"));
-    if (data.state === "stopped" && state.rtc.peer) cleanupRtcSession();
+    if (data.state === "stopped" && state.rtc.mode) cleanupRtcSession();
     return;
   }
   if (message.type === "evt.rtc.capabilities") {
@@ -1685,6 +1699,9 @@ async function failRtcSession(message) {
 }
 
 function cleanupRtcSession() {
+  if (rtcModeHasVideo(state.rtc.mode)) {
+    elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(performance.now()));
+  }
   state.rtc.generation += 1;
   state.localResources.delete("media");
   window.clearTimeout(state.rtc.pollTimer);
@@ -1826,7 +1843,13 @@ async function drawMjpegFrame(frame, generation) {
     bitmap.close();
   }
   const now = performance.now();
+  if (state.rtc.displayedFrames === 0) setResult(elements.liveVideoResult, "Live camera frames received", "ok");
   state.rtc.lastFrameAt = now;
+  displayAudit.record(frame.sequence, now, elements.liveVideoCanvas.width, elements.liveVideoCanvas.height);
+  if (now - displayAuditPublishedAt >= 1000) {
+    elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(now));
+    displayAuditPublishedAt = now;
+  }
   state.rtc.displayedFrames += 1;
   state.rtc.frameTimes.push(now);
   state.rtc.frameTimes = state.rtc.frameTimes.filter((time) => now - time <= 1000);
@@ -1956,7 +1979,8 @@ document.querySelector("#clearVisualLog").addEventListener("click", () => {
 
 setInterval(() => {
   elements.footerClock.textContent = new Date().toLocaleTimeString([], { hour12: false });
-  if (state.rtc.lastFrameAt > 0 && state.rtc.peer) {
+  if (state.rtc.lastFrameAt > 0 && state.rtc.mode) {
+    elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(performance.now()));
     const age = Math.max(0, Math.round(performance.now() - state.rtc.lastFrameAt));
     elements.liveVideoFrameAge.textContent = `${age} MS AGO`;
     elements.liveVideoFps.textContent = `${currentDisplayFps().toFixed(1)} FPS`;

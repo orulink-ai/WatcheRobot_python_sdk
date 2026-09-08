@@ -99,3 +99,26 @@ samples across repeated start/stop cycles are reported as a fragmentation trend.
 The live-video panel also shows source/target/sent FPS, transport latency,
 browser congestion, and animation FPS/underrun/late-frame pressure so a smooth
 idle animation cannot hide contention that appears only under AV load.
+
+## PTL preview candidate validation
+
+Pure video now uses the device's existing LAN MJPEG socket and Application
+session/control APIs without creating a browser WebRTC peer. Audio and AV
+sessions retain their WebRTC peer. This requires the paired ESP32 candidate
+that starts video from JPEG-client readiness. The Daemon routing is unchanged.
+This test bench change does not implement model enumeration, inference mode
+switching, or official SSCMA model-maintenance compatibility.
+
+The page marks video LIVE only after a JPEG has decoded and drawn. Inspect the
+`data-display-audit` attribute on `#liveVideoCanvas` for cumulative successful
+Canvas draws, duration, FPS, P95/max inter-frame gap, idle tail, duplicate and
+sequence errors, dimensions, and a bounded-storage truncation flag. The final
+snapshot is retained on stop and reset for a new session. This is browser draw
+evidence, not sensor-to-browser CRC verification or physical monitor scanout.
+A short snapshot above 15 FPS is not a ten-minute acceptance result.
+
+For the 2026-09-08 hardware investigation, failure records and the complete
+remaining integration checklist are maintained in the embedded repository's
+`docs/himax-unified-hil-2026-09-08.md`. The candidate remains experimental;
+legacy clients that require a video-only WebRTC offer need compatibility
+validation before product rollout.
