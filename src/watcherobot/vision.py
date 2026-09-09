@@ -18,6 +18,7 @@ from .errors import WatcheRobotError
 
 if TYPE_CHECKING:
     from .robot import WatcheRobot
+    from .inference import InferenceSession
 
 
 _IMAGE_HEADER = struct.Struct("<4sBBHIIHHI")
@@ -47,6 +48,7 @@ class VisionModel:
     name: str
     task: str
     contains_face_class: bool
+    verified: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,64 @@ class VisionDomain:
 
     def __init__(self, robot: WatcheRobot) -> None:
         self._robot = robot
+        self._inference_lock = threading.RLock()
+        self._inference_session: InferenceSession | None = None
+
+    def models(self, *, timeout: float | None = 10.0) -> tuple[VisionModel, ...]:
+        """Enumerate installed models without changing the selected model."""
+        from .inference import ack, integer
+        _validate_timeout(timeout)
+        self._robot._require_capability("vision.models.v1")
+        message_type = "ctrl.vision.models.get"
+        data = ack(self._robot._command(message_type, {}, timeout=timeout), message_type)
+        raw = data.get("models")
+        if not isinstance(raw, list) or len(raw) > 255:
+            raise WatcheRobotError("invalid vision model catalog")
+        models = []
+        seen = set()
+        for item in raw:
+            if not isinstance(item, dict):
+                raise WatcheRobotError("invalid vision model descriptor")
+            model_id = integer(item, "model_id", 1, 255)
+            name, task = item.get("model_name"), item.get("task")
+            if model_id in seen or not isinstance(name, str) or not name or task not in {"detection", "unknown", "classification"}:
+                raise WatcheRobotError("invalid vision model descriptor")
+            seen.add(model_id)
+            models.append(VisionModel(model_id, name, task, _required_bool(item, "contains_face_class"),
+                                      _required_bool(item, "verified")))
+        return tuple(models)
+
+    def start_inference(self, model_id: int, *, timeout: float | None = 10.0) -> InferenceSession:
+        """Start a headless model session. Stop existing camera work first."""
+        from .inference import InferenceSession, ack, integer
+        if isinstance(model_id, bool) or not isinstance(model_id, int) or not 1 <= model_id <= 255:
+            raise ValueError("model_id must be an integer between 1 and 255")
+        _validate_timeout(timeout)
+        self._robot._require_capability("vision.inference.v1")
+        with self._inference_lock:
+            if self._inference_session is not None and not self._inference_session.closed:
+                raise RuntimeError("close the previous inference session first")
+            session = InferenceSession(self._robot, model_id)
+            self._inference_session = session
+            try:
+                message_type = "ctrl.vision.inference.start"
+                data = ack(self._robot._command(message_type, {"session_id": session.id, "model_id": model_id},
+                                                timeout=timeout), message_type)
+                if integer(data, "session_id", 1) != session.id:
+                    raise WatcheRobotError("vision start ACK has another session")
+            except Exception:
+                # Caller-generated ID allows cleanup even when the start ACK was lost.
+                try:
+                    session.close()
+                except Exception:
+                    pass  # Retain the handle so robot.close()/stop_inference() can retry.
+                raise
+            return session
+
+    def stop_inference(self, *, timeout: float | None = 5.0) -> None:
+        with self._inference_lock:
+            if self._inference_session is not None:
+                self._inference_session.close(timeout=timeout)
 
     def status(self, *, timeout: float | None = None) -> VisionStatus:
         _validate_timeout(timeout)

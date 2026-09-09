@@ -4,6 +4,18 @@ const SUPPORTED_LOCALES = new Set(["en-US", "zh-CN"]);
 // legacy Chinese diagnostics from the device/service and powers the optional Chinese
 // presentation without putting Chinese literals back into the page or controller.
 const ENGLISH_PHRASES = new Map([
+  ["端侧模型测试", "On-device Model Test"],
+  ["读取模型", "Read Models"],
+  ["模型", "Model"],
+  ["请先读取模型", "Read models first"],
+  ["启动推理", "Start Inference"],
+  ["读取最新结果", "Read Latest Result"],
+  ["停止推理", "Stop Inference"],
+  ["推理运行中", "Inference is running"],
+  ["推理已停止", "Inference stopped"],
+  ["视觉数据已更新", "Vision data updated"],
+  ["模型预热中，请稍后再次读取", "Model is warming up; read again shortly"],
+  ["读取已安装模型，在不传输视频、不转动云台的情况下运行推理，并查看最新结果。开始前请停止其他相机功能。", "Read installed models, run inference without video or gimbal movement, and inspect the latest result. Stop camera features before starting."],
   ["人脸跟随测试", "Face Tracking Test"],
   ["查询视觉状态", "Query Vision Status"],
   ["开始人脸跟随", "Start Face Tracking"],

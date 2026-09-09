@@ -1694,3 +1694,31 @@ def test_media_lab_csp_allows_direct_device_websocket(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert "connect-src 'self' ws:" in response.headers["content-security-policy"]
+
+
+def test_generic_inference_owns_only_camera_and_retries_stop(tmp_path):
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities += ("vision.models.v1", "vision.inference.v1")
+    class Session:
+        id = 123
+        model_id = 2
+        fail_stop = True
+        def latest(self, **kwargs): return None
+        def close(self, **kwargs):
+            if self.fail_stop: raise TimeoutError("stop unconfirmed")
+    session = Session()
+    robot.vision = SimpleNamespace(start_inference=lambda model, **kw: session,
+                                  stop_inference=lambda **kw: session.close())
+    service = _service(module, tmp_path, robot)
+    client = _client_for_service(module, tmp_path, service)
+    assert client.post("/api/vision/inference/start", json={"model_id": 2}).status_code == 200
+    assert service.status()["resource_owners"] == {"camera": "vision_inference"}
+    assert client.get("/api/vision/inference/result").json() == {"ready": False}
+    with pytest.raises(TimeoutError): service.stop_inference()
+    assert service.status()["inference"]["state"] == "stop_required"
+    assert "camera" in service.status()["resource_owners"]
+    session.fail_stop = False
+    service.stop_inference()
+    assert service.status()["inference"]["state"] == "idle"
+    assert not service.status()["resource_owners"]

@@ -7,6 +7,7 @@ from .errors import (
     WatcheRobotError,
 )
 from .audio import AudioPlayback, PCMAudio
+from .inference import DetectionBox, InferenceResult, InferenceSession
 from .job import Job, JobState
 from .inputs import BackTouchEvent, InputDomain, InputEvent, RollerEvent, ScreenTouchEvent
 from .media import AudioFormat, AudioFrame, AudioRecording, ImageFrame, MicrophoneSession
@@ -41,6 +42,9 @@ from .vision import (
 )
 
 __all__ = [
+    "DetectionBox",
+    "InferenceResult",
+    "InferenceSession",
     "AudioFormat",
     "AudioFrame",
     "AudioPlayback",

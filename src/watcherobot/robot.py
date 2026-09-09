@@ -464,6 +464,10 @@ class WatcheRobot:
             self._closing = True
             microphone = self._microphone
         try:
+            self.vision.stop_inference()
+        except Exception:
+            _LOGGER.warning("Inference cleanup failed while closing robot", exc_info=True)
+        try:
             self.face_tracking._close()
         except Exception:
             _LOGGER.warning("Face tracking cleanup failed while closing robot", exc_info=True)

@@ -146,3 +146,10 @@ remaining integration checklist are maintained in the embedded repository's
 `docs/himax-unified-hil-2026-09-08.md`. The candidate remains experimental;
 legacy clients that require a video-only WebRTC offer need compatibility
 validation before product rollout.
+
+
+### 通用端侧模型
+
+On-device Model Test 使用 `vision.models()` 和 `vision.start_inference()`，支持读取原厂
+1～3 号及人脸 4 号目录、无预览推理、最新结果读取和显式停止。相机占用期间禁止启动
+冲突功能；停止未确认时保留占用。详见 [模型推理合同](../../docs/vision-model-inference.md)。

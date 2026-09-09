@@ -213,6 +213,22 @@
         <pre id="faceVisionStatus" style="white-space:pre-wrap;overflow-wrap:anywhere">—</pre>
       </section>
 
+      <section class="rtc-audio-panel" aria-labelledby="inferenceTitle">
+        <p class="eyebrow">02.9 / Model Inference</p>
+        <h2 id="inferenceTitle">On-device Model Test</h2>
+        <p>Read installed models, run inference without video or gimbal movement, and inspect the latest result. Stop camera features before starting.</p>
+        <div class="button-row">
+          <button id="queryModelsButton" class="station-action" type="button" disabled>Read Models</button>
+          <label for="inferenceModel">Model</label>
+          <select id="inferenceModel"><option value="">Read models first</option></select>
+          <button id="startInferenceButton" class="station-action" type="button" disabled>Start Inference</button>
+          <button id="queryInferenceButton" class="station-action" type="button" disabled>Read Latest Result</button>
+          <button id="stopInferenceButton" class="quiet-action" type="button" disabled>Stop Inference</button>
+        </div>
+        <p id="inferenceState" role="status">Awaiting Test</p>
+        <pre id="inferenceResult" style="white-space:pre-wrap;overflow-wrap:anywhere">—</pre>
+      </section>
+
       <section class="live-video-panel" id="liveVideoPanel" data-available="false" aria-labelledby="liveVideoTitle">
         <div class="live-video-copy">
           <div class="station-head">

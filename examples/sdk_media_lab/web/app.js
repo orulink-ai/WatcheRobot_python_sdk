@@ -4,6 +4,7 @@ import { createMjpegTransport } from "./mjpeg-transport.mjs";
 let displayAudit = createDisplayAudit();
 let displayAuditPublishedAt = 0;
 let faceRequestPending = false;
+let inferenceRequestPending = false;
 import { evaluateAnimationConfirmation } from "./animation-confirmation.mjs";
 import {
   clampAnimationIntervalMs,
@@ -194,6 +195,13 @@ const elements = {
   queryVisionButton: document.querySelector("#queryVisionButton"),
   startFaceTrackingButton: document.querySelector("#startFaceTrackingButton"),
   stopFaceTrackingButton: document.querySelector("#stopFaceTrackingButton"),
+  queryModelsButton: document.querySelector("#queryModelsButton"),
+  inferenceModel: document.querySelector("#inferenceModel"),
+  startInferenceButton: document.querySelector("#startInferenceButton"),
+  queryInferenceButton: document.querySelector("#queryInferenceButton"),
+  stopInferenceButton: document.querySelector("#stopInferenceButton"),
+  inferenceState: document.querySelector("#inferenceState"),
+  inferenceResult: document.querySelector("#inferenceResult"),
   faceTrackingCapability: document.querySelector("#faceTrackingCapability"),
   faceTrackingResult: document.querySelector("#faceTrackingResult"),
   faceVisionStatus: document.querySelector("#faceVisionStatus"),
@@ -590,6 +598,13 @@ function renderStatus(status) {
   elements.playAudioButton.disabled = !availability.speaker || !hasCapability("audio.stream");
   elements.stopAudioButton.disabled = !status.connected || !hasCapability("audio.stream");
   elements.capturePhotoButton.disabled = !availability.camera || !hasCapability("camera.capture");
+  const inferenceState = status.inference?.state || "idle";
+  const inferenceSupported = status.connected && hasCapability("vision.inference.v1");
+  elements.queryModelsButton.disabled = inferenceRequestPending || !status.connected || !hasCapability("vision.models.v1");
+  elements.startInferenceButton.disabled = inferenceRequestPending || !inferenceSupported || !availability.camera
+    || inferenceState !== "idle" || !elements.inferenceModel.value;
+  elements.queryInferenceButton.disabled = inferenceRequestPending || !inferenceSupported || inferenceState !== "running";
+  elements.stopInferenceButton.disabled = inferenceRequestPending || !status.connected || inferenceState === "idle";
   const faceState = status.face_tracking?.state || "idle";
   const faceSupported = hasCapability("face_tracking.control.v1");
   elements.faceTrackingCapability.textContent = !status.connected ? "Device Offline"
@@ -1966,6 +1981,42 @@ elements.stopAudioButton.addEventListener("click", () => {
   }).catch(() => {});
 });
 elements.capturePhotoButton.addEventListener("click", () => { capturePhoto().catch(() => {}); });
+
+async function inferenceAction(action) {
+  if (inferenceRequestPending) return;
+  inferenceRequestPending = true;
+  if (state.status) renderStatus(state.status);
+  try {
+    const isRead = action === "models" || action === "result";
+    const path = action === "models" ? "/api/vision/models" : `/api/vision/inference/${action}`;
+    const response = await api(path, {method: isRead ? "GET" : "POST",
+      ...(action === "start" ? {body: JSON.stringify({model_id: Number(elements.inferenceModel.value)})} : {})});
+    if (action === "models") {
+      elements.inferenceModel.replaceChildren();
+      for (const model of response.models) {
+        const option = document.createElement("option");
+        option.value = String(model.model_id);
+        option.textContent = `${model.model_id} · ${model.name}${model.verified ? "" : " (unverified)"}`;
+        option.disabled = !model.verified;
+        elements.inferenceModel.append(option);
+      }
+      elements.inferenceModel.value = String(response.models.find(model => model.verified)?.model_id || "");
+    }
+    elements.inferenceResult.textContent = JSON.stringify(response, null, 2);
+    setResult(elements.inferenceState, action === "start" ? "Inference is running" : action === "stop"
+      ? "Inference stopped" : action === "result" && !response.ready ? "Model is warming up; read again shortly" : "Vision data updated", "ok");
+  } catch (error) {
+    setResult(elements.inferenceState, error.message, "error");
+  } finally {
+    inferenceRequestPending = false;
+    await refreshStatus();
+  }
+}
+elements.queryModelsButton.addEventListener("click", () => { inferenceAction("models").catch(() => {}); });
+elements.startInferenceButton.addEventListener("click", () => { inferenceAction("start").catch(() => {}); });
+elements.queryInferenceButton.addEventListener("click", () => { inferenceAction("result").catch(() => {}); });
+elements.stopInferenceButton.addEventListener("click", () => { inferenceAction("stop").catch(() => {}); });
+elements.inferenceModel.addEventListener("change", () => { if (state.status) renderStatus(state.status); });
 
 async function faceTrackingAction(action) {
   if (faceRequestPending) return;
