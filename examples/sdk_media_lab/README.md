@@ -12,6 +12,9 @@ contained inside this directory; generated photos and recordings stay under
 the ignored `artifacts/` directory and are never included in a published
 source snapshot.
 
+The tested 2026-09-09 SDK/ESP32 pairing, concurrent video/audio results, and
+remaining limits are fixed in the [Himax media stage record](../../docs/himax-media-stage-20260909.md).
+
 ## Face tracking test
 
 The Edge Vision panel queries `robot.vision.status()` and exposes
@@ -22,15 +25,17 @@ shutdown stops owned tracking, and a disconnected tracking session is stopped on
 reconnection instead of automatically resumed. Closing only the browser tab does
 not exit the Application: use Stop Face Tracking to end an intentionally headless run.
 
-The panel requires `face_tracking.control.v1`. Current PTL preview firmware lacks
-inference, so Start is disabled with an explicit explanation; vision status remains
-queryable. A button or an existing SDK API does not add inference to that firmware.
+The panel requires `face_tracking.control.v1`. Preview-only PTL firmware reports
+inference unavailable, so Start is disabled with an explicit explanation; vision
+status remains queryable. Unified firmware can advertise inference support;
+the panel follows the actual device capability. A button or an existing SDK API
+does not add inference to preview-only firmware.
 The SDK also provides `robot.face_tracking.open_preview()` for optional diagnostic
 frames, but this panel currently tests headless start/stop, not diagnostic images.
 See [the SDK lifecycle contract](../../docs/face-tracking-lifecycle.md) and
 [preview API](../../docs/face-tracking-preview.md).
 
-Validation on 2026-09-08: 81 Test Bench Python tests, 30 SDK vision/tracking tests,
+Historical validation on preview-only firmware, 2026-09-08: 81 Test Bench Python tests, 30 SDK vision/tracking tests,
 and 86 JavaScript tests passed. A real browser queried the connected PTL device
 through its Application channel and displayed `inference=false`; unsupported
 tracking controls were disabled. Physical face-following motion remains untested
