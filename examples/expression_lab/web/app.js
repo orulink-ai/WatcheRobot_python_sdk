@@ -7,8 +7,15 @@ const POINTER_GAZE_GAIN_DEFAULT = 1.45;
 const POINTER_FLAT_SYNC_INTERVAL_MS = 55;
 const POINTER_FLAT_TRANSITION_MS = 90;
 const POINTER_SYNC_EPSILON = 0.015;
+const API_TIMEOUT_MS = 8000;
+const STATUS_TIMEOUT_MS = 2500;
+const EXPRESSION_PRESET = "standby";
 const LID_MASK_HALF_WIDTH_PIXELS = 112;
 const LID_MASK_HALF_HEIGHT_PIXELS = 64;
+const WATCHER_EYE_SEGMENTS = [
+  [-30.75, 0, 5, 30], [-18.25, 0, 6, 58], [-6.25, -23.5, 6, 25], [-6.25, 24, 6, 24],
+  [6.25, -23.5, 5, 25], [6.25, 23.5, 5, 25], [18.25, 0, 5, 58], [30.75, 0, 6, 30],
+];
 const EYELID_PRESET_STORAGE_KEY = "watcher.expressionLab.eyelidPresets.v1";
 const EYELID_PRESET_COOKIE_KEY = "watcherExpressionEyelidsV1";
 const EYELID_PRESET_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
@@ -16,8 +23,12 @@ const MAX_EYELID_PRESETS = 12;
 const VECTOR_ACCESSORY_MAX_STROKES = VectorPath.MAX_STROKES;
 const VECTOR_ACCESSORY_MAX_POINTS_PER_STROKE = VectorPath.MAX_POINTS_PER_STROKE;
 const VECTOR_ACCESSORY_MAX_POINTS = VectorPath.MAX_POINTS;
-const VECTOR_ACCESSORY_STORAGE_KEY = "watcher.expressionLab.vectorAccessories.v1";
+const VECTOR_ACCESSORY_STORAGE_KEY = "watcher.expressionLab.vectorAccessories.v2";
+const VECTOR_ACCESSORY_LEGACY_STORAGE_KEY = "watcher.expressionLab.vectorAccessories.v1";
+const VECTOR_ACCESSORY_COOKIE_PREFIX = "watcherExpressionVectorV1_";
+const VECTOR_ACCESSORY_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 const MAX_VECTOR_ACCESSORY_PRESETS = 12;
+const browserFetch = window.fetch.bind(window);
 const displayCtx = canvas.getContext("2d", { alpha: false });
 const flatCanvas = document.createElement("canvas");
 flatCanvas.width = canvas.width; flatCanvas.height = canvas.height;
@@ -54,20 +65,19 @@ const state = {
   active: false, serviceReady: false, statusInitialized: false,
   deviceConnected: false, expressionSupported: false, vectorAccessorySupported: false,
   firmwareUpdate: null,
-  preset: "standby", activeEyelidPresetId: null, eyelidPresets: [], sending: false, pairing: false, statusBusy: false,
+  activeEyelidPresetId: null, eyelidPresets: [], sending: false, pairing: false, statusBusy: false,
   intentActive: false, resumePending: false, resumeTimer: 0,
   lastFrame: performance.now(), phase: 0, debounce: 0,
   pointerInside: false, pointerRawX: 0, pointerRawY: 0, pointerTargetX: 0, pointerTargetY: 0,
   pointerX: 0, pointerY: 0, pointerLastSyncAt: 0,
   pointerLastSentX: Number.NaN, pointerLastSentY: Number.NaN,
   updateBusy: false, queuedUpdate: null,
-  vectorStrokes: [], vectorAccessoryLayer: "front", vectorTool: "brush", vectorDrawing: false,
+  vectorStrokes: [], vectorCompiledStrokes: [], vectorEncodedPath: "0100",
+  vectorCompilationDirty: true, lastSdkOutput: "",
+  vectorAccessoryLayer: "front", vectorTool: "brush", vectorDefaultSmooth: true, vectorDrawing: false,
   vectorDraft: null, vectorUndo: [], vectorRedo: [], vectorAccessoryPresets: [], vectorEraseChanged: false,
-};
-const presetDefaults = {
-  standby: { openness: 1, spacing: .85, tilt: 0, tag: "none" },
-  thinking: { openness: .72, spacing: .82, tilt: -7, tag: "thinking" },
-  speaking: { openness: .9, spacing: .88, tilt: 0, tag: "none" },
+  vectorSelectedStroke: -1, vectorSelectedPoint: -1, vectorDragOrigin: null,
+  vectorMoveSnapshot: null, vectorHistoryPending: false, vectorInteractionChanged: false,
 };
 const eyelidControlDefaults = {
   leftUpperLidY: -80, leftUpperLidRotation: 0,
@@ -88,7 +98,7 @@ const accessoryControlDefaults = {
 };
 
 function cloneVectorStrokes(strokes = state.vectorStrokes) {
-  return VectorPath.clone(strokes);
+  return VectorEditorV2.clone(strokes);
 }
 
 function vectorPointCount(strokes = state.vectorStrokes) {
@@ -96,36 +106,96 @@ function vectorPointCount(strokes = state.vectorStrokes) {
 }
 
 function encodeVectorAccessoryPath() {
-  return VectorPath.encode(state.vectorStrokes);
+  return state.vectorEncodedPath;
 }
 
 function decodeVectorAccessoryPath(path) {
-  return VectorPath.decode(path);
+  const strokes = VectorPath.decode(path);
+  return strokes?.map((stroke) => ({ ...stroke, smooth: false })) || null;
+}
+
+function normalizeVectorAccessoryPresets(parsed) {
+  if (!Array.isArray(parsed)) return [];
+  return parsed.flatMap((preset) => {
+      if (!preset || typeof preset.id !== "string" || typeof preset.name !== "string") return [];
+      const name = preset.name.trim().slice(0, 18);
+      const fallbackStrokes = decodeVectorAccessoryPath(preset.path);
+      const normalizedEditorStrokes = Array.isArray(preset.editor)
+        ? VectorEditorV2.normalizeEditorStrokes(preset.editor)
+        : null;
+      const editorStrokes = normalizedEditorStrokes?.length
+        ? normalizedEditorStrokes
+        : fallbackStrokes;
+      if (!name || !/^(front|back)$/.test(preset.layer) || !editorStrokes?.length) return [];
+      return [{
+        id: preset.id.slice(0, 64), name, layer: preset.layer,
+        path: VectorPath.encode(VectorEditorV2.compileToV1(editorStrokes)),
+        editor: editorStrokes,
+      }];
+    }).slice(0, MAX_VECTOR_ACCESSORY_PRESETS);
+}
+
+function loadVectorCookiePresets() {
+  const cookieParts = document.cookie.split("; ");
+  const compact = [];
+  for (let index = 0; index < MAX_VECTOR_ACCESSORY_PRESETS; index += 1) {
+    const prefix = `${VECTOR_ACCESSORY_COOKIE_PREFIX}${index}=`;
+    const cookie = cookieParts.find((part) => part.startsWith(prefix));
+    if (!cookie) continue;
+    try {
+      const [id, name, layer, path] = JSON.parse(decodeURIComponent(cookie.slice(prefix.length)));
+      compact.push({ id, name, layer, path });
+    } catch (_) {
+      // Ignore one damaged cookie without hiding the remaining saved presets.
+    }
+  }
+  return normalizeVectorAccessoryPresets(compact);
 }
 
 function loadVectorAccessoryPresets() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(VECTOR_ACCESSORY_STORAGE_KEY) || "[]");
-    if (!Array.isArray(parsed)) return [];
-    return parsed.flatMap((preset) => {
-      if (!preset || typeof preset.id !== "string" || typeof preset.name !== "string") return [];
-      const name = preset.name.trim().slice(0, 18);
-      if (!name || !/^(front|back)$/.test(preset.layer) || !decodeVectorAccessoryPath(preset.path)) return [];
-      return [{ id: preset.id.slice(0, 64), name, layer: preset.layer, path: preset.path }];
-    }).slice(0, MAX_VECTOR_ACCESSORY_PRESETS);
-  } catch (_) {
-    return [];
+  for (const key of [VECTOR_ACCESSORY_STORAGE_KEY, VECTOR_ACCESSORY_LEGACY_STORAGE_KEY]) {
+    try {
+      const serialized = localStorage.getItem(key);
+      if (!serialized) continue;
+      const presets = normalizeVectorAccessoryPresets(JSON.parse(serialized));
+      if (presets.length) return presets;
+    } catch (_) {
+      // Try the next storage source. A broken origin-local copy must not hide
+      // the cross-port compatibility backup.
+    }
   }
+  return loadVectorCookiePresets();
 }
 
 function persistVectorAccessoryPresets(presets) {
+  let localStored = false;
   try {
     localStorage.setItem(VECTOR_ACCESSORY_STORAGE_KEY, JSON.stringify(presets));
-    return true;
+    localStored = true;
   } catch (_) {
+    // The cookie backup below can still preserve the compiled device paths.
+  }
+  let cookiesStored = false;
+  try {
+    for (let index = 0; index < MAX_VECTOR_ACCESSORY_PRESETS; index += 1) {
+      const cookieName = `${VECTOR_ACCESSORY_COOKIE_PREFIX}${index}`;
+      const preset = presets[index];
+      if (!preset) {
+        document.cookie = `${cookieName}=; Max-Age=0; Path=/; SameSite=Strict`;
+        continue;
+      }
+      const compact = [preset.id, preset.name, preset.layer, preset.path];
+      document.cookie = `${cookieName}=${encodeURIComponent(JSON.stringify(compact))}; Max-Age=${VECTOR_ACCESSORY_COOKIE_MAX_AGE_SECONDS}; Path=/; SameSite=Strict`;
+    }
+    cookiesStored = true;
+  } catch (_) {
+    // Report failure only when neither storage mechanism is available.
+  }
+  if (!localStored && !cookiesStored) {
     toast("浏览器无法保存矢量装饰，请检查隐私或存储设置", "error");
     return false;
   }
+  return true;
 }
 
 function renderVectorAccessoryPresets() {
@@ -149,10 +219,15 @@ function saveVectorAccessoryPreset() {
   const input = byId("vectorAccessoryName"); const name = input.value.trim();
   if (!name || state.vectorStrokes.length === 0) return;
   const existing = state.vectorAccessoryPresets.find((preset) => preset.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+  if (!existing && state.vectorAccessoryPresets.length >= MAX_VECTOR_ACCESSORY_PRESETS) {
+    toast(`最多保存 ${MAX_VECTOR_ACCESSORY_PRESETS} 个矢量装饰`, "error");
+    return;
+  }
   const preset = {
     id: existing?.id || `vector-${Date.now()}`,
     name: name.slice(0, 18),
     path: encodeVectorAccessoryPath(),
+    editor: cloneVectorStrokes(),
     layer: state.vectorAccessoryLayer,
   };
   const nextPresets = existing
@@ -165,9 +240,11 @@ function saveVectorAccessoryPreset() {
 
 function applyVectorAccessoryPreset(presetId) {
   const preset = state.vectorAccessoryPresets.find((candidate) => candidate.id === presetId);
-  const strokes = preset ? decodeVectorAccessoryPath(preset.path) : null;
+  const strokes = preset?.editor ? cloneVectorStrokes(preset.editor) : decodeVectorAccessoryPath(preset?.path);
   if (!preset || !strokes) return;
-  pushVectorHistory(); state.vectorStrokes = strokes; state.vectorAccessoryLayer = preset.layer;
+  pushVectorHistory(); state.vectorStrokes = strokes; state.vectorCompilationDirty = true;
+  state.vectorAccessoryLayer = preset.layer;
+  selectVectorStroke(-1);
   byId("vectorAccessoryLayer").value = preset.layer; controls.accessory.value = "custom_vector";
   renderVectorAccessoryEditor(); queueUpdate(); toast(`已调用矢量装饰“${preset.name}”`);
 }
@@ -187,6 +264,8 @@ function pushVectorHistory() {
 function restoreVectorHistory(source, destination) {
   if (source.length === 0) return;
   destination.push(cloneVectorStrokes()); state.vectorStrokes = source.pop();
+  state.vectorCompilationDirty = true;
+  selectVectorStroke(-1);
   renderVectorAccessoryEditor(); refreshVectorHistoryButtons(); activateCustomVectorAccessory();
 }
 
@@ -196,15 +275,11 @@ function refreshVectorHistoryButtons() {
 }
 
 function drawVectorEyeGuide(target) {
-  target.save(); target.globalAlpha = .13; target.strokeStyle = controls.eyeColor.value;
-  target.lineCap = "round"; target.lineWidth = 8;
-  for (const centerX of [164, 346]) {
-    for (const offset of [-40, -24, -8, 8, 24, 40]) {
-      const height = 52 - Math.abs(offset) * .55;
-      target.beginPath(); target.moveTo(centerX + offset, 255 - height / 2);
-      target.lineTo(centerX + offset, 255 + height / 2); target.stroke();
-    }
-  }
+  const preview = values();
+  target.save();
+  target.globalAlpha = .3;
+  target.scale(vectorAccessoryCanvas.width / canvas.width, vectorAccessoryCanvas.height / canvas.height);
+  drawWatcherEyes(target, preview, preview.openness);
   target.restore();
 }
 
@@ -218,16 +293,70 @@ function renderVectorStroke(target, stroke, coordinateScale = 510 / 412) {
   }
 }
 
+function renderEditorVectorStroke(target, stroke, coordinateScale = 510 / 412) {
+  renderVectorStroke(target, { ...stroke, points: VectorEditorV2.smoothPoints(stroke) }, coordinateScale);
+}
+
+function selectVectorStroke(strokeIndex, pointIndex = -1) {
+  state.vectorSelectedStroke = strokeIndex >= 0 && strokeIndex < state.vectorStrokes.length ? strokeIndex : -1;
+  state.vectorSelectedPoint = state.vectorSelectedStroke >= 0 ? pointIndex : -1;
+  const selected = state.vectorStrokes[state.vectorSelectedStroke];
+  byId("vectorSmoothing").checked = selected ? selected.smooth !== false : state.vectorDefaultSmooth;
+  const hint = byId("vectorSmoothingHint");
+  if (hint) hint.textContent = selected ? "修改当前选中路径" : "用于之后新画的路径";
+}
+
+function refreshVectorSelectionControls() {
+  const selected = state.vectorStrokes[state.vectorSelectedStroke];
+  const disabled = !selected;
+  for (const id of ["vectorDuplicate", "vectorMirrorHorizontal", "vectorMirrorVertical", "vectorDelete"]) {
+    byId(id).disabled = disabled;
+  }
+  const label = selected
+    ? `已选第 ${state.vectorSelectedStroke + 1} 条路径 · ${selected.points.length} 个可编辑节点${state.vectorSelectedPoint >= 0 ? ` · 节点 ${state.vectorSelectedPoint + 1}` : ""}`
+    : "节点/移动工具可点选路径";
+  const selectionState = byId("vectorSelectionState");
+  selectionState.textContent = label;
+  selectionState.dataset.selected = String(!disabled);
+  const hasStrokes = state.vectorStrokes.length > 0;
+  byId("vectorClear").disabled = !hasStrokes;
+  byId("applyVectorAccessory").disabled = !hasStrokes;
+  byId("saveVectorAccessory").disabled = !hasStrokes || byId("vectorAccessoryName").value.trim() === "";
+}
+
 function renderVectorAccessoryEditor() {
+  if (state.vectorCompilationDirty) {
+    state.vectorCompiledStrokes = VectorEditorV2.compileToV1(state.vectorStrokes);
+    state.vectorEncodedPath = VectorPath.encode(state.vectorCompiledStrokes);
+    state.vectorCompilationDirty = false;
+  }
   vectorAccessoryCtx.fillStyle = "#020302"; vectorAccessoryCtx.fillRect(0, 0, 510, 510);
   drawVectorEyeGuide(vectorAccessoryCtx); vectorAccessoryCtx.strokeStyle = controls.eyeColor.value; vectorAccessoryCtx.fillStyle = controls.eyeColor.value;
-  state.vectorStrokes.forEach((stroke) => renderVectorStroke(vectorAccessoryCtx, stroke));
-  if (state.vectorDraft) renderVectorStroke(vectorAccessoryCtx, state.vectorDraft);
+  state.vectorStrokes.forEach((stroke) => renderEditorVectorStroke(vectorAccessoryCtx, stroke));
+  if (state.vectorDraft) renderEditorVectorStroke(vectorAccessoryCtx, state.vectorDraft);
+  const selected = state.vectorStrokes[state.vectorSelectedStroke];
+  if (selected) {
+    vectorAccessoryCtx.save();
+    vectorAccessoryCtx.strokeStyle = "rgba(255,255,255,.72)";
+    vectorAccessoryCtx.lineWidth = Math.max(2, (selected.width + 5) * 510 / 412);
+    renderEditorVectorStroke(vectorAccessoryCtx, { ...selected, width: selected.width + 5 });
+    selected.points.forEach((point, pointIndex) => {
+      const scale = 510 / 412;
+      vectorAccessoryCtx.beginPath();
+      vectorAccessoryCtx.arc(point.x * scale, point.y * scale, pointIndex === state.vectorSelectedPoint ? 7 : 5, 0, Math.PI * 2);
+      vectorAccessoryCtx.fillStyle = pointIndex === state.vectorSelectedPoint ? "#ffffff" : "#a1f03c";
+      vectorAccessoryCtx.fill();
+      vectorAccessoryCtx.lineWidth = 2; vectorAccessoryCtx.strokeStyle = "#15200e"; vectorAccessoryCtx.stroke();
+    });
+    vectorAccessoryCtx.restore();
+  }
   renderVectorAccessoryStatus(vectorPointCount() + (state.vectorDraft?.points.length || 0));
+  refreshVectorSelectionControls();
 }
 
 function renderVectorAccessoryStatus(points = vectorPointCount()) {
-  const capacity = `${state.vectorStrokes.length}/${VECTOR_ACCESSORY_MAX_STROKES} 条笔画 · ${points}/${VECTOR_ACCESSORY_MAX_POINTS} 个节点`;
+  const compiledPoints = VectorPath.pointCount(state.vectorCompiledStrokes);
+  const capacity = `${state.vectorStrokes.length}/${VECTOR_ACCESSORY_MAX_STROKES} 条路径 · ${points} 个锚点 · 实机 ${compiledPoints}/${VECTOR_ACCESSORY_MAX_POINTS} 节点`;
   const compatibility = state.deviceConnected && !state.vectorAccessorySupported
     ? "当前固件不支持，仅可 Web 预览"
     : "松开后同步";
@@ -255,37 +384,15 @@ function downsampleVectorPoints(points, maximum) {
 }
 
 function normalizeVectorStrokes(strokes) {
-  return VectorPath.normalize(strokes);
+  return VectorEditorV2.normalizeEditorStrokes(strokes);
 }
 
 function eraseVectorAt(point) {
   const eraserRadius = Number(byId("vectorBrushSize").value) * 1.5 + 5;
-  const erased = [];
-  state.vectorStrokes.forEach((stroke) => {
-    const densePoints = [];
-    stroke.points.forEach((strokePoint, index) => {
-      if (index === 0) { densePoints.push({ ...strokePoint }); return; }
-      const previous = stroke.points[index - 1]; const steps = Math.max(1, Math.ceil(pointDistance(previous, strokePoint) / 3));
-      for (let step = 1; step <= steps; step += 1) {
-        densePoints.push({
-          x: Math.round(previous.x + (strokePoint.x - previous.x) * step / steps),
-          y: Math.round(previous.y + (strokePoint.y - previous.y) * step / steps),
-        });
-      }
-    });
-    let segment = [];
-    densePoints.forEach((strokePoint) => {
-      if (pointDistance(point, strokePoint) > eraserRadius + stroke.width / 2) {
-        segment.push({ ...strokePoint });
-      } else if (segment.length) {
-        erased.push({ width: stroke.width, points: segment }); segment = [];
-      }
-    });
-    if (segment.length) erased.push({ width: stroke.width, points: segment });
-  });
-  const normalized = normalizeVectorStrokes(erased);
+  const normalized = VectorEditorV2.eraseAt(state.vectorStrokes, point, eraserRadius);
   if (JSON.stringify(normalized) !== JSON.stringify(state.vectorStrokes)) {
-    state.vectorStrokes = normalized; state.vectorEraseChanged = true;
+    state.vectorStrokes = normalized; state.vectorCompilationDirty = true;
+    state.vectorEraseChanged = true; selectVectorStroke(-1);
   }
 }
 
@@ -449,6 +556,7 @@ function applyEyelidPreset(presetId) {
   applyControlDefaults(preset.values);
   state.activeEyelidPresetId = preset.id;
   renderEyelidPresets();
+  renderVectorAccessoryEditor();
   queueUpdate();
   toast(`已调用眼皮预设“${preset.name}”`);
 }
@@ -482,7 +590,7 @@ function values() {
     ? { custom_vector_path: encodeVectorAccessoryPath(), custom_accessory_layer: state.vectorAccessoryLayer }
     : {};
   return {
-    preset: state.preset, style: controls.style.value, tag: controls.tag.value,
+    preset: EXPRESSION_PRESET, style: controls.style.value, tag: controls.tag.value,
     accessory: controls.accessory.value,
     accessory_scale: Number(controls.accessoryScale.value),
     accessory_x: Number(controls.accessoryX.value),
@@ -543,10 +651,13 @@ function refreshReadouts() {
   byId("blinkIntervalValue").value = `${controls.blinkInterval.value} ms`;
   byId("blinkDurationValue").value = `${controls.blinkDuration.value} ms`;
   byId("eyeColorValue").value = controls.eyeColor.value.toUpperCase();
-  byId("presetReadout").textContent = state.preset.toUpperCase();
   const args = values();
   const lines = Object.entries(args).map(([key, value]) => `    ${key}=${typeof value === "string" ? `"${value}"` : value},`);
-  byId("sdkOutput").textContent = `app.robot.expression_runtime.${state.active ? "update" : "start"}(\n${lines.join("\n")}\n)`;
+  const sdkOutput = `app.robot.expression_runtime.${state.active ? "update" : "start"}(\n${lines.join("\n")}\n)`;
+  if (sdkOutput !== state.lastSdkOutput) {
+    byId("sdkOutput").textContent = sdkOutput;
+    state.lastSdkOutput = sdkOutput;
+  }
 }
 
 function refreshPointerReadout() {
@@ -568,7 +679,7 @@ function renderAccessoryModule() {
   const hasAccessory = controls.accessory.value !== "none";
   byId("accessoryControlsModule").dataset.active = String(hasAccessory);
   byId("accessoryModuleState").textContent = controls.accessory.value === "custom_vector"
-    ? "DIY 矢量路径 V1 · 可独立变换"
+    ? "DIY 矢量路径 V2 兼容版 · 自动转为实机 V1"
     : (hasAccessory ? "装饰可独立变换" : "先选择头部装饰");
   renderVectorAccessoryStatus();
   controls.accessoryScale.disabled = !hasAccessory;
@@ -593,22 +704,46 @@ function drawLidMask(context, centerX, centerY, logicalY, rotationDeg, clipLeft,
   context.restore();
 }
 
-function drawEyelidMasks(p, eyeSpacing, gazeX, gazeY) {
-  eyeCtx.save();
-  eyeCtx.globalCompositeOperation = "destination-out";
-  eyeCtx.fillStyle = "#000";
+function drawEyelidMasks(context, p, eyeSpacing, gazeX, gazeY) {
+  context.save();
+  context.globalCompositeOperation = "destination-out";
+  context.fillStyle = "#000";
   const centerY = canvas.height / 2 + gazeY;
   const splitX = canvas.width / 2 + gazeX;
-  drawLidMask(eyeCtx, canvas.width / 2 - eyeSpacing + gazeX, centerY, p.left_upper_lid_y, p.left_upper_lid_rotation_deg, 0, splitX);
-  drawLidMask(eyeCtx, canvas.width / 2 + eyeSpacing + gazeX, centerY, p.right_upper_lid_y, p.right_upper_lid_rotation_deg, splitX, canvas.width);
-  drawLidMask(eyeCtx, canvas.width / 2 - eyeSpacing + gazeX, centerY, p.left_lower_lid_y, p.left_lower_lid_rotation_deg, 0, splitX);
-  drawLidMask(eyeCtx, canvas.width / 2 + eyeSpacing + gazeX, centerY, p.right_lower_lid_y, p.right_lower_lid_rotation_deg, splitX, canvas.width);
-  eyeCtx.restore();
+  drawLidMask(context, canvas.width / 2 - eyeSpacing + gazeX, centerY, p.left_upper_lid_y, p.left_upper_lid_rotation_deg, 0, splitX);
+  drawLidMask(context, canvas.width / 2 + eyeSpacing + gazeX, centerY, p.right_upper_lid_y, p.right_upper_lid_rotation_deg, splitX, canvas.width);
+  drawLidMask(context, canvas.width / 2 - eyeSpacing + gazeX, centerY, p.left_lower_lid_y, p.left_lower_lid_rotation_deg, 0, splitX);
+  drawLidMask(context, canvas.width / 2 + eyeSpacing + gazeX, centerY, p.right_lower_lid_y, p.right_lower_lid_rotation_deg, splitX, canvas.width);
+  context.restore();
 }
 
 function roundedRect(x, y, width, height, radius, context = ctx) {
   const r = Math.min(radius, width / 2, height / 2);
   context.beginPath(); context.roundRect(x, y, width, height, r); context.fill();
+}
+
+function drawWatcherEyes(context, p, openness) {
+  const styleScale = { watcher: 1, watcher_compact: .94, watcher_focus: .9, watcher_open: 1.12, watcher_pulse: 1 }[p.style] || 1;
+  const gazeX = p.gaze_x * GAZE_TRAVEL_PIXELS;
+  const gazeY = p.gaze_y * GAZE_TRAVEL_PIXELS;
+  const eyeSpacing = 88 * p.spacing;
+  context.fillStyle = p.color;
+  [-1, 1].forEach((side) => {
+    const center = canvas.width / 2 + side * eyeSpacing + gazeX;
+    const independentTilt = side < 0 ? p.left_tilt_deg : p.right_tilt_deg;
+    const eyeOpenness = side < 0 ? p.left_openness : p.right_openness;
+    const angle = (side * (p.tilt_deg + (p.style === "watcher_focus" ? 4 : 0)) + independentTilt) * Math.PI / 180;
+    context.save(); context.translate(center, canvas.height / 2 + gazeY); context.rotate(angle);
+    WATCHER_EYE_SEGMENTS.forEach(([x, y, width, height]) => {
+      const scaledWidth = width * p.scale * p.scale_x * p.stroke;
+      const scaledHeight = height * p.scale * p.scale_y * openness * styleScale * eyeOpenness;
+      const scaledX = x * p.scale * p.scale_x;
+      const scaledY = y * p.scale * p.scale_y * openness * styleScale * eyeOpenness;
+      roundedRect(scaledX - scaledWidth / 2, scaledY - scaledHeight / 2, scaledWidth, scaledHeight, scaledWidth / 2 * p.roundness, context);
+    });
+    context.restore();
+  });
+  drawEyelidMasks(context, p, eyeSpacing, gazeX, gazeY);
 }
 
 // The three silhouettes are the artist-supplied SVG paths. Web keeps them as
@@ -649,21 +784,19 @@ function drawTag(tag, color, gazeOffsetX = 0, gazeOffsetY = 0) {
 }
 
 const accessoryColors = {
-  halo: "#FFD43B", devil_horns: "#FF4B55", ninja_mask: "#39445D",
-  hero_mask: "#2878FF", eyepatch: "#667085", antenna: "#5DE4FF",
+  halo: "#FFD43B", devil_horns: "#FF4B55", eyepatch: "#667085",
 };
 
 const accessoryAnchors = {
-  halo: [206, 56], devil_horns: [206, 100], ninja_mask: [206, 206],
-  hero_mask: [206, 206], eyepatch: [206, 160], antenna: [206, 80], custom_vector: [206, 206],
+  halo: [206, 56], devil_horns: [206, 100], eyepatch: [206, 160], custom_vector: [206, 206],
 };
 
 function drawCustomVectorAccessory(color) {
   ctx.strokeStyle = color; ctx.fillStyle = color;
-  state.vectorStrokes.forEach((stroke) => renderVectorStroke(ctx, stroke, 1));
+  state.vectorCompiledStrokes.forEach((stroke) => renderVectorStroke(ctx, stroke, 1));
 }
 
-function drawAccessory(accessory, layer, t, transform, gazeOffsetX = 0, gazeOffsetY = 0) {
+function drawAccessory(accessory, layer, transform, gazeOffsetX = 0, gazeOffsetY = 0) {
   if (accessory === "none") return;
   ctx.save();
   const [anchorX, anchorY] = accessoryAnchors[accessory] || [206, 206];
@@ -684,16 +817,6 @@ function drawAccessory(accessory, layer, t, transform, gazeOffsetX = 0, gazeOffs
   } else if (layer === "back" && accessory === "devil_horns") {
     ctx.beginPath(); ctx.moveTo(86, 126); ctx.lineTo(110, 48); ctx.lineTo(146, 126); ctx.closePath(); ctx.fill();
     ctx.beginPath(); ctx.moveTo(266, 126); ctx.lineTo(302, 48); ctx.lineTo(328, 126); ctx.closePath(); ctx.fill();
-  } else if (layer === "back" && accessory === "antenna") {
-    ctx.beginPath(); ctx.moveTo(206, 112); ctx.lineTo(206, 48); ctx.stroke();
-    ctx.beginPath(); ctx.arc(206, 32, 16, 0, Math.PI * 2); ctx.fill();
-  } else if (layer === "back" && accessory === "ninja_mask") {
-    ctx.fillRect(40, 152, 334, 126);
-    ctx.beginPath(); ctx.moveTo(352, 164); ctx.lineTo(406, 144); ctx.lineTo(374, 194); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(352, 184); ctx.lineTo(406, 208); ctx.lineTo(366, 226); ctx.closePath(); ctx.fill();
-  } else if (layer === "back" && accessory === "hero_mask") {
-    ctx.beginPath(); ctx.moveTo(48, 152); ctx.lineTo(184, 136); ctx.lineTo(206, 164); ctx.lineTo(176, 268); ctx.lineTo(76, 264); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(364, 152); ctx.lineTo(228, 136); ctx.lineTo(206, 164); ctx.lineTo(236, 268); ctx.lineTo(336, 264); ctx.closePath(); ctx.fill();
   } else if (layer === "front" && accessory === "eyepatch") {
     ctx.strokeStyle = accessoryColors.eyepatch; ctx.lineWidth = 10;
     ctx.beginPath(); ctx.moveTo(18, 160); ctx.lineTo(394, 100); ctx.stroke();
@@ -733,7 +856,9 @@ function releasePointerTarget() {
 }
 
 function updatePointerMotion(dt) {
-  if (!controls.pointerTracking.checked) return;
+  if (!controls.pointerTracking.checked) return false;
+  const previousX = state.pointerX;
+  const previousY = state.pointerY;
   const smoothing = window.matchMedia("(prefers-reduced-motion: reduce)").matches
     ? 1
     : 1 - Math.exp(-dt / POINTER_SMOOTHING_MS);
@@ -741,6 +866,7 @@ function updatePointerMotion(dt) {
   state.pointerY += (state.pointerTargetY - state.pointerY) * smoothing;
   if (Math.abs(state.pointerTargetX - state.pointerX) < 0.001) state.pointerX = state.pointerTargetX;
   if (Math.abs(state.pointerTargetY - state.pointerY) < 0.001) state.pointerY = state.pointerTargetY;
+  return previousX !== state.pointerX || previousY !== state.pointerY;
 }
 
 function maybeSyncPointerGaze(now) {
@@ -765,7 +891,7 @@ function render(now) {
   // 50 ms gate can miss the third callback at 49.x ms and fall back to 15 FPS.
   if (now - state.lastFrame < 45) { requestAnimationFrame(render); return; }
   const dt = Math.min(100, now - state.lastFrame); state.lastFrame = now; state.phase += dt / 1000;
-  updatePointerMotion(dt);
+  const pointerMoved = updatePointerMotion(dt);
   const p = values();
   let openness = p.openness;
   if (p.auto_blink) {
@@ -775,41 +901,19 @@ function render(now) {
     const blinkStart = interval - duration;
     if (blink >= blinkStart) openness *= Math.max(.06, Math.abs(blink - (blinkStart + duration / 2)) / (duration / 2));
   }
-  if (p.preset === "speaking" || p.style === "watcher_pulse") openness *= .83 + Math.sin(state.phase * 7.4) * .14;
-  const styleScale = { watcher: 1, watcher_compact: .94, watcher_focus: .9, watcher_open: 1.12, watcher_pulse: 1 }[p.style];
+  if (p.style === "watcher_pulse") openness *= .83 + Math.sin(state.phase * 7.4) * .14;
   const gazeX = p.gaze_x * GAZE_TRAVEL_PIXELS; const gazeY = p.gaze_y * GAZE_TRAVEL_PIXELS;
   const secondaryGazeX = gazeX * SECONDARY_GAZE_FOLLOW;
   const secondaryGazeY = gazeY * SECONDARY_GAZE_FOLLOW;
-  const segments = [
-    [-30.75, 0, 5, 30], [-18.25, 0, 6, 58], [-6.25, -23.5, 6, 25], [-6.25, 24, 6, 24],
-    [6.25, -23.5, 5, 25], [6.25, 23.5, 5, 25], [18.25, 0, 5, 58], [30.75, 0, 6, 30],
-  ];
-  const eyeSpacing = 88 * p.spacing;
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  drawAccessory(p.accessory, "back", state.phase, p, secondaryGazeX, secondaryGazeY);
+  drawAccessory(p.accessory, "back", p, secondaryGazeX, secondaryGazeY);
   eyeCtx.clearRect(0, 0, eyeCanvas.width, eyeCanvas.height);
-  eyeCtx.fillStyle = p.color;
-  [-1, 1].forEach((side) => {
-    const center = canvas.width / 2 + side * eyeSpacing + gazeX;
-    const independentTilt = side < 0 ? p.left_tilt_deg : p.right_tilt_deg;
-    const eyeOpenness = side < 0 ? p.left_openness : p.right_openness;
-    const angle = (side * (p.tilt_deg + (p.style === "watcher_focus" ? 4 : 0)) + independentTilt) * Math.PI / 180;
-    eyeCtx.save(); eyeCtx.translate(center, canvas.height / 2 + gazeY); eyeCtx.rotate(angle);
-    segments.forEach(([x, y, width, height]) => {
-      const scaledWidth = width * p.scale * p.scale_x * p.stroke;
-      const scaledHeight = height * p.scale * p.scale_y * openness * styleScale * eyeOpenness;
-      const scaledX = x * p.scale * p.scale_x;
-      const scaledY = y * p.scale * p.scale_y * openness * styleScale * eyeOpenness;
-      roundedRect(scaledX - scaledWidth / 2, scaledY - scaledHeight / 2, scaledWidth, scaledHeight, scaledWidth / 2 * p.roundness, eyeCtx);
-    });
-    eyeCtx.restore();
-  });
-  drawEyelidMasks(p, eyeSpacing, gazeX, gazeY);
+  drawWatcherEyes(eyeCtx, p, openness);
   ctx.drawImage(eyeCanvas, 0, 0);
-  drawAccessory(p.accessory, "front", state.phase, p, secondaryGazeX, secondaryGazeY);
+  drawAccessory(p.accessory, "front", p, secondaryGazeX, secondaryGazeY);
   drawTag(p.tag, p.color, secondaryGazeX, secondaryGazeY);
   displayCtx.drawImage(flatCanvas, 0, 0);
-  refreshPointerReadout();
+  if (pointerMoved) refreshPointerReadout();
   maybeSyncPointerGaze(now);
   byId("fpsReadout").textContent = `${(1000 / Math.max(1, dt)).toFixed(1)} FPS`;
   requestAnimationFrame(render);
@@ -821,29 +925,12 @@ function toast(message, tone = "ok") {
 }
 
 async function api(path, body) {
-  const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
-  const contentType = response.headers.get("content-type") || "";
-  let payload;
-  if (contentType.includes("application/json")) {
-    payload = await response.json();
-  } else if (state.resumePending) {
-    title = "正在恢复代码表情";
-    hint = "设备通道已重新连接，正在恢复上次的参数";
-    status = "正在恢复同步";
-    sync = "RESUMING";
-    guideState = "connected";
-    startLabel = "正在恢复…";
-  } else {
-    const detail = (await response.text()).trim();
-    payload = { detail: detail || `请求失败（HTTP ${response.status}）` };
-  }
-  if (!response.ok) {
-    const detail = Array.isArray(payload.detail)
-      ? payload.detail.map((item) => item.msg || String(item)).join("；")
-      : payload.detail;
-    throw new Error(detail || "设备拒绝了参数");
-  }
-  return payload;
+  const response = await ExpressionLabWeb.fetchWithTimeout(browserFetch, path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  }, API_TIMEOUT_MS);
+  return ExpressionLabWeb.decodeApiResponse(response);
 }
 
 function renderConnectionState() {
@@ -951,9 +1038,13 @@ async function refreshConnectionStatus() {
   if (state.statusBusy) return;
   state.statusBusy = true;
   try {
-    const response = await fetch("./api/status", { cache: "no-store" });
-    if (!response.ok) throw new Error("SDK service unavailable");
-    applyStatus(await response.json());
+    const response = await ExpressionLabWeb.fetchWithTimeout(
+      browserFetch,
+      "./api/status",
+      { cache: "no-store" },
+      STATUS_TIMEOUT_MS,
+    );
+    applyStatus(await ExpressionLabWeb.decodeApiResponse(response));
   } catch (_) {
     if (state.active && state.intentActive) state.resumePending = true;
     state.statusInitialized = true;
@@ -1073,15 +1164,12 @@ function applyControlDefaults(defaults) {
 
 function resetEyeControls() {
   applyControlDefaults(eyeControlDefaults);
-  state.preset = "standby";
-  document.querySelectorAll(".preset").forEach((button) => {
-    button.classList.toggle("active", button.dataset.preset === state.preset);
-  });
   state.pointerInside = false;
   state.pointerRawX = 0; state.pointerRawY = 0;
   state.pointerTargetX = 0; state.pointerTargetY = 0;
   state.pointerX = 0; state.pointerY = 0;
   state.pointerLastSentX = Number.NaN; state.pointerLastSentY = Number.NaN;
+  renderVectorAccessoryEditor();
   queueUpdate();
   toast("眼睛参数已恢复默认");
 }
@@ -1090,6 +1178,7 @@ function resetEyelidControls() {
   state.activeEyelidPresetId = null;
   applyControlDefaults(eyelidControlDefaults);
   renderEyelidPresets();
+  renderVectorAccessoryEditor();
   queueUpdate();
   toast("眼皮参数已恢复默认");
 }
@@ -1100,13 +1189,6 @@ function resetAccessoryControls() {
   toast("标签与装饰已恢复默认");
 }
 
-document.querySelectorAll(".preset").forEach((button) => button.addEventListener("click", () => {
-  state.preset = button.dataset.preset;
-  document.querySelectorAll(".preset").forEach((candidate) => candidate.classList.toggle("active", candidate === button));
-  const defaults = presetDefaults[state.preset];
-  controls.openness.value = defaults.openness; controls.spacing.value = defaults.spacing; controls.tilt.value = defaults.tilt; controls.tag.value = defaults.tag;
-  queueUpdate();
-}));
 const lidControlNames = new Set(eyelidControlNames);
 function markEyelidsCustom() {
   if (state.activeEyelidPresetId === null) return;
@@ -1120,7 +1202,7 @@ Object.entries(controls).filter(([name]) => name !== "pointerTracking" && name !
     if (lidControlNames.has(name)) {
       markEyelidsCustom();
     }
-    if (name === "eyeColor") renderVectorAccessoryEditor();
+    if (!name.startsWith("accessory") && name !== "tag") renderVectorAccessoryEditor();
     queueUpdate();
   }));
 controls.pointerTracking.addEventListener("input", () => {
@@ -1150,11 +1232,70 @@ byId("eyelidPresetName").addEventListener("keydown", (event) => {
   if (event.key === "Enter" && event.target.value.trim() !== "") saveCurrentEyelidPreset();
 });
 byId("saveEyelidPreset").addEventListener("click", saveCurrentEyelidPreset);
-byId("vectorBrush").addEventListener("click", () => {
-  state.vectorTool = "brush"; byId("vectorBrush").classList.add("active"); byId("vectorEraser").classList.remove("active");
+const vectorToolButtons = {
+  brush: "vectorBrush", eraser: "vectorEraser", edit: "vectorEdit", move: "vectorMove",
+};
+function setVectorTool(tool) {
+  state.vectorTool = tool;
+  Object.entries(vectorToolButtons).forEach(([name, id]) => byId(id).classList.toggle("active", name === tool));
+  vectorAccessoryCanvas.dataset.tool = tool;
+  byId("vectorBrushSizeLabel").textContent = tool === "eraser" ? "橡皮大小" : "线条粗细";
+  byId("vectorSmoothingHint").textContent = state.vectorSelectedStroke >= 0
+    ? "修改当前选中路径"
+    : "用于之后新画的路径";
+  if (tool === "brush" || tool === "eraser") {
+    selectVectorStroke(-1);
+    renderVectorAccessoryEditor();
+  }
+}
+Object.entries(vectorToolButtons).forEach(([tool, id]) => {
+  byId(id).addEventListener("click", () => setVectorTool(tool));
 });
-byId("vectorEraser").addEventListener("click", () => {
-  state.vectorTool = "eraser"; byId("vectorEraser").classList.add("active"); byId("vectorBrush").classList.remove("active");
+byId("vectorSmoothing").addEventListener("input", (event) => {
+  const selected = state.vectorStrokes[state.vectorSelectedStroke];
+  if (!selected) {
+    state.vectorDefaultSmooth = event.target.checked;
+    return;
+  }
+  if (selected.smooth !== event.target.checked) {
+    pushVectorHistory(); selected.smooth = event.target.checked; state.vectorCompilationDirty = true;
+    renderVectorAccessoryEditor(); activateCustomVectorAccessory();
+  }
+});
+function mutateSelectedVectorStroke(transform) {
+  const index = state.vectorSelectedStroke;
+  if (index < 0 || !state.vectorStrokes[index]) return;
+  pushVectorHistory();
+  const next = transform(state.vectorStrokes[index]);
+  state.vectorStrokes[index] = next;
+  state.vectorStrokes = normalizeVectorStrokes(state.vectorStrokes);
+  state.vectorCompilationDirty = true;
+  selectVectorStroke(Math.min(index, state.vectorStrokes.length - 1));
+  renderVectorAccessoryEditor(); activateCustomVectorAccessory();
+}
+byId("vectorDuplicate").addEventListener("click", () => {
+  const index = state.vectorSelectedStroke;
+  if (index < 0) return;
+  if (state.vectorStrokes.length >= VECTOR_ACCESSORY_MAX_STROKES) {
+    toast("最多保留 12 条路径，请先删除一条", "error"); return;
+  }
+  pushVectorHistory();
+  state.vectorStrokes.splice(index + 1, 0, VectorEditorV2.duplicateStroke(state.vectorStrokes[index]));
+  state.vectorStrokes = normalizeVectorStrokes(state.vectorStrokes);
+  state.vectorCompilationDirty = true;
+  selectVectorStroke(index + 1); renderVectorAccessoryEditor(); activateCustomVectorAccessory();
+});
+byId("vectorMirrorHorizontal").addEventListener("click", () => {
+  mutateSelectedVectorStroke((stroke) => VectorEditorV2.mirrorStroke(stroke, "horizontal"));
+});
+byId("vectorMirrorVertical").addEventListener("click", () => {
+  mutateSelectedVectorStroke((stroke) => VectorEditorV2.mirrorStroke(stroke, "vertical"));
+});
+byId("vectorDelete").addEventListener("click", () => {
+  const index = state.vectorSelectedStroke;
+  if (index < 0) return;
+  pushVectorHistory(); state.vectorStrokes.splice(index, 1); state.vectorCompilationDirty = true; selectVectorStroke(-1);
+  renderVectorAccessoryEditor(); activateCustomVectorAccessory();
 });
 byId("vectorAccessoryLayer").addEventListener("input", (event) => {
   state.vectorAccessoryLayer = event.target.value; activateCustomVectorAccessory();
@@ -1163,7 +1304,8 @@ byId("vectorUndo").addEventListener("click", () => restoreVectorHistory(state.ve
 byId("vectorRedo").addEventListener("click", () => restoreVectorHistory(state.vectorRedo, state.vectorUndo));
 byId("vectorClear").addEventListener("click", () => {
   if (state.vectorStrokes.length === 0) return;
-  pushVectorHistory(); state.vectorStrokes = []; renderVectorAccessoryEditor(); activateCustomVectorAccessory();
+  pushVectorHistory(); state.vectorStrokes = []; state.vectorCompilationDirty = true;
+  selectVectorStroke(-1); renderVectorAccessoryEditor(); activateCustomVectorAccessory();
 });
 byId("applyVectorAccessory").addEventListener("click", () => {
   activateCustomVectorAccessory(); toast("DIY 矢量装饰已应用");
@@ -1180,11 +1322,30 @@ vectorAccessoryCanvas.addEventListener("pointerdown", (event) => {
   if (state.vectorTool === "brush" && state.vectorStrokes.length >= VECTOR_ACCESSORY_MAX_STROKES) {
     toast("V1 最多保留 12 条笔画，请先擦除或撤销部分内容", "error"); return;
   }
-  vectorAccessoryCanvas.setPointerCapture(event.pointerId); pushVectorHistory();
-  state.vectorDrawing = true; state.vectorEraseChanged = false;
   const point = vectorPointFromPointer(event);
+  state.vectorEraseChanged = false; state.vectorInteractionChanged = false; state.vectorHistoryPending = false;
+  if (state.vectorTool === "edit") {
+    const anchor = VectorEditorV2.hitTestPoint(state.vectorStrokes, point, 13);
+    const strokeIndex = anchor?.strokeIndex ?? VectorEditorV2.hitTestStroke(state.vectorStrokes, point, 14);
+    selectVectorStroke(strokeIndex, anchor?.pointIndex ?? -1);
+    if (!anchor) { renderVectorAccessoryEditor(); return; }
+    vectorAccessoryCanvas.setPointerCapture(event.pointerId); pushVectorHistory();
+    state.vectorDrawing = true; state.vectorHistoryPending = true; state.vectorDragOrigin = point;
+    renderVectorAccessoryEditor(); return;
+  }
+  if (state.vectorTool === "move") {
+    const strokeIndex = VectorEditorV2.hitTestStroke(state.vectorStrokes, point, 16);
+    selectVectorStroke(strokeIndex);
+    if (strokeIndex < 0) { renderVectorAccessoryEditor(); return; }
+    vectorAccessoryCanvas.setPointerCapture(event.pointerId); pushVectorHistory();
+    state.vectorDrawing = true; state.vectorHistoryPending = true; state.vectorDragOrigin = point;
+    state.vectorMoveSnapshot = cloneVectorStrokes([state.vectorStrokes[strokeIndex]])[0];
+    renderVectorAccessoryEditor(); return;
+  }
+  vectorAccessoryCanvas.setPointerCapture(event.pointerId); pushVectorHistory();
+  state.vectorDrawing = true; state.vectorHistoryPending = true;
   if (state.vectorTool === "brush") {
-    state.vectorDraft = { width: Number(byId("vectorBrushSize").value), points: [point] };
+    state.vectorDraft = { width: Number(byId("vectorBrushSize").value), smooth: byId("vectorSmoothing").checked, points: [point] };
   } else {
     eraseVectorAt(point);
   }
@@ -1196,22 +1357,41 @@ vectorAccessoryCanvas.addEventListener("pointermove", (event) => {
   if (state.vectorTool === "brush" && state.vectorDraft) {
     const last = state.vectorDraft.points[state.vectorDraft.points.length - 1];
     if (pointDistance(last, point) >= 1.5 && state.vectorDraft.points.length < 1024) state.vectorDraft.points.push(point);
-  } else {
+  } else if (state.vectorTool === "eraser") {
     eraseVectorAt(point);
+  } else if (state.vectorTool === "edit" && state.vectorSelectedPoint >= 0) {
+    const anchor = state.vectorStrokes[state.vectorSelectedStroke]?.points[state.vectorSelectedPoint];
+    if (anchor && (anchor.x !== point.x || anchor.y !== point.y)) {
+      anchor.x = point.x; anchor.y = point.y;
+      state.vectorCompilationDirty = true; state.vectorInteractionChanged = true;
+    }
+  } else if (state.vectorTool === "move" && state.vectorMoveSnapshot && state.vectorDragOrigin) {
+    const dx = point.x - state.vectorDragOrigin.x; const dy = point.y - state.vectorDragOrigin.y;
+    const moved = VectorEditorV2.translateStroke(state.vectorMoveSnapshot, dx, dy);
+    if (JSON.stringify(moved) !== JSON.stringify(state.vectorStrokes[state.vectorSelectedStroke])) {
+      state.vectorStrokes[state.vectorSelectedStroke] = moved;
+      state.vectorCompilationDirty = true; state.vectorInteractionChanged = true;
+    }
   }
   renderVectorAccessoryEditor();
 });
 function finishVectorDrawing() {
   if (!state.vectorDrawing) return;
-  state.vectorDrawing = false; let changed = state.vectorEraseChanged;
+  state.vectorDrawing = false; let changed = state.vectorEraseChanged || state.vectorInteractionChanged;
   if (state.vectorTool === "brush" && state.vectorDraft?.points.length) {
     const points = downsampleVectorPoints(simplifyVectorPoints(state.vectorDraft.points), VECTOR_ACCESSORY_MAX_POINTS_PER_STROKE);
-    state.vectorStrokes = normalizeVectorStrokes(state.vectorStrokes.concat({ width: state.vectorDraft.width, points }));
+    state.vectorStrokes = normalizeVectorStrokes(state.vectorStrokes.concat({
+      width: state.vectorDraft.width, smooth: state.vectorDraft.smooth, points,
+    }));
+    state.vectorCompilationDirty = true;
+    selectVectorStroke(state.vectorStrokes.length - 1);
     changed = true;
   }
-  state.vectorDraft = null; renderVectorAccessoryEditor();
+  state.vectorDraft = null; state.vectorDragOrigin = null; state.vectorMoveSnapshot = null;
+  state.vectorInteractionChanged = false; renderVectorAccessoryEditor();
   if (changed) activateCustomVectorAccessory();
-  else { state.vectorUndo.pop(); refreshVectorHistoryButtons(); }
+  else if (state.vectorHistoryPending) { state.vectorUndo.pop(); refreshVectorHistoryButtons(); }
+  state.vectorHistoryPending = false;
 }
 vectorAccessoryCanvas.addEventListener("pointerup", finishVectorDrawing);
 vectorAccessoryCanvas.addEventListener("pointercancel", finishVectorDrawing);

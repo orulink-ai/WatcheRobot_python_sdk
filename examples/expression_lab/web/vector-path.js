@@ -135,6 +135,7 @@
     MAX_POINTS,
     MAX_POINTS_PER_STROKE,
     MAX_STROKES,
+    MAX_WIDTH,
     clone,
     decode,
     downsample,
@@ -142,6 +143,7 @@
     normalize,
     pointCount,
     pointDistance,
+    pointSegmentDistance,
     simplify,
   };
 }));
