@@ -52,8 +52,12 @@ def test_publish_only_uploads_source_and_returns_immutable_commit(
     result = _publish(tmp_path, hub, events=events)
 
     assert result.to_dict() == {
-        "space_id": SPACE_ID,
+        "provider": "huggingface",
+        "repository_id": SPACE_ID,
+        "repository_type": "space",
         "commit": SPACE_COMMIT,
+        "repository_url": f"https://huggingface.co/spaces/{SPACE_ID}",
+        "space_id": SPACE_ID,
         "space_url": f"https://huggingface.co/spaces/{SPACE_ID}",
         "source_url": (
             f"https://huggingface.co/spaces/{SPACE_ID}/tree/{SPACE_COMMIT}"
@@ -63,7 +67,7 @@ def test_publish_only_uploads_source_and_returns_immutable_commit(
     assert [event.stage for event in events.events] == [
         "checking",
         "authenticating",
-        "ensuring_space",
+        "ensuring_repository",
         "uploading_source",
         "resolving_commit",
     ]

@@ -269,9 +269,12 @@ watcherobot robot pair 123456      # replace with the code shown on the robot
 watcherobot app init my_app
 cd my_app
 watcherobot app run
-watcherobot app login
+watcherobot app login                        # Hugging Face Device Flow (default)
+watcherobot app login --provider modelscope  # hidden ModelScope token prompt
 watcherobot app check .            # validate before publishing
-watcherobot app publish .          # upload an immutable source snapshot
+watcherobot app publish . --provider huggingface  # default public Space
+watcherobot app publish . --provider modelscope   # public ModelScope Dataset
+watcherobot app publish . --provider all          # publish the same snapshot to both
 watcherobot app submit .           # submit that snapshot for Marketplace review
 watcherobot app install com.example.my_app   # replace with the real Application ID
 watcherobot app list               # list installed applications

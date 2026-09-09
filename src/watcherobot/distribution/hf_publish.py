@@ -27,6 +27,7 @@ from .ports import (
     HubNetworkError,
     HubRepositoryConflict,
     RepositoryRevision,
+    SourceRepository,
     SpaceRepository,
     UploadFile,
 )
@@ -39,8 +40,55 @@ ApiFactory = Callable[[str], Any]
 class HuggingFacePublishHubClient:
     """Implement PublishHubClient through an explicitly-tokenized HfApi."""
 
+    provider = "huggingface"
+    display_name = "Hugging Face"
+    repository_type = "space"
+
     def __init__(self, *, api_factory: ApiFactory | None = None) -> None:
         self._api_factory = api_factory or _default_api_factory
+
+    def repository_url(self, repository_id: str) -> str:
+        return f"https://huggingface.co/spaces/{repository_id}"
+
+    def ensure_public_repository(
+        self,
+        token: AccessToken,
+        *,
+        repository_id: str,
+    ) -> SourceRepository:
+        result = self.ensure_public_space(
+            token,
+            space_id=repository_id,
+            sdk="static",
+        )
+        return SourceRepository(
+            repository_id=result.space_id,
+            repository_type=self.repository_type,
+            created=result.created,
+        )
+
+    def replace_repository_files(
+        self,
+        token: AccessToken,
+        *,
+        repository_id: str,
+        files: tuple[UploadFile, ...],
+        commit_message: str,
+    ) -> None:
+        self.replace_space_files(
+            token,
+            space_id=repository_id,
+            files=files,
+            commit_message=commit_message,
+        )
+
+    def get_repository_head(
+        self,
+        token: AccessToken,
+        *,
+        repository_id: str,
+    ) -> RepositoryRevision:
+        return self.get_space_head(token, space_id=repository_id)
 
     def ensure_public_space(
         self,

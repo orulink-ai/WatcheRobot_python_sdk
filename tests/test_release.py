@@ -209,6 +209,7 @@ def test_release_version_pr_runs_the_full_supported_compatibility_matrix() -> No
     assert "python-version: ${{ matrix.python-version }}" in release
     assert '"fastapi==0.129.*"' in release
     assert '"huggingface-hub==1.26.*"' in release
+    assert '"modelscope-hub==0.4.*"' in release
     assert '"packaging==24.*"' in release
     assert '"uvicorn==0.30.*"' in release
     assert '"starlette==0.51.*"' in release

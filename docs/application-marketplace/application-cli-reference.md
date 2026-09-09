@@ -41,9 +41,9 @@ watcherobot app marketplace --details
 | `init` | Create a runnable Hello World project without overwriting an existing path | No | Directory, ID, version, SDK range, and next commands |
 | `check` | Validate `app.json`, `app.py`, SDK compatibility, dependencies, and publishable files | No | Manifest summary |
 | `run` | Select and run a source directory through the SDK Daemon | Yes or reuses it | Start path and final state |
-| `login` | Authorize Hugging Face Device Flow; `--status` checks identity and `--force` replaces a valid login | No | Browser URL, code, expiry, and identity |
-| `logout` | Remove only the Watcher Hugging Face credential | No | Sign-out confirmation |
-| `publish` | Upload a public immutable Space snapshot without changing the official catalog | No | Space, commit, and fixed source URL |
+| `login` | Authenticate the selected `--provider`; Hugging Face uses Device Flow and ModelScope uses a hidden Access Token prompt | No | Authorization instructions or identity |
+| `logout` | Remove only the selected provider's Watcher credential | No | Sign-out confirmation |
+| `publish` | Upload to `huggingface`, `modelscope`, or `all` without changing the official catalog | No | Provider, repository, commit, and fixed source URL |
 | `submit` | Validate a published commit and open or reuse its official catalog PR; `--commit` selects an exact published revision | No | Commit, source, PR URL, and review status |
 | `marketplace` | Load the reviewed official catalog | No | Compact compatibility table |
 | `download` | Download and validate one catalog Space at an exact commit into empty staging | No | Application and staging summary |
@@ -121,16 +121,33 @@ watcherobot app marketplace --jsonl
 
 ```powershell
 watcherobot app login
+watcherobot app login --provider modelscope
 watcherobot app check .\my_app
-watcherobot app publish .\my_app
+watcherobot app publish .\my_app --provider huggingface
+watcherobot app publish .\my_app --provider modelscope
+watcherobot app publish .\my_app --provider all
 watcherobot app submit .\my_app
 ```
 
-`publish` creates or updates the developer's public Space and returns its exact
-commit. It does not read or modify the official catalog, so developers can
-publish test snapshots repeatedly without opening catalog PRs.
+`publish` defaults to the existing Hugging Face public Space behavior. Selecting
+`modelscope` creates or updates a public Dataset with the same deterministic file
+set. Selecting `all` publishes to both providers and returns a `publications`
+array; a partial failure returns a non-zero exit together with
+`completed_publications` for safe retry. Provider credentials are stored in
+separate Watcher keyring entries. Publishing never reads or modifies the official
+catalog.
 
-`submit` requires non-empty `description` and `author` fields. `icon` is
+For compatibility, a single Hugging Face JSONL result also retains the legacy
+`space_id` and `space_url` fields. New integrations should consume the neutral
+`provider`, `repository_id`, `repository_type`, and `repository_url` fields.
+
+ModelScope has no CLI Device Flow. Interactive login prompts for its Access Token
+without echoing it. For `--jsonl` automation, provide `MODELSCOPE_API_TOKEN` in
+the child-process environment; never put the token in command arguments.
+
+The current `submit` and reviewed Marketplace schema remain Hugging Face-only in
+this first provider-switching version. `submit` requires non-empty `description`
+and `author` fields. `icon` is
 optional: when present, the command reads and verifies it at the selected
 commit; when absent, presentation clients use the default WatcherRobot
 Application icon. The local manifest must match that fixed snapshot before the

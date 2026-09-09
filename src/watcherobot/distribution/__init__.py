@@ -4,6 +4,7 @@ from .check import ApplicationCheckResult, check_application
 from .credentials import (
     CREDENTIAL_ACCOUNT,
     CREDENTIAL_SERVICE,
+    MODELSCOPE_CREDENTIAL_SERVICE,
     CredentialStoreError,
     SystemCredentialStore,
 )
@@ -37,6 +38,7 @@ from .events import (
     exit_code_for,
 )
 from .hf_marketplace import HuggingFaceMarketplaceHubClient
+from .modelscope_publish import ModelScopeHubClient, ModelScopePublishHubClient
 from .marketplace import (
     MarketplaceApplication,
     MarketplaceError,
@@ -66,6 +68,8 @@ from .ports import (
     OAuthNetworkError,
     OAuthRequest,
     OAuthSlowDown,
+    SourcePublishClient,
+    SourceRepository,
 )
 from .login import (
     DEFAULT_OAUTH_REQUEST,
@@ -76,6 +80,7 @@ from .login import (
     LoginStatus,
     login,
     login_status,
+    login_with_access_token,
     logout,
 )
 from .source_files import (
@@ -98,6 +103,7 @@ __all__ = [
     "CredentialStoreError",
     "CREDENTIAL_ACCOUNT",
     "CREDENTIAL_SERVICE",
+    "MODELSCOPE_CREDENTIAL_SERVICE",
     "DEFAULT_OAUTH_REQUEST",
     "DeviceAuthorization",
     "DownloadError",
@@ -121,6 +127,8 @@ __all__ = [
     "MarketplaceApplication",
     "MarketplaceError",
     "MarketplaceHubClient",
+    "ModelScopeHubClient",
+    "ModelScopePublishHubClient",
     "OAuthClient",
     "OAuthAuthorizationDenied",
     "OAuthAuthorizationExpired",
@@ -136,6 +144,8 @@ __all__ = [
     "ProgressEvent",
     "ResultEvent",
     "SystemCredentialStore",
+    "SourcePublishClient",
+    "SourceRepository",
     "SystemApplicationEnvironmentRunner",
     "LoginError",
     "LoginResult",
@@ -146,6 +156,7 @@ __all__ = [
     "exit_code_for",
     "login",
     "login_status",
+    "login_with_access_token",
     "load_official_marketplace",
     "install_application",
     "list_installed_applications",

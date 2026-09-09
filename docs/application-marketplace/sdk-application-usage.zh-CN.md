@@ -259,25 +259,36 @@ Desktop 或其他机器调用方才使用 `--jsonl`：
 
 该命令不会退出浏览器，也不会删除 Hugging Face CLI 或其他程序保存的登录。
 
+如需发布到魔搭，使用独立凭据登录；Token 通过隐藏提示输入，不要放在命令参数中：
+
+```powershell
+.\.venv\Scripts\watcherobot.exe app login --provider modelscope
+```
+
 ## 6. 第三阶段：源码发布与名单提交测试
 
-源码发布和应用广场审核拆成两个操作：`publish` 只创建或更新开发者公开 Space；`submit`
-只选择已经发布的固定 commit 并创建官方名单 PR。请先确认 `app.json.id`、源码和依赖都
-允许公开。
+源码发布和应用广场审核拆成两个操作：`publish` 可由开发者选择 Hugging Face、ModelScope
+或同时发布；`submit` 当前仍只选择 Hugging Face 已发布的固定 commit 并创建官方名单 PR。
+请先确认 `app.json.id`、源码和依赖都允许公开。
 
 ```powershell
 .\.venv\Scripts\watcherobot.exe app check .\my_sdk_test
 .\.venv\Scripts\watcherobot.exe app publish .\my_sdk_test
+.\.venv\Scripts\watcherobot.exe app publish .\my_sdk_test --provider modelscope
+.\.venv\Scripts\watcherobot.exe app publish .\my_sdk_test --provider all
 ```
 
 发布规则：
 
-- Space 固定命名为 `<hf_username>/WatcherRobot-<app_id>`，类型为公开 static Space。
+- 仓库固定命名为 `<provider_username>/WatcherRobot-<app_id>`；Hugging Face 使用公开 static
+  Space，ModelScope 使用公开 Dataset。省略 `--provider` 时保持原有 Hugging Face 行为。
 - 上传的是校验后的完整源码集合；`.git`、`.venv`、缓存、凭据和 `.watcherignore` 命中的内容
   不会发布。
-- 成功结果只包含 `space_id`、完整 40 位 `commit` 和固定源码 URL，不包含 Catalog 或 PR 状态。
+- 成功结果包含平台中立的 Provider、仓库、完整 40 位 `commit` 和固定源码 URL，不包含
+  Catalog 或 PR 状态；单平台 Hugging Face JSONL 仍保留旧 `space_id`/`space_url` 字段。
 - 同一源码重复发布不会制造无意义的新 commit。
-- `publish` 不读取或修改官方 Catalog。
+- `publish` 不读取或修改官方 Catalog；`all` 任一平台失败时返回非零退出码，并报告已经完成的
+  发布，不自动回滚另一平台的不可变提交。
 
 源码确认无误后，再单独提交审核：
 

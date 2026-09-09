@@ -156,6 +156,7 @@ jobs:
             "fastapi==0.129.*" \
             "huggingface-hub==1.26.*" \
             "keyring==25.7.*" \
+            "modelscope-hub==0.4.*" \
             "packaging==24.*" \
             "Pillow==11.*" \
             "psutil==5.9.*" \

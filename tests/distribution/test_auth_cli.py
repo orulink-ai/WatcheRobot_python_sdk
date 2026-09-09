@@ -245,3 +245,36 @@ def test_cli_app_login_human_output_shows_authorization_and_identity(
         "Hugging Face login successful: developer",
     ]
     assert "hf_private-token" not in captured.out
+
+
+def test_cli_modelscope_login_reads_environment_without_exposing_token(
+    monkeypatch,
+    capsys,
+) -> None:
+    credentials = FakeCredentials()
+    dependencies = SimpleNamespace(
+        oauth=None,
+        credentials=credentials,
+        hub=FakeHub(),
+    )
+    requested: list[str] = []
+
+    def build(provider: str = "huggingface"):
+        requested.append(provider)
+        return dependencies
+
+    monkeypatch.setattr(
+        "watcherobot.distribution.cli._build_auth_dependencies",
+        build,
+    )
+    monkeypatch.setenv("MODELSCOPE_API_TOKEN", "ms-private-token")
+
+    exit_code = main(
+        ["app", "login", "--provider", "modelscope", "--jsonl"]
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert requested == ["modelscope"]
+    assert credentials.token == AccessToken("ms-private-token")
+    assert "ms-private-token" not in captured.out

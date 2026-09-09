@@ -5,6 +5,7 @@ import pytest
 from watcherobot.distribution.credentials import (
     CREDENTIAL_ACCOUNT,
     CREDENTIAL_SERVICE,
+    MODELSCOPE_CREDENTIAL_SERVICE,
     CredentialStoreError,
     SystemCredentialStore,
 )
@@ -62,6 +63,20 @@ def test_system_credential_store_uses_one_watcher_specific_entry() -> None:
         ("delete", CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT),
         ("get", CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT),
     ]
+
+
+def test_provider_credentials_are_isolated() -> None:
+    backend = FakeKeyring()
+    huggingface = SystemCredentialStore(provider="huggingface", backend=backend)
+    modelscope = SystemCredentialStore(provider="modelscope", backend=backend)
+
+    huggingface.save(AccessToken("hf-secret"))
+    modelscope.save(AccessToken("ms-secret"))
+
+    assert huggingface.load() == AccessToken("hf-secret")
+    assert modelscope.load() == AccessToken("ms-secret")
+    assert (CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT) in backend.values
+    assert (MODELSCOPE_CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT) in backend.values
 
 
 @pytest.mark.parametrize("operation", ["load", "save", "delete"])

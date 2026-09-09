@@ -51,7 +51,7 @@ class DeviceAuthorization:
 
 @dataclass(frozen=True)
 class HubIdentity:
-    """Non-sensitive Hugging Face account information."""
+    """Non-sensitive community account information."""
 
     username: str
     display_name: str = ""
@@ -92,6 +92,15 @@ class SpaceRepository:
     """Result of ensuring one public source Space exists."""
 
     space_id: str
+    created: bool
+
+
+@dataclass(frozen=True)
+class SourceRepository:
+    """Result of ensuring one public Application source repository exists."""
+
+    repository_id: str
+    repository_type: str
     created: bool
 
 
@@ -161,9 +170,42 @@ class CredentialStore(Protocol):
 
 
 class HubClient(Protocol):
-    """Authenticated Hugging Face operations used by distribution services."""
+    """Authenticated identity operation used by distribution services."""
 
     def whoami(self, token: AccessToken) -> HubIdentity: ...
+
+
+class SourcePublishClient(Protocol):
+    """Platform-neutral source publication boundary."""
+
+    provider: str
+    display_name: str
+    repository_type: str
+
+    def repository_url(self, repository_id: str) -> str: ...
+
+    def ensure_public_repository(
+        self,
+        token: AccessToken,
+        *,
+        repository_id: str,
+    ) -> SourceRepository: ...
+
+    def replace_repository_files(
+        self,
+        token: AccessToken,
+        *,
+        repository_id: str,
+        files: tuple[UploadFile, ...],
+        commit_message: str,
+    ) -> None: ...
+
+    def get_repository_head(
+        self,
+        token: AccessToken,
+        *,
+        repository_id: str,
+    ) -> RepositoryRevision: ...
 
 
 class PublishHubClient(Protocol):

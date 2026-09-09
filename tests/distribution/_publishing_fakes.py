@@ -15,6 +15,7 @@ from watcherobot.distribution.ports import (
     HubNetworkError,
     HubRepositoryConflict,
     RepositoryRevision,
+    SourceRepository,
     SpaceRepository,
     UploadFile,
 )
@@ -83,6 +84,9 @@ class FakeIdentityHub:
 
 @dataclass
 class FakePublishHub:
+    provider = "huggingface"
+    display_name = "Hugging Face"
+    repository_type = "space"
     space_created: bool = True
     catalog: CatalogDocument = CatalogDocument(
         content=b"[]\n",
@@ -93,6 +97,45 @@ class FakePublishHub:
     failure: str = ""
     calls: list[tuple[str, object]] = field(default_factory=list)
     uploaded_files: tuple[UploadFile, ...] = ()
+
+    def repository_url(self, repository_id: str) -> str:
+        return f"https://huggingface.co/spaces/{repository_id}"
+
+    def ensure_public_repository(
+        self,
+        token: AccessToken,
+        *,
+        repository_id: str,
+    ) -> SourceRepository:
+        result = self.ensure_public_space(
+            token,
+            space_id=repository_id,
+            sdk="static",
+        )
+        return SourceRepository(repository_id, self.repository_type, result.created)
+
+    def replace_repository_files(
+        self,
+        token: AccessToken,
+        *,
+        repository_id: str,
+        files: tuple[UploadFile, ...],
+        commit_message: str,
+    ) -> None:
+        self.replace_space_files(
+            token,
+            space_id=repository_id,
+            files=files,
+            commit_message=commit_message,
+        )
+
+    def get_repository_head(
+        self,
+        token: AccessToken,
+        *,
+        repository_id: str,
+    ) -> RepositoryRevision:
+        return self.get_space_head(token, space_id=repository_id)
 
     def ensure_public_space(
         self,

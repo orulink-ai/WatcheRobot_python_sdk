@@ -88,6 +88,49 @@ class LoginStatus:
         return payload
 
 
+def login_with_access_token(
+    token: AccessToken,
+    *,
+    credentials: CredentialStore,
+    hub: HubClient,
+    force: bool = False,
+    provider_display_name: str = "community",
+    sleep: Callable[[float], None] = time.sleep,
+) -> LoginResult:
+    """Verify and persist a provider token without exposing it in events."""
+
+    if not force:
+        status = login_status(
+            credentials=credentials,
+            hub=hub,
+            sleep=sleep,
+            provider_display_name=provider_display_name,
+        )
+        if status.logged_in:
+            return LoginResult(
+                username=status.username,
+                display_name=status.display_name,
+                reused=True,
+            )
+    identity = _verify_identity(
+        hub,
+        token,
+        sleep=sleep,
+        provider_display_name=provider_display_name,
+    )
+    try:
+        credentials.save(token)
+    except CredentialStoreError as exc:
+        raise LoginError(
+            ErrorCode.CREDENTIAL_STORE_ERROR,
+            "Unable to save the Watcher community credential",
+        ) from exc
+    return LoginResult(
+        username=identity.username,
+        display_name=identity.display_name,
+    )
+
+
 def login(
     *,
     oauth: OAuthClient,
@@ -209,6 +252,7 @@ def login_status(
     credentials: CredentialStore,
     hub: HubClient,
     sleep: Callable[[float], None] = time.sleep,
+    provider_display_name: str = "Hugging Face",
 ) -> LoginStatus:
     """Verify the saved Watcher credential without starting OAuth."""
 
@@ -217,7 +261,7 @@ def login_status(
     except CredentialStoreError as exc:
         raise LoginError(
             ErrorCode.CREDENTIAL_STORE_ERROR,
-            "Unable to read the Watcher Hugging Face credential",
+            f"Unable to read the Watcher {provider_display_name} credential",
         ) from exc
     if token is None:
         return LoginStatus(logged_in=False)
@@ -230,12 +274,12 @@ def login_status(
     except HubNetworkError as exc:
         raise LoginError(
             ErrorCode.AUTH_NETWORK_ERROR,
-            "Unable to connect to the Hugging Face identity service",
+            f"Unable to connect to the {provider_display_name} identity service",
         ) from exc
     except HubInvalidResponse as exc:
         raise LoginError(
             ErrorCode.AUTH_INVALID_RESPONSE,
-            "The Hugging Face identity service returned an invalid response",
+            f"The {provider_display_name} identity service returned an invalid response",
         ) from exc
     return LoginStatus(
         logged_in=True,
@@ -256,23 +300,24 @@ def _verify_identity(
     token: AccessToken,
     *,
     sleep: Callable[[float], None],
+    provider_display_name: str = "Hugging Face",
 ) -> HubIdentity:
     try:
         return _whoami_with_network_retry(hub, token, sleep=sleep)
     except HubAuthenticationError as exc:
         raise LoginError(
             ErrorCode.AUTH_INVALID_RESPONSE,
-            "Hugging Face identity verification failed",
+            f"{provider_display_name} identity verification failed",
         ) from exc
     except HubNetworkError as exc:
         raise LoginError(
             ErrorCode.AUTH_NETWORK_ERROR,
-            "Unable to connect to the Hugging Face identity service",
+            f"Unable to connect to the {provider_display_name} identity service",
         ) from exc
     except HubInvalidResponse as exc:
         raise LoginError(
             ErrorCode.AUTH_INVALID_RESPONSE,
-            "The Hugging Face identity service returned an invalid response",
+            f"The {provider_display_name} identity service returned an invalid response",
         ) from exc
 
 

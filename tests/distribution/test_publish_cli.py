@@ -17,9 +17,11 @@ COMMIT = "a" * 40
 
 def _result() -> PublishResult:
     return PublishResult(
-        space_id=SPACE_ID,
+        provider="huggingface",
+        repository_id=SPACE_ID,
+        repository_type="space",
         commit=COMMIT,
-        space_url=f"https://huggingface.co/spaces/{SPACE_ID}",
+        repository_url=f"https://huggingface.co/spaces/{SPACE_ID}",
         source_url=(
             f"https://huggingface.co/spaces/{SPACE_ID}/tree/{COMMIT}"
         ),
@@ -239,3 +241,90 @@ def test_default_publish_dependencies_use_real_hub_adapter() -> None:
     dependencies = _build_publish_dependencies()
 
     assert isinstance(dependencies.publish_hub, HuggingFacePublishHubClient)
+
+
+def test_cli_publish_all_selects_both_providers(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    requested: list[str] = []
+
+    def build(provider: str = "huggingface"):
+        requested.append(provider)
+        return SimpleNamespace(
+            credentials=object(),
+            identity_hub=object(),
+            publish_hub=SimpleNamespace(provider=provider),
+        )
+
+    def fake_publish(application_dir: Path, **kwargs):
+        provider = kwargs["publish_hub"].provider
+        repository_type = "space" if provider == "huggingface" else "dataset"
+        return PublishResult(
+            provider=provider,
+            repository_id=f"developer/{provider}-app",
+            repository_type=repository_type,
+            commit=COMMIT,
+            repository_url=f"https://example.test/{provider}",
+            source_url=f"https://example.test/{provider}/{COMMIT}",
+        )
+
+    monkeypatch.setattr(
+        "watcherobot.distribution.cli._build_publish_dependencies",
+        build,
+    )
+    monkeypatch.setattr(
+        "watcherobot.distribution.cli.publish_application",
+        fake_publish,
+    )
+
+    exit_code = main(
+        ["app", "publish", str(tmp_path), "--provider", "all", "--jsonl"]
+    )
+
+    payload = _json_lines(capsys.readouterr().out)[-1]["data"]
+    assert exit_code == 0
+    assert requested == ["huggingface", "modelscope"]
+    assert [item["provider"] for item in payload["publications"]] == [
+        "huggingface",
+        "modelscope",
+    ]
+
+
+def test_cli_publish_all_reports_completed_provider_on_partial_failure(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    def build(provider: str = "huggingface"):
+        return SimpleNamespace(
+            credentials=object(),
+            identity_hub=object(),
+            publish_hub=SimpleNamespace(provider=provider),
+        )
+
+    def publish_once(application_dir: Path, **kwargs):
+        del application_dir
+        provider = kwargs["publish_hub"].provider
+        if provider == "modelscope":
+            raise PublishError(ErrorCode.REMOTE_ERROR, "ModelScope request failed")
+        return _result()
+
+    monkeypatch.setattr(
+        "watcherobot.distribution.cli._build_publish_dependencies",
+        build,
+    )
+    monkeypatch.setattr(
+        "watcherobot.distribution.cli.publish_application",
+        publish_once,
+    )
+
+    exit_code = main(
+        ["app", "publish", str(tmp_path), "--provider", "all", "--jsonl"]
+    )
+
+    error = _json_lines(capsys.readouterr().out)[-1]
+    assert exit_code == 4
+    assert error["code"] == "remote_error"
+    assert error["details"]["completed_publications"] == [_result().to_dict()]

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import getpass
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from watcherobot.runtime.daemon.application.manifest import (
     ApplicationCompatibilityError,
@@ -29,6 +32,7 @@ from .events import (
 from .hf_marketplace import HuggingFaceMarketplaceHubClient
 from .hf_publish import HuggingFacePublishHubClient
 from .hub_http import HuggingFaceHubClient
+from .modelscope_publish import ModelScopeHubClient, ModelScopePublishHubClient
 from .install import (
     ApplicationInstallError,
     ApplicationInstallResult,
@@ -38,7 +42,15 @@ from .install import (
     list_installed_applications,
     uninstall_application,
 )
-from .login import LoginError, LoginResult, LoginStatus, login, login_status, logout
+from .login import (
+    LoginError,
+    LoginResult,
+    LoginStatus,
+    login,
+    login_status,
+    login_with_access_token,
+    logout,
+)
 from .marketplace import (
     MarketplaceError,
     OfficialMarketplace,
@@ -46,11 +58,13 @@ from .marketplace import (
 )
 from .oauth_http import HuggingFaceOAuthClient
 from .ports import (
+    AccessToken,
     CredentialStore,
     HubClient,
     MarketplaceHubClient,
     OAuthClient,
     PublishHubClient,
+    SourcePublishClient,
 )
 from .publish import PublishError, PublishResult, publish_application
 from .source_files import ApplicationSourceError
@@ -71,6 +85,8 @@ DISTRIBUTION_COMMANDS = frozenset(
         "uninstall",
     }
 )
+_PUBLISH_PROVIDERS = ("huggingface", "modelscope", "all")
+_AUTH_PROVIDERS = ("huggingface", "modelscope")
 _JSONL_HELP = (
     "Emit stable JSON Lines for Desktop automation; for manual use, omit "
     "--jsonl"
@@ -107,6 +123,12 @@ def add_distribution_commands(
         action="store_true",
         help="Check the saved Hugging Face identity without signing in",
     )
+    login_command.add_argument(
+        "--provider",
+        choices=_AUTH_PROVIDERS,
+        default="huggingface",
+        help="Community account to authenticate (default: huggingface)",
+    )
     login_mode.add_argument(
         "--force",
         action="store_true",
@@ -116,6 +138,12 @@ def add_distribution_commands(
     logout_command = app_commands.add_parser(
         "logout",
         help="Remove only the SDK's saved Hugging Face credential",
+    )
+    logout_command.add_argument(
+        "--provider",
+        choices=_AUTH_PROVIDERS,
+        default="huggingface",
+        help="Community credential to remove (default: huggingface)",
     )
     _add_jsonl_argument(logout_command)
     publish = app_commands.add_parser(
@@ -130,6 +158,12 @@ def add_distribution_commands(
         "application_dir",
         type=Path,
         help="Application source directory",
+    )
+    publish.add_argument(
+        "--provider",
+        choices=_PUBLISH_PROVIDERS,
+        default="huggingface",
+        help="Publish to Hugging Face, ModelScope, or both (default: huggingface)",
     )
     _add_jsonl_argument(publish)
     submit = app_commands.add_parser(
@@ -371,7 +405,7 @@ def _run_application_check(args: argparse.Namespace) -> int:
 
 @dataclass(frozen=True)
 class _AuthDependencies:
-    oauth: OAuthClient
+    oauth: OAuthClient | None
     credentials: CredentialStore
     hub: HubClient
 
@@ -394,7 +428,13 @@ class _HumanAuthEventSink:
             print(f"Code expires in: {expires_in} seconds")
 
 
-def _build_auth_dependencies() -> _AuthDependencies:
+def _build_auth_dependencies(provider: str = "huggingface") -> _AuthDependencies:
+    if provider == "modelscope":
+        return _AuthDependencies(
+            oauth=None,
+            credentials=SystemCredentialStore(provider="modelscope"),
+            hub=ModelScopeHubClient(),
+        )
     return _AuthDependencies(
         oauth=HuggingFaceOAuthClient(),
         credentials=SystemCredentialStore(),
@@ -403,7 +443,12 @@ def _build_auth_dependencies() -> _AuthDependencies:
 
 
 def _run_application_login(args: argparse.Namespace) -> int:
-    dependencies = _build_auth_dependencies()
+    provider = args.provider
+    dependencies = (
+        _build_auth_dependencies()
+        if provider == "huggingface"
+        else _build_auth_dependencies(provider)
+    )
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     result: LoginStatus | LoginResult
     try:
@@ -411,9 +456,11 @@ def _run_application_login(args: argparse.Namespace) -> int:
             result = login_status(
                 credentials=dependencies.credentials,
                 hub=dependencies.hub,
+                provider_display_name=_provider_display_name(provider),
             )
-        else:
+        elif provider == "huggingface":
             events: EventSink = event_writer or _HumanAuthEventSink()
+            assert dependencies.oauth is not None
             result = login(
                 oauth=dependencies.oauth,
                 credentials=dependencies.credentials,
@@ -421,10 +468,26 @@ def _run_application_login(args: argparse.Namespace) -> int:
                 events=events,
                 force=bool(args.force),
             )
+        else:
+            value = os.environ.get("MODELSCOPE_API_TOKEN", "")
+            if not value:
+                if args.jsonl:
+                    raise LoginError(
+                        ErrorCode.AUTH_REQUIRED,
+                        "Set MODELSCOPE_API_TOKEN before non-interactive login",
+                    )
+                value = getpass.getpass("ModelScope Access Token: ")
+            result = login_with_access_token(
+                AccessToken(value.strip()),
+                credentials=dependencies.credentials,
+                hub=dependencies.hub,
+                force=bool(args.force),
+                provider_display_name="ModelScope",
+            )
     except KeyboardInterrupt:
         return _print_auth_error(
             ErrorCode.OPERATION_CANCELLED,
-            "Hugging Face login cancelled",
+            f"{_provider_display_name(provider)} login cancelled",
             event_writer=event_writer,
         )
     except LoginError as exc:
@@ -434,18 +497,29 @@ def _run_application_login(args: argparse.Namespace) -> int:
         event_writer.emit(ResultEvent(data=result.to_dict()))
     elif isinstance(result, LoginStatus):
         if result.logged_in:
-            print(f"Logged in to Hugging Face as: {result.username}")
+            print(
+                f"Logged in to {_provider_display_name(provider)} as: "
+                f"{result.username}"
+            )
         else:
-            print("Not logged in to Hugging Face")
+            print(f"Not logged in to {_provider_display_name(provider)}")
     elif result.reused:
-        print(f"Reusing existing Hugging Face login: {result.username}")
+        print(
+            f"Reusing existing {_provider_display_name(provider)} login: "
+            f"{result.username}"
+        )
     else:
-        print(f"Hugging Face login successful: {result.username}")
+        print(f"{_provider_display_name(provider)} login successful: {result.username}")
     return ExitCode.SUCCESS
 
 
 def _run_application_logout(args: argparse.Namespace) -> int:
-    dependencies = _build_auth_dependencies()
+    provider = args.provider
+    dependencies = (
+        _build_auth_dependencies()
+        if provider == "huggingface"
+        else _build_auth_dependencies(provider)
+    )
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     try:
         result = logout(credentials=dependencies.credentials)
@@ -454,7 +528,7 @@ def _run_application_logout(args: argparse.Namespace) -> int:
     if event_writer is not None:
         event_writer.emit(ResultEvent(data=result.to_dict()))
     else:
-        print("Signed out of Watcher's Hugging Face login")
+        print(f"Signed out of Watcher's {_provider_display_name(provider)} login")
     return ExitCode.SUCCESS
 
 
@@ -462,7 +536,7 @@ def _run_application_logout(args: argparse.Namespace) -> int:
 class _PublishDependencies:
     credentials: CredentialStore
     identity_hub: HubClient
-    publish_hub: PublishHubClient
+    publish_hub: SourcePublishClient | PublishHubClient
 
 
 class _HumanPublishEventSink:
@@ -473,7 +547,13 @@ class _HumanPublishEventSink:
             print(event.message, file=sys.stderr)
 
 
-def _build_publish_dependencies() -> _PublishDependencies:
+def _build_publish_dependencies(provider: str = "huggingface") -> _PublishDependencies:
+    if provider == "modelscope":
+        return _PublishDependencies(
+            credentials=SystemCredentialStore(provider="modelscope"),
+            identity_hub=ModelScopeHubClient(),
+            publish_hub=ModelScopePublishHubClient(),
+        )
     return _PublishDependencies(
         credentials=SystemCredentialStore(),
         identity_hub=HuggingFaceHubClient(),
@@ -482,17 +562,30 @@ def _build_publish_dependencies() -> _PublishDependencies:
 
 
 def _run_application_publish(args: argparse.Namespace) -> int:
-    dependencies = _build_publish_dependencies()
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     events: EventSink = event_writer or _HumanPublishEventSink()
+    providers = (
+        ("huggingface", "modelscope")
+        if args.provider == "all"
+        else (args.provider,)
+    )
+    results: list[PublishResult] = []
     try:
-        result = publish_application(
-            args.application_dir,
-            credentials=dependencies.credentials,
-            identity_hub=dependencies.identity_hub,
-            publish_hub=dependencies.publish_hub,
-            events=events,
-        )
+        for provider in providers:
+            dependencies = (
+                _build_publish_dependencies()
+                if provider == "huggingface"
+                else _build_publish_dependencies(provider)
+            )
+            results.append(
+                publish_application(
+                    args.application_dir,
+                    credentials=dependencies.credentials,
+                    identity_hub=dependencies.identity_hub,
+                    publish_hub=cast(SourcePublishClient, dependencies.publish_hub),
+                    events=events,
+                )
+            )
     except KeyboardInterrupt:
         return _print_publish_error(
             ErrorCode.OPERATION_CANCELLED,
@@ -518,28 +611,45 @@ def _run_application_publish(args: argparse.Namespace) -> int:
             event_writer=event_writer,
         )
     except PublishError as exc:
+        details = dict(exc.details)
+        if results:
+            details["completed_publications"] = [
+                result.to_dict() for result in results
+            ]
         return _print_publish_error(
             exc.code,
             str(exc),
-            details=exc.details,
+            details=details,
             event_writer=event_writer,
         )
 
     if event_writer is not None:
-        event_writer.emit(ResultEvent(data=result.to_dict()))
+        payload: dict[str, object]
+        if len(results) == 1:
+            payload = results[0].to_dict()
+        else:
+            payload = {"publications": [result.to_dict() for result in results]}
+        event_writer.emit(ResultEvent(data=payload))
     else:
-        _print_publish_result(result)
+        for result in results:
+            _print_publish_result(result)
     return ExitCode.SUCCESS
 
 
 def _print_publish_result(result: PublishResult) -> None:
     fields: tuple[tuple[str, str], ...] = (
-        ("Space", result.space_id),
+        ("Provider", result.provider),
+        ("Repository", result.repository_id),
+        ("Repository type", result.repository_type),
         ("Commit", result.commit),
-        ("Space URL", result.space_url),
+        ("Repository URL", result.repository_url),
         ("Source", result.source_url),
     )
     _print_labeled_block("Application source published", fields)
+
+
+def _provider_display_name(provider: str) -> str:
+    return "Hugging Face" if provider == "huggingface" else "ModelScope"
 
 
 def _print_publish_error(
@@ -572,7 +682,7 @@ def _run_application_submit(args: argparse.Namespace) -> int:
             commit=args.commit,
             credentials=dependencies.credentials,
             identity_hub=dependencies.identity_hub,
-            publish_hub=dependencies.publish_hub,
+            publish_hub=cast(PublishHubClient, dependencies.publish_hub),
             events=events,
         )
     except KeyboardInterrupt:

@@ -261,28 +261,41 @@ credential, run:
 This does not sign out the browser and does not remove credentials stored by the
 Hugging Face CLI or another program.
 
+To publish to ModelScope, sign in to its isolated credential entry. The token is
+read from a hidden prompt and must not be passed as a command argument:
+
+```powershell
+.\.venv\Scripts\watcherobot.exe app login --provider modelscope
+```
+
 ## 6. Publish source and submit it for review
 
-Source publication and marketplace review are separate operations. `publish`
-creates or updates the developer's public Space only. `submit` selects an
-already-published immutable commit and creates the official catalog pull request.
+Source publication and marketplace review are separate operations. Developers can
+use `publish` for Hugging Face, ModelScope, or both. `submit` currently selects a
+Hugging Face immutable commit and creates the official catalog pull request.
 Confirm that the ID, source, and dependencies are safe to disclose first.
 
 ```powershell
 .\.venv\Scripts\watcherobot.exe app check .\my_sdk_test
 .\.venv\Scripts\watcherobot.exe app publish .\my_sdk_test
+.\.venv\Scripts\watcherobot.exe app publish .\my_sdk_test --provider modelscope
+.\.venv\Scripts\watcherobot.exe app publish .\my_sdk_test --provider all
 ```
 
 Publishing rules:
 
-- The public static Space is named
-  `<hf_username>/WatcherRobot-<app_id>`.
+- Repositories are named `<provider_username>/WatcherRobot-<app_id>`. Hugging Face
+  uses a public static Space and ModelScope uses a public Dataset. Omitting
+  `--provider` preserves the original Hugging Face behavior.
 - The complete validated source set is uploaded. Git metadata, virtual
   environments, caches, credentials, and `.watcherignore` matches are excluded.
-- The result contains `space_id`, an immutable 40-character `commit`, and a
-  fixed source URL. It contains no Catalog or PR state.
+- The result contains neutral provider/repository fields, an immutable
+  40-character `commit`, and a fixed source URL. A single-provider Hugging Face
+  JSONL result also retains the legacy `space_id` and `space_url` fields.
 - Re-publishing identical source does not create a meaningless commit.
-- `publish` never reads or modifies the official Catalog.
+- `publish` never reads or modifies the official Catalog. If either provider fails
+  under `all`, the command returns non-zero and reports completed publications;
+  it does not roll back immutable commits on the other provider.
 
 When the snapshot is ready for review, submit it separately:
 
