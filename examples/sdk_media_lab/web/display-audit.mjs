@@ -1,4 +1,4 @@
-/** Cumulative evidence from successful canvas draws, never packet arrivals.
+/** Cumulative evidence from unique forward-sequence canvas draws, never packet arrivals.
  * This does not prove sensor field of view, source CRC, or physical scanout. */
 export function createDisplayAudit(maxSamples = 36000) {
   let first = null, last = null, sequence = null, frames = 0;
@@ -33,7 +33,7 @@ export function createDisplayAudit(maxSamples = 36000) {
       const seconds = first === null ? 0 : Math.max(0, now - first) / 1000;
       const sorted = [...intervals].sort((a, b) => a - b);
       return {
-        method: "completed_canvas_draw", frames, duration_seconds: seconds,
+        method: "unique_forward_canvas_draw", frames, duration_seconds: seconds,
         fps: seconds > 0 ? (frames - 1) / seconds : 0,
         gap_p95_ms: sorted.length ? sorted[Math.ceil(sorted.length * .95) - 1] : 0,
         gap_max_ms: Math.max(maxGap, tail), stalls_over_1s: stalls + (tail > 1000 ? 1 : 0),

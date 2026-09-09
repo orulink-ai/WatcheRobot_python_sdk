@@ -42,6 +42,10 @@ def isolate_system_runtime_state(
 ) -> None:
     """Keep real Desktop/SDK state files out of CLI discovery tests."""
 
+    # Daemon discovery also reads a shared instance root. Isolate child processes
+    # as well as in-process state so tests cannot reuse or stop a live Desktop.
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "shared-instance"))
+
     monkeypatch.setattr(
         watcherobot_cli,
         "system_runtime_state_root",
@@ -677,6 +681,7 @@ def test_cli_status_reports_not_running_for_empty_user_state(
     capsys,
 ) -> None:
     monkeypatch.setenv("WATCHER_RUNTIME_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
 
     exit_code = main(["daemon", "status"])
 

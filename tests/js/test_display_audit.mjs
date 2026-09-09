@@ -2,11 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createDisplayAudit } from "../../examples/sdk_media_lab/web/display-audit.mjs";
 
-test("measures completed canvas draws and ignores duplicate sequences", () => {
+test("measures unique forward-sequence canvas draws", () => {
   const audit = createDisplayAudit();
   for (let i = 0; i <= 9600; i++) audit.record(i, i * 62.5, 640, 480);
   audit.record(9600, 600001, 640, 480);
   const result = audit.snapshot(600001);
+  assert.equal(result.method, "unique_forward_canvas_draw");
   assert.equal(result.frames, 9601);
   assert.equal(result.duplicates, 1);
   assert.ok(Math.abs(result.fps - 16) < .001);

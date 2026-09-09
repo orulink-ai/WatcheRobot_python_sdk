@@ -129,20 +129,23 @@ The live-video panel also shows source/target/sent FPS, transport latency,
 browser congestion, and animation FPS/underrun/late-frame pressure so a smooth
 idle animation cannot hide contention that appears only under AV load.
 
-## PTL preview candidate validation
+## PTL preview candidate validation (2026-09-08 historical baseline)
 
 Pure video now uses the device's existing LAN MJPEG socket and Application
 session/control APIs without creating a browser WebRTC peer. Audio and AV
 sessions retain their WebRTC peer. This requires the paired ESP32 candidate
 that starts video from JPEG-client readiness. The Daemon routing is unchanged.
-This test bench change does not implement model enumeration, inference mode
-switching, or official SSCMA model-maintenance compatibility.
+That historical candidate did not implement model enumeration or inference mode
+switching. The current paired firmware and SDK add both (see the generic model
+section below); official SSCMA model-maintenance compatibility is still separate.
 
 The page marks video LIVE only after a JPEG has decoded and drawn. Inspect the
-`data-display-audit` attribute on `#liveVideoCanvas` for cumulative successful
-Canvas draws, duration, FPS, P95/max inter-frame gap, idle tail, duplicate and
+`data-display-audit` attribute on `#liveVideoCanvas` for cumulative unique forward-sequence
+Canvas draws, duration, new-frame FPS, P95/max content-update gap, idle tail, duplicate and
 sequence errors, dimensions, and a bounded-storage truncation flag. The final
-snapshot is retained on stop and reset for a new session. This is browser draw
+snapshot is retained on stop and reset for a new session. Duplicate/backward
+frames are counted as anomalies but excluded from the new-frame rate; this is
+not the total number of Canvas draw calls. This is browser draw
 evidence, not sensor-to-browser CRC verification or physical monitor scanout.
 A short snapshot above 15 FPS is not a ten-minute acceptance result.
 

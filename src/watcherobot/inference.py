@@ -125,12 +125,23 @@ class InferenceSession:
     def close(self, *, timeout: float | None = 5.0) -> None:
         from .vision import _validate_timeout
         _validate_timeout(timeout)
-        with self._lock:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        acquired = self._lock.acquire() if timeout is None else self._lock.acquire(timeout=timeout)
+        if not acquired:
+            raise TimeoutError("inference result request did not become idle")
+        try:
             if self.closed:
                 return
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                raise TimeoutError("inference stop budget exhausted")
             message_type = "ctrl.vision.inference.stop"
-            ack(self._robot._command(message_type, {"session_id": self.id}, timeout=timeout), message_type)
+            data = ack(self._robot._command(message_type, {"session_id": self.id}, timeout=remaining), message_type)
+            if integer(data, "session_id", 1) != self.id:
+                raise WatcheRobotError("vision stop ACK has another session")
             self._closed = True
+        finally:
+            self._lock.release()
 
     def __enter__(self) -> InferenceSession:
         return self

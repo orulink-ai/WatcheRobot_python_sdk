@@ -106,6 +106,8 @@ class VisionDomain:
         _validate_timeout(timeout)
         self._robot._require_capability("vision.inference.v1")
         with self._inference_lock:
+            if self._robot._closed or self._robot._closing:
+                raise WatcheRobotError("robot connection is closed")
             if self._inference_session is not None and not self._inference_session.closed:
                 raise RuntimeError("close the previous inference session first")
             session = InferenceSession(self._robot, model_id)
@@ -116,6 +118,8 @@ class VisionDomain:
                                                 timeout=timeout), message_type)
                 if integer(data, "session_id", 1) != session.id:
                     raise WatcheRobotError("vision start ACK has another session")
+                if self._robot._closed or self._robot._closing:
+                    raise WatcheRobotError("robot connection closed while starting inference")
             except Exception:
                 # Caller-generated ID allows cleanup even when the start ACK was lost.
                 try:
@@ -126,9 +130,24 @@ class VisionDomain:
             return session
 
     def stop_inference(self, *, timeout: float | None = 5.0) -> None:
-        with self._inference_lock:
+        _validate_timeout(timeout)
+        deadline = None if timeout is None else time.monotonic() + timeout
+        acquired = (self._inference_lock.acquire() if timeout is None
+                    else self._inference_lock.acquire(timeout=timeout))
+        if not acquired:
+            raise TimeoutError("inference control did not become idle")
+        try:
             if self._inference_session is not None:
-                self._inference_session.close(timeout=timeout)
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise TimeoutError("inference stop budget exhausted")
+                self._inference_session.close(timeout=remaining)
+        finally:
+            self._inference_lock.release()
+
+    def _close(self) -> None:
+        # Include domain and session lock waits in the connection cleanup budget.
+        self.stop_inference(timeout=_CLOSE_CONTROL_WAIT_SECONDS)
 
     def status(self, *, timeout: float | None = None) -> VisionStatus:
         _validate_timeout(timeout)

@@ -147,3 +147,102 @@ def test_old_firmware_rejects_generic_api_before_sending(method, args):
     robot = WatcheRobot._from_transport(transport)
     with pytest.raises(WatcheRobotError): getattr(robot.vision, method)(*args)
     assert not transport.commands
+
+
+@pytest.mark.parametrize("operation", ["start", "result"])
+def test_robot_close_is_bounded_while_inference_command_waits(monkeypatch, operation):
+    import threading
+    import watcherobot.vision as vision
+    monkeypatch.setattr(vision, "_CLOSE_CONTROL_WAIT_SECONDS", 0.03)
+    transport = InferenceTransport()
+    transport_closed = threading.Event()
+    transport.close = transport_closed.set
+    robot = WatcheRobot._from_transport(transport)
+    session = robot.vision.start_inference(2) if operation == "result" else None
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    original = transport.send_command
+    errors = []
+    def blocked(kind, data, timeout=None):
+        if kind.endswith(".start" if operation == "start" else ".result.get"):
+            entered.set()
+            assert release.wait(2)
+        return original(kind, data, timeout)
+    transport.send_command = blocked
+    def request():
+        try:
+            session.latest(timeout=60) if session else robot.vision.start_inference(2, timeout=60)
+        except Exception as error:
+            errors.append(error)
+    worker = threading.Thread(target=request)
+    closer = threading.Thread(target=lambda: (robot.close(), finished.set()))
+    worker.start()
+    assert entered.wait(1)
+    closer.start()
+    try:
+        assert finished.wait(0.5), "robot close waited for a blocked inference request"
+        assert robot._closed and transport_closed.is_set()
+        with pytest.raises(Exception, match="closed"):
+            robot.vision.start_inference(2)
+    finally:
+        release.set()
+        worker.join(2)
+        closer.join(2)
+    if operation == "start":
+        assert errors, "late startup must not publish a usable session"
+
+
+def test_foreign_stop_ack_keeps_session_retryable():
+    from watcherobot import WatcheRobotError
+    transport = InferenceTransport()
+    robot = WatcheRobot._from_transport(transport)
+    session = robot.vision.start_inference(2)
+    original = transport.send_command
+    def foreign(kind, data, timeout=None):
+        return {"type": "sys.ack", "code": 0, "data": {"type": kind, "session_id": session.id + 1}}
+    transport.send_command = foreign
+    with pytest.raises(WatcheRobotError):
+        session.close()
+    assert not session.closed
+    transport.send_command = original
+    session.close()
+
+
+def test_failed_start_cleanup_retains_handle_and_old_stop_preserves_new_session():
+    transport = InferenceTransport()
+    robot = WatcheRobot._from_transport(transport)
+    original = transport.send_command
+    def failed(kind, data, timeout=None):
+        if kind.endswith(".start"):
+            original(kind, data, timeout)
+        raise TimeoutError("ACK unavailable")
+    transport.send_command = failed
+    with pytest.raises(TimeoutError):
+        robot.vision.start_inference(1)
+    old = robot.vision._inference_session
+    assert old is not None and not old.closed
+    transport.send_command = original
+    robot.vision.stop_inference()
+    new = robot.vision.start_inference(2)
+    old.close()
+    original("ctrl.vision.inference.stop", {"session_id": old.id})
+    assert transport.current == new.id
+    robot.close()
+
+
+def test_disconnected_inference_cannot_resume_or_reach_a_new_connection():
+    from watcherobot import WatcheRobotError
+    old_transport = InferenceTransport()
+    old_robot = WatcheRobot._from_transport(old_transport)
+    old_session = old_robot.vision.start_inference(2)
+    old_transport.disconnect_callback()
+    with pytest.raises(WatcheRobotError, match="closed"):
+        old_session.latest()
+    with pytest.raises(WatcheRobotError, match="closed"):
+        old_robot.vision.start_inference(2)
+    new_transport = InferenceTransport()
+    with WatcheRobot._from_transport(new_transport) as new_robot:
+        new_session = new_robot.vision.start_inference(2)
+        with pytest.raises(WatcheRobotError, match="closed"):
+            old_session.close()
+        assert new_transport.current == new_session.id
+    assert new_session.closed and new_transport.current == 0
