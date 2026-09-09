@@ -559,11 +559,15 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         index = client.get("/")
         stylesheet = client.get("/styles.css")
         vector_path = client.get("/vector-path.js")
+        vector_editor = client.get("/vector-editor-v2.js")
+        web_runtime = client.get("/web-runtime.js")
         script = client.get("/app.js")
 
-    assert 'href="./styles.css?v=expression-lab-28"' in index.text
-    assert 'src="./vector-path.js?v=expression-lab-28"' in index.text
-    assert 'src="./app.js?v=expression-lab-28"' in index.text
+    assert 'href="./styles.css?v=expression-lab-32"' in index.text
+    assert 'src="./vector-path.js?v=expression-lab-32"' in index.text
+    assert 'src="./vector-editor-v2.js?v=expression-lab-32"' in index.text
+    assert 'src="./web-runtime.js?v=expression-lab-32"' in index.text
+    assert 'src="./app.js?v=expression-lab-32"' in index.text
     assert 'id="firmwareUpdate"' in index.text
     assert 'id="firmwareDownload"' in index.text
     assert 'id="connectionGuide"' in index.text
@@ -578,14 +582,22 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert ".controls { grid-column: 2 / -1; }" in stylesheet.text
     assert ".inspector { grid-column: 1 / -1; }" in stylesheet.text
     assert ".stage { position: sticky; top: 16px; }" in stylesheet.text
+    assert ".accessory-editor-controls label.vector-smoothing" in stylesheet.text
+    assert ".always-open-heading" in stylesheet.text
     assert vector_path.status_code == 200
     assert "function normalize(strokes)" in vector_path.text
     assert script.status_code == 200
+    assert web_runtime.status_code == 200
+    assert "decodeApiResponse" in web_runtime.text
+    assert "fetchWithTimeout" in web_runtime.text
     assert "javascript" in script.headers["content-type"]
     assert script.headers["cache-control"] == "no-store"
-    assert 'fetch("./api/status"' in script.text
-    assert 'response.headers.get("content-type")' in script.text
-    assert "await response.text()" in script.text
+    assert '"./api/status"' in script.text
+    assert 'response.headers?.get("content-type")' in web_runtime.text
+    assert "await response.text()" in web_runtime.text
+    assert "ExpressionLabWeb.decodeApiResponse" in script.text
+    assert "ExpressionLabWeb.fetchWithTimeout" in script.text
+    assert "else if (state.resumePending)" not in script.text
     assert "statusInitialized" in script.text
     assert "正在连接 SDK" in script.text
     assert "window.setInterval(refreshConnectionStatus, 1500)" in script.text
@@ -598,6 +610,17 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert 'scale: Number(controls.scale.value)' in script.text
     assert 'accessory: controls.accessory.value' in script.text
     assert 'id="accessory"' in index.text
+    assert 'class="preset-strip"' not in index.text
+    assert 'data-preset=' not in index.text
+    assert 'const EXPRESSION_PRESET = "standby"' in script.text
+    assert 'preset: EXPRESSION_PRESET' in script.text
+    assert "const presetDefaults" not in script.text
+    assert 'document.querySelectorAll(".preset")' not in script.text
+    for retained_accessory in ("halo", "devil_horns", "eyepatch", "custom_vector"):
+        assert f'value="{retained_accessory}"' in index.text
+    for retired_accessory in ("ninja_mask", "hero_mask", "antenna"):
+        assert f'value="{retired_accessory}"' not in index.text
+        assert retired_accessory not in script.text
     assert 'accessory_scale: Number(controls.accessoryScale.value)' in script.text
     assert 'accessory_x: Number(controls.accessoryX.value)' in script.text
     assert 'accessory_y: Number(controls.accessoryY.value)' in script.text
@@ -677,7 +700,7 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert "const LID_MASK_HALF_WIDTH_PIXELS = 112" in script.text
     assert "context.rect(clipLeft, 0, clipRight - clipLeft, canvas.height)" in script.text
     assert 'const eyeCanvas = document.createElement("canvas")' in script.text
-    assert 'eyeCtx.globalCompositeOperation = "destination-out"' in script.text
+    assert 'context.globalCompositeOperation = "destination-out"' in script.text
     assert "ctx.drawImage(eyeCanvas, 0, 0)" in script.text
     assert "sendExpressionUpdate" in script.text
     assert "在 Watcher 打开 Desktop Link" in script.text
@@ -692,8 +715,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert "new Path2D(pathData)" in script.text
     assert "tagCircle(" not in script.text
     assert "const SECONDARY_GAZE_FOLLOW = 0.5" in script.text
-    assert "drawAccessory(p.accessory, \"back\", state.phase, p, secondaryGazeX, secondaryGazeY)" in script.text
-    assert "drawAccessory(p.accessory, \"front\", state.phase, p, secondaryGazeX, secondaryGazeY)" in script.text
+    assert "drawAccessory(p.accessory, \"back\", p, secondaryGazeX, secondaryGazeY)" in script.text
+    assert "drawAccessory(p.accessory, \"front\", p, secondaryGazeX, secondaryGazeY)" in script.text
     assert "drawTag(p.tag, p.color, secondaryGazeX, secondaryGazeY)" in script.text
     assert 'value="custom_pixel"' not in index.text
     assert 'id="pixelAccessoryCanvas"' not in index.text
@@ -703,13 +726,35 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert 'id="vectorAccessoryCanvas"' in index.text
     assert 'id="vectorBrush"' in index.text
     assert 'id="vectorEraser"' in index.text
+    assert 'id="vectorEdit"' in index.text
+    assert 'id="vectorMove"' in index.text
+    assert 'id="vectorSmoothing"' in index.text
+    assert 'id="vectorBrushSizeLabel"' in index.text
+    assert 'id="vectorSmoothingHint"' in index.text
+    assert 'id="vectorDuplicate"' in index.text
+    assert 'id="vectorMirrorHorizontal"' in index.text
+    assert 'id="vectorMirrorVertical"' in index.text
+    assert 'id="vectorDelete"' in index.text
     assert 'id="vectorUndo"' in index.text
     assert 'id="vectorRedo"' in index.text
     assert 'id="saveVectorAccessory"' in index.text
     assert "const MAX_STROKES = 12" in vector_path.text
     assert "const MAX_POINTS = 192" in vector_path.text
+    assert vector_editor.status_code == 200
+    assert "compileToV1" in vector_editor.text
     assert "while (total > MAX_POINTS)" in vector_path.text
     assert "VectorPath.MAX_STROKES" in script.text
+    assert "VectorEditorV2.compileToV1" in script.text
+    assert "vectorEncodedPath" in script.text
+    assert "VECTOR_ACCESSORY_COOKIE_PREFIX" in script.text
+    assert "VectorEditorV2.hitTestPoint" in script.text
+    assert "VectorEditorV2.hitTestStroke" in script.text
+    assert "VectorEditorV2.eraseAt" in script.text
+    assert "function drawWatcherEyes" in script.text
+    assert "drawWatcherEyes(target, preview, preview.openness)" in script.text
+    assert '<summary>颜色与眨眼' not in index.text
+    assert '<summary>四块眼皮遮罩' not in index.text
+    assert 'class="always-open-heading"' in index.text
     assert "function encodeVectorAccessoryPath()" in script.text
     assert "function drawCustomVectorAccessory" in script.text
     assert "custom_vector_path: encodeVectorAccessoryPath()" in script.text

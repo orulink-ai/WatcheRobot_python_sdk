@@ -424,10 +424,24 @@ def create_web_app(
     async def vector_path_script() -> FileResponse:
         return web_file("vector-path.js")
 
+    @app.get("/vector-editor-v2.js")
+    async def vector_editor_v2_script() -> FileResponse:
+        return web_file("vector-editor-v2.js")
+
+    @app.get("/web-runtime.js")
+    async def web_runtime_script() -> FileResponse:
+        return web_file("web-runtime.js")
+
     # Retain the first PoC URLs for compatibility with already packaged copies.
     @app.get("/assets/{asset_name}")
     async def asset(asset_name: str) -> FileResponse:
-        if asset_name not in {"styles.css", "vector-path.js", "app.js"}:
+        if asset_name not in {
+            "styles.css",
+            "vector-path.js",
+            "vector-editor-v2.js",
+            "web-runtime.js",
+            "app.js",
+        }:
             raise HTTPException(status_code=404, detail="asset not found")
         return web_file(asset_name)
 

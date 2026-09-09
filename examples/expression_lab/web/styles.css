@@ -167,8 +167,6 @@ body:not(.scanlines) .screen-scan { display: none; }
 .transport { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; padding: 16px 18px 18px; border-top: 1px solid var(--line); }
 .transport span { min-width: 108px; color: var(--muted); font: 10px "Cascadia Code", monospace; text-align: right; }
 
-.preset-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 18px 18px 10px; }
-.preset.active { color: var(--green); border-color: var(--green-dim); background: rgba(161, 240, 60, .08); }
 .eyelid-preset-studio { padding: 14px 18px 12px; border-bottom: 1px solid var(--line); background: rgba(4, 6, 4, .22); }
 .eyelid-preset-save { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; }
 .eyelid-preset-save label > span { display: block; margin-bottom: 6px; color: var(--muted); font: 10px "Cascadia Code", monospace; }
@@ -215,15 +213,25 @@ body:not(.scanlines) .screen-scan { display: none; }
 .accessory-canvas-shell { min-width: 0; }
 #vectorAccessoryCanvas { display: block; width: min(100%, 510px); aspect-ratio: 1; border: 1px solid rgba(161, 240, 60, .28); border-radius: 8px; background: #020302; cursor: crosshair; touch-action: none; }
 #vectorAccessoryCanvas { image-rendering: auto; }
+#vectorAccessoryCanvas[data-tool="eraser"] { cursor: cell; }
+#vectorAccessoryCanvas[data-tool="edit"] { cursor: pointer; }
+#vectorAccessoryCanvas[data-tool="move"] { cursor: move; }
 .accessory-canvas-shell > span { display: block; margin-top: 7px; color: var(--quiet); font: 9px/1.4 "Cascadia Code", monospace; }
 .accessory-editor-controls { display: flex; flex-direction: column; gap: 10px; }
-.accessory-editor-controls label { display: block; }
-.accessory-tool-row, .accessory-history-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+.accessory-editor-controls > label:not(.toggle) { display: block; }
+.accessory-tool-row, .accessory-history-row, .accessory-transform-row { display: grid; gap: 7px; }
+.accessory-tool-row, .accessory-transform-row { grid-template-columns: repeat(2, 1fr); }
 .accessory-history-row { grid-template-columns: repeat(3, 1fr); }
 .accessory-tool-row button.active { color: #081005; border-color: var(--green); background: var(--green); }
+.accessory-transform-row button:disabled { opacity: .36; }
+.accessory-editor-controls label.vector-smoothing { min-height: 40px; margin: 0; padding: 0 2px; display: grid; grid-template-columns: 38px auto; align-items: center; column-gap: 10px; }
+.vector-smoothing > span { grid-row: 1 / span 2; width: 38px; flex: 0 0 38px; }
+.vector-smoothing b { color: var(--ink); font-size: 12px; font-weight: 600; }
+.vector-smoothing small { color: var(--quiet); font: 9px/1.25 "Cascadia Code", monospace; }
 .accessory-editor-controls button { min-height: 34px; padding-inline: 8px; }
 .accessory-apply { margin-top: 2px; color: var(--green); border-color: var(--green-dim); background: rgba(161, 240, 60, .07); }
-#vectorAccessoryState { margin: 0; color: var(--muted); font: 10px/1.5 "Cascadia Code", monospace; }
+#vectorAccessoryState, #vectorSelectionState { margin: 0; color: var(--muted); font: 10px/1.5 "Cascadia Code", monospace; }
+#vectorSelectionState[data-selected="true"] { color: var(--green); }
 .vector-accessory-studio { border-top-color: rgba(161, 240, 60, .32); }
 .accessory-preset-studio { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; padding: 0 18px 18px; }
 .accessory-preset-studio label > span { display: block; margin-bottom: 6px; color: var(--muted); font: 10px "Cascadia Code", monospace; }
@@ -247,6 +255,8 @@ input[type="range"] { width: 100%; height: 18px; margin: 8px 0 0; accent-color: 
 .advanced summary small { margin-left: auto; color: var(--muted); font: 10px "Cascadia Code", monospace; letter-spacing: 0; }
 .advanced[open] summary { color: var(--green); background: rgba(161,240,60,.035); }
 .advanced .slider-grid { padding-top: 16px; }
+.always-open-heading { min-height: 48px; padding: 0 18px; display: flex; align-items: center; gap: 10px; color: var(--green); background: rgba(161,240,60,.035); font-family: "Bahnschrift", sans-serif; letter-spacing: .06em; }
+.always-open-heading small { margin-left: auto; color: var(--muted); font: 10px "Cascadia Code", monospace; letter-spacing: 0; }
 .motion-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 20px; padding: 18px; }
 .motion-grid label > span { display: flex; justify-content: space-between; gap: 16px; }
 .color-field { grid-column: 1 / -1; display: grid; grid-template-columns: auto 54px 1fr; align-items: center; gap: 12px; }
