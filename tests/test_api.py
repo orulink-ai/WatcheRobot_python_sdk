@@ -133,15 +133,55 @@ def test_custom_display_stop_failure_does_not_prevent_transport_cleanup():
     robot = WatcheRobot._from_transport(transport)
     robot.expression_runtime.start("standby")
     original = transport.send_command
+    attempts = []
 
     def reject_stop(message_type, data, timeout=None):
         if message_type == "ctrl.expression.runtime.stop":
+            attempts.append(message_type)
             raise WatcheRobotError("stop rejected")
         return original(message_type, data, timeout)
 
     transport.send_command = reject_stop
     robot.close()
+    assert len(attempts) == 2
     assert transport.closed
+
+
+def test_custom_display_close_retries_a_transient_stop_failure():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    original = transport.send_command
+    attempts = []
+
+    def fail_once(message_type, data, timeout=None):
+        if message_type == "ctrl.expression.runtime.stop":
+            attempts.append(message_type)
+            if len(attempts) == 1:
+                raise WatcheRobotError("temporary failure")
+        return original(message_type, data, timeout)
+
+    transport.send_command = fail_once
+    robot.close()
+
+    assert len(attempts) == 2
+    assert transport.closed
+
+
+@pytest.mark.parametrize("play", ["behavior", "animation"])
+def test_builtin_play_clears_local_custom_display_ownership(play):
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+
+    if play == "behavior":
+        robot.behavior.play("greeting")
+    else:
+        robot.animation.play("smile")
+
+    robot.close()
+
+    assert not any(name == "ctrl.expression.runtime.stop" for name, _ in transport.commands)
 
 
 def test_custom_display_failed_stop_can_be_retried_by_close():

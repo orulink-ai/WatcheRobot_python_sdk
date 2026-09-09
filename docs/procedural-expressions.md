@@ -18,8 +18,9 @@ independent mode flag. On matching display-ownership firmware:
   restarting its sounds or motions. The ACK confirms the request, not that the
   restored SD animation has already rendered successfully.
 - Explicit built-in behavior/animation play also relinquishes custom ownership.
-  Normal `ApplicationContext` / robot cleanup attempts `stop()` before closing
-  its transport. Firmware session teardown releases custom resources too.
+  Normal `ApplicationContext` / robot cleanup attempts `stop()` twice before
+  closing its transport. Firmware session teardown releases custom resources
+  too if both attempts fail.
 
 ```python
 # Within an existing ApplicationContext; all control still goes through Daemon.

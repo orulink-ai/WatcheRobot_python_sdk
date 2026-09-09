@@ -55,7 +55,9 @@ class BehaviorDomain(_Domain):
     def play(self, behavior_id: str, *, repeat: int = 1) -> Job:
         if not behavior_id or repeat <= 0:
             raise ValueError("behavior_id and a positive repeat are required")
-        return self._robot._start_job("ctrl.behavior.play", {"behavior_id": behavior_id, "repeat": repeat})
+        job = self._robot._start_job("ctrl.behavior.play", {"behavior_id": behavior_id, "repeat": repeat})
+        self._robot.expression_runtime._mark_display_released()
+        return job
 
     def stop(self) -> None:
         self._robot._command("ctrl.behavior.stop", {})
@@ -71,7 +73,9 @@ class AnimationDomain(_Domain):
     def play(self, animation_id: str) -> Job:
         if not animation_id:
             raise ValueError("animation_id is required")
-        return self._robot._start_job("ctrl.animation.play", {"animation_id": animation_id})
+        job = self._robot._start_job("ctrl.animation.play", {"animation_id": animation_id})
+        self._robot.expression_runtime._mark_display_released()
+        return job
 
     def prefetch(self, animation_id: str) -> None:
         """Prepare an installed animation in the device's decoded-frame cache."""
@@ -196,7 +200,18 @@ class ExpressionRuntimeDomain(_Domain):
     def _close(self) -> None:
         with self._lock:
             if self._owns_display:
-                self.stop()
+                try:
+                    self.stop()
+                except Exception:
+                    # A transient command failure should not make the only
+                    # cleanup attempt impossible before the transport closes.
+                    self.stop()
+
+    def _mark_display_released(self) -> None:
+        """Forget local cleanup ownership after firmware takes the display back."""
+
+        with self._lock:
+            self._owns_display = False
 
     @staticmethod
     def _build_payload(
@@ -550,7 +565,8 @@ class ExpressionRuntimeDomain(_Domain):
         """Return the display to the firmware's current built-in state.
 
         Firmware implementing display ownership also releases custom rendering
-        caches. A failed command keeps local ownership so cleanup can retry.
+        caches. Close retries one failed stop before the transport is closed;
+        a persistent failure is finally handled by device-session teardown.
         """
         with self._lock:
             self._robot._require_capability("expression.runtime.v3")
