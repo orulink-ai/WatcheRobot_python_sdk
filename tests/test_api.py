@@ -85,6 +85,87 @@ class FakeOpusDecoder:
         return b""
 
 
+def test_custom_display_is_returned_before_robot_transport_closes():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    original = transport.send_command
+
+    def check_order(message_type, data, timeout=None):
+        assert not transport.closed
+        return original(message_type, data, timeout)
+
+    transport.send_command = check_order
+    robot.expression_runtime.start("standby")
+    robot.close()
+    robot.close()
+    assert [name for name, _ in transport.commands].count("ctrl.expression.runtime.stop") == 1
+    assert transport.closed
+
+
+def test_custom_display_failed_start_does_not_claim_cleanup_ownership():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    original = transport.send_command
+
+    def reject_start(message_type, data, timeout=None):
+        if message_type == "ctrl.expression.runtime.start":
+            raise WatcheRobotError("start rejected")
+        return original(message_type, data, timeout)
+
+    transport.send_command = reject_start
+    with pytest.raises(WatcheRobotError, match="start rejected"):
+        robot.expression_runtime.start("standby")
+    robot.close()
+    assert not any(name == "ctrl.expression.runtime.stop" for name, _ in transport.commands)
+
+
+def test_custom_display_explicit_stop_is_not_repeated_on_close():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    robot.expression_runtime.stop()
+    robot.close()
+    assert [name for name, _ in transport.commands].count("ctrl.expression.runtime.stop") == 1
+
+
+def test_custom_display_stop_failure_does_not_prevent_transport_cleanup():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    original = transport.send_command
+
+    def reject_stop(message_type, data, timeout=None):
+        if message_type == "ctrl.expression.runtime.stop":
+            raise WatcheRobotError("stop rejected")
+        return original(message_type, data, timeout)
+
+    transport.send_command = reject_stop
+    robot.close()
+    assert transport.closed
+
+
+def test_custom_display_failed_stop_can_be_retried_by_close():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    original = transport.send_command
+    attempts = []
+
+    def fail_once(message_type, data, timeout=None):
+        if message_type == "ctrl.expression.runtime.stop":
+            attempts.append(message_type)
+            if len(attempts) == 1:
+                raise WatcheRobotError("temporary failure")
+        return original(message_type, data, timeout)
+
+    transport.send_command = fail_once
+    with pytest.raises(WatcheRobotError, match="temporary failure"):
+        robot.expression_runtime.stop()
+    robot.close()
+    assert len(attempts) == 2
+    assert transport.closed
+
+
 def test_robot_can_refresh_the_device_snapshot_after_reconnection():
     transport = FakeTransport()
     robot = WatcheRobot._from_transport(transport)

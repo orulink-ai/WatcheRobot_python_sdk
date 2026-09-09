@@ -188,6 +188,16 @@ def _expression_color_rgb565(value: str) -> int:
 class ExpressionRuntimeDomain(_Domain):
     """Control the negotiated device-side procedural Watcher expression runtime."""
 
+    def __init__(self, robot: WatcheRobot) -> None:
+        super().__init__(robot)
+        self._lock = threading.RLock()
+        self._owns_display = False
+
+    def _close(self) -> None:
+        with self._lock:
+            if self._owns_display:
+                self.stop()
+
     @staticmethod
     def _build_payload(
         *,
@@ -441,7 +451,12 @@ class ExpressionRuntimeDomain(_Domain):
             transition_ms=transition_ms,
         )
         self._robot._require_capability("expression.runtime.v3")
-        self._robot._command("ctrl.expression.runtime.start", payload)
+        # Claim cleanup ownership only after the firmware acknowledges takeover.
+        with self._lock:
+            if self._robot._closed or self._robot._closing:
+                raise WatcheRobotError("robot is closing or closed")
+            self._robot._command("ctrl.expression.runtime.start", payload)
+            self._owns_display = True
 
     def update(
         self,
@@ -532,8 +547,15 @@ class ExpressionRuntimeDomain(_Domain):
         self._robot._command("ctrl.expression.runtime.update", payload)
 
     def stop(self) -> None:
-        self._robot._require_capability("expression.runtime.v3")
-        self._robot._command("ctrl.expression.runtime.stop", {})
+        """Return the display to the firmware's current built-in state.
+
+        Firmware implementing display ownership also releases custom rendering
+        caches. A failed command keeps local ownership so cleanup can retry.
+        """
+        with self._lock:
+            self._robot._require_capability("expression.runtime.v3")
+            self._robot._command("ctrl.expression.runtime.stop", {})
+            self._owns_display = False
 
 
 class ExpressionDomain(_Domain):
@@ -916,6 +938,10 @@ class WatcheRobot:
                 return
             self._closing = True
             microphone = self._microphone
+        try:
+            self.expression_runtime._close()
+        except Exception:
+            _LOGGER.warning("Custom display cleanup failed while closing robot", exc_info=True)
         try:
             self.vision._close()
         except Exception:

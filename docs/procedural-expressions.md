@@ -4,6 +4,46 @@
 `expression.runtime.v3` capability. The Application sends compact parameters;
 the ESP32 generates RGB565 frames locally and keeps the Daemon content-agnostic.
 
+## Display ownership and returning to built-in expressions
+
+Use the existing `start()` / `stop()` pair as the display switch, not a second
+independent mode flag. On matching display-ownership firmware:
+
+- `start()` acknowledges successful takeover after rendering the first custom
+  frame. Automatic idle expressions and incidental media-completion UI updates
+  cannot replace it. Device connection, audio and motion state continue running.
+- `update()` changes the owned custom UI. It does not start a second renderer.
+- `stop()` relinquishes ownership, frees custom canvas/projection caches and
+  queues a visual refresh of the **current** built-in behavior state, without
+  restarting its sounds or motions. The ACK confirms the request, not that the
+  restored SD animation has already rendered successfully.
+- Explicit built-in behavior/animation play also relinquishes custom ownership.
+  Normal `ApplicationContext` / robot cleanup attempts `stop()` before closing
+  its transport. Firmware session teardown releases custom resources too.
+
+```python
+# Within an existing ApplicationContext; all control still goes through Daemon.
+await asyncio.to_thread(app.robot.expression_runtime.start, "standby")
+try:
+    await asyncio.to_thread(app.robot.expression_runtime.update, gaze_x=0.5)
+    await asyncio.sleep(2)
+finally:
+    await asyncio.to_thread(app.robot.expression_runtime.stop)
+```
+
+The custom renderer frees the unused built-in frame pool only after a successful
+first frame. The built-in player reallocates it lazily when needed. Custom
+canvas allocation is PSRAM-only; insufficient PSRAM fails the command instead
+of falling back to scarce internal RAM. Shared display/behavior tasks remain.
+This reduces retained caches, but does not guarantee a particular DMA free block
+or make all camera/audio/motion combinations fit in memory.
+
+Older `expression.runtime.v3` firmware still accepts these commands but may not
+implement this ownership/resource policy; update both sides for these guarantees.
+Forced Application process termination cannot run SDK cleanup. If the Daemon
+keeps the device session alive, an explicit `stop()` or device-session teardown
+is still required; no business-frame routing bypass is added to the Daemon.
+
 ```python
 await asyncio.to_thread(
     app.robot.expression_runtime.start,
