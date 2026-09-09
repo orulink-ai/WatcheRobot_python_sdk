@@ -5,7 +5,19 @@ import {
   evaluateResourceLifecycle,
   selectLifecycleBaseline,
   selectLatestReleaseSnapshot,
+  selectFeatureResourceSnapshots,
 } from "../../examples/sdk_media_lab/web/resource-health.mjs";
+
+test("feature table keeps start, failure and completion edges, excluding polling", () => {
+  const stages = ["baseline", "before:ctrl.camera.capture:0", "after:ctrl.camera.capture:-3",
+    "periodic", "completed:camera:-3", "rtc_running", "released:idle_tts:0", "rtc_release_3000ms"];
+  const history = stages.map(stage => ({ stage }));
+  assert.deepEqual(selectFeatureResourceSnapshots(history).map(row => row.stage),
+    ["rtc_release_3000ms", "released:idle_tts:0", "completed:camera:-3", "after:ctrl.camera.capture:-3", "before:ctrl.camera.capture:0", "baseline"]);
+  assert.deepEqual(history.map(row => row.stage), stages);
+  assert.equal(selectFeatureResourceSnapshots(history, 2).length, 2);
+  assert.deepEqual(selectFeatureResourceSnapshots(undefined), []);
+});
 
 const baseline = {
   stage: "baseline",

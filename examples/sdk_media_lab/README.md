@@ -12,6 +12,35 @@ contained inside this directory; generated photos and recordings stay under
 the ignored `artifacts/` directory and are never included in a published
 source snapshot.
 
+The tested 2026-09-09 SDK/ESP32 pairing, concurrent video/audio results, and
+remaining limits are fixed in the [Himax media stage record](../../docs/himax-media-stage-20260909.md).
+
+## Face tracking test
+
+The Edge Vision panel queries `robot.vision.status()` and exposes
+`robot.face_tracking.start()` / `stop(policy="hold")`. Tracking runs on the device
+without uploading a preview. Start reserves both camera and motion until stop is
+confirmed; stop timeouts keep those resources reserved and allow retry. Application
+shutdown stops owned tracking, and a disconnected tracking session is stopped on
+reconnection instead of automatically resumed. Closing only the browser tab does
+not exit the Application: use Stop Face Tracking to end an intentionally headless run.
+
+The panel requires `face_tracking.control.v1`. Preview-only PTL firmware reports
+inference unavailable, so Start is disabled with an explicit explanation; vision
+status remains queryable. Unified firmware can advertise inference support;
+the panel follows the actual device capability. A button or an existing SDK API
+does not add inference to preview-only firmware.
+The SDK also provides `robot.face_tracking.open_preview()` for optional diagnostic
+frames, but this panel currently tests headless start/stop, not diagnostic images.
+See [the SDK lifecycle contract](../../docs/face-tracking-lifecycle.md) and
+[preview API](../../docs/face-tracking-preview.md).
+
+Historical validation on preview-only firmware, 2026-09-08: 81 Test Bench Python tests, 30 SDK vision/tracking tests,
+and 86 JavaScript tests passed. A real browser queried the connected PTL device
+through its Application channel and displayed `inference=false`; unsupported
+tracking controls were disabled. Physical face-following motion remains untested
+on this PTL firmware. English and Chinese panel text were verified in the browser.
+
 Start the Runtime, then run:
 
 ```powershell
@@ -99,3 +128,49 @@ samples across repeated start/stop cycles are reported as a fragmentation trend.
 The live-video panel also shows source/target/sent FPS, transport latency,
 browser congestion, and animation FPS/underrun/late-frame pressure so a smooth
 idle animation cannot hide contention that appears only under AV load.
+
+## PTL preview candidate validation (2026-09-08 historical baseline)
+
+Pure video now uses the device's existing LAN MJPEG socket and Application
+session/control APIs without creating a browser WebRTC peer. Audio and AV
+sessions retain their WebRTC peer. This requires the paired ESP32 candidate
+that starts video from JPEG-client readiness. The Daemon routing is unchanged.
+That historical candidate did not implement model enumeration or inference mode
+switching. The current paired firmware and SDK add both (see the generic model
+section below); official SSCMA model-maintenance compatibility is still separate.
+
+The page marks video LIVE only after a JPEG has decoded and drawn. Inspect the
+`data-display-audit` attribute on `#liveVideoCanvas` for cumulative unique forward-sequence
+Canvas draws, duration, new-frame FPS, P95/max content-update gap, idle tail, duplicate and
+sequence errors, dimensions, and a bounded-storage truncation flag. The final
+snapshot is retained on stop and reset for a new session. Duplicate/backward
+frames are counted as anomalies but excluded from the new-frame rate; this is
+not the total number of Canvas draw calls. This is browser draw
+evidence, not sensor-to-browser CRC verification or physical monitor scanout.
+A short snapshot above 15 FPS is not a ten-minute acceptance result.
+
+For the 2026-09-08 hardware investigation, failure records and the complete
+remaining integration checklist are maintained in the embedded repository's
+`docs/himax-unified-hil-2026-09-08.md`. The candidate remains experimental;
+legacy clients that require a video-only WebRTC offer need compatibility
+validation before product rollout.
+
+
+### 功能切换资源诊断
+
+资源面板的 Recent Feature Resource Table 展示最近的功能启动前、启动后、完成和释放快照，
+包括内部 RAM、最大连续块、DMA 最大块，以及 TTS/SFX 常驻任务栈字节数。
+`tts_playback=false` 只代表当前没有播放；应结合 `tts_runtime` 和 `tts_stack_bytes`
+判断工作任务是否已经释放。音频编解码器常驻状态由 `codec_resident` 单独表示；
+DMA 剩余量和最大连续块见内存列，不能由一个常驻布尔值推算。
+配套固件也在这些功能边界输出串口 `resource_table`，周期采样不重复打印表格。
+
+Boot Minimum Internal RAM 是本次设备启动以来的低水位，不会在停止视频时复原。
+判断回收应比较当前剩余量和最大连续块，不能把启动以来的最低值当作当前剩余量。
+表格仅展示内存历史窗口中最近的功能边界；完整排障记录应同时保存设备串口日志。
+
+### 通用端侧模型调用
+
+On-device Model Test 使用 `vision.models()` 和 `vision.start_inference()`，支持读取原厂
+1～3 号及人脸 4 号目录、无预览推理、最新结果读取和显式停止。相机占用期间禁止启动
+冲突功能；停止未确认时保留占用。详见 [模型推理合同](../../docs/vision-model-inference.md)。

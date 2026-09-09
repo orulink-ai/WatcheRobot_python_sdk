@@ -1,4 +1,10 @@
 import { evaluateRtcAudioHealth } from "./rtc-audio-health.mjs";
+import { createDisplayAudit } from "./display-audit.mjs";
+import { createMjpegTransport } from "./mjpeg-transport.mjs";
+let displayAudit = createDisplayAudit();
+let displayAuditPublishedAt = 0;
+let faceRequestPending = false;
+let inferenceRequestPending = false;
 import { evaluateAnimationConfirmation } from "./animation-confirmation.mjs";
 import {
   clampAnimationIntervalMs,
@@ -15,12 +21,14 @@ import {
   evaluateResourceLifecycle,
   selectLifecycleBaseline,
   selectLatestReleaseSnapshot,
+  selectFeatureResourceSnapshots,
 } from "./resource-health.mjs";
 import {
   controlAvailability,
   isCurrentRtcGeneration,
   resolveRtcMode,
   rtcModeHasAudio,
+  rtcTransportPlan,
   rtcModeHasVideo,
 } from "./media-resource-policy.mjs";
 import {
@@ -77,7 +85,7 @@ const state = {
     mode: null,
     peer: null,
     channel: null,
-    videoSocket: null,
+    videoTransport: null,
     localStream: null,
     diagnosticAudio: null,
     remoteStream: null,
@@ -185,6 +193,19 @@ const elements = {
   playAudioButton: document.querySelector("#playAudioButton"),
   stopAudioButton: document.querySelector("#stopAudioButton"),
   capturePhotoButton: document.querySelector("#capturePhotoButton"),
+  queryVisionButton: document.querySelector("#queryVisionButton"),
+  startFaceTrackingButton: document.querySelector("#startFaceTrackingButton"),
+  stopFaceTrackingButton: document.querySelector("#stopFaceTrackingButton"),
+  queryModelsButton: document.querySelector("#queryModelsButton"),
+  inferenceModel: document.querySelector("#inferenceModel"),
+  startInferenceButton: document.querySelector("#startInferenceButton"),
+  queryInferenceButton: document.querySelector("#queryInferenceButton"),
+  stopInferenceButton: document.querySelector("#stopInferenceButton"),
+  inferenceState: document.querySelector("#inferenceState"),
+  inferenceResult: document.querySelector("#inferenceResult"),
+  faceTrackingCapability: document.querySelector("#faceTrackingCapability"),
+  faceTrackingResult: document.querySelector("#faceTrackingResult"),
+  faceVisionStatus: document.querySelector("#faceVisionStatus"),
   liveVideoPanel: document.querySelector("#liveVideoPanel"),
   liveVideoCapability: document.querySelector("#liveVideoCapability"),
   startLiveVideoButton: document.querySelector("#startLiveVideoButton"),
@@ -229,6 +250,7 @@ const elements = {
   resourcePsramLargest: document.querySelector("#resourcePsramLargest"),
   resourceMinimum: document.querySelector("#resourceMinimum"),
   resourceOwners: document.querySelector("#resourceOwners"),
+  resourceTransitions: document.querySelector("#resourceTransitions"),
   resourceDelta: document.querySelector("#resourceDelta"),
   resourceRelease: document.querySelector("#resourceRelease"),
   rtcRemoteAudio: document.querySelector("#rtcRemoteAudio"),
@@ -416,6 +438,10 @@ function updateResourceMonitor(status) {
     rtc: "RTC",
     media_system: "Media System",
     tts_playback: "Speaker",
+    tts_runtime: "TTS worker resident",
+    sfx_playback: "Local sound",
+    sfx_runtime: "SFX worker resident",
+    codec_resident: "Codec / DMA resident",
     microphone_runtime: "Microphone",
     voice_runtime: "Voice Task",
     face_tracking_preview: "Face Preview",
@@ -427,6 +453,21 @@ function updateResourceMonitor(status) {
     .filter(([name, active]) => name !== "voice_state" && active === true)
     .map(([name]) => resourceLabels[name] || name);
   elements.resourceOwners.textContent = owners.length > 0 ? owners.join(" / ") : "No Active Media Resources";
+  elements.resourceTransitions.replaceChildren(...selectFeatureResourceSnapshots(status.resources?.history).map(row => {
+    const tr = document.createElement("tr");
+    const values = [row.stage,
+      formatBytes(row.memory?.internal?.free_bytes),
+      formatBytes(row.memory?.internal?.largest_free_block_bytes),
+      formatBytes(row.memory?.dma?.largest_free_block_bytes),
+      formatBytes(row.resources?.tts_stack_bytes),
+      formatBytes(row.resources?.sfx_stack_bytes)];
+    for (const value of values) {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.append(td);
+    }
+    return tr;
+  }));
   elements.resourceDelta.textContent = lifecycleBaseline
     ? `Against ${hasRtcBaseline ? "RTC pre-start" : "Connection Baseline"}: internal ${formatSignedBytes(health.deltas.internalFreeBytes)} / ${formatSignedBytes(health.deltas.internalLargestBytes)} · DMA ${formatSignedBytes(health.deltas.dmaLargestBytes)} · PSRAM ${formatSignedBytes(health.deltas.psramLargestBytes)}${health.trend?.monotonicDecline ? " · declined after 4 consecutive releases" : ""}`
     : "Waiting for Resource Baseline";
@@ -578,6 +619,24 @@ function renderStatus(status) {
   elements.playAudioButton.disabled = !availability.speaker || !hasCapability("audio.stream");
   elements.stopAudioButton.disabled = !status.connected || !hasCapability("audio.stream");
   elements.capturePhotoButton.disabled = !availability.camera || !hasCapability("camera.capture");
+  const inferenceState = status.inference?.state || "idle";
+  const inferenceSupported = status.connected && hasCapability("vision.inference.v1");
+  elements.queryModelsButton.disabled = inferenceRequestPending || !status.connected || !hasCapability("vision.models.v1");
+  elements.startInferenceButton.disabled = inferenceRequestPending || !inferenceSupported || !availability.camera
+    || inferenceState !== "idle" || !elements.inferenceModel.value;
+  elements.queryInferenceButton.disabled = inferenceRequestPending || !inferenceSupported || inferenceState !== "running";
+  elements.stopInferenceButton.disabled = inferenceRequestPending || !status.connected || inferenceState === "idle";
+  const faceState = status.face_tracking?.state || "idle";
+  const faceSupported = hasCapability("face_tracking.control.v1");
+  elements.faceTrackingCapability.textContent = !status.connected ? "Device Offline"
+    : !faceSupported ? "Current firmware does not support face tracking"
+      : faceState === "running" ? "Face tracking is running"
+        : faceState === "stop_required" ? "Tracking stop is unconfirmed; retry stop"
+          : "Face tracking is available";
+  elements.queryVisionButton.disabled = faceRequestPending || !status.connected || !hasCapability("vision.status.v1");
+  elements.startFaceTrackingButton.disabled = faceRequestPending || !status.connected || !faceSupported
+    || faceState !== "idle" || !availability.camera || !availability.motion;
+  elements.stopFaceTrackingButton.disabled = faceRequestPending || !status.connected || faceState === "idle";
   elements.recordMicrophoneButton.disabled = !availability.microphone || !hasCapability("microphone");
   elements.applyMotionButton.disabled = !availability.motion;
   elements.stopMotionButton.disabled = !status.connected || !hasCapability("motion");
@@ -795,6 +854,9 @@ function drawEmptyWaveform() {
 }
 
 function resetLiveVideoMetrics() {
+  displayAudit = createDisplayAudit();
+  displayAuditPublishedAt = 0;
+  elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(performance.now()));
   Object.assign(state.rtc, {
     eventCursor: 0,
     remoteCandidates: [],
@@ -1316,6 +1378,13 @@ async function startRtcSession(mode) {
       try { await api(`${startPath.slice(0, -5)}stop`, { method: "POST" }); } catch (_) {}
       return;
     }
+    const transport = rtcTransportPlan(mode);
+    if (!transport.peer) {
+      createMjpegVideoTransport(null, generation);
+      startRtcControlLoops(generation);
+      await refreshStatus();
+      return;
+    }
     const peer = new RTCPeerConnection({ iceServers: [] });
     state.rtc.peer = peer;
     if (wantsAudio && localStream) {
@@ -1406,36 +1475,16 @@ function setLiveVideoState(value, message = null) {
 }
 
 function createMjpegVideoTransport(peer, generation) {
-  const controlChannel = peer.createDataChannel("rtc-control", { ordered: true });
-  state.rtc.channel = controlChannel;
+  state.rtc.channel = peer ? peer.createDataChannel("rtc-control", { ordered: true }) : null;
   const url = state.status?.connection?.mjpeg_websocket_url;
   if (!url) throw new Error("Device did not provide a direct live-video URL");
-  const socket = new WebSocket(url);
-  state.rtc.videoSocket = socket;
-  socket.binaryType = "arraybuffer";
-  socket.addEventListener("open", () => {
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.videoSocket !== socket) return;
-    socket.send("ready");
-    setLiveVideoState("connected");
-    setResult(
-      elements.liveVideoResult,
-      rtcModeHasAudio(state.rtc.mode) ? "Audio/video channel connected" : "Live-video channel connected",
-      "ok",
-    );
-  });
-  socket.addEventListener("message", (event) => {
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.videoSocket !== socket) return;
-    enqueueMjpegPacket(event.data, generation);
-  });
-  socket.addEventListener("close", () => {
-    if (
-      isCurrentRtcGeneration(state.rtc.generation, generation)
-      && state.rtc.videoSocket === socket
-      && state.rtc.peer === peer
-      && !state.rtc.teardownInProgress
-    ) {
-      failRtcSession("Live-video channel closed");
-    }
+  state.rtc.videoTransport = createMjpegTransport({
+    url,
+    isActive: () => isCurrentRtcGeneration(state.rtc.generation, generation)
+      && state.rtc.peer === peer && !state.rtc.teardownInProgress,
+    onPacket: (packet, displayed, current) => enqueueMjpegPacket(packet, generation, { displayed, current }),
+    onConnecting: () => setLiveVideoState("connecting", "Video connection interrupted; reconnecting"),
+    onFailure: message => failRtcSession(message),
   });
 }
 
@@ -1450,7 +1499,7 @@ async function startRtcAudio() {
 function startRtcControlLoops(generation) {
   pollRtcEvents(generation);
   state.rtc.heartbeatTimer = window.setInterval(async () => {
-    if (!state.rtc.peer || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!state.rtc.mode || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
     const browserSendUs = Math.round((performance.timeOrigin + performance.now()) * 1000);
     try {
       await api(rtcEndpoint("clock-ping"), {
@@ -1458,14 +1507,14 @@ function startRtcControlLoops(generation) {
         body: JSON.stringify({ browser_send_us: browserSendUs }),
       });
     } catch (error) {
-      if (state.rtc.peer && isCurrentRtcGeneration(state.rtc.generation, generation)) {
+      if (state.rtc.mode && isCurrentRtcGeneration(state.rtc.generation, generation)) {
         failRtcSession(error.message);
       }
     }
   }, 1500);
   state.rtc.feedbackTimer = window.setInterval(async () => {
     const peer = state.rtc.peer;
-    if (!peer || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!state.rtc.mode || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
     const fps = currentDisplayFps();
     const frameAgeMs = state.rtc.lastFrameAt > 0
       ? Math.max(0, performance.now() - state.rtc.lastFrameAt)
@@ -1557,17 +1606,17 @@ async function collectRtcAudioStats(peer, generation) {
 }
 
 async function pollRtcEvents(generation) {
-  if (!state.rtc.peer || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+  if (!state.rtc.mode || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
   try {
     const payload = await api(`${rtcEndpoint("events")}?after=${state.rtc.eventCursor}`);
-    if (!state.rtc.peer || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!state.rtc.mode || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
     for (const event of payload.events || []) {
       state.rtc.eventCursor = Math.max(state.rtc.eventCursor, event.id || 0);
       await handleRtcEvent(event.message || {}, generation);
-      if (!state.rtc.peer || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+      if (!state.rtc.mode || !isCurrentRtcGeneration(state.rtc.generation, generation)) return;
     }
   } catch (error) {
-    if (state.rtc.peer && isCurrentRtcGeneration(state.rtc.generation, generation)) {
+    if (state.rtc.mode && isCurrentRtcGeneration(state.rtc.generation, generation)) {
       await failRtcSession(error.message);
     }
     return;
@@ -1589,9 +1638,10 @@ async function handleRtcEvent(message, generation) {
     return;
   }
   if (message.type === "evt.rtc.state") {
-    setRtcSessionState(data.state || "connecting");
+    setRtcSessionState(data.state === "connected" && rtcModeHasVideo(state.rtc.mode) && !state.rtc.lastFrameAt
+      ? "connecting" : data.state || "connecting");
     if (data.state === "failed") await failRtcSession(localizeError(data.reason || "Device RTC session failed"));
-    if (data.state === "stopped" && state.rtc.peer) cleanupRtcSession();
+    if (data.state === "stopped" && state.rtc.mode) cleanupRtcSession();
     return;
   }
   if (message.type === "evt.rtc.capabilities") {
@@ -1685,7 +1735,12 @@ async function failRtcSession(message) {
 }
 
 function cleanupRtcSession() {
+  if (rtcModeHasVideo(state.rtc.mode)) {
+    elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(performance.now()));
+  }
   state.rtc.generation += 1;
+  state.rtc.videoTransport?.stop();
+  state.rtc.videoTransport = null;
   state.localResources.delete("media");
   window.clearTimeout(state.rtc.pollTimer);
   window.clearInterval(state.rtc.heartbeatTimer);
@@ -1694,13 +1749,11 @@ function cleanupRtcSession() {
   state.rtc.heartbeatTimer = null;
   state.rtc.feedbackTimer = null;
   const channel = state.rtc.channel;
-  const videoSocket = state.rtc.videoSocket;
   const peer = state.rtc.peer;
   const localStream = state.rtc.localStream;
   const diagnosticAudio = state.rtc.diagnosticAudio;
   const mode = state.rtc.mode;
   state.rtc.channel = null;
-  state.rtc.videoSocket = null;
   state.rtc.peer = null;
   state.rtc.localStream = null;
   state.rtc.diagnosticAudio = null;
@@ -1718,9 +1771,6 @@ function cleanupRtcSession() {
   if (channel) {
     channel.onclose = null;
     try { channel.close(); } catch (_) {}
-  }
-  if (videoSocket) {
-    try { videoSocket.close(); } catch (_) {}
   }
   if (peer) {
     peer.onconnectionstatechange = null;
@@ -1751,14 +1801,15 @@ function cleanupRtcSession() {
   state.rtc.mode = null;
 }
 
-async function enqueueMjpegPacket(value, generation) {
+async function enqueueMjpegPacket(value, generation, transport = null) {
   let admission = { ownsDecoder: false, replacedPending: false };
   try {
     const packet = value instanceof ArrayBuffer ? value : await value.arrayBuffer();
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || (transport && !transport.current())) return;
     const completePacket = acceptMjpegTransportPacket(state.rtc.mjpegChunkReassembler, packet);
     if (!completePacket) return;
     const frame = parseWjpgPacket(completePacket);
+    frame.transport = transport;
     state.rtc.receivedFrames += 1;
     if (state.rtc.lastSequence !== null) {
       const expected = (state.rtc.lastSequence + 1) >>> 0;
@@ -1814,7 +1865,8 @@ function parseWjpgPacket(packet) {
 async function drawMjpegFrame(frame, generation) {
   const bitmap = await createImageBitmap(new Blob([frame.jpeg], { type: "image/jpeg" }));
   try {
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!isCurrentRtcGeneration(state.rtc.generation, generation)
+      || (frame.transport && !frame.transport.current())) return;
     const canvas = elements.liveVideoCanvas;
     if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
       canvas.width = bitmap.width;
@@ -1826,7 +1878,16 @@ async function drawMjpegFrame(frame, generation) {
     bitmap.close();
   }
   const now = performance.now();
+  frame.transport?.displayed();
+  if (state.rtc.displayedFrames === 0 || elements.liveVideoStage.dataset.state !== "live") {
+    setResult(elements.liveVideoResult, "Live camera frames received", "ok");
+  }
   state.rtc.lastFrameAt = now;
+  displayAudit.record(frame.sequence, now, elements.liveVideoCanvas.width, elements.liveVideoCanvas.height);
+  if (now - displayAuditPublishedAt >= 1000) {
+    elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(now));
+    displayAuditPublishedAt = now;
+  }
   state.rtc.displayedFrames += 1;
   state.rtc.frameTimes.push(now);
   state.rtc.frameTimes = state.rtc.frameTimes.filter((time) => now - time <= 1000);
@@ -1941,6 +2002,63 @@ elements.stopAudioButton.addEventListener("click", () => {
   }).catch(() => {});
 });
 elements.capturePhotoButton.addEventListener("click", () => { capturePhoto().catch(() => {}); });
+
+async function inferenceAction(action) {
+  if (inferenceRequestPending) return;
+  inferenceRequestPending = true;
+  if (state.status) renderStatus(state.status);
+  try {
+    const isRead = action === "models" || action === "result";
+    const path = action === "models" ? "/api/vision/models" : `/api/vision/inference/${action}`;
+    const response = await api(path, {method: isRead ? "GET" : "POST",
+      ...(action === "start" ? {body: JSON.stringify({model_id: Number(elements.inferenceModel.value)})} : {})});
+    if (action === "models") {
+      elements.inferenceModel.replaceChildren();
+      for (const model of response.models) {
+        const option = document.createElement("option");
+        option.value = String(model.model_id);
+        option.textContent = `${model.model_id} · ${model.name}${model.verified ? "" : " (unverified)"}`;
+        option.disabled = !model.verified;
+        elements.inferenceModel.append(option);
+      }
+      elements.inferenceModel.value = String(response.models.find(model => model.verified)?.model_id || "");
+    }
+    elements.inferenceResult.textContent = JSON.stringify(response, null, 2);
+    setResult(elements.inferenceState, action === "start" ? "Inference is running" : action === "stop"
+      ? "Inference stopped" : action === "result" && !response.ready ? "Model is warming up; read again shortly" : "Vision data updated", "ok");
+  } catch (error) {
+    setResult(elements.inferenceState, error.message, "error");
+  } finally {
+    inferenceRequestPending = false;
+    await refreshStatus();
+  }
+}
+elements.queryModelsButton.addEventListener("click", () => { inferenceAction("models").catch(() => {}); });
+elements.startInferenceButton.addEventListener("click", () => { inferenceAction("start").catch(() => {}); });
+elements.queryInferenceButton.addEventListener("click", () => { inferenceAction("result").catch(() => {}); });
+elements.stopInferenceButton.addEventListener("click", () => { inferenceAction("stop").catch(() => {}); });
+elements.inferenceModel.addEventListener("change", () => { if (state.status) renderStatus(state.status); });
+
+async function faceTrackingAction(action) {
+  if (faceRequestPending) return;
+  faceRequestPending = true;
+  if (state.status) renderStatus(state.status);
+  try {
+    const result = await api(action === "status" ? "/api/vision/status" : `/api/face-tracking/${action}`,
+      { method: action === "status" ? "GET" : "POST" });
+    if (action === "status") elements.faceVisionStatus.textContent = JSON.stringify(result, null, 2);
+    setResult(elements.faceTrackingResult, action === "status" ? "Vision status updated"
+      : action === "start" ? "Face tracking is running" : "Face tracking stopped; position held", "ok");
+  } catch (error) {
+    setResult(elements.faceTrackingResult, error.message, "error");
+  } finally {
+    faceRequestPending = false;
+    await refreshStatus();
+  }
+}
+elements.queryVisionButton.addEventListener("click", () => { faceTrackingAction("status").catch(() => {}); });
+elements.startFaceTrackingButton.addEventListener("click", () => { faceTrackingAction("start").catch(() => {}); });
+elements.stopFaceTrackingButton.addEventListener("click", () => { faceTrackingAction("stop").catch(() => {}); });
 elements.startLiveVideoButton.addEventListener("click", () => { startLiveVideo(); });
 elements.stopLiveVideoButton.addEventListener("click", () => { stopRtcSession(); });
 elements.startRtcAudioButton.addEventListener("click", () => { startRtcAudio(); });
@@ -1956,7 +2074,8 @@ document.querySelector("#clearVisualLog").addEventListener("click", () => {
 
 setInterval(() => {
   elements.footerClock.textContent = new Date().toLocaleTimeString([], { hour12: false });
-  if (state.rtc.lastFrameAt > 0 && state.rtc.peer) {
+  if (state.rtc.lastFrameAt > 0 && state.rtc.mode) {
+    elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(performance.now()));
     const age = Math.max(0, Math.round(performance.now() - state.rtc.lastFrameAt));
     elements.liveVideoFrameAge.textContent = `${age} MS AGO`;
     elements.liveVideoFps.textContent = `${currentDisplayFps().toFixed(1)} FPS`;

@@ -16,6 +16,120 @@ ROOT = Path(__file__).parents[1]
 LAB_ROOT = ROOT / "examples" / "sdk_media_lab"
 
 
+class FakeFaceTracking:
+    def __init__(self):
+        self.starts = 0
+        self.stops = 0
+        self.fail_stop = False
+        self.fail_start = False
+        self.start_timeout = None
+
+    def start(self, **kwargs):
+        self.starts += 1
+        self.start_timeout = kwargs.get("timeout")
+        if self.fail_start:
+            raise TimeoutError("start unconfirmed")
+
+    def stop(self, *, policy, **kwargs):
+        assert policy == "hold"
+        self.stops += 1
+        if self.fail_stop:
+            raise TimeoutError("stop unconfirmed")
+
+
+def test_face_tracking_controls_hold_camera_and_motion_until_stop(tmp_path):
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities += ("face_tracking.control.v1",)
+    robot.face_tracking = FakeFaceTracking()
+    service = _service(module, tmp_path, robot)
+    client = _client_for_service(module, tmp_path, service)
+    assert client.post("/api/face-tracking/start").status_code == 200
+    assert client.post("/api/face-tracking/start").status_code == 200
+    assert robot.face_tracking.starts == 1
+    # A cold device verifies its model catalog before starting the camera.
+    assert robot.face_tracking.start_timeout == 10.0
+    assert service.status()["resource_owners"]["camera"] == "face_tracking"
+    with pytest.raises(module.MediaLabBusyError):
+        service.capture_photo()
+    robot.face_tracking.fail_stop = True
+    with pytest.raises(TimeoutError):
+        service.stop_face_tracking()
+    assert service.status()["face_tracking"]["state"] == "stop_required"
+    assert "motion" in service.status()["resource_owners"]
+    robot.face_tracking.fail_stop = False
+    assert client.post("/api/face-tracking/stop").status_code == 200
+    assert not service.status()["resource_owners"]
+    assert service.status()["face_tracking"]["state"] == "idle"
+
+
+def test_face_tracking_unsupported_never_sends_start(tmp_path):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    client = _client_for_service(module, tmp_path, service)
+    assert client.post("/api/face-tracking/start").status_code == 409
+    assert not service.status()["resource_owners"]
+
+
+def test_face_tracking_failed_start_is_stopped_before_releasing_resources(tmp_path):
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities += ("face_tracking.control.v1",)
+    robot.face_tracking = FakeFaceTracking()
+    robot.face_tracking.fail_start = True
+    service = _service(module, tmp_path, robot)
+    with pytest.raises(TimeoutError):
+        service.start_face_tracking()
+    assert robot.face_tracking.stops == 1
+    assert not service.status()["resource_owners"]
+
+
+def test_face_tracking_application_shutdown_stops_owned_tracking(tmp_path):
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities += ("face_tracking.control.v1",)
+    robot.face_tracking = FakeFaceTracking()
+    service = _service(module, tmp_path, robot)
+    with _client_for_service(module, tmp_path, service) as client:
+        assert client.post("/api/face-tracking/start").status_code == 200
+    assert robot.face_tracking.stops == 1
+    assert not service.status()["resource_owners"]
+
+
+def test_face_tracking_uncertain_start_and_stop_keep_resource_ownership(tmp_path):
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities += ("face_tracking.control.v1",)
+    robot.face_tracking = FakeFaceTracking()
+    robot.face_tracking.fail_start = robot.face_tracking.fail_stop = True
+    service = _service(module, tmp_path, robot)
+    with pytest.raises(TimeoutError):
+        service.start_face_tracking()
+    assert service.status()["face_tracking"]["state"] == "stop_required"
+    with pytest.raises(module.MediaLabBusyError):
+        service.start_face_tracking()
+    assert set(service.status()["resource_owners"]) == {"camera", "motion"}
+    robot.face_tracking.fail_stop = False
+    service.stop_face_tracking()
+
+
+def test_face_tracking_disconnect_requires_stop_on_reconnection(tmp_path):
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities += ("face_tracking.control.v1",)
+    robot.face_tracking = FakeFaceTracking()
+    service = _service(module, tmp_path, robot)
+    service.start_face_tracking()
+    service._device_status_provider = lambda: {"online": False}
+    service.maintain()
+    assert service.status()["face_tracking"]["state"] == "stop_required"
+    service._device_status_provider = lambda: {"online": True}
+    service.maintain()
+    assert robot.face_tracking.stops == 1
+    assert robot.face_tracking.starts == 1
+    assert not service.status()["resource_owners"]
+
+
 def _load_service_module() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "watcherobot_sdk_media_lab_service",
@@ -1517,8 +1631,7 @@ def test_local_ui_uses_english_source_copy_without_chinese_hardcoding() -> None:
         "Streaming PCM sample",
         "rtc-control",
         "mjpeg_websocket_url",
-        "new WebSocket(url)",
-        'socket.send("ready")',
+        "createMjpegTransport",
         "parseWjpgPacket",
         'api("/api/video/session/start"',
         "navigator.mediaDevices.getUserMedia",
@@ -1581,3 +1694,31 @@ def test_media_lab_csp_allows_direct_device_websocket(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert "connect-src 'self' ws:" in response.headers["content-security-policy"]
+
+
+def test_generic_inference_owns_only_camera_and_retries_stop(tmp_path):
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities += ("vision.models.v1", "vision.inference.v1")
+    class Session:
+        id = 123
+        model_id = 2
+        fail_stop = True
+        def latest(self, **kwargs): return None
+        def close(self, **kwargs):
+            if self.fail_stop: raise TimeoutError("stop unconfirmed")
+    session = Session()
+    robot.vision = SimpleNamespace(start_inference=lambda model, **kw: session,
+                                  stop_inference=lambda **kw: session.close())
+    service = _service(module, tmp_path, robot)
+    client = _client_for_service(module, tmp_path, service)
+    assert client.post("/api/vision/inference/start", json={"model_id": 2}).status_code == 200
+    assert service.status()["resource_owners"] == {"camera": "vision_inference"}
+    assert client.get("/api/vision/inference/result").json() == {"ready": False}
+    with pytest.raises(TimeoutError): service.stop_inference()
+    assert service.status()["inference"]["state"] == "stop_required"
+    assert "camera" in service.status()["resource_owners"]
+    session.fail_stop = False
+    service.stop_inference()
+    assert service.status()["inference"]["state"] == "idle"
+    assert not service.status()["resource_owners"]

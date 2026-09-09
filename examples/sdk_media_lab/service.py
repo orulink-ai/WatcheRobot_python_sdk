@@ -18,6 +18,7 @@ import wave
 from collections import deque
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
@@ -179,6 +180,10 @@ class PairDeviceRequest(BaseModel):
     device_ip: str | None = None
 
 
+class InferenceStartRequest(BaseModel):
+    model_id: int = Field(ge=1, le=255, strict=True)
+
+
 class RtcSessionStartRequest(BaseModel):
     mode: str = Field(default="video", pattern=r"^(video|audio|av)$")
 
@@ -224,6 +229,10 @@ class MediaLabService:
         device_status_provider: Callable[[], Mapping[str, object]],
         device_pairer: Callable[[str, str | None], Mapping[str, object]],
     ) -> None:
+        self._inference_lock = threading.RLock()
+        self._inference_session = None
+        self._inference_lease = None
+        self._inference_state = "idle"
         self._robot = robot
         self._rtc = rtc
         self._artifacts_dir = Path(artifacts_dir)
@@ -253,12 +262,17 @@ class MediaLabService:
         self._live_video_lock_held = False
         self._rtc_resources_held: tuple[str, ...] = ()
         self._browser_host_ipv4: str | None = None
+        self._face_lock = threading.RLock()
+        self._face_lease: Any = None
+        self._face_state = "idle"
         self._append_event("system", "SDK Test Bench ready", "ok")
 
     def status(self) -> dict[str, object]:
         with self._state_lock:
             active_action = self._active_action
             active_actions = dict(self._active_actions)
+            face_state = self._face_state
+        inference_session = self._inference_session
         artifacts: dict[str, dict[str, object]] = {}
         for filename, content_type in self._ARTIFACT_TYPES.items():
             path = self._artifacts_dir / filename
@@ -288,6 +302,13 @@ class MediaLabService:
                 "history": list(self._robot.resource_history),
             },
             "rtc": rtc,
+            "inference": {"state": self._inference_state,
+                          "session_id": inference_session.id if inference_session else None,
+                          "model_id": inference_session.model_id if inference_session else None},
+            "face_tracking": {
+                "state": face_state,
+                "supported": "face_tracking.control.v1" in self._robot.capabilities,
+            },
             "artifacts": artifacts,
             "events": self.events(),
         }
@@ -308,6 +329,110 @@ class MediaLabService:
             if connection.get("online") is not True or rtc.get("state") == "stopped":
                 self._release_live_video_lock()
         self._refresh_device_snapshot(connection)
+        with self._inference_lock:
+            if self._inference_lease is not None:
+                if connection.get("online") is not True:
+                    self._inference_state = "stop_required"
+                elif self._inference_state == "stop_required":
+                    self.stop_inference()
+        with self._face_lock:
+            if self._face_lease is not None:
+                if connection.get("online") is not True:
+                    self._set_face_state("stop_required")
+                elif self._face_state == "stop_required":
+                    self.stop_face_tracking()
+
+    def vision_models(self) -> dict[str, object]:
+        self._ensure_device_online()
+        self._ensure_capability("vision.models.v1")
+        return {"models": [asdict(model) for model in self._robot.vision.models()]}
+
+    def start_inference(self, model_id: int) -> dict[str, object]:
+        with self._inference_lock:
+            self._ensure_device_online()
+            self._ensure_capability("vision.inference.v1")
+            if self._inference_lease is not None:
+                raise MediaLabBusyError("Stop the current inference session first")
+            lease = self._operation("vision_inference", resources=("camera",))
+            lease.__enter__()
+            self._inference_lease = lease
+            self._inference_state = "starting"
+            try:
+                self._inference_session = self._robot.vision.start_inference(model_id)
+            except Exception:
+                self._inference_state = "stop_required"
+                try:
+                    self.stop_inference()
+                except Exception:
+                    _LOGGER.exception("Inference startup cleanup remains unconfirmed")
+                raise
+            self._inference_state = "running"
+            return {"state": "running", "session_id": self._inference_session.id, "model_id": model_id}
+
+    def inference_result(self) -> dict[str, object]:
+        with self._inference_lock:
+            if self._inference_session is None or self._inference_state != "running":
+                raise MediaLabBusyError("No running inference session")
+            result = self._inference_session.latest(timeout=3.0)
+            return {"ready": False} if result is None else {"ready": True, **asdict(result)}
+
+    def stop_inference(self) -> dict[str, object]:
+        with self._inference_lock:
+            if self._inference_lease is None:
+                return {"state": "idle"}
+            self._inference_state = "stop_required"
+            self._robot.vision.stop_inference()
+            self._inference_lease.__exit__(None, None, None)
+            self._inference_lease = None
+            self._inference_session = None
+            self._inference_state = "idle"
+            return {"state": "idle"}
+
+    def vision_status(self) -> dict[str, object]:
+        self._ensure_device_online()
+        self._ensure_capability("vision.status.v1")
+        return asdict(self._robot.vision.status(timeout=3.0))
+
+    def _set_face_state(self, state: str) -> None:
+        with self._state_lock:
+            self._face_state = state
+
+    def start_face_tracking(self) -> dict[str, object]:
+        with self._face_lock:
+            self._ensure_device_online()
+            self._ensure_capability("face_tracking.control.v1")
+            if self._face_lease is not None:
+                if self._face_state != "running":
+                    raise MediaLabBusyError("Face tracking stop must be confirmed first")
+                return {"state": self._face_state}
+            lease = self._operation("face_tracking", resources=("camera", "motion"))
+            lease.__enter__()
+            self._face_lease = lease
+            self._set_face_state("starting")
+            try:
+                # Cold startup includes validating the four on-device model slots.
+                self._robot.face_tracking.start(timeout=10.0)
+            except Exception:
+                # A timeout does not prove the motors never started.
+                self._set_face_state("stop_required")
+                try:
+                    self.stop_face_tracking()
+                except Exception:
+                    _LOGGER.exception("Face tracking start cleanup remains unconfirmed")
+                raise
+            self._set_face_state("running")
+            return {"state": "running"}
+
+    def stop_face_tracking(self) -> dict[str, object]:
+        with self._face_lock:
+            if self._face_lease is None:
+                return {"state": "idle"}
+            self._set_face_state("stop_required")
+            self._robot.face_tracking.stop(policy="hold", timeout=2.0)
+            self._face_lease.__exit__(None, None, None)
+            self._face_lease = None
+            self._set_face_state("idle")
+            return {"state": "idle"}
 
     def events(self, *, after: int = 0) -> list[dict[str, object]]:
         with self._state_lock:
@@ -829,6 +954,14 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
                 await maintenance_task
             except asyncio.CancelledError:
                 pass
+            try:
+                await asyncio.to_thread(service.stop_inference)
+            except Exception:
+                _LOGGER.exception("Inference shutdown could not be confirmed")
+            try:
+                await asyncio.to_thread(service.stop_face_tracking)
+            except Exception:
+                _LOGGER.exception("Face tracking shutdown could not be confirmed")
 
     app = FastAPI(
         title="WatcheRobot SDK Test Bench",
@@ -958,6 +1091,34 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     @app.post("/api/actions/stop-audio")
     async def stop_audio() -> dict[str, object]:
         return await _run_action(service.stop_audio)
+
+    @app.get("/api/vision/models")
+    async def vision_models() -> dict[str, object]:
+        return await _run_action(service.vision_models)
+
+    @app.post("/api/vision/inference/start")
+    async def start_inference(request: InferenceStartRequest) -> dict[str, object]:
+        return await _run_action(lambda: service.start_inference(request.model_id))
+
+    @app.post("/api/vision/inference/stop")
+    async def stop_inference() -> dict[str, object]:
+        return await _run_action(service.stop_inference)
+
+    @app.get("/api/vision/inference/result")
+    async def inference_result() -> dict[str, object]:
+        return await _run_action(service.inference_result)
+
+    @app.get("/api/vision/status")
+    async def vision_status() -> dict[str, object]:
+        return await _run_action(service.vision_status)
+
+    @app.post("/api/face-tracking/start")
+    async def start_face_tracking() -> dict[str, object]:
+        return await _run_action(service.start_face_tracking)
+
+    @app.post("/api/face-tracking/stop")
+    async def stop_face_tracking() -> dict[str, object]:
+        return await _run_action(service.stop_face_tracking)
 
     @app.post("/api/controls/motion/move")
     async def move_motion(request: MotionMoveRequest) -> dict[str, object]:
