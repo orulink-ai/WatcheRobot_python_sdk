@@ -513,3 +513,10 @@ footer { position: relative; z-index: 11; display: flex; justify-content: space-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+.resource-transition-table { margin-top: 20px; overflow-x: auto; }
+.resource-transition-table summary { cursor: pointer; font-weight: 600; }
+.resource-transition-table p { font-size: .8rem; }
+.resource-transition-table table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.resource-transition-table th, .resource-transition-table td { padding: 8px; text-align: left; border-bottom: 1px solid var(--line); }
+.resource-transition-table td:first-child { overflow-wrap: anywhere; }

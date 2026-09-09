@@ -148,7 +148,20 @@ legacy clients that require a video-only WebRTC offer need compatibility
 validation before product rollout.
 
 
-### 通用端侧模型
+### 功能切换资源诊断
+
+资源面板的 Recent Feature Resource Table 展示最近的功能启动前、启动后、完成和释放快照，
+包括内部 RAM、最大连续块、DMA 最大块，以及 TTS/SFX 常驻任务栈字节数。
+`tts_playback=false` 只代表当前没有播放；应结合 `tts_runtime` 和 `tts_stack_bytes`
+判断工作任务是否已经释放。音频编解码器常驻状态由 `codec_resident` 单独表示；
+DMA 剩余量和最大连续块见内存列，不能由一个常驻布尔值推算。
+配套固件也在这些功能边界输出串口 `resource_table`，周期采样不重复打印表格。
+
+Boot Minimum Internal RAM 是本次设备启动以来的低水位，不会在停止视频时复原。
+判断回收应比较当前剩余量和最大连续块，不能把启动以来的最低值当作当前剩余量。
+表格仅展示内存历史窗口中最近的功能边界；完整排障记录应同时保存设备串口日志。
+
+### 通用端侧模型调用
 
 On-device Model Test 使用 `vision.models()` 和 `vision.start_inference()`，支持读取原厂
 1～3 号及人脸 4 号目录、无预览推理、最新结果读取和显式停止。相机占用期间禁止启动

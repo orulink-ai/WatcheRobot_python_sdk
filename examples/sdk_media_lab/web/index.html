@@ -116,13 +116,21 @@
           <div><dt>DMA Largest Block</dt><dd id="resourceDmaLargest">—</dd></div>
           <div><dt>PSRAM Free</dt><dd id="resourcePsram">—</dd></div>
           <div><dt>PSRAM Largest Block</dt><dd id="resourcePsramLargest">—</dd></div>
-          <div><dt>Session Minimum Internal RAM</dt><dd id="resourceMinimum">—</dd></div>
+          <div><dt>Boot Minimum Internal RAM</dt><dd id="resourceMinimum">—</dd></div>
         </dl>
         <div class="resource-details">
           <div><span>Owners</span><strong id="resourceOwners">Waiting for Telemetry</strong></div>
           <div><span>Against Baseline</span><strong id="resourceDelta">Waiting for Baseline</strong></div>
           <div><span>Release Result</span><strong id="resourceRelease">No RTC Stop Record</strong></div>
         </div>
+        <details class="resource-transition-table" open>
+          <summary>Recent Feature Resource Snapshots</summary>
+          <p>Worker stack sizes describe resident allocations, not total memory owned by a feature. Full transition history is printed to the device log.</p>
+          <table>
+            <thead><tr><th>Stage</th><th>Internal Free</th><th>Largest Block</th><th>DMA Largest Block</th><th>TTS Stack</th><th>SFX Stack</th></tr></thead>
+            <tbody id="resourceTransitions"></tbody>
+          </table>
+        </details>
       </section>
 
       <section class="actuator-grid" aria-label="Actuator Test Bench">

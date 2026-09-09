@@ -21,6 +21,7 @@ import {
   evaluateResourceLifecycle,
   selectLifecycleBaseline,
   selectLatestReleaseSnapshot,
+  selectFeatureResourceSnapshots,
 } from "./resource-health.mjs";
 import {
   controlAvailability,
@@ -249,6 +250,7 @@ const elements = {
   resourcePsramLargest: document.querySelector("#resourcePsramLargest"),
   resourceMinimum: document.querySelector("#resourceMinimum"),
   resourceOwners: document.querySelector("#resourceOwners"),
+  resourceTransitions: document.querySelector("#resourceTransitions"),
   resourceDelta: document.querySelector("#resourceDelta"),
   resourceRelease: document.querySelector("#resourceRelease"),
   rtcRemoteAudio: document.querySelector("#rtcRemoteAudio"),
@@ -436,6 +438,10 @@ function updateResourceMonitor(status) {
     rtc: "RTC",
     media_system: "Media System",
     tts_playback: "Speaker",
+    tts_runtime: "TTS worker resident",
+    sfx_playback: "Local sound",
+    sfx_runtime: "SFX worker resident",
+    codec_resident: "Codec / DMA resident",
     microphone_runtime: "Microphone",
     voice_runtime: "Voice Task",
     face_tracking_preview: "Face Preview",
@@ -447,6 +453,21 @@ function updateResourceMonitor(status) {
     .filter(([name, active]) => name !== "voice_state" && active === true)
     .map(([name]) => resourceLabels[name] || name);
   elements.resourceOwners.textContent = owners.length > 0 ? owners.join(" / ") : "No Active Media Resources";
+  elements.resourceTransitions.replaceChildren(...selectFeatureResourceSnapshots(status.resources?.history).map(row => {
+    const tr = document.createElement("tr");
+    const values = [row.stage,
+      formatBytes(row.memory?.internal?.free_bytes),
+      formatBytes(row.memory?.internal?.largest_free_block_bytes),
+      formatBytes(row.memory?.dma?.largest_free_block_bytes),
+      formatBytes(row.resources?.tts_stack_bytes),
+      formatBytes(row.resources?.sfx_stack_bytes)];
+    for (const value of values) {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.append(td);
+    }
+    return tr;
+  }));
   elements.resourceDelta.textContent = lifecycleBaseline
     ? `Against ${hasRtcBaseline ? "RTC pre-start" : "Connection Baseline"}: internal ${formatSignedBytes(health.deltas.internalFreeBytes)} / ${formatSignedBytes(health.deltas.internalLargestBytes)} · DMA ${formatSignedBytes(health.deltas.dmaLargestBytes)} · PSRAM ${formatSignedBytes(health.deltas.psramLargestBytes)}${health.trend?.monotonicDecline ? " · declined after 4 consecutive releases" : ""}`
     : "Waiting for Resource Baseline";

@@ -2,6 +2,12 @@ export const RESOURCE_BASELINE_TOLERANCE_BYTES = 8192;
 export const RESOURCE_PSRAM_TOLERANCE_BYTES = 128 * 1024;
 const LIFECYCLE_CONTEXT_RESOURCES = ["animation", "animation_runtime"];
 
+export function selectFeatureResourceSnapshots(history, limit = 12) {
+  return (history || []).filter(snapshot =>
+    /^(before:|after:|handled:|completed:|released:|rtc_release_\d+ms$|rtc_pre_start$|baseline$)/.test(snapshot?.stage || "")
+  ).slice(-limit).reverse();
+}
+
 export function selectLatestReleaseSnapshot(history) {
   return [...(history || [])]
     .reverse()
