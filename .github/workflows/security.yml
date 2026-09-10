@@ -1,0 +1,61 @@
+name: Python SDK Security and SBOM
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "7 19 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-sdk-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # GitHub Dependency Review requires Dependency Graph, which is not enabled
+  # for this repository. Trivy scans the complete checkout and manifests here.
+  repository-scan:
+    name: Vulnerability, license and secret scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Scan Python source and dependency manifests
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,license
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Generate CycloneDX SBOM
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          skip-setup-trivy: true
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          format: cyclonedx
+          output: python-sdk-sbom.cdx.json
+          exit-code: "0"
+      - name: Upload SBOM
+        if: always()
+        id: upload-sbom
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-sdk-sbom-${{ github.sha }}
+          path: python-sdk-sbom.cdx.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Report unavailable SBOM archive
+        if: always() && steps.upload-sbom.outcome == 'failure'
+        run: echo "::warning::The security scan completed, but GitHub artifact storage rejected the generated SBOM archive."

@@ -14,12 +14,11 @@ def test_package_version_has_one_release_source() -> None:
     assert 'dynamic = ["version"]' in pyproject
     assert '[tool.hatch.version]\npath = "src/watcherobot/__init__.py"' in pyproject
     assert 'version = "0.1.0"' not in pyproject
-    version_sources = re.findall(
-        r'^__version__ = "([^"]+)"$', package_init, flags=re.MULTILINE
-    )
+    version_sources = re.findall(r'^__version__ = "([^"]+)"$', package_init, flags=re.MULTILINE)
     assert len(version_sources) == 1
     assert str(Version(version_sources[0])) == version_sources[0]
     assert '"bleak>=3,<4"' in pyproject
+    assert 'requires = ["hatchling>=1.24,<1.32"]' in pyproject
     assert '"av>=16,<17"' in pyproject
 
 
@@ -35,7 +34,7 @@ def test_releasing_uses_one_next_patch_version_family() -> None:
 def test_release_workflow_separates_test_and_production_indexes() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
 
-    assert "tags: [\"v*\"]" in workflow
+    assert 'tags: ["v*"]' in workflow
     assert "pull_request:" not in workflow
     assert "workflow_dispatch:" in workflow
     assert "recover_tag:" in workflow
@@ -49,7 +48,10 @@ def test_release_workflow_separates_test_and_production_indexes() -> None:
     assert "UV_PUBLISH_CHECK_URL: https://test.pypi.org/simple/" in workflow
     assert "actions/upload-artifact@v7" in workflow
     assert workflow.count("actions/download-artifact@v8") >= 3
-    assert workflow.count("watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}") >= 4
+    assert (
+        workflow.count("watcherobot-${{ needs.gate.outputs.version }}-${{ github.run_attempt }}")
+        >= 4
+    )
     assert "runs-on: [self-hosted, Linux, X64, sdk-release]" in workflow
     assert "tools/check_release_gate.py" in workflow
     assert 'tag_commit=$(git rev-list -n 1 "${GITHUB_REF_NAME}")' in workflow
@@ -74,9 +76,7 @@ def test_release_workflow_separates_test_and_production_indexes() -> None:
 def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     gate_job = workflow.split("  gate:", maxsplit=1)[1].split("  build:", maxsplit=1)[0]
-    build_job = workflow.split("  build:", maxsplit=1)[1].split(
-        "  draft-release:", maxsplit=1
-    )[0]
+    build_job = workflow.split("  build:", maxsplit=1)[1].split("  draft-release:", maxsplit=1)[0]
     recovery_gate_job = workflow.split("  recover-gate:", maxsplit=1)[1].split(
         "  recover-draft-assets:", maxsplit=1
     )[0]
@@ -103,8 +103,8 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     assert "--defer-draft-validation" in recovery_gate_job
     assert 'sys.exit("Production recovery requires a stable version")' in recovery_gate_job
     assert 'raise SystemExit("Production recovery requires a stable version")' not in workflow
-    assert "--version-file \"${GITHUB_WORKSPACE}/src/watcherobot/__init__.py\"" in workflow
-    assert "gh release download \"${RECOVER_TAG}\"" in workflow
+    assert '--version-file "${GITHUB_WORKSPACE}/src/watcherobot/__init__.py"' in workflow
+    assert 'gh release download "${RECOVER_TAG}"' in workflow
     assert "tools/verify_release_artifacts.py" in workflow
     assert "https://test.pypi.org/pypi/watcherobot/${VERSION}/json" in workflow
     assert "actions/upload-artifact@v7" in recovery_draft_job
@@ -113,8 +113,14 @@ def test_release_workflow_has_a_fail_closed_production_recovery_path() -> None:
     assert "github.run_id" in recovery_gate_job
     assert "github.run_id" in recovery_publish_job
     assert "github.run_id" in recovery_verify_job
-    assert "watcherobot-recovery-${{ steps.gate.outputs.version }}-${{ github.run_attempt }}" not in workflow
-    assert "watcherobot-recovery-${{ needs.recover-gate.outputs.version }}-${{ github.run_attempt }}" not in workflow
+    assert (
+        "watcherobot-recovery-${{ steps.gate.outputs.version }}-${{ github.run_attempt }}"
+        not in workflow
+    )
+    assert (
+        "watcherobot-recovery-${{ needs.recover-gate.outputs.version }}-${{ github.run_attempt }}"
+        not in workflow
+    )
     assert 'mapfile -t distributions < <(python "${RECOVERY_VALIDATOR}"' in workflow
     assert 'uv publish --trusted-publishing always "${distributions[@]}"' in workflow
     assert "UV_PUBLISH_CHECK_URL: https://pypi.org/simple/" in workflow
@@ -152,45 +158,32 @@ def test_production_publish_requires_a_release_and_version_check() -> None:
     assert "environment:\n      name: pypi" in workflow
 
 
-def test_development_ci_uses_one_representative_python_environment() -> None:
+def test_development_ci_uses_hosted_runner_and_emits_evidence() -> None:
     workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
     development = workflow.split("  development:", maxsplit=1)[1].split(
-        "  release-compatibility:", maxsplit=1
+        "  compatibility:", maxsplit=1
     )[0]
 
     assert "pull_request:" in workflow
-    assert "types: [opened, synchronize, reopened, labeled, unlabeled]" in workflow
     assert "push:\n    branches: [main]" in workflow
-    assert "!contains(github.event.pull_request.labels.*.name, 'release:version')" in development
-    assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in development
+    assert "runs-on: ubuntu-24.04" in development
+    assert "self-hosted" not in development
     assert 'python-version: "3.11"' in development
     assert "matrix:" not in development
-    assert "dependency-profile" not in development
-    assert development.count("actions/setup-python@v6") == 1
-    assert "python -m pytest" in development
+    assert (
+        development.count("actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6") == 1
+    )
+    assert "python -m pytest --junitxml=artifacts/pytest.xml" in development
     assert "python -m mypy src/watcherobot" in development
-    assert "python -m pytest tests/provisioning" in development
-    assert "from watcherobot.provisioning.bleak_backend import BleakBackend" in development
     assert "id-token: write" not in workflow
     assert "environment:" not in workflow
     assert "python -m build" in workflow
     assert "python -m twine check dist/*" in workflow
     assert ".venv-wheel-check/bin/python -m pip install --force-reinstall dist/*.whl" in workflow
+    assert ".venv-wheel-check/bin/watcher-distribution --help" in workflow
     assert "python -m pip check" in workflow
-    assert development.count("name: Create isolated virtual environment") == 1
-    assert 'echo "$PWD/.venv/bin" >> "$GITHUB_PATH"' in development
-    assert development.count("api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}") == 1
-    assert development.count("tar --extract --gzip --strip-components=1") == 1
-    assert development.count("name: Clean workspace before snapshot download") == 1
-    assert development.count('workspace=$(realpath -m "${GITHUB_WORKSPACE}")') == 1
-    assert development.count('runner_work=$(realpath -m "${RUNNER_TEMP}/..")') == 1
-    assert development.count('[[ "${workspace}" == "${runner_work}"/*/* ]]') == 1
-    assert "/opt/actions-runner-ci/_work" not in development
-    assert development.count('rm -rf -- "${workspace}"/*') == 1
-    assert "actions/checkout" not in development
-    assert development.count("--retry 5 --retry-connrefused") == 1
-    assert "--retry-all-errors" not in development
-    assert "Building is deliberately independent of Git history and tags" in development
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in development
+    assert "artifacts/SHA256SUMS" in development
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'build-backend = "hatchling.build"' in pyproject
     assert '[tool.hatch.version]\npath = "src/watcherobot/__init__.py"' in pyproject
@@ -198,38 +191,74 @@ def test_development_ci_uses_one_representative_python_environment() -> None:
     assert "versioneer" not in pyproject.lower()
 
 
-def test_release_version_pr_runs_the_full_supported_compatibility_matrix() -> None:
+def test_every_pr_runs_supported_runtime_and_dependency_compatibility() -> None:
     workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
-    release = workflow.split("  release-compatibility:", maxsplit=1)[1]
+    compatibility = workflow.split("  compatibility:", maxsplit=1)[1].split(
+        "  cross-platform:", maxsplit=1
+    )[0]
 
-    assert "contains(github.event.pull_request.labels.*.name, 'release:version')" in release
-    assert 'python-version: ["3.10", "3.11", "3.12"]' in release
-    assert 'dependency-profile: ["lowest", "latest"]' in release
-    assert "max-parallel: 2" in release
-    assert "python-version: ${{ matrix.python-version }}" in release
-    assert '"fastapi==0.129.*"' in release
-    assert '"huggingface-hub==1.26.*"' in release
-    assert '"packaging==24.*"' in release
-    assert '"uvicorn==0.30.*"' in release
-    assert '"starlette==0.51.*"' in release
-    assert '"websockets==14.*"' in release
-    assert '"fastapi>=0.129,<1"' in release
-    assert '"starlette>=0.51,<1"' in release
-    assert '"websockets>=14,<16"' in release
-    assert "python -m pytest" in release
-    assert "python -m mypy src/watcherobot" in release
-    assert "matrix.python-version == '3.12'" in release
-    assert "matrix.dependency-profile == 'latest'" in release
-    assert "python -m build" in release
-    assert "python -m twine check dist/*" in release
+    for version in ('"3.10"', '"3.11"', '"3.12"'):
+        assert version in compatibility
+    assert compatibility.count("dependency-profile: lowest") == 1
+    assert compatibility.count("dependency-profile: latest") == 3
+    assert "python-version: ${{ matrix.python-version }}" in compatibility
+    assert '"fastapi==0.129.*"' in compatibility
+    assert '"huggingface-hub==1.26.*"' in compatibility
+    assert '"packaging==24.*"' in compatibility
+    assert '"uvicorn==0.30.*"' in compatibility
+    assert '"starlette==0.51.*"' in compatibility
+    assert '"websockets==14.*"' in compatibility
+    assert "python -m pytest --junitxml=" in compatibility
 
 
-def test_fake_ble_tests_run_in_development_ci_on_self_hosted_linux() -> None:
+def test_development_ci_pins_node_and_runs_media_browser_contracts() -> None:
     workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+    development = workflow.split("  development:", maxsplit=1)[1].split(
+        "  compatibility:", maxsplit=1
+    )[0]
 
-    assert "runs-on: [self-hosted, Linux, X64, sdk-ci]" in workflow
-    assert "python -m pytest tests/provisioning" in workflow
-    assert "from watcherobot.provisioning.bleak_backend import BleakBackend" in workflow
+    assert "uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4" in development
+    assert 'node-version: "22.14.0"' in development
+    assert "name: Run fixed-Node media and vision browser contracts" in development
+    assert "node --test tests/js/*.mjs" in development
+
+
+def test_hardware_ble_is_isolated_from_untrusted_pr_code() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+    hil = (ROOT / ".github" / "workflows" / "hardware-hil.yml").read_text(encoding="utf-8")
+
+    assert "self-hosted" not in workflow
+    assert "workflow_dispatch:" in hil
+    assert "runs-on: [self-hosted, Windows, X64, watcher-hil]" in hil
+    assert "ble_provisioning_hardware_test.py" in hil
+    assert "Read provisioning status without changing credentials" in hil
+    assert "BLE_ID_PREFIX: ${{ inputs.ble_id_prefix }}" in hil
+    assert "--id-prefix $env:BLE_ID_PREFIX" in hil
+    assert " status `" in hil
+
+
+def test_ci_covers_cross_platform_quality_security_and_sbom() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+    security = (ROOT / ".github" / "workflows" / "security.yml").read_text(encoding="utf-8")
+
+    assert "os: [ubuntu-latest, windows-latest, macos-latest]" in workflow
+    assert 'PYTHONUTF8: "1"' in workflow
+    assert "python -m ruff check" in workflow
+    assert "python -m ruff format --check" in workflow
+    assert "scanners: vuln,secret,license" in security
+    assert "format: cyclonedx" in security
+    assert "actions/dependency-review-action" not in security
+    assert "id: upload-sbom" in security
+    assert "continue-on-error: true" in security
+    assert "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25" in security
+
+
+def test_sdk_ci_actions_in_scope_use_immutable_commits() -> None:
+    for filename in ("sdk-ci.yml", "hardware-hil.yml", "security.yml"):
+        workflow = (ROOT / ".github" / "workflows" / filename).read_text(encoding="utf-8")
+        references = re.findall(r"\buses:\s+[^\s@]+@([^\s#]+)", workflow)
+        assert references, filename
+        assert all(re.fullmatch(r"[0-9a-f]{40}", reference) for reference in references)
 
 
 def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
@@ -241,7 +270,10 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     assert "/tmp/review_result.md" not in workflow
     assert "PR_BODY: ${{ github.event.pull_request.body }}" in workflow
     assert '"${{ github.event.pull_request.body }}" \\' not in workflow
-    assert '"repos/${{ github.repository }}/contents/.github/scripts/luxiao_review.py?ref=${BASE_SHA}"' in workflow
+    assert (
+        '"repos/${{ github.repository }}/contents/.github/scripts/luxiao_review.py?ref=${BASE_SHA}"'
+        in workflow
+    )
     assert 'python3 "${REVIEW_SCRIPT}" \\' in workflow
     assert "BASE_SHA: ${{ github.event.pull_request.base.sha }}" in workflow
     assert "/home/runner-ci/scripts/luxiao-review.py" not in workflow
@@ -250,8 +282,8 @@ def test_luxiao_review_uses_job_scoped_temporary_files() -> None:
     assert "NamedTemporaryFile" in bridge
     assert '"LUXIAO_REMOTE_DIR", "/home/hermesadmin/.cache/luxiao-review"' in bridge
     assert 'local_file = "/tmp/luxiao_prompt.txt"' not in bridge
-    assert 'MAX_DIFF_CHARS = 100_000' in bridge
-    assert 'REMOTE_REVIEW_TIMEOUT_SECONDS = 600' in bridge
+    assert "MAX_DIFF_CHARS = 100_000" in bridge
+    assert "REMOTE_REVIEW_TIMEOUT_SECONDS = 600" in bridge
     assert '"timeout",' in bridge
     assert '"--kill-after=30s",' in bridge
     assert "timeout=REMOTE_REVIEW_TIMEOUT_SECONDS + 60" in bridge
@@ -273,9 +305,7 @@ def test_legacy_publish_workflow_is_removed() -> None:
 
 
 def test_prepare_release_uses_repository_scoped_github_app() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "prepare-release.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (ROOT / ".github" / "workflows" / "prepare-release.yml").read_text(encoding="utf-8")
 
     assert "actions/create-github-app-token@v2" in workflow
     assert "ORULINK_RELEASE_APP_ID" in workflow
@@ -286,4 +316,4 @@ def test_prepare_release_uses_repository_scoped_github_app() -> None:
     assert "tools/check_release_availability.py" in workflow
     assert "runs-on: [self-hosted, Linux, X64, sdk-orchestrator]" in workflow
     assert "runs-on: [self-hosted, Linux, X64, sdk-release]" not in workflow
-    assert '--state open' in workflow
+    assert "--state open" in workflow
