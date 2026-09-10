@@ -61,6 +61,8 @@ jobs:
           .venv-wheel-check/bin/watcher-distribution --help
       - name: Upload test reports and distributions
         if: always()
+        id: upload-sdk-evidence
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: python-sdk-evidence-${{ github.sha }}
@@ -69,6 +71,10 @@ jobs:
             dist/
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Report unavailable SDK evidence archive
+        if: always() && steps.upload-sdk-evidence.outcome == 'failure'
+        run: echo "::warning::SDK checks completed, but GitHub artifact storage rejected the evidence archive."
 
   compatibility:
     name: Python ${{ matrix.python-version }} / ${{ matrix.dependency-profile }}
@@ -114,12 +120,18 @@ jobs:
           python -m pytest --junitxml="artifacts/pytest-${{ matrix.python-version }}-${{ matrix.dependency-profile }}.xml"
       - name: Upload compatibility report
         if: always()
+        id: upload-compatibility-report
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compatibility-${{ matrix.python-version }}-${{ matrix.dependency-profile }}-${{ github.sha }}
           path: artifacts/
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Report unavailable compatibility archive
+        if: always() && steps.upload-compatibility-report.outcome == 'failure'
+        run: echo "::warning::Compatibility tests completed, but GitHub artifact storage rejected the report archive."
 
   cross-platform:
     name: Paths and CLI (${{ matrix.os }})

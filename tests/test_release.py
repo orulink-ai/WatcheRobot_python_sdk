@@ -247,7 +247,9 @@ def test_ci_covers_cross_platform_quality_security_and_sbom() -> None:
     assert "python -m ruff format --check" in workflow
     assert "scanners: vuln,secret,license" in security
     assert "format: cyclonedx" in security
-    assert "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294" in security
+    assert "actions/dependency-review-action" not in security
+    assert "id: upload-sbom" in security
+    assert "continue-on-error: true" in security
     assert "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25" in security
 
 
