@@ -584,6 +584,7 @@ class ExpressionDomain(_Domain):
             "resource.expression.play",
             {"source": "official", "resource_id": resource_id},
         )
+        self._robot.expression_runtime._mark_display_released()
 
 
 class MotionDomain(_Domain):
@@ -684,6 +685,7 @@ class WorkDomain(_Domain):
     def play(self, work_id: str) -> None:
         self._validate_id(work_id)
         self._robot._command("resource.work.play", {"work_id": work_id})
+        self._robot.expression_runtime._mark_display_released()
 
     def play_expression(self, work_id: str, *, clip_id: str) -> None:
         """Play one authored expression clip from an installed SD work."""
@@ -695,6 +697,7 @@ class WorkDomain(_Domain):
             "resource.expression.play",
             {"source": "work", "work_id": work_id, "clip_id": clip_id},
         )
+        self._robot.expression_runtime._mark_display_released()
 
     def delete(self, work_id: str) -> None:
         self._validate_id(work_id)

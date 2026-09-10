@@ -9,6 +9,9 @@ const POINTER_FLAT_TRANSITION_MS = 90;
 const POINTER_SYNC_EPSILON = 0.015;
 const API_TIMEOUT_MS = 8000;
 const STATUS_TIMEOUT_MS = 2500;
+const RUN_CREDENTIAL = document.querySelector(
+  'meta[name="expression-lab-run-credential"]',
+)?.content || "";
 const EXPRESSION_PRESET = "standby";
 const LID_MASK_HALF_WIDTH_PIXELS = 112;
 const LID_MASK_HALF_HEIGHT_PIXELS = 64;
@@ -927,7 +930,10 @@ function toast(message, tone = "ok") {
 async function api(path, body) {
   const response = await ExpressionLabWeb.fetchWithTimeout(browserFetch, path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Expression-Lab-Run-Credential": RUN_CREDENTIAL,
+    },
     body: body ? JSON.stringify(body) : undefined,
   }, API_TIMEOUT_MS);
   return ExpressionLabWeb.decodeApiResponse(response);
@@ -1409,7 +1415,14 @@ byId("layout").addEventListener("change", (event) => { document.body.dataset.lay
 byId("scanlines").addEventListener("change", (event) => document.body.classList.toggle("scanlines", event.target.checked));
 byId("closeTweaks").addEventListener("click", () => { byId("tweaks").hidden = true; byId("openTweaks").hidden = false; });
 byId("openTweaks").addEventListener("click", () => { byId("tweaks").hidden = false; byId("openTweaks").hidden = true; });
-window.addEventListener("pagehide", () => { if (state.active) navigator.sendBeacon("./api/expression/stop"); });
+window.addEventListener("pagehide", () => {
+  if (!state.active) return;
+  browserFetch("./api/expression/stop", {
+    method: "POST",
+    headers: { "X-Expression-Lab-Run-Credential": RUN_CREDENTIAL },
+    keepalive: true,
+  }).catch(() => {});
+});
 
 document.body.classList.add("scanlines");
 state.eyelidPresets = loadEyelidPresets();

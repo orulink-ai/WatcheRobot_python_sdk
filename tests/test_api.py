@@ -168,7 +168,16 @@ def test_custom_display_close_retries_a_transient_stop_failure():
     assert transport.closed
 
 
-@pytest.mark.parametrize("play", ["behavior", "animation"])
+@pytest.mark.parametrize(
+    "play",
+    [
+        "behavior",
+        "animation",
+        "official_expression",
+        "work",
+        "work_expression",
+    ],
+)
 def test_builtin_play_clears_local_custom_display_ownership(play):
     transport = FakeTransport()
     robot = WatcheRobot._from_transport(transport)
@@ -176,12 +185,47 @@ def test_builtin_play_clears_local_custom_display_ownership(play):
 
     if play == "behavior":
         robot.behavior.play("greeting")
-    else:
+    elif play == "animation":
         robot.animation.play("smile")
+    elif play == "official_expression":
+        robot.expressions.play_official("happy")
+    elif play == "work":
+        robot.works.play("morning_show")
+    else:
+        robot.works.play_expression("morning_show", clip_id="face-first")
 
     robot.close()
 
     assert not any(name == "ctrl.expression.runtime.stop" for name, _ in transport.commands)
+
+
+@pytest.mark.parametrize(
+    "play",
+    ["official_expression", "work", "work_expression"],
+)
+def test_failed_resource_play_keeps_local_custom_display_cleanup_ownership(play):
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    original = transport.send_command
+
+    def reject_resource_play(message_type, data, timeout=None):
+        if message_type in {"resource.expression.play", "resource.work.play"}:
+            raise WatcheRobotError("resource play rejected")
+        return original(message_type, data, timeout)
+
+    transport.send_command = reject_resource_play
+    with pytest.raises(WatcheRobotError, match="resource play rejected"):
+        if play == "official_expression":
+            robot.expressions.play_official("happy")
+        elif play == "work":
+            robot.works.play("morning_show")
+        else:
+            robot.works.play_expression("morning_show", clip_id="face-first")
+
+    robot.close()
+
+    assert [name for name, _ in transport.commands].count("ctrl.expression.runtime.stop") == 1
 
 
 def test_custom_display_failed_stop_can_be_retried_by_close():

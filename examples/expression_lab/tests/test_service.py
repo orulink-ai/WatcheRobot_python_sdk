@@ -11,6 +11,10 @@ from watcherobot.errors import CommandError
 from service import ExpressionLabService, ExpressionStartRequest, create_web_app
 
 
+RUN_CREDENTIAL = "test-expression-lab-run-credential"
+AUTH_HEADERS = {"X-Expression-Lab-Run-Credential": RUN_CREDENTIAL}
+
+
 class FakeExpressionRuntime:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
@@ -403,8 +407,16 @@ def test_web_api_returns_structured_json_for_sdk_command_rejection(tmp_path: Pat
     web_root.mkdir()
     (web_root / "index.html").write_text("<h1>lab</h1>", encoding="utf-8")
 
-    with TestClient(create_web_app(service, web_root=web_root), raise_server_exceptions=False) as client:
-        response = client.post("/api/expression/start", json={"preset": "standby"})
+    with TestClient(
+        create_web_app(service, web_root=web_root, run_credential=RUN_CREDENTIAL),
+        base_url="http://127.0.0.1",
+        raise_server_exceptions=False,
+    ) as client:
+        response = client.post(
+            "/api/expression/start",
+            json={"preset": "standby"},
+            headers=AUTH_HEADERS,
+        )
 
     assert response.status_code == 409
     assert response.headers["content-type"].startswith("application/json")
@@ -419,16 +431,21 @@ def test_web_api_validates_ranges_and_stops_on_shutdown(tmp_path: Path) -> None:
     web_root = tmp_path / "web"
     web_root.mkdir()
     (web_root / "index.html").write_text("<h1>lab</h1>", encoding="utf-8")
-    app = create_web_app(service, web_root=web_root)
+    app = create_web_app(service, web_root=web_root, run_credential=RUN_CREDENTIAL)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         response = client.post(
             "/api/expression/start",
             json={"preset": "thinking", "style": "watcher_focus", "tag": "question"},
+            headers=AUTH_HEADERS,
         )
         assert response.status_code == 200
         assert client.get("/api/status").json()["active"] is True
-        invalid = client.post("/api/expression/update", json={"gaze_x": 2.0})
+        invalid = client.post(
+            "/api/expression/update",
+            json={"gaze_x": 2.0},
+            headers=AUTH_HEADERS,
+        )
         assert invalid.status_code == 422
 
     assert runtime.calls[-1] == ("stop", {})
@@ -524,9 +541,16 @@ def test_web_pairing_accepts_only_a_six_digit_code(tmp_path: Path) -> None:
     web_root.mkdir()
     (web_root / "index.html").write_text("<h1>lab</h1>", encoding="utf-8")
 
-    with TestClient(create_web_app(service, web_root=web_root)) as client:
-        invalid = client.post("/api/pair", json={"pairing_code": "58471"})
-        paired = client.post("/api/pair", json={"pairing_code": "584711"})
+    with TestClient(
+        create_web_app(service, web_root=web_root, run_credential=RUN_CREDENTIAL),
+        base_url="http://127.0.0.1",
+    ) as client:
+        invalid = client.post(
+            "/api/pair", json={"pairing_code": "58471"}, headers=AUTH_HEADERS
+        )
+        paired = client.post(
+            "/api/pair", json={"pairing_code": "584711"}, headers=AUTH_HEADERS
+        )
 
     assert invalid.status_code == 422
     assert paired.status_code == 200
@@ -543,8 +567,13 @@ def test_web_pairing_reports_management_errors_without_echoing_code(tmp_path: Pa
     web_root.mkdir()
     (web_root / "index.html").write_text("<h1>lab</h1>", encoding="utf-8")
 
-    with TestClient(create_web_app(service, web_root=web_root)) as client:
-        response = client.post("/api/pair", json={"pairing_code": "584711"})
+    with TestClient(
+        create_web_app(service, web_root=web_root, run_credential=RUN_CREDENTIAL),
+        base_url="http://127.0.0.1",
+    ) as client:
+        response = client.post(
+            "/api/pair", json={"pairing_code": "584711"}, headers=AUTH_HEADERS
+        )
 
     assert response.status_code == 409
     assert response.json() == {"detail": "pairing code <pairing-code> was rejected"}
@@ -555,7 +584,10 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     service, _ = make_service()
     web_root = Path(__file__).resolve().parents[1] / "web"
 
-    with TestClient(create_web_app(service, web_root=web_root)) as client:
+    with TestClient(
+        create_web_app(service, web_root=web_root, run_credential=RUN_CREDENTIAL),
+        base_url="http://127.0.0.1",
+    ) as client:
         index = client.get("/")
         stylesheet = client.get("/styles.css")
         vector_path = client.get("/vector-path.js")
@@ -564,6 +596,8 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
         script = client.get("/app.js")
 
     assert 'href="./styles.css?v=expression-lab-32"' in index.text
+    assert f'content="{RUN_CREDENTIAL}"' in index.text
+    assert RUN_CREDENTIAL not in script.text
     assert 'src="./vector-path.js?v=expression-lab-32"' in index.text
     assert 'src="./vector-editor-v2.js?v=expression-lab-32"' in index.text
     assert 'src="./web-runtime.js?v=expression-lab-32"' in index.text
@@ -608,6 +642,9 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert 'api("./api/pair", { pairing_code: pairingCode })' in script.text
     assert 'scale_x: Number(controls.scaleX.value)' in script.text
     assert 'scale: Number(controls.scale.value)' in script.text
+    assert "X-Expression-Lab-Run-Credential" in script.text
+    assert "keepalive: true" in script.text
+    assert "navigator.sendBeacon" not in script.text
     assert 'accessory: controls.accessory.value' in script.text
     assert 'id="accessory"' in index.text
     assert 'class="preset-strip"' not in index.text
@@ -761,3 +798,65 @@ def test_web_index_uses_prefix_safe_relative_asset_urls() -> None:
     assert "intentActive" in script.text
     assert "scheduleExpressionResume" in script.text
     assert "连接恢复，代码表情已重新同步" in script.text
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/pair",
+        "/api/expression/start",
+        "/api/expression/update",
+        "/api/expression/stop",
+    ],
+)
+def test_web_rejects_state_changes_without_the_run_credential(
+    tmp_path: Path, path: str
+) -> None:
+    service, runtime = make_service()
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    (web_root / "index.html").write_text(
+        '<meta name="expression-lab-run-credential" '
+        'content="__EXPRESSION_LAB_RUN_CREDENTIAL__">',
+        encoding="utf-8",
+    )
+    payload = (
+        {"pairing_code": "584711"}
+        if path == "/api/pair"
+        else {"preset": "standby"}
+    )
+
+    with TestClient(
+        create_web_app(service, web_root=web_root, run_credential=RUN_CREDENTIAL),
+        base_url="http://127.0.0.1",
+    ) as client:
+        response = client.post(path, json=payload)
+
+    assert response.status_code == 403
+    assert runtime.calls == []
+
+
+def test_web_rejects_cross_origin_state_change_with_the_run_credential(
+    tmp_path: Path,
+) -> None:
+    service, runtime = make_service()
+    web_root = tmp_path / "web"
+    web_root.mkdir()
+    (web_root / "index.html").write_text(
+        '<meta name="expression-lab-run-credential" '
+        'content="__EXPRESSION_LAB_RUN_CREDENTIAL__">',
+        encoding="utf-8",
+    )
+
+    with TestClient(
+        create_web_app(service, web_root=web_root, run_credential=RUN_CREDENTIAL),
+        base_url="http://127.0.0.1",
+    ) as client:
+        response = client.post(
+            "/api/expression/start",
+            json={"preset": "standby"},
+            headers={**AUTH_HEADERS, "Origin": "https://example.com"},
+        )
+
+    assert response.status_code == 403
+    assert runtime.calls == []

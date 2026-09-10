@@ -6,14 +6,15 @@ import asyncio
 import hashlib
 import json
 import re
+import secrets
 import threading
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from watcherobot.errors import WatcheRobotError
 
@@ -21,6 +22,8 @@ from watcherobot.errors import WatcheRobotError
 APPLICATION_ID = "com.orulink.expression_lab"
 APPLICATION_VERSION = "0.1.1"
 REQUIRED_FIRMWARE_CAPABILITY = "expression.runtime.v3"
+RUN_CREDENTIAL_HEADER = "X-Expression-Lab-Run-Credential"
+RUN_CREDENTIAL_PLACEHOLDER = "__EXPRESSION_LAB_RUN_CREDENTIAL__"
 
 
 @dataclass(frozen=True)
@@ -393,8 +396,19 @@ def create_web_app(
     *,
     web_root: Path,
     firmware_root: Path | None = None,
+    run_credential: str | None = None,
 ) -> FastAPI:
     firmware_bundle = FirmwareBundle.load(firmware_root)
+    credential = run_credential or secrets.token_urlsafe(32)
+    index_document = (web_root / "index.html").read_text(encoding="utf-8")
+    if RUN_CREDENTIAL_PLACEHOLDER not in index_document:
+        index_document = index_document.replace(
+            "<head>",
+            "<head><meta name=\"expression-lab-run-credential\" "
+            f'content=\"{credential}\">',
+            1,
+        )
+    index_document = index_document.replace(RUN_CREDENTIAL_PLACEHOLDER, credential)
 
     def web_file(name: str) -> FileResponse:
         return FileResponse(web_root / name, headers={"Cache-Control": "no-store"})
@@ -408,9 +422,26 @@ def create_web_app(
 
     app = FastAPI(title="Watcher Expression Lab", lifespan=lifespan)
 
+    def require_state_change_credential(
+        request: Request,
+        supplied_credential: str | None = Header(
+            default=None, alias=RUN_CREDENTIAL_HEADER
+        ),
+    ) -> None:
+        hostname = request.url.hostname
+        origin = request.headers.get("origin")
+        expected_origin = f"{request.url.scheme}://{request.headers.get('host', '')}"
+        if (
+            hostname not in {"127.0.0.1", "localhost", "::1"}
+            or supplied_credential is None
+            or not secrets.compare_digest(supplied_credential, credential)
+            or (origin is not None and origin.rstrip("/").lower() != expected_origin.lower())
+        ):
+            raise HTTPException(status_code=403, detail="state change not authorized")
+
     @app.get("/")
-    async def index() -> FileResponse:
-        return web_file("index.html")
+    async def index() -> HTMLResponse:
+        return HTMLResponse(index_document, headers={"Cache-Control": "no-store"})
 
     @app.get("/styles.css")
     async def stylesheet() -> FileResponse:
@@ -469,7 +500,9 @@ def create_web_app(
             headers={"Cache-Control": "no-store"},
         )
 
-    @app.post("/api/pair")
+    @app.post(
+        "/api/pair", dependencies=[Depends(require_state_change_credential)]
+    )
     async def pair(request: PairWatcherRequest) -> dict[str, object]:
         try:
             return await asyncio.to_thread(service.pair, request.pairing_code)
@@ -479,7 +512,10 @@ def create_web_app(
         except TimeoutError as error:
             raise HTTPException(status_code=504, detail=str(error)) from error
 
-    @app.post("/api/expression/start")
+    @app.post(
+        "/api/expression/start",
+        dependencies=[Depends(require_state_change_credential)],
+    )
     async def start(request: ExpressionStartRequest) -> dict[str, object]:
         try:
             payload = request.model_dump()
@@ -490,7 +526,10 @@ def create_web_app(
         except TimeoutError as error:
             raise HTTPException(status_code=504, detail=str(error)) from error
 
-    @app.post("/api/expression/update")
+    @app.post(
+        "/api/expression/update",
+        dependencies=[Depends(require_state_change_credential)],
+    )
     async def update(request: ExpressionUpdateRequest) -> dict[str, object]:
         try:
             return await asyncio.to_thread(service.update, **request.model_dump(exclude_none=True))
@@ -499,7 +538,10 @@ def create_web_app(
         except TimeoutError as error:
             raise HTTPException(status_code=504, detail=str(error)) from error
 
-    @app.post("/api/expression/stop")
+    @app.post(
+        "/api/expression/stop",
+        dependencies=[Depends(require_state_change_credential)],
+    )
     async def stop() -> dict[str, object]:
         try:
             return await asyncio.to_thread(service.stop)
