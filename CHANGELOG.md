@@ -34,6 +34,8 @@
 
 ## [Unreleased]
 
+- Expression Lab 完成 Web 端收尾：修复 V2 矢量橡皮、平滑开关、镜像边界、画板眼睛参考、接口异常提示和随机端口预设恢复，并降低静止预览的重复编译与 DOM 更新开销。
+
 ## [0.1.1] - 2026-08-18
 
 - Application 首次开发流程简化为 `pip install watcherobot`、`watcherobot app init` 和 `watcherobot app run`；初始化器会生成播放一次 `happy` 行为的 Hello World 项目，并自动补齐本地开发元数据。

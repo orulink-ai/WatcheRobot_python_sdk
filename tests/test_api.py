@@ -27,6 +27,8 @@ class FakeTransport:
             "behavior",
             "animation",
             "animation.prefetch.v1",
+            "expression.runtime.v1",
+            "expression.runtime.v3",
             "motion",
             "audio",
             "audio.stream",
@@ -81,6 +83,171 @@ class FakeOpusDecoder:
 
     def flush(self):
         return b""
+
+
+def test_custom_display_is_returned_before_robot_transport_closes():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    original = transport.send_command
+
+    def check_order(message_type, data, timeout=None):
+        assert not transport.closed
+        return original(message_type, data, timeout)
+
+    transport.send_command = check_order
+    robot.expression_runtime.start("standby")
+    robot.close()
+    robot.close()
+    assert [name for name, _ in transport.commands].count("ctrl.expression.runtime.stop") == 1
+    assert transport.closed
+
+
+def test_custom_display_failed_start_does_not_claim_cleanup_ownership():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    original = transport.send_command
+
+    def reject_start(message_type, data, timeout=None):
+        if message_type == "ctrl.expression.runtime.start":
+            raise WatcheRobotError("start rejected")
+        return original(message_type, data, timeout)
+
+    transport.send_command = reject_start
+    with pytest.raises(WatcheRobotError, match="start rejected"):
+        robot.expression_runtime.start("standby")
+    robot.close()
+    assert not any(name == "ctrl.expression.runtime.stop" for name, _ in transport.commands)
+
+
+def test_custom_display_explicit_stop_is_not_repeated_on_close():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    robot.expression_runtime.stop()
+    robot.close()
+    assert [name for name, _ in transport.commands].count("ctrl.expression.runtime.stop") == 1
+
+
+def test_custom_display_stop_failure_does_not_prevent_transport_cleanup():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    original = transport.send_command
+    attempts = []
+
+    def reject_stop(message_type, data, timeout=None):
+        if message_type == "ctrl.expression.runtime.stop":
+            attempts.append(message_type)
+            raise WatcheRobotError("stop rejected")
+        return original(message_type, data, timeout)
+
+    transport.send_command = reject_stop
+    robot.close()
+    assert len(attempts) == 2
+    assert transport.closed
+
+
+def test_custom_display_close_retries_a_transient_stop_failure():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    original = transport.send_command
+    attempts = []
+
+    def fail_once(message_type, data, timeout=None):
+        if message_type == "ctrl.expression.runtime.stop":
+            attempts.append(message_type)
+            if len(attempts) == 1:
+                raise WatcheRobotError("temporary failure")
+        return original(message_type, data, timeout)
+
+    transport.send_command = fail_once
+    robot.close()
+
+    assert len(attempts) == 2
+    assert transport.closed
+
+
+@pytest.mark.parametrize(
+    "play",
+    [
+        "behavior",
+        "animation",
+        "official_expression",
+        "work",
+        "work_expression",
+    ],
+)
+def test_builtin_play_clears_local_custom_display_ownership(play):
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+
+    if play == "behavior":
+        robot.behavior.play("greeting")
+    elif play == "animation":
+        robot.animation.play("smile")
+    elif play == "official_expression":
+        robot.expressions.play_official("happy")
+    elif play == "work":
+        robot.works.play("morning_show")
+    else:
+        robot.works.play_expression("morning_show", clip_id="face-first")
+
+    robot.close()
+
+    assert not any(name == "ctrl.expression.runtime.stop" for name, _ in transport.commands)
+
+
+@pytest.mark.parametrize(
+    "play",
+    ["official_expression", "work", "work_expression"],
+)
+def test_failed_resource_play_keeps_local_custom_display_cleanup_ownership(play):
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    original = transport.send_command
+
+    def reject_resource_play(message_type, data, timeout=None):
+        if message_type in {"resource.expression.play", "resource.work.play"}:
+            raise WatcheRobotError("resource play rejected")
+        return original(message_type, data, timeout)
+
+    transport.send_command = reject_resource_play
+    with pytest.raises(WatcheRobotError, match="resource play rejected"):
+        if play == "official_expression":
+            robot.expressions.play_official("happy")
+        elif play == "work":
+            robot.works.play("morning_show")
+        else:
+            robot.works.play_expression("morning_show", clip_id="face-first")
+
+    robot.close()
+
+    assert [name for name, _ in transport.commands].count("ctrl.expression.runtime.stop") == 1
+
+
+def test_custom_display_failed_stop_can_be_retried_by_close():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    original = transport.send_command
+    attempts = []
+
+    def fail_once(message_type, data, timeout=None):
+        if message_type == "ctrl.expression.runtime.stop":
+            attempts.append(message_type)
+            if len(attempts) == 1:
+                raise WatcheRobotError("temporary failure")
+        return original(message_type, data, timeout)
+
+    transport.send_command = fail_once
+    with pytest.raises(WatcheRobotError, match="temporary failure"):
+        robot.expression_runtime.stop()
+    robot.close()
+    assert len(attempts) == 2
+    assert transport.closed
 
 
 def test_robot_can_refresh_the_device_snapshot_after_reconnection():
@@ -157,6 +324,230 @@ def test_animation_domain_exposes_the_device_catalog_as_an_immutable_snapshot():
     robot = WatcheRobot._from_transport(transport)
 
     assert robot.animation.available_ids == ("boot", "happy", "smile")
+
+
+def test_expression_runtime_domain_builds_bounded_parameter_commands():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    robot.expression_runtime.start(
+        "standby",
+        style="watcher",
+        gaze_x=0.35,
+        gaze_y=-0.1,
+        openness=0.8,
+        spacing=0.85,
+        scale=1.15,
+        scale_x=2.0,
+        scale_y=2.0,
+        stroke=1.1,
+        roundness=0.75,
+        left_openness=0.9,
+        right_openness=1.1,
+        tilt_deg=8,
+        left_tilt_deg=-3,
+        right_tilt_deg=4,
+        left_upper_lid_y=-40,
+        left_upper_lid_rotation_deg=12,
+        right_upper_lid_y=-38,
+        right_upper_lid_rotation_deg=-12,
+        left_lower_lid_y=24,
+        left_lower_lid_rotation_deg=-14,
+        right_lower_lid_y=26,
+        right_lower_lid_rotation_deg=14,
+        tag="none",
+        accessory="halo",
+        accessory_scale=1.25,
+        accessory_x=0.2,
+        accessory_y=-0.15,
+        accessory_rotation_deg=18,
+        auto_blink=True,
+        blink_interval_ms=4200,
+        blink_duration_ms=260,
+        color="#A1F03C",
+        sphere_strength=0.68,
+        transition_ms=180,
+    )
+    robot.expression_runtime.update(
+        preset="thinking",
+        gaze_x=-0.25,
+        tag="thinking",
+        accessory="devil_horns",
+        accessory_scale=0.8,
+        accessory_x=-0.3,
+        accessory_y=0.1,
+        accessory_rotation_deg=-22,
+        sphere_strength=0.4,
+        transition_ms=240,
+    )
+    robot.expression_runtime.stop()
+
+    assert transport.commands == [
+        (
+            "ctrl.expression.runtime.start",
+            {
+                "preset": "standby",
+                "style": "watcher",
+                "gaze_x_milli": 350,
+                "gaze_y_milli": -100,
+                "openness_milli": 800,
+                "spacing_milli": 850,
+                "scale_milli": 1150,
+                "scale_x_milli": 2000,
+                "scale_y_milli": 2000,
+                "stroke_milli": 1100,
+                "roundness_milli": 750,
+                "left_openness_milli": 900,
+                "right_openness_milli": 1100,
+                "tilt_deg": 8,
+                "left_tilt_deg": -3,
+                "right_tilt_deg": 4,
+                "left_upper_lid_y": -40,
+                "left_upper_lid_rotation_deg": 12,
+                "right_upper_lid_y": -38,
+                "right_upper_lid_rotation_deg": -12,
+                "left_lower_lid_y": 24,
+                "left_lower_lid_rotation_deg": -14,
+                "right_lower_lid_y": 26,
+                "right_lower_lid_rotation_deg": 14,
+                "tag": "none",
+                "accessory": "halo",
+                "accessory_scale_milli": 1250,
+                "accessory_x_milli": 200,
+                "accessory_y_milli": -150,
+                "accessory_rotation_deg": 18,
+                "auto_blink": True,
+                "blink_interval_ms": 4200,
+                "blink_duration_ms": 260,
+                "color_rgb565": 0xA787,
+                "sphere_strength_milli": 680,
+                "transition_ms": 180,
+            },
+        ),
+        (
+            "ctrl.expression.runtime.update",
+            {
+                "preset": "thinking",
+                "gaze_x_milli": -250,
+                "tag": "thinking",
+                "accessory": "devil_horns",
+                "accessory_scale_milli": 800,
+                "accessory_x_milli": -300,
+                "accessory_y_milli": 100,
+                "accessory_rotation_deg": -22,
+                "sphere_strength_milli": 400,
+                "transition_ms": 240,
+            },
+        ),
+        ("ctrl.expression.runtime.stop", {}),
+    ]
+
+
+def test_expression_runtime_encodes_a_bounded_custom_pixel_accessory():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    mask = "80" + "00" * 325
+
+    robot.expression_runtime.start(
+        "standby",
+        accessory="custom_pixel",
+        custom_accessory_mask=mask,
+        custom_accessory_layer="front",
+    )
+
+    assert transport.commands[-1] == (
+        "ctrl.expression.runtime.start",
+        {
+            "preset": "standby",
+            "accessory": "custom_pixel",
+            "custom_accessory_mask": mask,
+            "custom_accessory_layer": "front",
+        },
+    )
+
+
+def test_expression_runtime_encodes_a_bounded_custom_vector_accessory():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    path = "010108020032001400460014"
+
+    robot.expression_runtime.start(
+        "standby",
+        accessory="custom_vector",
+        custom_vector_path=path,
+        custom_accessory_layer="front",
+    )
+
+    assert transport.commands[-1] == (
+        "ctrl.expression.runtime.start",
+        {
+            "preset": "standby",
+            "accessory": "custom_vector",
+            "custom_vector_path": path,
+            "custom_accessory_layer": "front",
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "kwargs", "message"),
+    [
+        ("start", {"preset": "unknown"}, "preset"),
+        ("start", {"preset": "standby", "style": "canvas_js"}, "style"),
+        ("update", {}, "at least one"),
+        ("update", {"gaze_x": 1.01}, "gaze_x"),
+        ("update", {"openness": 0.0}, "openness"),
+        ("update", {"spacing": 0.39}, "spacing"),
+        ("update", {"scale": 1.51}, "scale"),
+        ("update", {"scale_x": 2.21}, "scale_x"),
+        ("update", {"scale_y": 0.74}, "scale_y"),
+        ("update", {"stroke": 2.01}, "stroke"),
+        ("update", {"roundness": -0.01}, "roundness"),
+        ("update", {"left_openness": 1.51}, "left_openness"),
+        ("update", {"right_openness": 0.09}, "right_openness"),
+        ("update", {"tilt_deg": 31}, "tilt_deg"),
+        ("update", {"left_tilt_deg": -31}, "left_tilt_deg"),
+        ("update", {"right_tilt_deg": 31}, "right_tilt_deg"),
+        ("update", {"left_upper_lid_y": -81}, "left_upper_lid_y"),
+        ("update", {"right_lower_lid_y": 81}, "right_lower_lid_y"),
+        ("update", {"left_lower_lid_rotation_deg": -46}, "left_lower_lid_rotation_deg"),
+        ("update", {"right_upper_lid_rotation_deg": 46}, "right_upper_lid_rotation_deg"),
+        ("update", {"tag": "arbitrary_svg"}, "tag"),
+        ("update", {"accessory": "arbitrary_canvas_js"}, "accessory"),
+        ("update", {"custom_accessory_mask": "00"}, "custom_accessory_mask"),
+        ("update", {"custom_accessory_mask": "gg" * 326}, "custom_accessory_mask"),
+        ("update", {"custom_accessory_layer": "middle"}, "custom_accessory_layer"),
+        ("update", {"custom_vector_path": ""}, "custom_vector_path"),
+        ("update", {"custom_vector_path": "0101080200320014"}, "custom_vector_path"),
+        ("update", {"custom_vector_path": "0200"}, "custom_vector_path"),
+        ("update", {"accessory_scale": 2.01}, "accessory_scale"),
+        ("update", {"accessory_x": -1.01}, "accessory_x"),
+        ("update", {"accessory_y": 1.01}, "accessory_y"),
+        ("update", {"accessory_rotation_deg": 181}, "accessory_rotation_deg"),
+        ("update", {"auto_blink": 1}, "auto_blink"),
+        ("update", {"blink_interval_ms": 1199}, "blink_interval_ms"),
+        ("update", {"blink_duration_ms": 801}, "blink_duration_ms"),
+        ("update", {"color": "green"}, "color"),
+        ("update", {"sphere_strength": 1.01}, "sphere_strength"),
+        ("update", {"transition_ms": 2001}, "transition_ms"),
+    ],
+)
+def test_expression_runtime_rejects_unsafe_or_out_of_range_values(method, kwargs, message):
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises((TypeError, ValueError), match=message):
+        getattr(robot.expression_runtime, method)(**kwargs)
+
+
+def test_expression_runtime_requires_negotiated_firmware_capability():
+    transport = FakeTransport()
+    transport.capabilities = tuple(
+        capability for capability in transport.capabilities if capability != "expression.runtime.v3"
+    )
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(WatcheRobotError, match="expression.runtime.v3"):
+        robot.expression_runtime.start("standby")
 
 
 @pytest.mark.parametrize("work_id", ["", "UPPER", "contains-dash", "1starts_with_digit", "x" * 24])

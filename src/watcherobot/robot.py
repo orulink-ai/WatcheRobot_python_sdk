@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import queue
 import re
 import threading
@@ -54,7 +55,9 @@ class BehaviorDomain(_Domain):
     def play(self, behavior_id: str, *, repeat: int = 1) -> Job:
         if not behavior_id or repeat <= 0:
             raise ValueError("behavior_id and a positive repeat are required")
-        return self._robot._start_job("ctrl.behavior.play", {"behavior_id": behavior_id, "repeat": repeat})
+        job = self._robot._start_job("ctrl.behavior.play", {"behavior_id": behavior_id, "repeat": repeat})
+        self._robot.expression_runtime._mark_display_released()
+        return job
 
     def stop(self) -> None:
         self._robot._command("ctrl.behavior.stop", {})
@@ -70,7 +73,9 @@ class AnimationDomain(_Domain):
     def play(self, animation_id: str) -> Job:
         if not animation_id:
             raise ValueError("animation_id is required")
-        return self._robot._start_job("ctrl.animation.play", {"animation_id": animation_id})
+        job = self._robot._start_job("ctrl.animation.play", {"animation_id": animation_id})
+        self._robot.expression_runtime._mark_display_released()
+        return job
 
     def prefetch(self, animation_id: str) -> None:
         """Prepare an installed animation in the device's decoded-frame cache."""
@@ -84,6 +89,491 @@ class AnimationDomain(_Domain):
         self._robot._command("ctrl.animation.stop", {})
 
 
+_EXPRESSION_RUNTIME_PRESETS = frozenset({"standby", "thinking", "speaking"})
+_EXPRESSION_RUNTIME_STYLES = frozenset(
+    {"watcher", "watcher_compact", "watcher_focus", "watcher_open", "watcher_pulse"}
+)
+_EXPRESSION_RUNTIME_TAGS = frozenset({"none", "thinking", "question", "love"})
+_EXPRESSION_RUNTIME_ACCESSORIES = frozenset(
+    {
+        "none", "halo", "devil_horns", "ninja_mask", "hero_mask", "eyepatch", "antenna",
+        "custom_pixel", "custom_vector",
+    }
+)
+_EXPRESSION_CUSTOM_ACCESSORY_MASK_HEX_LENGTH = 652
+_EXPRESSION_CUSTOM_ACCESSORY_LAYERS = frozenset({"back", "front"})
+_EXPRESSION_VECTOR_MAX_STROKES = 12
+_EXPRESSION_VECTOR_MAX_POINTS_PER_STROKE = 48
+_EXPRESSION_VECTOR_MAX_POINTS = 192
+_EXPRESSION_VECTOR_MAX_WIDTH = 48
+_EXPRESSION_VECTOR_MAX_HEX_LENGTH = 1588
+
+
+def _expression_choice(name: str, value: str, allowed: frozenset[str]) -> str:
+    if not isinstance(value, str) or value not in allowed:
+        choices = ", ".join(sorted(allowed))
+        raise ValueError(f"{name} must be one of: {choices}")
+    return value
+
+
+def _expression_scaled_number(name: str, value: float, minimum: float, maximum: float) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"{name} must be a number")
+    numeric = float(value)
+    if not math.isfinite(numeric) or not minimum <= numeric <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return int(round(numeric * 1000.0))
+
+
+def _expression_custom_accessory_mask(value: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(
+        rf"[0-9A-Fa-f]{{{_EXPRESSION_CUSTOM_ACCESSORY_MASK_HEX_LENGTH}}}", value
+    ) is None:
+        raise ValueError(
+            "custom_accessory_mask must contain exactly 652 hexadecimal characters"
+        )
+    return value.lower()
+
+
+def _expression_custom_vector_path(value: str) -> str:
+    message = "custom_vector_path must be a valid bounded vector path"
+    if (
+        not isinstance(value, str)
+        or len(value) < 4
+        or len(value) > _EXPRESSION_VECTOR_MAX_HEX_LENGTH
+        or len(value) % 2 != 0
+        or re.fullmatch(r"[0-9A-Fa-f]+", value) is None
+    ):
+        raise ValueError(message)
+    encoded = bytes.fromhex(value)
+    if encoded[0] != 1 or encoded[1] > _EXPRESSION_VECTOR_MAX_STROKES:
+        raise ValueError(message)
+    offset = 2
+    total_points = 0
+    for _ in range(encoded[1]):
+        if offset + 2 > len(encoded):
+            raise ValueError(message)
+        width = encoded[offset]
+        point_count = encoded[offset + 1]
+        offset += 2
+        total_points += point_count
+        if (
+            width < 1
+            or width > _EXPRESSION_VECTOR_MAX_WIDTH
+            or point_count < 1
+            or point_count > _EXPRESSION_VECTOR_MAX_POINTS_PER_STROKE
+            or total_points > _EXPRESSION_VECTOR_MAX_POINTS
+            or offset + point_count * 4 > len(encoded)
+        ):
+            raise ValueError(message)
+        for point_offset in range(offset, offset + point_count * 4, 4):
+            x = int.from_bytes(encoded[point_offset : point_offset + 2], "big")
+            y = int.from_bytes(encoded[point_offset + 2 : point_offset + 4], "big")
+            if x >= 412 or y >= 412:
+                raise ValueError(message)
+        offset += point_count * 4
+    if offset != len(encoded):
+        raise ValueError(message)
+    return value.lower()
+
+
+def _expression_color_rgb565(value: str) -> int:
+    if not isinstance(value, str) or len(value) != 7 or value[0] != "#":
+        raise ValueError("color must be a #RRGGBB value")
+    try:
+        red = int(value[1:3], 16)
+        green = int(value[3:5], 16)
+        blue = int(value[5:7], 16)
+    except ValueError as error:
+        raise ValueError("color must be a #RRGGBB value") from error
+    return ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)
+
+
+class ExpressionRuntimeDomain(_Domain):
+    """Control the negotiated device-side procedural Watcher expression runtime."""
+
+    def __init__(self, robot: WatcheRobot) -> None:
+        super().__init__(robot)
+        self._lock = threading.RLock()
+        self._owns_display = False
+
+    def _close(self) -> None:
+        with self._lock:
+            if self._owns_display:
+                try:
+                    self.stop()
+                except Exception:
+                    # A transient command failure should not make the only
+                    # cleanup attempt impossible before the transport closes.
+                    self.stop()
+
+    def _mark_display_released(self) -> None:
+        """Forget local cleanup ownership after firmware takes the display back."""
+
+        with self._lock:
+            self._owns_display = False
+
+    @staticmethod
+    def _build_payload(
+        *,
+        preset: str | None = None,
+        style: str | None = None,
+        gaze_x: float | None = None,
+        gaze_y: float | None = None,
+        openness: float | None = None,
+        spacing: float | None = None,
+        scale: float | None = None,
+        scale_x: float | None = None,
+        scale_y: float | None = None,
+        stroke: float | None = None,
+        roundness: float | None = None,
+        left_openness: float | None = None,
+        right_openness: float | None = None,
+        tilt_deg: int | None = None,
+        left_tilt_deg: int | None = None,
+        right_tilt_deg: int | None = None,
+        left_upper_lid_y: int | None = None,
+        left_upper_lid_rotation_deg: int | None = None,
+        right_upper_lid_y: int | None = None,
+        right_upper_lid_rotation_deg: int | None = None,
+        left_lower_lid_y: int | None = None,
+        left_lower_lid_rotation_deg: int | None = None,
+        right_lower_lid_y: int | None = None,
+        right_lower_lid_rotation_deg: int | None = None,
+        tag: str | None = None,
+        accessory: str | None = None,
+        accessory_scale: float | None = None,
+        accessory_x: float | None = None,
+        accessory_y: float | None = None,
+        accessory_rotation_deg: int | None = None,
+        custom_accessory_mask: str | None = None,
+        custom_vector_path: str | None = None,
+        custom_accessory_layer: str | None = None,
+        auto_blink: bool | None = None,
+        blink_interval_ms: int | None = None,
+        blink_duration_ms: int | None = None,
+        color: str | None = None,
+        sphere_strength: float | None = None,
+        transition_ms: int | None = None,
+        require_any: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if preset is not None:
+            payload["preset"] = _expression_choice("preset", preset, _EXPRESSION_RUNTIME_PRESETS)
+        if style is not None:
+            payload["style"] = _expression_choice("style", style, _EXPRESSION_RUNTIME_STYLES)
+        if gaze_x is not None:
+            payload["gaze_x_milli"] = _expression_scaled_number("gaze_x", gaze_x, -1.0, 1.0)
+        if gaze_y is not None:
+            payload["gaze_y_milli"] = _expression_scaled_number("gaze_y", gaze_y, -1.0, 1.0)
+        if openness is not None:
+            payload["openness_milli"] = _expression_scaled_number("openness", openness, 0.05, 1.2)
+        if spacing is not None:
+            payload["spacing_milli"] = _expression_scaled_number("spacing", spacing, 0.4, 1.6)
+        if scale is not None:
+            payload["scale_milli"] = _expression_scaled_number("scale", scale, 0.5, 1.5)
+        if scale_x is not None:
+            payload["scale_x_milli"] = _expression_scaled_number("scale_x", scale_x, 0.75, 2.2)
+        if scale_y is not None:
+            payload["scale_y_milli"] = _expression_scaled_number("scale_y", scale_y, 0.75, 2.2)
+        if stroke is not None:
+            payload["stroke_milli"] = _expression_scaled_number("stroke", stroke, 0.5, 2.0)
+        if roundness is not None:
+            payload["roundness_milli"] = _expression_scaled_number("roundness", roundness, 0.0, 1.0)
+        if left_openness is not None:
+            payload["left_openness_milli"] = _expression_scaled_number(
+                "left_openness", left_openness, 0.1, 1.5
+            )
+        if right_openness is not None:
+            payload["right_openness_milli"] = _expression_scaled_number(
+                "right_openness", right_openness, 0.1, 1.5
+            )
+        if tilt_deg is not None:
+            if isinstance(tilt_deg, bool) or not isinstance(tilt_deg, int) or not -30 <= tilt_deg <= 30:
+                raise ValueError("tilt_deg must be an integer between -30 and 30")
+            payload["tilt_deg"] = tilt_deg
+        for name, value in (("left_tilt_deg", left_tilt_deg), ("right_tilt_deg", right_tilt_deg)):
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int) or not -30 <= value <= 30:
+                    raise ValueError(f"{name} must be an integer between -30 and 30")
+                payload[name] = value
+        for name, value in (
+            ("left_upper_lid_y", left_upper_lid_y),
+            ("right_upper_lid_y", right_upper_lid_y),
+            ("left_lower_lid_y", left_lower_lid_y),
+            ("right_lower_lid_y", right_lower_lid_y),
+        ):
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int) or not -80 <= value <= 80:
+                    raise ValueError(f"{name} must be an integer between -80 and 80")
+                payload[name] = value
+        for name, value in (
+            ("left_upper_lid_rotation_deg", left_upper_lid_rotation_deg),
+            ("right_upper_lid_rotation_deg", right_upper_lid_rotation_deg),
+            ("left_lower_lid_rotation_deg", left_lower_lid_rotation_deg),
+            ("right_lower_lid_rotation_deg", right_lower_lid_rotation_deg),
+        ):
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int) or not -45 <= value <= 45:
+                    raise ValueError(f"{name} must be an integer between -45 and 45")
+                payload[name] = value
+        if tag is not None:
+            payload["tag"] = _expression_choice("tag", tag, _EXPRESSION_RUNTIME_TAGS)
+        if accessory is not None:
+            payload["accessory"] = _expression_choice(
+                "accessory", accessory, _EXPRESSION_RUNTIME_ACCESSORIES
+            )
+        if accessory_scale is not None:
+            payload["accessory_scale_milli"] = _expression_scaled_number(
+                "accessory_scale", accessory_scale, 0.25, 2.0
+            )
+        if accessory_x is not None:
+            payload["accessory_x_milli"] = _expression_scaled_number(
+                "accessory_x", accessory_x, -1.0, 1.0
+            )
+        if accessory_y is not None:
+            payload["accessory_y_milli"] = _expression_scaled_number(
+                "accessory_y", accessory_y, -1.0, 1.0
+            )
+        if accessory_rotation_deg is not None:
+            if (
+                isinstance(accessory_rotation_deg, bool)
+                or not isinstance(accessory_rotation_deg, int)
+                or not -180 <= accessory_rotation_deg <= 180
+            ):
+                raise ValueError("accessory_rotation_deg must be an integer between -180 and 180")
+            payload["accessory_rotation_deg"] = accessory_rotation_deg
+        if custom_accessory_mask is not None:
+            payload["custom_accessory_mask"] = _expression_custom_accessory_mask(custom_accessory_mask)
+        if custom_vector_path is not None:
+            payload["custom_vector_path"] = _expression_custom_vector_path(custom_vector_path)
+        if custom_accessory_layer is not None:
+            payload["custom_accessory_layer"] = _expression_choice(
+                "custom_accessory_layer", custom_accessory_layer, _EXPRESSION_CUSTOM_ACCESSORY_LAYERS
+            )
+        if auto_blink is not None:
+            if not isinstance(auto_blink, bool):
+                raise TypeError("auto_blink must be a bool")
+            payload["auto_blink"] = auto_blink
+        for name, value, minimum, maximum in (
+            ("blink_interval_ms", blink_interval_ms, 1200, 10000),
+            ("blink_duration_ms", blink_duration_ms, 100, 800),
+        ):
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+                    raise ValueError(f"{name} must be an integer between {minimum} and {maximum}")
+                payload[name] = value
+        if color is not None:
+            payload["color_rgb565"] = _expression_color_rgb565(color)
+        if sphere_strength is not None:
+            payload["sphere_strength_milli"] = _expression_scaled_number(
+                "sphere_strength", sphere_strength, 0.0, 1.0
+            )
+        if transition_ms is not None:
+            if (
+                isinstance(transition_ms, bool)
+                or not isinstance(transition_ms, int)
+                or not 0 <= transition_ms <= 2000
+            ):
+                raise ValueError("transition_ms must be an integer between 0 and 2000")
+            payload["transition_ms"] = transition_ms
+        if require_any and not payload:
+            raise ValueError("at least one expression parameter is required")
+        return payload
+
+    def start(
+        self,
+        preset: str,
+        *,
+        style: str | None = None,
+        gaze_x: float | None = None,
+        gaze_y: float | None = None,
+        openness: float | None = None,
+        spacing: float | None = None,
+        scale: float | None = None,
+        scale_x: float | None = None,
+        scale_y: float | None = None,
+        stroke: float | None = None,
+        roundness: float | None = None,
+        left_openness: float | None = None,
+        right_openness: float | None = None,
+        tilt_deg: int | None = None,
+        left_tilt_deg: int | None = None,
+        right_tilt_deg: int | None = None,
+        left_upper_lid_y: int | None = None,
+        left_upper_lid_rotation_deg: int | None = None,
+        right_upper_lid_y: int | None = None,
+        right_upper_lid_rotation_deg: int | None = None,
+        left_lower_lid_y: int | None = None,
+        left_lower_lid_rotation_deg: int | None = None,
+        right_lower_lid_y: int | None = None,
+        right_lower_lid_rotation_deg: int | None = None,
+        tag: str | None = None,
+        accessory: str | None = None,
+        accessory_scale: float | None = None,
+        accessory_x: float | None = None,
+        accessory_y: float | None = None,
+        accessory_rotation_deg: int | None = None,
+        custom_accessory_mask: str | None = None,
+        custom_vector_path: str | None = None,
+        custom_accessory_layer: str | None = None,
+        auto_blink: bool | None = None,
+        blink_interval_ms: int | None = None,
+        blink_duration_ms: int | None = None,
+        color: str | None = None,
+        sphere_strength: float | None = None,
+        transition_ms: int | None = None,
+    ) -> None:
+        payload = self._build_payload(
+            preset=preset,
+            style=style,
+            gaze_x=gaze_x,
+            gaze_y=gaze_y,
+            openness=openness,
+            spacing=spacing,
+            scale=scale,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            stroke=stroke,
+            roundness=roundness,
+            left_openness=left_openness,
+            right_openness=right_openness,
+            tilt_deg=tilt_deg,
+            left_tilt_deg=left_tilt_deg,
+            right_tilt_deg=right_tilt_deg,
+            left_upper_lid_y=left_upper_lid_y,
+            left_upper_lid_rotation_deg=left_upper_lid_rotation_deg,
+            right_upper_lid_y=right_upper_lid_y,
+            right_upper_lid_rotation_deg=right_upper_lid_rotation_deg,
+            left_lower_lid_y=left_lower_lid_y,
+            left_lower_lid_rotation_deg=left_lower_lid_rotation_deg,
+            right_lower_lid_y=right_lower_lid_y,
+            right_lower_lid_rotation_deg=right_lower_lid_rotation_deg,
+            tag=tag,
+            accessory=accessory,
+            accessory_scale=accessory_scale,
+            accessory_x=accessory_x,
+            accessory_y=accessory_y,
+            accessory_rotation_deg=accessory_rotation_deg,
+            custom_accessory_mask=custom_accessory_mask,
+            custom_vector_path=custom_vector_path,
+            custom_accessory_layer=custom_accessory_layer,
+            auto_blink=auto_blink,
+            blink_interval_ms=blink_interval_ms,
+            blink_duration_ms=blink_duration_ms,
+            color=color,
+            sphere_strength=sphere_strength,
+            transition_ms=transition_ms,
+        )
+        self._robot._require_capability("expression.runtime.v3")
+        # Claim cleanup ownership only after the firmware acknowledges takeover.
+        with self._lock:
+            if self._robot._closed or self._robot._closing:
+                raise WatcheRobotError("robot is closing or closed")
+            self._robot._command("ctrl.expression.runtime.start", payload)
+            self._owns_display = True
+
+    def update(
+        self,
+        *,
+        preset: str | None = None,
+        style: str | None = None,
+        gaze_x: float | None = None,
+        gaze_y: float | None = None,
+        openness: float | None = None,
+        spacing: float | None = None,
+        scale: float | None = None,
+        scale_x: float | None = None,
+        scale_y: float | None = None,
+        stroke: float | None = None,
+        roundness: float | None = None,
+        left_openness: float | None = None,
+        right_openness: float | None = None,
+        tilt_deg: int | None = None,
+        left_tilt_deg: int | None = None,
+        right_tilt_deg: int | None = None,
+        left_upper_lid_y: int | None = None,
+        left_upper_lid_rotation_deg: int | None = None,
+        right_upper_lid_y: int | None = None,
+        right_upper_lid_rotation_deg: int | None = None,
+        left_lower_lid_y: int | None = None,
+        left_lower_lid_rotation_deg: int | None = None,
+        right_lower_lid_y: int | None = None,
+        right_lower_lid_rotation_deg: int | None = None,
+        tag: str | None = None,
+        accessory: str | None = None,
+        accessory_scale: float | None = None,
+        accessory_x: float | None = None,
+        accessory_y: float | None = None,
+        accessory_rotation_deg: int | None = None,
+        custom_accessory_mask: str | None = None,
+        custom_vector_path: str | None = None,
+        custom_accessory_layer: str | None = None,
+        auto_blink: bool | None = None,
+        blink_interval_ms: int | None = None,
+        blink_duration_ms: int | None = None,
+        color: str | None = None,
+        sphere_strength: float | None = None,
+        transition_ms: int | None = None,
+    ) -> None:
+        payload = self._build_payload(
+            preset=preset,
+            style=style,
+            gaze_x=gaze_x,
+            gaze_y=gaze_y,
+            openness=openness,
+            spacing=spacing,
+            scale=scale,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            stroke=stroke,
+            roundness=roundness,
+            left_openness=left_openness,
+            right_openness=right_openness,
+            tilt_deg=tilt_deg,
+            left_tilt_deg=left_tilt_deg,
+            right_tilt_deg=right_tilt_deg,
+            left_upper_lid_y=left_upper_lid_y,
+            left_upper_lid_rotation_deg=left_upper_lid_rotation_deg,
+            right_upper_lid_y=right_upper_lid_y,
+            right_upper_lid_rotation_deg=right_upper_lid_rotation_deg,
+            left_lower_lid_y=left_lower_lid_y,
+            left_lower_lid_rotation_deg=left_lower_lid_rotation_deg,
+            right_lower_lid_y=right_lower_lid_y,
+            right_lower_lid_rotation_deg=right_lower_lid_rotation_deg,
+            tag=tag,
+            accessory=accessory,
+            accessory_scale=accessory_scale,
+            accessory_x=accessory_x,
+            accessory_y=accessory_y,
+            accessory_rotation_deg=accessory_rotation_deg,
+            custom_accessory_mask=custom_accessory_mask,
+            custom_vector_path=custom_vector_path,
+            custom_accessory_layer=custom_accessory_layer,
+            auto_blink=auto_blink,
+            blink_interval_ms=blink_interval_ms,
+            blink_duration_ms=blink_duration_ms,
+            color=color,
+            sphere_strength=sphere_strength,
+            transition_ms=transition_ms,
+            require_any=True,
+        )
+        self._robot._require_capability("expression.runtime.v3")
+        self._robot._command("ctrl.expression.runtime.update", payload)
+
+    def stop(self) -> None:
+        """Return the display to the firmware's current built-in state.
+
+        Firmware implementing display ownership also releases custom rendering
+        caches. Close retries one failed stop before the transport is closed;
+        a persistent failure is finally handled by device-session teardown.
+        """
+        with self._lock:
+            self._robot._require_capability("expression.runtime.v3")
+            self._robot._command("ctrl.expression.runtime.stop", {})
+            self._owns_display = False
+
+
 class ExpressionDomain(_Domain):
     """Play named expression resources installed in the official SD catalog."""
 
@@ -94,6 +584,7 @@ class ExpressionDomain(_Domain):
             "resource.expression.play",
             {"source": "official", "resource_id": resource_id},
         )
+        self._robot.expression_runtime._mark_display_released()
 
 
 class MotionDomain(_Domain):
@@ -194,6 +685,7 @@ class WorkDomain(_Domain):
     def play(self, work_id: str) -> None:
         self._validate_id(work_id)
         self._robot._command("resource.work.play", {"work_id": work_id})
+        self._robot.expression_runtime._mark_display_released()
 
     def play_expression(self, work_id: str, *, clip_id: str) -> None:
         """Play one authored expression clip from an installed SD work."""
@@ -205,6 +697,7 @@ class WorkDomain(_Domain):
             "resource.expression.play",
             {"source": "work", "work_id": work_id, "clip_id": clip_id},
         )
+        self._robot.expression_runtime._mark_display_released()
 
     def delete(self, work_id: str) -> None:
         self._validate_id(work_id)
@@ -378,6 +871,7 @@ class WatcheRobot:
         self._closing = False
         self.behavior = BehaviorDomain(self)
         self.animation = AnimationDomain(self)
+        self.expression_runtime = ExpressionRuntimeDomain(self)
         self.motion = MotionDomain(self)
         self.audio = AudioDomain(self)
         self.expressions = ExpressionDomain(self)
@@ -463,6 +957,10 @@ class WatcheRobot:
                 return
             self._closing = True
             microphone = self._microphone
+        try:
+            self.expression_runtime._close()
+        except Exception:
+            _LOGGER.warning("Custom display cleanup failed while closing robot", exc_info=True)
         try:
             self.vision._close()
         except Exception:
