@@ -24,6 +24,7 @@ class GiteePublicRepository:
 
     def __init__(self, *, transport: JsonTransport | None = None) -> None:
         self._transport = transport or UrllibJsonTransport()
+        self._verified_revision: tuple[str, str] | None = None
 
     def _get(self, path: str) -> dict[str, object]:
         try:
@@ -57,9 +58,12 @@ class GiteePublicRepository:
 
     def read_file(self, *, repo_id: str, commit: str, path: str) -> bytes:
         _validate_reference(repo_id, commit, path)
-        revision = self._get(f"{repo_id}/commits/{commit}")
-        if revision.get("sha") != commit:
-            raise HubInvalidResponse("Gitee did not resolve the exact requested commit")
+        if self._verified_revision != (repo_id, commit):
+            revision = self._get(f"{repo_id}/commits/{commit}")
+            if revision.get("sha") != commit:
+                raise HubInvalidResponse("Gitee did not resolve the exact requested commit")
+            # One immutable revision per instance: bounded and repository-scoped.
+            self._verified_revision = (repo_id, commit)
         return self._read_verified_file(repo_id, commit, path)
 
     def _read_verified_file(self, repo_id: str, commit: str, path: str) -> bytes:

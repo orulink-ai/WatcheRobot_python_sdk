@@ -15,6 +15,28 @@ from watcherobot.distribution.ports import (
 SHA = "a" * 40
 
 
+@pytest.mark.parametrize('status,payload', [(429, {}), (403, {'rate_limited': True}), (403, {})])
+def test_anonymous_denial_is_not_reported_as_bad_token(status, payload):
+    from watcherobot.distribution.ports import HubNetworkError
+    api = SimpleNamespace(request=lambda *args: (status, payload))
+    with pytest.raises(HubNetworkError):
+        GiteeRepository(api=api)._request('GET', 'repos/owner/app')
+
+
+def test_plaintext_rate_limit_body_is_classified(monkeypatch):
+    from io import BytesIO
+    from urllib.error import HTTPError
+    from watcherobot.distribution.gitee_repository import GiteeApi
+
+    def denied(*args, **kwargs):
+        raise HTTPError('https://gitee.com', 403, 'Forbidden', {},
+                        BytesIO(b'403 Forbidden (Rate Limit Exceeded) secret'))
+
+    monkeypatch.setattr('watcherobot.distribution.gitee_repository.build_opener',
+                        lambda *args: SimpleNamespace(open=denied))
+    assert GiteeApi().request('GET', 'repos/owner/app', None) == (403, {'rate_limited': True})
+
+
 @pytest.mark.parametrize("mode", ["40000", "040000"])
 def test_gitee_directory_modes_are_supported(tmp_path, mode):
     api = Api({"tree": [

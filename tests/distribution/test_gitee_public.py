@@ -10,12 +10,36 @@ from watcherobot.distribution.ports import HubFileNotFound, HubInvalidResponse, 
 SHA = 'a' * 40
 
 
+def test_same_immutable_revision_is_verified_only_once():
+    transport = Transport({'sha': SHA}, file_payload(), file_payload())
+    client = GiteePublicRepository(transport=transport)
+    client.read_file(repo_id='owner/app', commit=SHA, path='app.json')
+    client.read_file(repo_id='owner/app', commit=SHA, path='README.md')
+    assert sum('/commits/' in url for url in transport.urls) == 1
+
+
 def file_payload(content=b'[]\n'):
     return {
         'type': 'file', 'encoding': 'base64', 'size': len(content),
         'content': base64.b64encode(content).decode(),
         'sha': hashlib.sha1(f'blob {len(content)}\0'.encode() + content).hexdigest(),
     }
+
+
+def test_revision_cache_is_scoped_to_repository():
+    transport = Transport({'sha': SHA}, file_payload(), {'sha': SHA}, file_payload())
+    client = GiteePublicRepository(transport=transport)
+    for repo in ('owner/app', 'other/app'):
+        client.read_file(repo_id=repo, commit=SHA, path='app.json')
+    assert sum('/commits/' in url for url in transport.urls) == 2
+
+
+def test_failed_revision_is_not_cached():
+    transport = Transport({'sha': 'b' * 40}, {'sha': SHA}, file_payload())
+    client = GiteePublicRepository(transport=transport)
+    with pytest.raises(HubInvalidResponse):
+        client.read_file(repo_id='owner/app', commit=SHA, path='app.json')
+    assert client.read_file(repo_id='owner/app', commit=SHA, path='app.json') == b'[]\n'
 
 
 class Transport:

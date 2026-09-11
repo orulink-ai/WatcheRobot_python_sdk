@@ -66,6 +66,11 @@ class GiteeApi:
                     raise HubInvalidResponse("Gitee response exceeds limit")
                 return response.status, json.loads(raw)
         except HTTPError as exc:
+            # Inspect only a bounded error body; never expose server text or credentials.
+            with exc:
+                body = exc.read(8192).lower()
+            if exc.code == 429 or (exc.code == 403 and b"rate limit exceeded" in body):
+                return exc.code, {"rate_limited": True}
             return exc.code, {}
         except (URLError, OSError, ValueError):
             raise HubNetworkError("Gitee API request failed") from None
@@ -138,6 +143,13 @@ class GiteeRepository:
         allowed: tuple[int, ...] = (200, 201),
     ) -> Any:
         status, payload = self.api.request(method, path, token, data)
+        if status == 429 or (
+            status == 403 and isinstance(payload, dict)
+            and payload.get("rate_limited") is True
+        ):
+            raise HubNetworkError("Gitee 请求频率超限，请稍后重试；不会自动重试或切换凭据")
+        if status == 403 and token is None:
+            raise HubNetworkError("Gitee 匿名读取被拒绝（HTTP 403），可能涉及限流或仓库访问限制")
         if status in (401, 403):
             raise HubAuthenticationError(
                 "Gitee permission denied; check token scope and account security binding"
