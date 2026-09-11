@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +14,8 @@ from watcherobot.runtime.daemon.application.manifest import (
 )
 
 from .check import check_application
-from .credentials import SystemCredentialStore
+from .credentials import CredentialStoreError, SystemCredentialStore
+from .gitee_auth import GiteeHubClient
 from .download import DownloadError, DownloadResult, download_application_snapshot
 from .events import (
     DistributionEvent,
@@ -46,6 +48,10 @@ from .marketplace import (
 )
 from .oauth_http import HuggingFaceOAuthClient
 from .ports import (
+    AccessToken,
+    HubAuthenticationError,
+    HubInvalidResponse,
+    HubNetworkError,
     CredentialStore,
     HubClient,
     MarketplaceHubClient,
@@ -95,9 +101,9 @@ def add_distribution_commands(
     _add_jsonl_argument(check)
     login_command = app_commands.add_parser(
         "login",
-        help="Sign in to Hugging Face for publishing",
+        help="Sign in to the selected distribution provider",
         description=(
-            "Authorize the SDK with Hugging Face Device Flow. Omit --jsonl "
+            "Use Hugging Face Device Flow or an interactive Gitee token. Omit --jsonl "
             "for interactive use."
         ),
     )
@@ -105,7 +111,7 @@ def add_distribution_commands(
     login_mode.add_argument(
         "--status",
         action="store_true",
-        help="Check the saved Hugging Face identity without signing in",
+        help="Check the selected provider identity without signing in",
     )
     login_mode.add_argument(
         "--force",
@@ -113,11 +119,13 @@ def add_distribution_commands(
         help="Replace an existing valid login",
     )
     _add_jsonl_argument(login_command)
+    login_command.add_argument('--provider', choices=('huggingface', 'gitee'), required=True)
     logout_command = app_commands.add_parser(
         "logout",
-        help="Remove only the SDK's saved Hugging Face credential",
+        help="Remove only the selected provider's SDK credential",
     )
     _add_jsonl_argument(logout_command)
+    logout_command.add_argument('--provider', choices=('huggingface', 'gitee'), required=True)
     publish = app_commands.add_parser(
         "publish",
         help="Publish Application source to its public Space",
@@ -403,6 +411,8 @@ def _build_auth_dependencies() -> _AuthDependencies:
 
 
 def _run_application_login(args: argparse.Namespace) -> int:
+    if args.provider == 'gitee':
+        return _run_gitee_auth(args)
     dependencies = _build_auth_dependencies()
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     result: LoginStatus | LoginResult
@@ -445,6 +455,8 @@ def _run_application_login(args: argparse.Namespace) -> int:
 
 
 def _run_application_logout(args: argparse.Namespace) -> int:
+    if args.provider == 'gitee':
+        return _run_gitee_auth(args)
     dependencies = _build_auth_dependencies()
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     try:
@@ -455,6 +467,52 @@ def _run_application_logout(args: argparse.Namespace) -> int:
         event_writer.emit(ResultEvent(data=result.to_dict()))
     else:
         print("Signed out of Watcher's Hugging Face login")
+    return ExitCode.SUCCESS
+
+
+def _run_gitee_auth(args: argparse.Namespace) -> int:
+    writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    credentials = SystemCredentialStore(provider='gitee')
+    hub = GiteeHubClient()
+    try:
+        if args.app_command == 'logout':
+            credentials.delete()
+            data = {'provider': 'gitee', 'logged_in': False}
+        else:
+            token = credentials.load()
+            if args.status and token is None:
+                data = {'provider': 'gitee', 'logged_in': False}
+            else:
+                if not args.status and (args.force or token is None):
+                    if args.jsonl or not sys.stdin.isatty():
+                        return _print_auth_error(
+                            ErrorCode.AUTH_REQUIRED,
+                            'Run app login --provider gitee in an interactive terminal',
+                            event_writer=writer,
+                        )
+                    value = getpass.getpass('Gitee Access Token: ').strip()
+                    if not value:
+                        raise HubAuthenticationError('Gitee token must not be empty')
+                    token = AccessToken(value)
+                    identity = hub.whoami(token)
+                    credentials.save(token)
+                else:
+                    identity = hub.whoami(token)
+                data = {'provider': 'gitee', 'logged_in': True, 'username': identity.username}
+    except (KeyboardInterrupt, EOFError):
+        return _print_auth_error(ErrorCode.OPERATION_CANCELLED, 'Gitee login cancelled', event_writer=writer)
+    except (HubAuthenticationError, HubInvalidResponse, HubNetworkError, CredentialStoreError) as exc:
+        code = {
+            HubAuthenticationError: ErrorCode.AUTH_DENIED,
+            HubInvalidResponse: ErrorCode.AUTH_INVALID_RESPONSE,
+            HubNetworkError: ErrorCode.AUTH_NETWORK_ERROR,
+            CredentialStoreError: ErrorCode.CREDENTIAL_STORE_ERROR,
+        }[type(exc)]
+        return _print_auth_error(code, str(exc), event_writer=writer)
+    if writer is not None:
+        writer.emit(ResultEvent(data=data))
+    else:
+        print(f"Gitee: {data.get('username', 'not logged in')}")
     return ExitCode.SUCCESS
 
 

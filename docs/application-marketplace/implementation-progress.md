@@ -89,7 +89,7 @@ OAuth 前置核对已完成：官方文档确认 Public App 支持 Device Code O
 - 新增登录状态查询与退出服务：无效或过期 Token 只清理 Watcher 自己的凭据条目；Hub 网络暂时失败时保留本地 Token 并返回稳定错误；退出同样只删除该精确条目。
 - 登录结果通过 `reused` 明确区分缓存复用与新授权；凭据读写异常、身份验证异常和 OAuth 非法响应均映射为稳定、脱敏的认证错误。
 - 本小步定向登录测试 14 项、SDK 全量 343 项通过，mypy 66 个源码文件通过。
-- CLI 已新增 `app login`、`app login --status`、`app logout`，登录可用 `--force` 跳过缓存；三者均提供人类输出和 `--jsonl` 机器输出，且在 Daemon 启动分支之前直接调用分发服务。
+- CLI 已新增 `app login --provider huggingface`、`app login --provider huggingface --status`、`app logout --provider huggingface`，登录可用 `--force` 跳过缓存；三者均提供人类输出和 `--jsonl` 机器输出，且在 Daemon 启动分支之前直接调用分发服务。
 - Device Flow 的 JSONL `progress` 只输出授权网址、用户码和有效期；成功与错误事件均不包含访问 Token、Device Code 或 traceback。远程认证错误按既定退出码返回。
 - CLI TDD 首次因 `login/logout` 子命令不存在而 5 项失败；最小实现后 CLI 与登录定向测试 19 项、SDK 全量 348 项通过，mypy 66 个源码文件、`pip check` 与迁移守卫 post 模式均通过。
 - 首次使用普通账号执行真实 Device Flow 时，浏览器授权成功，但 Token 轮询遇到一次临时网络错误后立即终止；随后同一端点的脱敏连通性复查成功，确认需要增强瞬时网络容错，而不是修改 OAuth scope 或凭据合同。

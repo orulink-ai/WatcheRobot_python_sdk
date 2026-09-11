@@ -217,13 +217,13 @@ Watcher's operating-system credential entry.
 Check status first:
 
 ```powershell
-.\.venv\Scripts\watcherobot.exe app login --status
+.\.venv\Scripts\watcherobot.exe app login --provider huggingface --status
 ```
 
 For a first-time developer, use the human-readable command without `--jsonl`:
 
 ```powershell
-.\.venv\Scripts\watcherobot.exe app login
+.\.venv\Scripts\watcherobot.exe app login --provider huggingface
 ```
 
 The terminal prints instructions like these:
@@ -242,8 +242,8 @@ access token.
 Use `--jsonl` only for Desktop or another machine caller:
 
 ```powershell
-.\.venv\Scripts\watcherobot.exe app login --status --jsonl
-.\.venv\Scripts\watcherobot.exe app login --jsonl
+.\.venv\Scripts\watcherobot.exe app login --provider huggingface --status --jsonl
+.\.venv\Scripts\watcherobot.exe app login --provider huggingface --jsonl
 ```
 
 Machine callers read `progress.data.verification_uri`,
@@ -255,7 +255,7 @@ Use `--force` to replace a still-valid saved login. To remove only Watcher's sav
 credential, run:
 
 ```powershell
-.\.venv\Scripts\watcherobot.exe app logout
+.\.venv\Scripts\watcherobot.exe app logout --provider huggingface
 ```
 
 This does not sign out the browser and does not remove credentials stored by the

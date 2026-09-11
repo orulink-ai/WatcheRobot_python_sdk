@@ -34,9 +34,9 @@
 | 命令 | 用途 | 登录 | 启动 Daemon |
 | --- | --- | --- | --- |
 | `watcher-distribution app check <directory> --jsonl` | 校验 `app.json`、`app.py`、SDK 兼容性、依赖与可发布文件 | 不需要 | 否 |
-| `watcher-distribution app login --jsonl` | 启动 OAuth Device Flow；可加 `--force` | 建立登录 | 否 |
-| `watcher-distribution app login --status --jsonl` | 校验 Watcher 专属凭据并返回身份 | 使用已有凭据 | 否 |
-| `watcher-distribution app logout --jsonl` | 只删除 Watcher 专属凭据项 | 使用已有凭据 | 否 |
+| `watcher-distribution app login --provider huggingface --jsonl` | 启动 OAuth Device Flow；可加 `--force` | 建立登录 | 否 |
+| `watcher-distribution app login --provider huggingface --status --jsonl` | 校验 Watcher 专属凭据并返回身份 | 使用已有凭据 | 否 |
+| `watcher-distribution app logout --provider huggingface --jsonl` | 只删除 Watcher 专属凭据项 | 使用已有凭据 | 否 |
 | `watcher-distribution app publish <directory> --jsonl` | 创建或更新公开 Space 并返回固定源码 commit；不修改官方名单 | 需要 | 否 |
 | `watcher-distribution app submit <directory> [--commit <sha>] --jsonl` | 校验已发布固定快照并创建或复用官方名单 PR；不上传源码 | 需要 | 否 |
 | `watcher-distribution app marketplace --jsonl` | 匿名读取官方名单及固定 commit 的结构化 `app.json` | 不需要 | 否 |

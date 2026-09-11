@@ -213,13 +213,13 @@ App 的 Device Flow，并把 Token 只保存到 Watcher 专用系统凭据项。
 先用普通模式查询状态：
 
 ```powershell
-.\.venv\Scripts\watcherobot.exe app login --status
+.\.venv\Scripts\watcherobot.exe app login --provider huggingface --status
 ```
 
 第一次使用时执行面向人的交互命令，不要添加 `--jsonl`：
 
 ```powershell
-.\.venv\Scripts\watcherobot.exe app login
+.\.venv\Scripts\watcherobot.exe app login --provider huggingface
 ```
 
 终端会明确显示英文提示，例如：
@@ -239,8 +239,8 @@ Code expires in: 300 seconds
 Desktop 或其他机器调用方才使用 `--jsonl`：
 
 ```powershell
-.\.venv\Scripts\watcherobot.exe app login --status --jsonl
-.\.venv\Scripts\watcherobot.exe app login --jsonl
+.\.venv\Scripts\watcherobot.exe app login --provider huggingface --status --jsonl
+.\.venv\Scripts\watcherobot.exe app login --provider huggingface --jsonl
 ```
 
 机器调用方从 `progress.data.verification_uri`、`progress.data.user_code` 和
@@ -254,7 +254,7 @@ Desktop 或其他机器调用方才使用 `--jsonl`：
 已有凭据仍需重新授权时使用 `--force`。只清理 Watcher 专用凭据时执行：
 
 ```powershell
-.\.venv\Scripts\watcherobot.exe app logout
+.\.venv\Scripts\watcherobot.exe app logout --provider huggingface
 ```
 
 该命令不会退出浏览器，也不会删除 Hugging Face CLI 或其他程序保存的登录。

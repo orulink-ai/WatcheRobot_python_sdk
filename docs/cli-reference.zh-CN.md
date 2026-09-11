@@ -216,22 +216,22 @@ watcherobot app stop
 
 ### 登录、发布与提交
 
-#### `watcherobot app login [--status | --force]`
+#### `watcherobot app login --provider huggingface [--status | --force]`
 
 通过 Watcher Desktop 的公开 OAuth Device Flow 登录 Hugging Face。默认输出授权地址和用户码；`--status` 只检查已保存身份；`--force` 强制发起新的登录。Token 只保存在 Watcher 专用的操作系统凭据项中。
 
 ```powershell
-watcherobot app login
-watcherobot app login --status
-watcherobot app login --force
+watcherobot app login --provider huggingface
+watcherobot app login --provider huggingface --status
+watcherobot app login --provider huggingface --force
 ```
 
-#### `watcherobot app logout`
+#### `watcherobot app logout --provider huggingface`
 
 只删除 Watcher 保存的 Hugging Face 凭据，不会影响 Hugging Face CLI 或其他程序的登录。
 
 ```powershell
-watcherobot app logout
+watcherobot app logout --provider huggingface
 ```
 
 #### `watcherobot app publish <目录>`

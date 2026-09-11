@@ -264,7 +264,7 @@ watcherobot app stop
 
 ### Authenticate, publish, and submit
 
-#### `watcherobot app login [--status | --force]`
+#### `watcherobot app login --provider huggingface [--status | --force]`
 
 Uses the Watcher Desktop public OAuth Device Flow to authorize publishing to
 Hugging Face. The default flow prints a URL and user code; `--status` checks
@@ -272,18 +272,18 @@ the saved identity without opening a flow; `--force` replaces a valid saved
 login. The token is stored only in Watcher's operating-system credential entry.
 
 ```powershell
-watcherobot app login
-watcherobot app login --status
-watcherobot app login --force
+watcherobot app login --provider huggingface
+watcherobot app login --provider huggingface --status
+watcherobot app login --provider huggingface --force
 ```
 
-#### `watcherobot app logout`
+#### `watcherobot app logout --provider huggingface`
 
 Removes only Watcher's saved Hugging Face credential. It does not sign out the
 Hugging Face CLI or another program.
 
 ```powershell
-watcherobot app logout
+watcherobot app logout --provider huggingface
 ```
 
 #### `watcherobot app publish <directory>`

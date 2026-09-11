@@ -269,7 +269,7 @@ watcherobot robot pair 123456      # replace with the code shown on the robot
 watcherobot app init my_app
 cd my_app
 watcherobot app run
-watcherobot app login
+watcherobot app login --provider huggingface
 watcherobot app check .            # validate before publishing
 watcherobot app publish .          # upload an immutable source snapshot
 watcherobot app submit .           # submit that snapshot for Marketplace review

@@ -58,8 +58,8 @@ def test_sdk_application_usage_guide_is_executable_and_matches_store_boundary() 
     for command in (
         "app check",
         "app run",
-        "app login --status",
-        "app login --jsonl",
+        "app login --provider huggingface --status",
+        "app login --provider huggingface --jsonl",
         "app publish",
         "app submit",
         "app marketplace --jsonl",
@@ -81,7 +81,7 @@ def test_sdk_application_usage_guide_is_executable_and_matches_store_boundary() 
 def test_chinese_usage_guide_directs_humans_to_interactive_english_login() -> None:
     guide = CHINESE_USAGE_GUIDE_PATH.read_text(encoding="utf-8")
 
-    assert ".\\.venv\\Scripts\\watcherobot.exe app login\n" in guide
+    assert ".\\.venv\\Scripts\\watcherobot.exe app login --provider huggingface\n" in guide
     assert "Authorize Hugging Face in your browser" in guide
     assert "Open: https://hf.co/oauth/device" in guide
     assert "Desktop 或其他机器调用方才使用 `--jsonl`" in guide

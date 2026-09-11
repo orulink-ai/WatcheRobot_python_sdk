@@ -27,7 +27,7 @@ watcherobot app init .\my_app
 cd my_app
 watcherobot app run
 watcherobot app check .
-watcherobot app login
+watcherobot app login --provider huggingface
 watcherobot app publish .
 watcherobot app submit .
 watcherobot app marketplace
@@ -120,7 +120,7 @@ watcherobot app marketplace --jsonl
 ## Publishing and catalog review
 
 ```powershell
-watcherobot app login
+watcherobot app login --provider huggingface
 watcherobot app check .\my_app
 watcherobot app publish .\my_app
 watcherobot app submit .\my_app
