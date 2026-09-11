@@ -68,8 +68,11 @@ class GiteeApi:
                 return response.status, json.loads(raw)
         except HTTPError as exc:
             # Inspect only a bounded error body; never expose server text or credentials.
-            with exc:
-                body = exc.read(8192).lower()
+            try:
+                with exc:
+                    body = exc.read(8192).lower()
+            except (OSError, ValueError):
+                raise HubNetworkError("Gitee API request failed") from None
             if exc.code == 429 or (exc.code == 403 and b"rate limit exceeded" in body):
                 return exc.code, {"rate_limited": True}
             return exc.code, {}
@@ -232,7 +235,9 @@ class GiteeRepository:
                 destination = root / path
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(content)
-            self.git.run(root, "add", "--all")
+            # Only the explicitly collected publication files exist here. Do not
+            # let a bundled .gitignore silently remove them from the snapshot.
+            self.git.run(root, "add", "--all", "--force")
             self.git.run(
                 root,
                 "-c",

@@ -15,6 +15,51 @@ from watcherobot.distribution.ports import (
 SHA = "a" * 40
 
 
+def test_publish_preserves_explicit_files_even_when_gitignored(tmp_path):
+    import subprocess
+    from watcherobot.distribution.gitee_repository import GiteeGit
+
+    remote = tmp_path / 'remote.git'
+    subprocess.run(['git', 'init', '--bare', str(remote)], check=True, capture_output=True)
+
+    class LocalGit(GiteeGit):
+        def run(self, root, *args, token=None):
+            args = tuple(str(remote) if arg.startswith('https://gitee.com/') else arg
+                         for arg in args)
+            return super().run(root, *args, token=None)
+
+    GiteeRepository(git=LocalGit()).replace_repository_files(
+        AccessToken('test'), repo_id='alice/app',
+        files=(UploadFile.from_bytes('.gitignore', b'web/\n'),
+               UploadFile.from_bytes('web/app.js', b'console.log(1)'),
+               UploadFile.from_bytes('app.json', b'{}')),
+        commit_message='fixture',
+    )
+    result = subprocess.run(['git', '--git-dir', str(remote), 'show', 'HEAD:web/app.js'],
+                            capture_output=True, check=False)
+    assert result.returncode == 0
+    assert result.stdout == b'console.log(1)'
+
+
+def test_error_body_disconnect_is_sanitized(monkeypatch):
+    from io import BytesIO
+    from urllib.error import HTTPError
+    from watcherobot.distribution.gitee_repository import GiteeApi
+    from watcherobot.distribution.ports import HubNetworkError
+
+    class BrokenBody(BytesIO):
+        def read(self, size):
+            raise OSError('private response details')
+
+    def denied(*args, **kwargs):
+        raise HTTPError('https://gitee.com', 403, 'Forbidden', {}, BrokenBody())
+
+    monkeypatch.setattr('watcherobot.distribution.gitee_repository.build_opener',
+                        lambda *args: SimpleNamespace(open=denied))
+    with pytest.raises(HubNetworkError, match='Gitee API request failed'):
+        GiteeApi().request('GET', 'repos/alice/app', None)
+
+
 @pytest.mark.parametrize('status,payload', [(429, {}), (403, {'rate_limited': True}), (403, {})])
 def test_anonymous_denial_is_not_reported_as_bad_token(status, payload):
     from watcherobot.distribution.ports import HubNetworkError

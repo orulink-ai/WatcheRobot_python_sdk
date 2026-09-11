@@ -48,6 +48,13 @@ publish 不投稿；submit 不上传源码；必须先发布，且本地 app.jso
 
 ## 本轮验证记录
 
+以下按验证阶段保留历史结果，不代表每个阶段的限制仍然存在。当前源码以“Git 下载优化后的复测”中的后续补齐结果为准；正式发布门禁仍包括 HF 线上目录、Gitee 分支保护和新版 Runtime/示例发布。
+
+### PR 审查修复
+
+- 发布文件由 SDK 收集器及 `.watcherignore` 决定；临时 Git 仓库不得再按 `.gitignore` 静默丢弃已选文件。真实本地 Git 发布回归覆盖被忽略的 UI 静态资源。
+- Gitee API 错误响应读取中断时统一返回已脱敏网络错误，不将底层异常直接暴露给 CLI。
+
 ### SDK Test Bench 普通开发者实测
 
 - qiqi779 发布 examples/sdk_media_lab 1.1.0，共 23 个文件，版本 f2ab6fc55349ca30f4028c82be3e0880aaf7e128。示例清单升级 schema 2，仅声明已有验证记录的 Windows。
