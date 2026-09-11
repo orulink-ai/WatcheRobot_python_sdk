@@ -98,23 +98,31 @@ class VisionDomain:
                                       _required_bool(item, "verified")))
         return tuple(models)
 
-    def start_inference(self, model_id: int, *, timeout: float | None = 10.0) -> InferenceSession:
-        """Start a headless model session. Stop existing camera work first."""
+    def start_inference(self, model_id: int, *, preview: bool = False,
+                        timeout: float | None = 10.0) -> InferenceSession:
+        """Start a model session with optional same-frame JPEG, without motion."""
         from .inference import InferenceSession, ack, integer
         if isinstance(model_id, bool) or not isinstance(model_id, int) or not 1 <= model_id <= 255:
             raise ValueError("model_id must be an integer between 1 and 255")
         _validate_timeout(timeout)
         self._robot._require_capability("vision.inference.v1")
+        if not isinstance(preview, bool):
+            raise ValueError("preview must be a boolean")
+        if preview:
+            self._robot._require_capability("vision.inference.preview.v1")
         with self._inference_lock:
             if self._robot._closed or self._robot._closing:
                 raise WatcheRobotError("robot connection is closed")
             if self._inference_session is not None and not self._inference_session.closed:
                 raise RuntimeError("close the previous inference session first")
-            session = InferenceSession(self._robot, model_id)
+            session = InferenceSession(self._robot, model_id, preview=preview)
             self._inference_session = session
             try:
                 message_type = "ctrl.vision.inference.start"
-                data = ack(self._robot._command(message_type, {"session_id": session.id, "model_id": model_id},
+                options = {"session_id": session.id, "model_id": model_id}
+                if preview:
+                    options["preview"] = True
+                data = ack(self._robot._command(message_type, options,
                                                 timeout=timeout), message_type)
                 if integer(data, "session_id", 1) != session.id:
                     raise WatcheRobotError("vision start ACK has another session")

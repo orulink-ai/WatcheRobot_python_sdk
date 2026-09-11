@@ -182,6 +182,7 @@ class PairDeviceRequest(BaseModel):
 
 
 class InferenceStartRequest(BaseModel):
+    preview: bool = Field(default=False, strict=True)
     model_id: int = Field(ge=1, le=255, strict=True)
 
 
@@ -354,7 +355,7 @@ class MediaLabService:
         self._ensure_capability("vision.models.v1")
         return {"models": [asdict(model) for model in self._robot.vision.models()]}
 
-    def start_inference(self, model_id: int) -> dict[str, object]:
+    def start_inference(self, model_id: int, *, preview: bool = False) -> dict[str, object]:
         with self._inference_lock:
             self._ensure_device_online()
             self._ensure_capability("vision.inference.v1")
@@ -365,7 +366,7 @@ class MediaLabService:
             self._inference_lease = lease
             self._inference_state = "starting"
             try:
-                self._inference_session = self._robot.vision.start_inference(model_id)
+                self._inference_session = self._robot.vision.start_inference(model_id, **({"preview": True} if preview else {}))
             except Exception:
                 self._inference_state = "stop_required"
                 try:
@@ -381,7 +382,13 @@ class MediaLabService:
             if self._inference_session is None or self._inference_state != "running":
                 raise MediaLabBusyError("No running inference session")
             result = self._inference_session.latest(timeout=3.0)
-            return {"ready": False} if result is None else {"ready": True, **asdict(result)}
+            if result is None:
+                return {"ready": False}
+            data = asdict(result)
+            jpeg = data.pop("jpeg", None)
+            if jpeg is not None:
+                data["jpeg_base64"] = base64.b64encode(jpeg).decode("ascii")
+            return {"ready": True, **data}
 
     def stop_inference(self) -> dict[str, object]:
         with self._inference_lock:
@@ -1132,7 +1139,7 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
 
     @app.post("/api/vision/inference/start")
     async def start_inference(request: InferenceStartRequest) -> dict[str, object]:
-        return await _run_action(lambda: service.start_inference(request.model_id))
+        return await _run_action(lambda: service.start_inference(request.model_id, preview=request.preview))
 
     @app.post("/api/vision/inference/stop")
     async def stop_inference() -> dict[str, object]:

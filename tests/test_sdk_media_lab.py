@@ -1762,3 +1762,30 @@ def test_generic_inference_owns_only_camera_and_retries_stop(tmp_path):
     service.stop_inference()
     assert service.status()["inference"]["state"] == "idle"
     assert not service.status()["resource_owners"]
+
+
+def test_generic_preview_http_returns_same_frame_and_only_owns_camera(tmp_path):
+    import base64
+    from watcherobot.inference import InferenceResult, DetectionBox
+    module = _load_service_module()
+    robot = _robot()
+    calls = []
+    result = InferenceResult(123, 3, 9, 100, 640, 480, "detection",
+                             (DetectionBox(100, 120, 80, 60, 90, 2),), b"\xff\xd8image\xff\xd9")
+    session = SimpleNamespace(id=123, model_id=3, latest=lambda **kw: result)
+    def start(model_id, **options):
+        calls.append((model_id, options))
+        return session
+    robot.vision = SimpleNamespace(start_inference=start, stop_inference=lambda: None)
+    robot.capabilities += ("vision.inference.v1", "vision.inference.preview.v1")
+    service = _service(module, tmp_path, robot)
+    client = _client_for_service(module, tmp_path, service)
+    assert client.post("/api/vision/inference/start", json={"model_id": 3, "preview": True}).status_code == 200
+    assert calls == [(3, {"preview": True})]
+    frame = client.get("/api/vision/inference/result").json()
+    assert frame["sequence"] == 9 and frame["model_id"] == 3
+    assert base64.b64decode(frame["jpeg_base64"]) == result.jpeg
+    assert frame["boxes"][0]["x"] == 100
+    assert service.status()["resource_owners"] == {"camera": "vision_inference"}
+    service.stop_inference()
+    assert not service.status()["resource_owners"]
