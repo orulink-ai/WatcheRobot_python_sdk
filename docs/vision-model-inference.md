@@ -21,7 +21,9 @@ with robot.vision.start_inference(2) as inference:
 ## API 合同
 
 - `models(timeout=10.0)` 只读取目录，不切换模型、不写入模型；返回 `tuple[VisionModel, ...]`。
-- `start_inference(model_id, timeout=10.0)` 启动无 JPEG、无云台运动的端侧推理。
+- `start_inference(model_id, preview=False, timeout=10.0)` 启动无云台运动的端侧推理。
+  `preview=True` 需要固件声明 `vision.inference.preview.v1`，最新结果的 `jpeg` 字节与
+  检测框来自同次采集；不开预览时 `jpeg=None`。PTL 同步预览为 640×480。
   启动前需停止占用相机的预览、拍照或跟随，当前版本尚未实现通用自动抢占。
 - `session.latest(timeout=None)` 返回最新 `InferenceResult`，预热尚无结果时返回 `None`。
   重复读取可能得到同一序号；不要把查询次数作为推理帧率。
@@ -34,7 +36,7 @@ with robot.vision.start_inference(2) as inference:
 `InferenceResult` 包含会话、模型、序号、设备时间戳、结果坐标空间宽高、任务和检测框。
 `DetectionBox.x/y` 是中心坐标，`width/height` 是框尺寸，`score` 为 0～100，
 `target` 是模型输出类别索引。它不同于旧 `FaceBox` 的左上角坐标语义。
-当前四个已验证模型都是检测任务，结果坐标空间为 320×240；这不是正式视频分辨率。
+当前四个已验证模型都是检测任务，无预览结果坐标空间为 320×240；开启预览为 640×480。
 分类结果不会被转换成检测框；当前解析器明确拒绝不支持的结果任务。
 
 ## 模型与能力边界
@@ -42,13 +44,19 @@ with robot.vision.start_inference(2) as inference:
 原厂人员、宠物、手势分别保持在 1～3 号，4 号是独立人脸检测。
 `verified=True` 表示当前完整槽位 CRC 与已验证工件一致，并非模型准确率认证。
 未知槽位仍能在目录中显示为 `Unverified model`，但通用推理拒绝运行，避免错误后处理。
-原厂元数据自动解析、未知模型通用算子适配、推理调试 JPEG 不属于本接口已完成能力。
+原厂元数据自动解析、未知模型通用算子适配不属于本接口已完成能力。
 
 ## 测试网页
 
 `examples/sdk_media_lab` 增加 On-device Model Test：读取模型 → 选择模型 → 启动推理 →
 读取最新结果 → 停止推理。页面按真实能力与相机占用启用按钮，结果 JSON 显示真实
 模型及会话标识，未就绪显示预热状态。Application 退出及设备断线会清理其推理工作。
+
+手势预览：选择 3 号 Gesture Detection → Start Model Preview，显示同帧检测框、
+类别 ID 和置信度。3 号模型类别映射已由实机使用者确认：0＝布（Paper）、
+1＝石头（Rock）、2＝剪刀（Scissors）。此映射仅用于 3 号模型，未知类别保留 ID。
+预览不产生跟随运动。切换模型前先停止；普通与预览模式使用同一摄像头所有权。
+图像按需随结果响应返回，只保留最新一帧；这是诊断预览，不承诺视频帧率。
 
 固件命令为 `ctrl.vision.models.get`、`ctrl.vision.inference.start/stop`、
 `ctrl.vision.inference.result.get`。启动带 `model_id`、`session_id`，停止和读取带

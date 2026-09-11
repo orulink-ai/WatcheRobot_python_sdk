@@ -177,6 +177,10 @@ Boot Minimum Internal RAM 是本次设备启动以来的低水位，不会在停
 
 ### 通用端侧模型调用
 
+测试网页当前仅展示 3 号手势与 4 号人脸模型；人员和宠物模型从测试列表隐藏。
+设备模型槽位与 SDK `vision.models()` 完整目录保持不变，不执行擦除。
+
 On-device Model Test 使用 `vision.models()` 和 `vision.start_inference()`，支持读取原厂
-1～3 号及人脸 4 号目录、无预览推理、最新结果读取和显式停止。相机占用期间禁止启动
+1～3 号及人脸 4 号目录、无预览推理、同帧模型预览、最新结果读取和显式停止。
+选择 3 号手势模型并点击 Start Model Preview 可查看画面、类别 ID 和置信度，不驱动云台。相机占用期间禁止启动
 冲突功能；停止未确认时保留占用。详见 [模型推理合同](../../docs/vision-model-inference.md)。

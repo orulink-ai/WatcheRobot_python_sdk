@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import secrets
+import base64
+import binascii
 import threading
 import time
 from dataclasses import dataclass
@@ -56,19 +58,21 @@ class InferenceResult:
     frame_height: int
     task: str
     boxes: tuple[DetectionBox, ...]
+    jpeg: bytes | None = None
 
 
 class InferenceSession:
     """Headless inference; close only this session, never a newer owner.
 
     Results are device-side latest snapshots. Slow consumers skip older results.
-    JPEG debug output is not enabled by this API.
+    Optional JPEG output belongs to the same snapshot as the detection boxes.
     """
 
-    def __init__(self, robot: WatcheRobot, model_id: int) -> None:
+    def __init__(self, robot: WatcheRobot, model_id: int, *, preview: bool = False) -> None:
         self._robot = robot
         self.id = secrets.randbelow(0x7FFFFFFF) + 1
         self.model_id = model_id
+        self.preview = preview
         self._closed = False
         self._lock = threading.RLock()
 
@@ -105,8 +109,19 @@ class InferenceSession:
                 boxes.append(DetectionBox(integer(item, "x", 0, width), integer(item, "y", 0, height),
                                           integer(item, "width", 1, width), integer(item, "height", 1, height),
                                           integer(item, "score", 0, 100), integer(item, "target", 0, 255)))
+            jpeg = None
+            if self.preview:
+                encoded = data.get("jpeg_base64")
+                if not isinstance(encoded, str) or not 0 < len(encoded) <= 175000:
+                    raise WatcheRobotError("invalid vision preview image")
+                try:
+                    jpeg = base64.b64decode(encoded, validate=True)
+                except (ValueError, binascii.Error) as exc:
+                    raise WatcheRobotError("invalid vision preview encoding") from exc
+                if not jpeg.startswith(b"\xff\xd8") or not jpeg.endswith(b"\xff\xd9"):
+                    raise WatcheRobotError("invalid vision preview JPEG")
             return InferenceResult(self.id, model_id, integer(data, "sequence", 1),
-                                   integer(data, "timestamp_ms"), width, height, "detection", tuple(boxes))
+                                   integer(data, "timestamp_ms"), width, height, "detection", tuple(boxes), jpeg)
 
     def results(self, *, poll_interval: float = 0.1) -> Iterator[InferenceResult]:
         """Yield new results until closed, with no accumulating background queue."""

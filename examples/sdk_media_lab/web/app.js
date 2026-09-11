@@ -1,4 +1,5 @@
 import { evaluateRtcAudioHealth } from "./rtc-audio-health.mjs";
+import { detectionLabel, testBenchModels } from "./model-preview.mjs";
 import { createDisplayAudit } from "./display-audit.mjs";
 import { createMjpegTransport } from "./mjpeg-transport.mjs";
 let displayAudit = createDisplayAudit();
@@ -8,6 +9,11 @@ let faceFramePending = false;
 let facePreviewEpoch = 0;
 let facePreviewActive = false;
 let inferenceRequestPending = false;
+let modelPreviewActive = false;
+let modelPreviewEpoch = 0;
+let modelPreviewPending = false;
+let modelPreviewSequence = null;
+let modelPreviewFrameAt = 0;
 import { evaluateAnimationConfirmation } from "./animation-confirmation.mjs";
 import {
   clampAnimationIntervalMs,
@@ -204,6 +210,9 @@ const elements = {
   facePreviewMetrics: document.querySelector("#facePreviewMetrics"),
   stopFaceTrackingButton: document.querySelector("#stopFaceTrackingButton"),
   queryModelsButton: document.querySelector("#queryModelsButton"),
+  startInferencePreviewButton: document.querySelector("#startInferencePreviewButton"),
+  inferenceCanvas: document.querySelector("#inferenceCanvas"),
+  inferenceMetrics: document.querySelector("#inferenceMetrics"),
   inferenceModel: document.querySelector("#inferenceModel"),
   startInferenceButton: document.querySelector("#startInferenceButton"),
   queryInferenceButton: document.querySelector("#queryInferenceButton"),
@@ -631,6 +640,13 @@ function renderStatus(status) {
   elements.queryModelsButton.disabled = inferenceRequestPending || !status.connected || !hasCapability("vision.models.v1");
   elements.startInferenceButton.disabled = inferenceRequestPending || !inferenceSupported || !availability.camera
     || inferenceState !== "idle" || !elements.inferenceModel.value;
+  elements.startInferencePreviewButton.disabled = elements.startInferenceButton.disabled || !hasCapability("vision.inference.preview.v1");
+  elements.inferenceModel.disabled = inferenceState !== "idle";
+  if (inferenceState === "idle" && modelPreviewActive) {
+    modelPreviewActive = false;
+    modelPreviewEpoch++;
+    elements.inferenceCanvas.hidden = true;
+  }
   elements.queryInferenceButton.disabled = inferenceRequestPending || !inferenceSupported || inferenceState !== "running";
   elements.stopInferenceButton.disabled = inferenceRequestPending || !status.connected || inferenceState === "idle";
   const faceState = status.face_tracking?.state || "idle";
@@ -2028,7 +2044,7 @@ elements.stopAudioButton.addEventListener("click", () => {
 });
 elements.capturePhotoButton.addEventListener("click", () => { capturePhoto().catch(() => {}); });
 
-async function inferenceAction(action) {
+async function inferenceAction(action, preview = false) {
   if (inferenceRequestPending) return;
   inferenceRequestPending = true;
   if (state.status) renderStatus(state.status);
@@ -2036,8 +2052,9 @@ async function inferenceAction(action) {
     const isRead = action === "models" || action === "result";
     const path = action === "models" ? "/api/vision/models" : `/api/vision/inference/${action}`;
     const response = await api(path, {method: isRead ? "GET" : "POST",
-      ...(action === "start" ? {body: JSON.stringify({model_id: Number(elements.inferenceModel.value)})} : {})});
+      ...(action === "start" ? {body: JSON.stringify({model_id: Number(elements.inferenceModel.value), preview})} : {})});
     if (action === "models") {
+      response.models = testBenchModels(response.models);
       elements.inferenceModel.replaceChildren();
       for (const model of response.models) {
         const option = document.createElement("option");
@@ -2048,7 +2065,17 @@ async function inferenceAction(action) {
       }
       elements.inferenceModel.value = String(response.models.find(model => model.verified)?.model_id || "");
     }
-    elements.inferenceResult.textContent = JSON.stringify(response, null, 2);
+    if (action === "start" || action === "stop") {
+      modelPreviewActive = action === "start" && preview;
+      modelPreviewEpoch++;
+      modelPreviewSequence = null;
+      modelPreviewFrameAt = Date.now();
+      elements.inferenceCanvas.hidden = !modelPreviewActive;
+      elements.inferenceCanvas.getContext("2d").clearRect(0, 0, 640, 480);
+      elements.inferenceMetrics.textContent = modelPreviewActive ? "Waiting for a preview frame" : "";
+    }
+    const {jpeg_base64, ...details} = response;
+    elements.inferenceResult.textContent = JSON.stringify(details, null, 2);
     setResult(elements.inferenceState, action === "start" ? "Inference is running" : action === "stop"
       ? "Inference stopped" : action === "result" && !response.ready ? "Model is warming up; read again shortly" : "Vision data updated", "ok");
   } catch (error) {
@@ -2059,6 +2086,7 @@ async function inferenceAction(action) {
   }
 }
 elements.queryModelsButton.addEventListener("click", () => { inferenceAction("models").catch(() => {}); });
+elements.startInferencePreviewButton.addEventListener("click", () => { inferenceAction("start", true).catch(() => {}); });
 elements.startInferenceButton.addEventListener("click", () => { inferenceAction("start").catch(() => {}); });
 elements.queryInferenceButton.addEventListener("click", () => { inferenceAction("result").catch(() => {}); });
 elements.stopInferenceButton.addEventListener("click", () => { inferenceAction("stop").catch(() => {}); });
@@ -2153,3 +2181,48 @@ refreshStatus({ quiet: false });
 drawEmptyWaveform();
 updateMotionPreview();
 updateLightPreview();
+
+// Each JPEG and its center-based boxes share one latest result.
+setInterval(async () => {
+  if (!modelPreviewActive || modelPreviewPending || inferenceRequestPending) return;
+  modelPreviewPending = true;
+  const epoch = modelPreviewEpoch;
+  try {
+    const result = await api("/api/vision/inference/result");
+    if (epoch !== modelPreviewEpoch) return;
+    if (!result.ready || !result.jpeg_base64 || result.sequence === modelPreviewSequence) {
+      if (Date.now() - modelPreviewFrameAt > 2000) {
+        elements.inferenceCanvas.getContext("2d").clearRect(0, 0, 640, 480);
+        elements.inferenceMetrics.textContent = "Preview requested; no recent image received";
+      }
+      return;
+    }
+    const image = new Image();
+    image.src = `data:image/jpeg;base64,${result.jpeg_base64}`;
+    await image.decode();
+    if (!modelPreviewActive || epoch !== modelPreviewEpoch) return;
+    const canvas = elements.inferenceCanvas;
+    canvas.width = result.frame_width; canvas.height = result.frame_height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = "#45e6a3"; ctx.fillStyle = "#45e6a3";
+    ctx.lineWidth = 2; ctx.font = "16px sans-serif";
+    for (const box of result.boxes) {
+      const x = box.x - box.width / 2, y = box.y - box.height / 2;
+      ctx.strokeRect(x, y, box.width, box.height);
+      const label = i18n.translate(detectionLabel(result.model_id, box.target));
+      ctx.fillText(`${label} (${box.target}) - ${box.score}%`, Math.max(0, x), Math.max(18, y - 4));
+    }
+    canvas.dataset.sequence = String(result.sequence);
+    modelPreviewSequence = result.sequence;
+    modelPreviewFrameAt = Date.now();
+    elements.inferenceMetrics.textContent = `#${result.sequence} - ${result.frame_width} x ${result.frame_height} - ${result.boxes.length} detections`;
+    const {jpeg_base64, ...details} = result;
+    elements.inferenceResult.textContent = JSON.stringify(details, null, 2);
+  } catch (error) {
+    if (epoch === modelPreviewEpoch) {
+      elements.inferenceMetrics.textContent = error.message;
+      elements.inferenceCanvas.getContext("2d").clearRect(0, 0, 640, 480);
+    }
+  } finally { modelPreviewPending = false; }
+}, 200);

@@ -225,19 +225,22 @@
         <pre id="faceVisionStatus" style="white-space:pre-wrap;overflow-wrap:anywhere">—</pre>
       </section>
 
-      <section class="rtc-audio-panel" aria-labelledby="inferenceTitle">
+      <section class="rtc-audio-panel" id="inferencePanel" aria-labelledby="inferenceTitle">
         <p class="eyebrow">02.9 / Model Inference</p>
-        <h2 id="inferenceTitle">On-device Model Test</h2>
-        <p>Read installed models, run inference without video or gimbal movement, and inspect the latest result. Stop camera features before starting.</p>
+        <h2 id="inferenceTitle">Gesture and Face Model Test</h2>
+        <p>Test gesture and face detection with optional preview and no gimbal movement. Stop camera features before starting.</p>
         <div class="button-row">
           <button id="queryModelsButton" class="station-action" type="button" disabled>Read Models</button>
           <label for="inferenceModel">Model</label>
           <select id="inferenceModel"><option value="">Read models first</option></select>
           <button id="startInferenceButton" class="station-action" type="button" disabled>Start Inference</button>
+          <button id="startInferencePreviewButton" class="station-action" type="button" disabled>Start Model Preview</button>
           <button id="queryInferenceButton" class="station-action" type="button" disabled>Read Latest Result</button>
           <button id="stopInferenceButton" class="quiet-action" type="button" disabled>Stop Inference</button>
         </div>
         <p id="inferenceState" role="status">Awaiting Test</p>
+        <canvas id="inferenceCanvas" width="640" height="480" hidden style="max-width:100%;height:auto"></canvas>
+        <p id="inferenceMetrics" role="status"></p>
         <pre id="inferenceResult" style="white-space:pre-wrap;overflow-wrap:anywhere">—</pre>
       </section>
 

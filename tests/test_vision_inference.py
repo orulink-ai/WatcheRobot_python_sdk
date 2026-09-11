@@ -38,6 +38,49 @@ def test_catalog_is_typed_and_does_not_select_models():
     assert len(transport.commands) == 1
 
 
+def test_preview_requires_capability_and_returns_same_result_image():
+    import base64
+    from watcherobot import WatcheRobotError
+    transport = InferenceTransport()
+    robot = WatcheRobot._from_transport(transport)
+    with pytest.raises(WatcheRobotError):
+        robot.vision.start_inference(2, preview=True)
+    assert not transport.commands
+    transport.capabilities += ("vision.inference.preview.v1",)
+    robot = WatcheRobot._from_transport(transport)
+    original = transport.send_command
+    def response(message_type, data, timeout=None):
+        result = original(message_type, data, timeout)
+        if message_type.endswith("result.get"):
+            result["data"]["jpeg_base64"] = base64.b64encode(b"\xff\xd8image\xff\xd9").decode()
+        return result
+    transport.send_command = response
+    with robot.vision.start_inference(2, preview=True) as session:
+        assert transport.commands[-1][1]["preview"] is True
+        result = session.latest()
+        assert result.jpeg == b"\xff\xd8image\xff\xd9"
+        assert result.boxes[0].center == (160, 120)
+
+
+@pytest.mark.parametrize("encoded", [None, "!invalid", "a" * 175001, "bm90LWEtanBlZw=="],
+                         ids=["missing", "invalid-base64", "oversized", "not-jpeg"])
+def test_preview_rejects_missing_oversized_or_invalid_image(encoded):
+    from watcherobot import WatcheRobotError
+    transport = InferenceTransport()
+    transport.capabilities += ("vision.inference.preview.v1",)
+    robot = WatcheRobot._from_transport(transport)
+    original = transport.send_command
+    def response(message_type, data, timeout=None):
+        result = original(message_type, data, timeout)
+        if message_type.endswith("result.get"):
+            result["data"]["jpeg_base64"] = encoded
+        return result
+    transport.send_command = response
+    with robot.vision.start_inference(2, preview=True) as session:
+        with pytest.raises(WatcheRobotError):
+            session.latest()
+
+
 def test_inference_has_session_scoped_results_and_close():
     transport = InferenceTransport()
     robot = WatcheRobot._from_transport(transport)

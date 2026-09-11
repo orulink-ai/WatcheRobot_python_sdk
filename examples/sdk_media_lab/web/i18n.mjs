@@ -4,6 +4,13 @@ const SUPPORTED_LOCALES = new Set(["en-US", "zh-CN"]);
 // legacy Chinese diagnostics from the device/service and powers the optional Chinese
 // presentation without putting Chinese literals back into the page or controller.
 const ENGLISH_PHRASES = new Map([
+  ["手势与人脸模型测试", "Gesture and Face Model Test"],
+  ["测试手势和人脸检测，可选画面预览，不驱动云台。开始前请停止其他摄像头功能。", "Test gesture and face detection with optional preview and no gimbal movement. Stop camera features before starting."],
+  ["布", "Paper"],
+  ["石头", "Rock"],
+  ["剪刀", "Scissors"],
+  ["启动模型预览", "Start Model Preview"],
+  ["读取已安装模型，运行可选预览的推理且不驱动云台，并查看最新结果。开始前请停止其他摄像头功能。", "Read installed models, run inference with optional preview and no gimbal movement, and inspect the latest result. Stop camera features before starting."],
   ["已请求预览，尚未收到最近的图像", "Preview requested; no recent image received"],
   ["已请求预览，等待首帧图像", "Preview requested; waiting for the first image"],
   ["端侧跟随可选同步画面预览。启动后云台会转动，停止后保持当前位置。开始前请停止实时视频。", "Run tracking on the robot, with optional matching preview frames. Starting tracking moves the gimbal; stopping holds its current position. Stop live video before starting tracking."],
