@@ -58,21 +58,21 @@ class FakeSnapshotHub:
     marker: str = "first"
     calls: list[tuple[str, str, Path]] = field(default_factory=list)
 
-    def download_space_snapshot(
+    def download_repository_snapshot(
         self,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         target: Path,
     ) -> RepositoryRevision:
-        self.calls.append((space_id, commit, target))
+        self.calls.append((repo_id, commit, target))
         if self.failure is not None:
             raise self.failure
         _write_application(target, marker=self.marker)
         return RepositoryRevision(
             commit=self.returned_commit,
             url=(
-                f"https://huggingface.co/spaces/{space_id}/tree/"
+                f"https://huggingface.co/spaces/{repo_id}/tree/"
                 f"{self.returned_commit}"
             ),
         )
@@ -101,8 +101,8 @@ def test_download_requires_an_existing_empty_caller_target(
     hub = FakeSnapshotHub()
 
     with pytest.raises(DownloadError) as captured:
-        download_application_snapshot(
-            space_id=SPACE_ID,
+        download_application_snapshot(provider="huggingface",
+            repo_id=SPACE_ID,
             commit=COMMIT,
             target=target,
             hub=hub,
@@ -121,8 +121,8 @@ def test_download_rejects_floating_revision_before_remote_call(
     hub = FakeSnapshotHub()
 
     with pytest.raises(DownloadError) as captured:
-        download_application_snapshot(
-            space_id=SPACE_ID,
+        download_application_snapshot(provider="huggingface",
+            repo_id=SPACE_ID,
             commit="main",
             target=target,
             hub=hub,
@@ -142,8 +142,8 @@ def test_download_validates_in_isolation_then_delivers_exact_source(
     hub = FakeSnapshotHub()
     events = RecordingEvents()
 
-    result = download_application_snapshot(
-        space_id=SPACE_ID,
+    result = download_application_snapshot(provider="huggingface",
+        repo_id=SPACE_ID,
         commit=COMMIT,
         target=target,
         hub=hub,
@@ -151,8 +151,8 @@ def test_download_validates_in_isolation_then_delivers_exact_source(
         watcherobot_version="1.5.0",
     )
 
-    assert result.to_dict() == {
-        "space_id": SPACE_ID,
+    assert result.to_dict() == {"provider": "huggingface",
+        "repo_id": SPACE_ID,
         "commit": COMMIT,
         "source_url": (
             f"https://huggingface.co/spaces/{SPACE_ID}/tree/{COMMIT}"
@@ -197,8 +197,8 @@ def test_download_excludes_hugging_face_local_metadata_from_delivered_source(
     target.mkdir()
 
     class MetadataHub(FakeSnapshotHub):
-        def download_space_snapshot(self, **kwargs):
-            revision = super().download_space_snapshot(**kwargs)
+        def download_repository_snapshot(self, **kwargs):
+            revision = super().download_repository_snapshot(**kwargs)
             metadata = kwargs["target"] / ".cache" / "huggingface"
             metadata.mkdir(parents=True)
             metadata.joinpath("app.py.metadata").write_text(
@@ -207,8 +207,8 @@ def test_download_excludes_hugging_face_local_metadata_from_delivered_source(
             )
             return revision
 
-    download_application_snapshot(
-        space_id=SPACE_ID,
+    download_application_snapshot(provider="huggingface",
+        repo_id=SPACE_ID,
         commit=COMMIT,
         target=target,
         hub=MetadataHub(),
@@ -224,8 +224,8 @@ def test_wrong_resolved_commit_leaves_target_empty(tmp_path: Path) -> None:
     target.mkdir()
 
     with pytest.raises(DownloadError) as captured:
-        download_application_snapshot(
-            space_id=SPACE_ID,
+        download_application_snapshot(provider="huggingface",
+            repo_id=SPACE_ID,
             commit=COMMIT,
             target=target,
             hub=FakeSnapshotHub(returned_commit=OTHER_COMMIT),
@@ -241,8 +241,8 @@ def test_invalid_snapshot_manifest_leaves_target_empty(tmp_path: Path) -> None:
     target.mkdir()
 
     class InvalidManifestHub(FakeSnapshotHub):
-        def download_space_snapshot(self, **kwargs):
-            revision = super().download_space_snapshot(**kwargs)
+        def download_repository_snapshot(self, **kwargs):
+            revision = super().download_repository_snapshot(**kwargs)
             kwargs["target"].joinpath("app.json").write_text(
                 "{}",
                 encoding="utf-8",
@@ -250,8 +250,8 @@ def test_invalid_snapshot_manifest_leaves_target_empty(tmp_path: Path) -> None:
             return revision
 
     with pytest.raises(ApplicationManifestError):
-        download_application_snapshot(
-            space_id=SPACE_ID,
+        download_application_snapshot(provider="huggingface",
+            repo_id=SPACE_ID,
             commit=COMMIT,
             target=target,
             hub=InvalidManifestHub(),
@@ -266,8 +266,8 @@ def test_snapshot_manifest_id_must_match_space_name(tmp_path: Path) -> None:
     target.mkdir()
 
     class DifferentApplicationHub(FakeSnapshotHub):
-        def download_space_snapshot(self, **kwargs):
-            revision = super().download_space_snapshot(**kwargs)
+        def download_repository_snapshot(self, **kwargs):
+            revision = super().download_repository_snapshot(**kwargs)
             manifest_path = kwargs["target"] / "app.json"
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
             payload["id"] = "com.example.different"
@@ -275,8 +275,8 @@ def test_snapshot_manifest_id_must_match_space_name(tmp_path: Path) -> None:
             return revision
 
     with pytest.raises(DownloadError) as captured:
-        download_application_snapshot(
-            space_id=SPACE_ID,
+        download_application_snapshot(provider="huggingface",
+            repo_id=SPACE_ID,
             commit=COMMIT,
             target=target,
             hub=DifferentApplicationHub(),
@@ -292,8 +292,8 @@ def test_missing_space_is_sanitized_and_target_stays_empty(tmp_path: Path) -> No
     target.mkdir()
 
     with pytest.raises(DownloadError) as captured:
-        download_application_snapshot(
-            space_id=SPACE_ID,
+        download_application_snapshot(provider="huggingface",
+            repo_id=SPACE_ID,
             commit=COMMIT,
             target=target,
             hub=FakeSnapshotHub(
@@ -316,16 +316,16 @@ def test_same_fixed_commit_is_independent_from_later_main_changes(
     second_target.mkdir()
     hub = FakeSnapshotHub(marker="fixed")
 
-    download_application_snapshot(
-        space_id=SPACE_ID,
+    download_application_snapshot(provider="huggingface",
+        repo_id=SPACE_ID,
         commit=COMMIT,
         target=first_target,
         hub=hub,
         watcherobot_version="1.5.0",
     )
     hub.marker = "fixed"
-    download_application_snapshot(
-        space_id=SPACE_ID,
+    download_application_snapshot(provider="huggingface",
+        repo_id=SPACE_ID,
         commit=COMMIT,
         target=second_target,
         hub=hub,

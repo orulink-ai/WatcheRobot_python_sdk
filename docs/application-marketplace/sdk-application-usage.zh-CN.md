@@ -275,7 +275,7 @@ Desktop 或其他机器调用方才使用 `--jsonl`：
 - Space 固定命名为 `<hf_username>/WatcherRobot-<app_id>`，类型为公开 static Space。
 - 上传的是校验后的完整源码集合；`.git`、`.venv`、缓存、凭据和 `.watcherignore` 命中的内容
   不会发布。
-- 成功结果只包含 `space_id`、完整 40 位 `commit` 和固定源码 URL，不包含 Catalog 或 PR 状态。
+- 成功结果只包含 `repo_id`、完整 40 位 `commit` 和固定源码 URL，不包含 Catalog 或 PR 状态。
 - 同一源码重复发布不会制造无意义的新 commit。
 - `publish` 不读取或修改官方 Catalog。
 
@@ -299,12 +299,12 @@ Desktop 或其他机器调用方才使用 `--jsonl`：
 - 固定 commit 上的 `app.json` 必须与本地项目一致；不一致时应重新发布当前项目，或者检出与
   该 commit 匹配的源码后再提交。
 - `submit` 只读取固定源码并修改官方 Catalog PR，绝不上传或改写 Application 源码。
-- 成功结果包含 `space_id`、`commit`、固定 `source_url`、`pr_status` 和可选 `pr_url`。
+- 成功结果包含 `repo_id`、`commit`、固定 `source_url`、`pr_status` 和可选 `pr_url`。
 - 同一固定 commit 的开放 PR 会复用。
 - 同一 App 已有不同 commit 的开放 PR 时返回 `catalog_pr_conflict`；先处理原 PR，再提交新版本。
 - 新建的名单 PR 会直接展示 App 名称、ID、版本、作者、简介、SDK 要求、依赖和固定源码链接；
   用户提供自选图标时额外展示图标路径和固定版本图标，否则标记使用默认图标。Catalog 文件
-  本身仍只保存 `space_id + commit`。
+  本身仍只保存 `repo_id + commit`。
 - 普通开发者不能直接修改官方名单。只有维护者合并 PR 后，App 才会出现在正式应用广场。
 
 ## 7. 第四阶段：正式名单与固定快照测试
@@ -317,7 +317,7 @@ Desktop 或其他机器调用方才使用 `--jsonl`：
 ```
 
 默认输出是紧凑兼容性表格，`--details` 会显示完整固定源码 URL、commit、SDK 要求、依赖、
-作者和说明。每个 Application 都有固定 `space_id + commit`、
+作者和说明。每个 Application 都有固定 `repo_id + commit`、
 结构化 `app.json` 字段、`source_url` 和 `compatible`。不要把 Space `main` 当作安装版本。
 
 Desktop 使用机器形式：
@@ -329,7 +329,7 @@ Desktop 使用机器形式：
 当前公开测试锚点为：
 
 ```text
-space_id = tianguiti/WatcherRobot-com.orulink.marketplace_smoke
+repo_id = tianguiti/WatcherRobot-com.orulink.marketplace_smoke
 commit   = 18c3966e898d6ca84b1868663d1b5b591f9f7606
 ```
 
@@ -339,7 +339,7 @@ commit   = 18c3966e898d6ca84b1868663d1b5b591f9f7606
 $staging = Join-Path ([IO.Path]::GetTempPath()) ("watcher-sdk-download-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $staging | Out-Null
 .\.venv\Scripts\watcherobot.exe app download `
-  --space-id tianguiti/WatcherRobot-com.orulink.marketplace_smoke `
+  --repo-id tianguiti/WatcherRobot-com.orulink.marketplace_smoke `
   --commit 18c3966e898d6ca84b1868663d1b5b591f9f7606 `
   --target $staging
 Get-ChildItem -LiteralPath $staging
@@ -355,7 +355,7 @@ Desktop 在同一命令末尾添加 `--jsonl`，并只读取结构化事件字�
 
 ```powershell
 .\.venv\Scripts\watcherobot.exe app install `
-  --space-id <user>/WatcherRobot-<app_id> `
+  --repo-id <user>/WatcherRobot-<app_id> `
   --commit <40-character-commit> `
   --store-root $env:LOCALAPPDATA\WatcherRobot\applications `
   --runtime-root <Desktop-app-runtime-directory>
@@ -441,7 +441,7 @@ check result / exit code:
 daemon status:
 app run result / exit code:
 HF username / login status:
-publish space_id / commit / exit code:
+publish repo_id / commit / exit code:
 submit commit / pr_url / exit code:
 marketplace catalog_commit / target app:
 download commit / exit code:

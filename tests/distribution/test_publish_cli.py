@@ -17,9 +17,9 @@ COMMIT = "a" * 40
 
 def _result() -> PublishResult:
     return PublishResult(
-        space_id=SPACE_ID,
+        repo_id=SPACE_ID,
         commit=COMMIT,
-        space_url=f"https://huggingface.co/spaces/{SPACE_ID}",
+        repository_url=f"https://huggingface.co/spaces/{SPACE_ID}",
         source_url=(
             f"https://huggingface.co/spaces/{SPACE_ID}/tree/{COMMIT}"
         ),
@@ -46,14 +46,14 @@ def _install_success(monkeypatch):
             ProgressEvent(
                 stage="resolving_commit",
                 message="Resolving the immutable source commit",
-                data={"space_id": SPACE_ID},
+                data={"repo_id": SPACE_ID},
             )
         )
         return _result()
 
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_publish_dependencies",
-        lambda: dependencies,
+        lambda provider: dependencies,
         raising=False,
     )
     monkeypatch.setattr(
@@ -80,7 +80,7 @@ def test_cli_publish_jsonl_only_returns_fixed_source(
 ) -> None:
     calls = _install_success(monkeypatch)
 
-    exit_code = main(["app", "publish", str(tmp_path), "--jsonl"])
+    exit_code = main(["app", "publish", "--provider", "huggingface", str(tmp_path), "--jsonl"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -96,7 +96,7 @@ def test_cli_publish_jsonl_only_returns_fixed_source(
             "type": "progress",
             "stage": "resolving_commit",
             "message": "Resolving the immutable source commit",
-            "data": {"space_id": SPACE_ID},
+            "data": {"repo_id": SPACE_ID},
         },
         {"type": "result", "ok": True, "data": _result().to_dict()},
     ]
@@ -111,7 +111,7 @@ def test_cli_publish_human_output_has_no_catalog_status(
 ) -> None:
     _install_success(monkeypatch)
 
-    exit_code = main(["app", "publish", str(tmp_path)])
+    exit_code = main(["app", "publish", "--provider", "huggingface", str(tmp_path)])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -129,7 +129,7 @@ def test_cli_publish_human_output_has_no_catalog_status(
 def test_cli_publish_maps_remote_error(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_publish_dependencies",
-        lambda: SimpleNamespace(
+        lambda provider: SimpleNamespace(
             credentials=object(),
             identity_hub=object(),
             publish_hub=object(),
@@ -149,7 +149,7 @@ def test_cli_publish_maps_remote_error(tmp_path: Path, monkeypatch, capsys) -> N
         raising=False,
     )
 
-    exit_code = main(["app", "publish", str(tmp_path), "--jsonl"])
+    exit_code = main(["app", "publish", "--provider", "huggingface", str(tmp_path), "--jsonl"])
 
     assert exit_code == 4
     assert _json_lines(capsys.readouterr().out) == [
@@ -169,7 +169,7 @@ def test_cli_publish_maps_local_source_error_to_validation_exit(
 ) -> None:
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_publish_dependencies",
-        lambda: SimpleNamespace(
+        lambda provider: SimpleNamespace(
             credentials=object(),
             identity_hub=object(),
             publish_hub=object(),
@@ -186,7 +186,7 @@ def test_cli_publish_maps_local_source_error_to_validation_exit(
         raising=False,
     )
 
-    exit_code = main(["app", "publish", str(tmp_path), "--jsonl"])
+    exit_code = main(["app", "publish", "--provider", "huggingface", str(tmp_path), "--jsonl"])
 
     captured = capsys.readouterr()
     assert exit_code == 2
@@ -201,7 +201,7 @@ def test_cli_publish_keyboard_interrupt_is_jsonl_cancellation(
 ) -> None:
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_publish_dependencies",
-        lambda: SimpleNamespace(
+        lambda provider: SimpleNamespace(
             credentials=object(),
             identity_hub=object(),
             publish_hub=object(),
@@ -218,7 +218,7 @@ def test_cli_publish_keyboard_interrupt_is_jsonl_cancellation(
         raising=False,
     )
 
-    exit_code = main(["app", "publish", str(tmp_path), "--jsonl"])
+    exit_code = main(["app", "publish", "--provider", "huggingface", str(tmp_path), "--jsonl"])
 
     captured = capsys.readouterr()
     assert exit_code == 130
@@ -236,6 +236,6 @@ def test_cli_publish_keyboard_interrupt_is_jsonl_cancellation(
 def test_default_publish_dependencies_use_real_hub_adapter() -> None:
     from watcherobot.distribution.cli import _build_publish_dependencies
 
-    dependencies = _build_publish_dependencies()
+    dependencies = _build_publish_dependencies("huggingface")
 
     assert isinstance(dependencies.publish_hub, HuggingFacePublishHubClient)

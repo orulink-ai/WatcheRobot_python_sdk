@@ -50,6 +50,7 @@ class GiteePublicRepository:
         revision = branch.get("commit")
         commit = revision.get("sha") if isinstance(revision, dict) else None
         _validate_reference(repo_id, commit, path)
+        assert isinstance(commit, str)
         return CatalogDocument(
             content=self._read_verified_file(repo_id, commit, path), commit=commit,
         )

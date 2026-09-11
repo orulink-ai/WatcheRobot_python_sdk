@@ -279,7 +279,7 @@ Publishing rules:
   `<hf_username>/WatcherRobot-<app_id>`.
 - The complete validated source set is uploaded. Git metadata, virtual
   environments, caches, credentials, and `.watcherignore` matches are excluded.
-- The result contains `space_id`, an immutable 40-character `commit`, and a
+- The result contains `repo_id`, an immutable 40-character `commit`, and a
   fixed source URL. It contains no Catalog or PR state.
 - Re-publishing identical source does not create a meaningless commit.
 - `publish` never reads or modifies the official Catalog.
@@ -308,7 +308,7 @@ Submission rules:
   the current project or check out the source matching the selected commit.
 - `submit` reads the fixed source and changes only the official Catalog PR; it
   never uploads or rewrites Application source.
-- The result contains `space_id`, `commit`, fixed `source_url`, `pr_status`, and
+- The result contains `repo_id`, `commit`, fixed `source_url`, `pr_status`, and
   an optional `pr_url`.
 - An existing open pull request for the same commit is reused.
 - An open pull request for another commit of the same App produces
@@ -317,7 +317,7 @@ Submission rules:
   author, description, SDK requirement, dependencies, and fixed source link. It
   displays the icon path and fixed-revision icon when supplied, otherwise it
   marks the default icon fallback. The catalog file itself still stores only
-  `space_id + commit`.
+  `repo_id + commit`.
 - The App appears in the official marketplace only after a maintainer merges the
   catalog pull request.
 
@@ -332,7 +332,7 @@ Reading the official marketplace requires no login:
 
 The default is a compact compatibility table. `--details` includes the full source
 URL, commit, SDK requirement, dependencies, author, and description. Each App points to a fixed
-`space_id + commit`, its structured `app.json`, a fixed `source_url`, and SDK
+`repo_id + commit`, its structured `app.json`, a fixed `source_url`, and SDK
 compatibility. Never treat a Space's moving `main` branch as an installed version.
 
 Desktop uses the machine form:
@@ -348,7 +348,7 @@ directory:
 $staging = Join-Path ([IO.Path]::GetTempPath()) ("watcher-sdk-download-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $staging | Out-Null
 .\.venv\Scripts\watcherobot.exe app download `
-  --space-id <user>/WatcherRobot-<app_id> `
+  --repo-id <user>/WatcherRobot-<app_id> `
   --commit <40-character-commit> `
   --target $staging
 ```
@@ -366,7 +366,7 @@ the first install; every App receives its own environment below the App Store:
 
 ```powershell
 .\.venv\Scripts\watcherobot.exe app install `
-  --space-id <user>/WatcherRobot-<app_id> `
+  --repo-id <user>/WatcherRobot-<app_id> `
   --commit <40-character-commit> `
   --store-root $env:LOCALAPPDATA\WatcherRobot\applications `
   --runtime-root <Desktop-app-runtime-directory>

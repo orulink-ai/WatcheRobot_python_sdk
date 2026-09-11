@@ -41,21 +41,21 @@ class CatalogPullRequestConflict(RuntimeError):
 class CatalogEntry:
     """The only two fields accepted in the official V1 catalog."""
 
-    space_id: str
+    repo_id: str
     commit: str
 
     def to_dict(self) -> dict[str, str]:
-        return {"space_id": self.space_id, "commit": self.commit}
+        return {"repo_id": self.repo_id, "commit": self.commit}
 
 
-def validate_catalog_reference(space_id: object, commit: object) -> CatalogEntry:
+def validate_catalog_reference(repo_id: object, commit: object) -> CatalogEntry:
     """Validate one immutable public Space reference from any caller."""
 
     if (
-        not isinstance(space_id, str)
-        or _SPACE_ID_PATTERN.fullmatch(space_id) is None
+        not isinstance(repo_id, str)
+        or _SPACE_ID_PATTERN.fullmatch(repo_id) is None
     ):
-        raise CatalogDocumentError("Catalog entry contains an invalid space_id")
+        raise CatalogDocumentError("Catalog entry contains an invalid repo_id")
     if (
         not isinstance(commit, str)
         or _FULL_COMMIT_PATTERN.fullmatch(commit) is None
@@ -63,7 +63,7 @@ def validate_catalog_reference(space_id: object, commit: object) -> CatalogEntry
         raise CatalogDocumentError(
             "Catalog entry commit must be a full lowercase SHA"
         )
-    return CatalogEntry(space_id=space_id, commit=commit)
+    return CatalogEntry(repo_id=repo_id, commit=commit)
 
 
 @dataclass(frozen=True)
@@ -76,24 +76,24 @@ class CatalogSubmissionPlan:
     pull_request: CatalogPullRequest | None = None
 
 
-def catalog_pull_request_title(space_id: str, commit: str) -> str:
+def catalog_pull_request_title(repo_id: str, commit: str) -> str:
     """Return the stable title used to identify one pending commit."""
 
-    return f"{_PULL_REQUEST_TITLE_PREFIX}{space_id}@{commit}"
+    return f"{_PULL_REQUEST_TITLE_PREFIX}{repo_id}@{commit}"
 
 
 def plan_catalog_submission(
     document: CatalogDocument,
     *,
     open_pull_requests: tuple[CatalogPullRequest, ...],
-    space_id: str,
+    repo_id: str,
     commit: str,
 ) -> CatalogSubmissionPlan:
     """Plan an idempotent main-list update without mutating remote state."""
 
     entries = parse_catalog_entries(document.content)
     current = next(
-        (entry for entry in entries if entry.space_id == space_id),
+        (entry for entry in entries if entry.repo_id == repo_id),
         None,
     )
     if current is not None and current.commit == commit:
@@ -106,14 +106,14 @@ def plan_catalog_submission(
         pull_request
         for pull_request in open_pull_requests
         if pull_request.title.startswith(
-            f"{_PULL_REQUEST_TITLE_PREFIX}{space_id}@"
+            f"{_PULL_REQUEST_TITLE_PREFIX}{repo_id}@"
         )
     )
     if len(matching_pull_requests) > 1:
         raise CatalogPullRequestConflict(matching_pull_requests[0])
     if matching_pull_requests:
         existing = matching_pull_requests[0]
-        if existing.title == catalog_pull_request_title(space_id, commit):
+        if existing.title == catalog_pull_request_title(repo_id, commit):
             return CatalogSubmissionPlan(
                 status="pending",
                 parent_commit=document.commit,
@@ -123,11 +123,11 @@ def plan_catalog_submission(
 
     updated = list(entries)
     if current is None:
-        updated.append(CatalogEntry(space_id=space_id, commit=commit))
+        updated.append(CatalogEntry(repo_id=repo_id, commit=commit))
     else:
         current_index = updated.index(current)
         updated[current_index] = CatalogEntry(
-            space_id=space_id,
+            repo_id=repo_id,
             commit=commit,
         )
     encoded = (
@@ -160,17 +160,17 @@ def parse_catalog_entries(content: bytes) -> tuple[CatalogEntry, ...]:
         )
 
     entries: list[CatalogEntry] = []
-    seen_space_ids: set[str] = set()
+    seen_repo_ids: set[str] = set()
     for item in payload:
-        if not isinstance(item, dict) or set(item) != {"space_id", "commit"}:
+        if not isinstance(item, dict) or set(item) != {"repo_id", "commit"}:
             raise CatalogDocumentError(
-                "Each catalog entry must contain only space_id and commit"
+                "Each catalog entry must contain only repo_id and commit"
             )
-        entry = validate_catalog_reference(item["space_id"], item["commit"])
-        if entry.space_id in seen_space_ids:
+        entry = validate_catalog_reference(item["repo_id"], item["commit"])
+        if entry.repo_id in seen_repo_ids:
             raise CatalogDocumentError(
-                f"Catalog contains duplicate space_id: {entry.space_id}"
+                f"Catalog contains duplicate repo_id: {entry.repo_id}"
             )
-        seen_space_ids.add(entry.space_id)
+        seen_repo_ids.add(entry.repo_id)
         entries.append(entry)
     return tuple(entries)

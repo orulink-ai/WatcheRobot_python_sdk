@@ -88,10 +88,10 @@ class UploadFile:
 
 
 @dataclass(frozen=True)
-class SpaceRepository:
+class SourceRepository:
     """Result of ensuring one public source Space exists."""
 
-    space_id: str
+    repo_id: str
     created: bool
 
 
@@ -169,35 +169,35 @@ class HubClient(Protocol):
 class PublishHubClient(Protocol):
     """Remote writes and authenticated reads for publish/submit commands."""
 
-    def ensure_public_space(
+    def ensure_public_repository(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         sdk: str,
-    ) -> SpaceRepository: ...
+    ) -> SourceRepository: ...
 
-    def replace_space_files(
+    def replace_repository_files(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         files: tuple[UploadFile, ...],
         commit_message: str,
     ) -> None: ...
 
-    def get_space_head(
+    def get_repository_head(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
     ) -> RepositoryRevision: ...
 
-    def read_space_file(
+    def read_repository_file(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         path: str,
     ) -> bytes: ...
@@ -241,18 +241,18 @@ class MarketplaceHubClient(Protocol):
         path: str,
     ) -> CatalogDocument: ...
 
-    def read_space_file(
+    def read_repository_file(
         self,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         path: str,
     ) -> bytes: ...
 
-    def download_space_snapshot(
+    def download_repository_snapshot(
         self,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         target: Path,
     ) -> RepositoryRevision: ...

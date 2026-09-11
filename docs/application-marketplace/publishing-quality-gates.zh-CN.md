@@ -2,7 +2,7 @@
 
 > 状态：已记录的发布问题与后续实现清单；不是当前 SDK 已经执行的规则。
 >
-> 目标：在 `watcherobot app check` 和 `watcherobot app publish` 阶段尽早提示或拦截问题，避免应用进入广场后才能在用户机器上暴露安装或启动失败。
+> 目标：在 `watcherobot app check` 和 `watcherobot app publish --provider huggingface` 阶段尽早提示或拦截问题，避免应用进入广场后才能在用户机器上暴露安装或启动失败。
 
 ## 1. 已确认的问题
 

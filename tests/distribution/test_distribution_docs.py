@@ -28,8 +28,8 @@ def test_application_cli_reference_separates_human_and_machine_usage() -> None:
     reference = CLI_REFERENCE_PATH.read_text(encoding="utf-8")
 
     assert "For manual use, omit `--jsonl`" in reference
-    assert "watcherobot app marketplace --details" in reference
-    assert "watcherobot app marketplace --jsonl" in reference
+    assert "watcherobot app marketplace --provider huggingface --details" in reference
+    assert "watcherobot app marketplace --provider huggingface --jsonl" in reference
     assert "Human-friendly English" in reference
     assert "Stable JSON Lines" in reference
     for command in (

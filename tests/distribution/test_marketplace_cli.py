@@ -23,7 +23,7 @@ def _marketplace() -> OfficialMarketplace:
         catalog_commit=CATALOG_COMMIT,
         applications=(
             MarketplaceApplication(
-                space_id="alice/WatcherRobot-com.example.alpha",
+                repo_id="alice/WatcherRobot-com.example.alpha",
                 commit="a" * 40,
                 source_url=(
                     "https://huggingface.co/spaces/alice/"
@@ -43,7 +43,7 @@ def _marketplace() -> OfficialMarketplace:
                 host_compatible=True,
             ),
             MarketplaceApplication(
-                space_id="bob/WatcherRobot-com.example.beta",
+                repo_id="bob/WatcherRobot-com.example.beta",
                 commit="b" * 40,
                 source_url=(
                     "https://huggingface.co/spaces/bob/"
@@ -83,7 +83,7 @@ def _install_success(monkeypatch):
 
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_marketplace_dependencies",
-        lambda: dependencies,
+        lambda provider: dependencies,
         raising=False,
     )
     monkeypatch.setattr(
@@ -109,13 +109,13 @@ def test_cli_marketplace_jsonl_reuses_public_service_without_daemon(
 ) -> None:
     calls, dependencies = _install_success(monkeypatch)
 
-    exit_code = main(["app", "marketplace", "--jsonl"])
+    exit_code = main(["app", "marketplace", "--provider", "huggingface", "--jsonl"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.err == ""
     assert len(calls) == 1
-    assert set(calls[0]) == {"hub", "events"}
+    assert set(calls[0]) == {"hub", "events", "provider"}
     assert calls[0]["hub"] is dependencies.hub
     assert _json_lines(captured.out) == [
         {
@@ -133,7 +133,7 @@ def test_cli_marketplace_human_output_is_a_compact_table(
 ) -> None:
     _install_success(monkeypatch)
 
-    exit_code = main(["app", "marketplace"])
+    exit_code = main(["app", "marketplace", "--provider", "huggingface"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -156,7 +156,7 @@ def test_cli_marketplace_details_shows_reviewed_source_metadata(
 ) -> None:
     _install_success(monkeypatch)
 
-    exit_code = main(["app", "marketplace", "--details"])
+    exit_code = main(["app", "marketplace", "--provider", "huggingface", "--details"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -176,7 +176,7 @@ def test_cli_marketplace_jsonl_maps_stable_marketplace_error(
 ) -> None:
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_marketplace_dependencies",
-        lambda: SimpleNamespace(hub=object()),
+        lambda provider: SimpleNamespace(hub=object()),
         raising=False,
     )
 
@@ -193,7 +193,7 @@ def test_cli_marketplace_jsonl_maps_stable_marketplace_error(
         raising=False,
     )
 
-    exit_code = main(["app", "marketplace", "--jsonl"])
+    exit_code = main(["app", "marketplace", "--provider", "huggingface", "--jsonl"])
 
     captured = capsys.readouterr()
     assert exit_code == 4
@@ -215,7 +215,7 @@ def test_cli_marketplace_keyboard_interrupt_is_jsonl_cancellation(
 ) -> None:
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_marketplace_dependencies",
-        lambda: SimpleNamespace(hub=object()),
+        lambda provider: SimpleNamespace(hub=object()),
         raising=False,
     )
 
@@ -228,7 +228,7 @@ def test_cli_marketplace_keyboard_interrupt_is_jsonl_cancellation(
         raising=False,
     )
 
-    exit_code = main(["app", "marketplace", "--jsonl"])
+    exit_code = main(["app", "marketplace", "--provider", "huggingface", "--jsonl"])
 
     captured = capsys.readouterr()
     assert exit_code == 130
@@ -239,6 +239,6 @@ def test_cli_marketplace_keyboard_interrupt_is_jsonl_cancellation(
 def test_default_marketplace_dependencies_use_public_hub_adapter() -> None:
     from watcherobot.distribution.cli import _build_marketplace_dependencies
 
-    dependencies = _build_marketplace_dependencies()
+    dependencies = _build_marketplace_dependencies("huggingface")
 
     assert isinstance(dependencies.hub, HuggingFaceMarketplaceHubClient)

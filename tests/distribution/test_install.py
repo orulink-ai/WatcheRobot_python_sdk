@@ -30,14 +30,14 @@ class FakeHub:
     def __init__(self, source: Path) -> None:
         self.source = source
 
-    def download_space_snapshot(
+    def download_repository_snapshot(
         self,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         target: Path,
     ) -> RepositoryRevision:
-        assert space_id == SPACE_ID
+        assert repo_id == SPACE_ID
         assert commit == COMMIT
         for source in self.source.rglob("*"):
             relative = source.relative_to(self.source)
@@ -81,6 +81,20 @@ class FakeEnvironmentRunner:
         return ApplicationEnvironmentOutput()
 
 
+def test_cross_provider_install_requires_explicit_uninstall(tmp_path):
+    source = tmp_path / "source"
+    runtime = tmp_path / "runtime"
+    _write_source(source)
+    _write_runtime(runtime)
+    kwargs = dict(repo_id=SPACE_ID, commit=COMMIT, store_root=tmp_path / "store",
+                  runtime_root=runtime, hub=FakeHub(source), environment_runner=FakeEnvironmentRunner())
+    install_application(provider="gitee", **kwargs)
+    assert list_installed_applications(tmp_path / "store")[0].provider == "gitee"
+    with pytest.raises(ApplicationInstallError, match="different source"):
+        install_application(provider="huggingface", **kwargs)
+    assert list_installed_applications(tmp_path / "store")[0].provider == "gitee"
+
+
 def test_runtime_publication_retries_one_transient_filesystem_failure(
     tmp_path: Path,
     monkeypatch,
@@ -103,8 +117,8 @@ def test_runtime_publication_retries_one_transient_filesystem_failure(
     monkeypatch.setattr(install_module.shutil, "copytree", flaky_copytree)
     monkeypatch.setattr(install_module.time, "sleep", lambda _: None)
 
-    installed = install_application(
-        space_id=SPACE_ID,
+    installed = install_application(provider="huggingface",
+        repo_id=SPACE_ID,
         commit=COMMIT,
         store_root=tmp_path / "application-store",
         runtime_root=runtime,
@@ -134,8 +148,8 @@ def test_install_allows_an_application_for_another_host_platform(
         raising=False,
     )
 
-    installed = install_application(
-        space_id=SPACE_ID,
+    installed = install_application(provider="huggingface",
+        repo_id=SPACE_ID,
         commit=COMMIT,
         store_root=tmp_path / "application-store",
         runtime_root=runtime,
@@ -187,8 +201,8 @@ def test_invalid_cached_runtime_is_archived_and_rebuilt(tmp_path: Path) -> None:
     stale_runtime.mkdir(parents=True)
     stale_runtime.joinpath("invalid.txt").write_text("stale", encoding="utf-8")
 
-    installed = install_application(
-        space_id=SPACE_ID,
+    installed = install_application(provider="huggingface",
+        repo_id=SPACE_ID,
         commit=COMMIT,
         store_root=store_root,
         runtime_root=runtime,
@@ -315,8 +329,8 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
     store_root = tmp_path / "application-store"
     runner = FakeEnvironmentRunner()
 
-    installed = install_application(
-        space_id=SPACE_ID,
+    installed = install_application(provider="huggingface",
+        repo_id=SPACE_ID,
         commit=COMMIT,
         store_root=store_root,
         runtime_root=runtime,
@@ -329,7 +343,7 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
     assert installed.application_root.joinpath("source/app.py").is_file()
     assert installed.application_root.joinpath(".venv").is_dir()
     record = json.loads(installed.application_root.joinpath("install.json").read_text())
-    assert record["source"]["space_id"] == SPACE_ID
+    assert record["source"]["repo_id"] == SPACE_ID
     assert record["source"]["commit"] == COMMIT
     assert record["runtime"]["watcherobot_version"] == "0.1.1a3"
     assert [command.stage for command in runner.commands] == [

@@ -20,7 +20,7 @@
 - SDK 仓库是 Daemon 的唯一源码仓库，但分发 CLI 与 Daemon 运行时解耦；Daemon 不访问 Hugging Face，也不持有 Hugging Face Token。
 - Desktop 只能以受控子进程调用随包 `watcher-distribution`，按参数数组传参并消费 stdout JSONL；不得用 shell 拼接命令。
 - 登录、源码发布和 Catalog 提交使用 Watcher 专属系统凭据项。公开广场读取与固定快照下载不得读取 Hugging Face CLI、本机环境变量或 Watcher OAuth 凭据。
-- 官方 Dataset 只保存 `space_id + commit` 结构化索引。源码保存在开发者公开 Space，安装必须使用名单中的固定 commit，不能跟随 Space `main`。
+- 官方 Dataset 只保存 `repo_id + commit` 结构化索引。源码保存在开发者公开 Space，安装必须使用名单中的固定 commit，不能跟随 Space `main`。
 - SDK 负责固定快照下载、Runtime 校验与复制、每 App 独立 `.venv`、安装事务、已安装列表和卸载；Desktop 只传入锁定 Runtime 目录、调用受控子进程并展示进度。安装命令不会启动或连接 Daemon。
 - 每个第三方 App 使用自己的 Python 环境。Daemon 只接收 Desktop 选择后生成的受控启动规格，不负责创建环境或安装依赖。
 
@@ -37,11 +37,11 @@
 | `watcher-distribution app login --provider huggingface --jsonl` | 启动 OAuth Device Flow；可加 `--force` | 建立登录 | 否 |
 | `watcher-distribution app login --provider huggingface --status --jsonl` | 校验 Watcher 专属凭据并返回身份 | 使用已有凭据 | 否 |
 | `watcher-distribution app logout --provider huggingface --jsonl` | 只删除 Watcher 专属凭据项 | 使用已有凭据 | 否 |
-| `watcher-distribution app publish <directory> --jsonl` | 创建或更新公开 Space 并返回固定源码 commit；不修改官方名单 | 需要 | 否 |
-| `watcher-distribution app submit <directory> [--commit <sha>] --jsonl` | 校验已发布固定快照并创建或复用官方名单 PR；不上传源码 | 需要 | 否 |
-| `watcher-distribution app marketplace --jsonl` | 匿名读取官方名单及固定 commit 的结构化 `app.json` | 不需要 | 否 |
-| `watcher-distribution app download --space-id <id> --commit <sha> --target <empty-dir> --jsonl` | 匿名下载并校验固定快照 | 不需要 | 否 |
-| `watcher-distribution app install --space-id <id> --commit <sha> --store-root <dir> --runtime-root <locked-runtime-dir> --jsonl` | 下载固定快照、验证锁定 Runtime、创建每 App 独立环境并原子安装 | 不需要 | 否 |
+| `watcher-distribution app publish --provider huggingface <directory> --jsonl` | 创建或更新公开 Space 并返回固定源码 commit；不修改官方名单 | 需要 | 否 |
+| `watcher-distribution app submit --provider huggingface <directory> [--commit <sha>] --jsonl` | 校验已发布固定快照并创建或复用官方名单 PR；不上传源码 | 需要 | 否 |
+| `watcher-distribution app marketplace --provider huggingface --jsonl` | 匿名读取官方名单及固定 commit 的结构化 `app.json` | 不需要 | 否 |
+| `watcher-distribution app download --provider huggingface --repo-id <id> --commit <sha> --target <empty-dir> --jsonl` | 匿名下载并校验固定快照 | 不需要 | 否 |
+| `watcher-distribution app install --provider huggingface --repo-id <id> --commit <sha> --store-root <dir> --runtime-root <locked-runtime-dir> --jsonl` | 下载固定快照、验证锁定 Runtime、创建每 App 独立环境并原子安装 | 不需要 | 否 |
 | `watcher-distribution app list --store-root <dir> --jsonl` | 读取 SDK App Store 已安装记录 | 不需要 | 否 |
 | `watcher-distribution app uninstall --store-root <dir> --app-id <id> --jsonl` | 将一个 App 移入可恢复本地回收目录 | 不需要 | 否 |
 
@@ -101,9 +101,9 @@ traceback。Desktop 应以稳定错误码选择 UI 状态，以退出码判断�
 ## 发布、名单与固定快照
 
 1. `check` 先确定公开文件集合，排除 `.venv`、凭据、缓存、VCS 与本机路径文件。
-2. `publish` 创建或更新公开 static Space，并用完整文件集合形成提交；相同内容不制造新 commit。它只返回 `space_id + commit + source_url`，不读取或修改官方 Catalog，也不要求应用广场展示字段完整。
+2. `publish` 创建或更新公开 static Space，并用完整文件集合形成提交；相同内容不制造新 commit。它只返回 `repo_id + commit + source_url`，不读取或修改官方 Catalog，也不要求应用广场展示字段完整。
 3. `submit` 要求 `description`、`author` 均为非空，`icon` 可选。在任何 Catalog 写入前读取并校验已发布 commit 上的 `app.json`；填写图标时额外校验该固定 commit 上的图标文件，未填写时由展示端使用默认 WatcherRobot Application 图标。同时要求本地 Manifest 与固定快照一致。省略 `--commit` 时提交当前 Space HEAD；显式传入时只接受完整 40 位小写 SHA。
-4. `submit` 向官方公开 Dataset `Orulink/watcherobot-app-store` 创建名单 PR，但绝不上传或改写 Space 源码。PR 描述直接展示固定快照的 Manifest 摘要和源码链接；存在自选图标时展示固定版本图标，否则标记使用默认图标。Catalog 文件仍只保存 `space_id + commit`。相同 commit 的开放 PR 复用；不同 commit 遇到已有开放 PR 返回 `catalog_pr_conflict`，V1 不自动改写旧 PR，也不创建第二个 PR。
+4. `submit` 向官方公开 Dataset `Orulink/watcherobot-app-store` 创建名单 PR，但绝不上传或改写 Space 源码。PR 描述直接展示固定快照的 Manifest 摘要和源码链接；存在自选图标时展示固定版本图标，否则标记使用默认图标。Catalog 文件仍只保存 `repo_id + commit`。相同 commit 的开放 PR 复用；不同 commit 遇到已有开放 PR 返回 `catalog_pr_conflict`，V1 不自动改写旧 PR，也不创建第二个 PR。
 5. 维护者合并 PR 后，`marketplace` 才会从 Dataset 主分支看到该记录。
 6. `download` 必须同时收到完整 40 位 commit 和空目录，校验实际解析 commit、文件边界、Manifest、固定 `app.py`、SDK 兼容性以及 Space/App 身份一致性。`install` 复用此校验，并在 SDK App Store 中校验或复制锁定 Runtime、创建该 App 的隔离环境、安装依赖、编译入口、校验 SDK 导入，最后原子写入 `install.json`。失败候选不得成为已安装 App。
 7. Space `main` 后续变化不影响已安装固定快照；名单删除只阻止新的官方安装，不应禁用已经安装的 App。

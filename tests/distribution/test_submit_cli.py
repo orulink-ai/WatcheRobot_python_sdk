@@ -16,7 +16,7 @@ PR_URL = "https://huggingface.co/datasets/catalog/discussions/7"
 
 def _result() -> SubmitResult:
     return SubmitResult(
-        space_id=SPACE_ID,
+        repo_id=SPACE_ID,
         commit=COMMIT,
         source_url=(
             f"https://huggingface.co/spaces/{SPACE_ID}/tree/{COMMIT}"
@@ -47,14 +47,14 @@ def _install_success(monkeypatch):
             ProgressEvent(
                 stage="updating_catalog",
                 message="Preparing the official marketplace submission",
-                data={"space_id": SPACE_ID, "commit": COMMIT},
+                data={"repo_id": SPACE_ID, "commit": COMMIT},
             )
         )
         return _result()
 
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_publish_dependencies",
-        lambda: dependencies,
+        lambda provider: dependencies,
         raising=False,
     )
     monkeypatch.setattr(
@@ -78,7 +78,7 @@ def test_cli_submit_jsonl_creates_catalog_request_without_publishing(
     calls = _install_success(monkeypatch)
 
     exit_code = main(
-        ["app", "submit", str(tmp_path), "--commit", COMMIT, "--jsonl"]
+        ["app", "submit", "--provider", "huggingface", str(tmp_path), "--commit", COMMIT, "--jsonl"]
     )
 
     captured = capsys.readouterr()
@@ -90,7 +90,7 @@ def test_cli_submit_jsonl_creates_catalog_request_without_publishing(
             "type": "progress",
             "stage": "updating_catalog",
             "message": "Preparing the official marketplace submission",
-            "data": {"space_id": SPACE_ID, "commit": COMMIT},
+            "data": {"repo_id": SPACE_ID, "commit": COMMIT},
         },
         {"type": "result", "ok": True, "data": _result().to_dict()},
     ]
@@ -103,7 +103,7 @@ def test_cli_submit_human_output_shows_review_status(
 ) -> None:
     _install_success(monkeypatch)
 
-    exit_code = main(["app", "submit", str(tmp_path)])
+    exit_code = main(["app", "submit", "--provider", "huggingface", str(tmp_path)])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -121,7 +121,7 @@ def test_cli_submit_jsonl_preserves_catalog_conflict_details(
 ) -> None:
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_publish_dependencies",
-        lambda: SimpleNamespace(
+        lambda provider: SimpleNamespace(
             credentials=object(),
             identity_hub=object(),
             publish_hub=object(),
@@ -133,7 +133,7 @@ def test_cli_submit_jsonl_preserves_catalog_conflict_details(
         raise SubmitError(
             ErrorCode.CATALOG_PR_CONFLICT,
             "This Application already has a pending marketplace PR",
-            details={"space_id": SPACE_ID, "commit": COMMIT, "pr_url": PR_URL},
+            details={"repo_id": SPACE_ID, "commit": COMMIT, "pr_url": PR_URL},
         )
 
     monkeypatch.setattr(
@@ -142,7 +142,7 @@ def test_cli_submit_jsonl_preserves_catalog_conflict_details(
         raising=False,
     )
 
-    exit_code = main(["app", "submit", str(tmp_path), "--jsonl"])
+    exit_code = main(["app", "submit", "--provider", "huggingface", str(tmp_path), "--jsonl"])
 
     assert exit_code == 4
     assert _json_lines(capsys.readouterr().out)[0] == {
@@ -150,5 +150,5 @@ def test_cli_submit_jsonl_preserves_catalog_conflict_details(
         "ok": False,
         "code": "catalog_pr_conflict",
         "message": "This Application already has a pending marketplace PR",
-        "details": {"space_id": SPACE_ID, "commit": COMMIT, "pr_url": PR_URL},
+        "details": {"repo_id": SPACE_ID, "commit": COMMIT, "pr_url": PR_URL},
     }
