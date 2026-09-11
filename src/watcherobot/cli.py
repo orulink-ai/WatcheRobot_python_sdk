@@ -405,12 +405,12 @@ def main(argv: list[str] | None = None) -> int:
                 raise CliError(str(exc)) from exc
         if args.command == "robot":
             if handles_robot_hardware_command(args):
-                state = _live_runtime_state()
-                if state is None:
+                hardware_state = _live_runtime_state()
+                if hardware_state is None:
                     raise CliError("Runtime is not running; run 'watcherobot daemon start' first")
                 return run_robot_hardware_command(
                     args,
-                    runtime_state=state,
+                    runtime_state=hardware_state,
                     request_json=_request_json,
                 )
             if args.robot_command == "status":
