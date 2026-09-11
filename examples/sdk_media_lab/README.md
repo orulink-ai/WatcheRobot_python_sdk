@@ -184,3 +184,7 @@ On-device Model Test 使用 `vision.models()` 和 `vision.start_inference()`，�
 1～3 号及人脸 4 号目录、无预览推理、同帧模型预览、最新结果读取和显式停止。
 选择 3 号手势模型并点击 Start Model Preview 可查看画面、类别 ID 和置信度，不驱动云台。相机占用期间禁止启动
 冲突功能；停止未确认时保留占用。详见 [模型推理合同](../../docs/vision-model-inference.md)。
+
+### 分发清单
+
+应用清单使用 schema 2，显式安装 FastAPI、Uvicorn、Pydantic，声明最低 SDK 0.1.7。当前分发范围为 Windows/macOS；Linux 不在此清单的已声明平台内。本次只修复清单，不发布新的 Marketplace 或 PyPI 版本；干净设备安装仍需发布前验收。

@@ -1,10 +1,11 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "example.sdk_media_lab",
   "name": "SDK Test Bench",
   "version": "1.1.0",
-  "requires_watcherobot": ">=0.1.0a4,<0.2",
-  "dependencies": [],
+  "requires_watcherobot": ">=0.1.7,<0.2",
+  "dependencies": ["fastapi>=0.129,<1", "uvicorn>=0.30,<1", "pydantic>=2,<3"],
+  "supported_host_platforms": ["windows", "macos"],
   "description": "Validate WatcheRobot motion, lighting, animation, camera, audio, RTC, and resource lifecycle from one local dashboard.",
   "author": "Orulink AI",
   "icon": "icon.svg"
