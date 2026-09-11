@@ -210,14 +210,18 @@
       <section class="rtc-audio-panel" id="faceTrackingPanel" aria-labelledby="faceTrackingTitle">
         <p class="eyebrow">02.8 / Edge Vision</p>
         <h2 id="faceTrackingTitle">Face Tracking Test</h2>
-        <p>Runs on the robot without sending video to the computer. Starting tracking moves the gimbal; stopping holds its current position. Stop live video before starting tracking.</p>
+        <p>Run tracking on the robot, with optional matching preview frames. Starting tracking moves the gimbal; stopping holds its current position. Stop live video before starting tracking.</p>
         <p id="faceTrackingCapability">Waiting for device capabilities</p>
         <div class="button-row">
           <button class="station-action" id="queryVisionButton" type="button" disabled>Query Vision Status</button>
           <button class="station-action" id="startFaceTrackingButton" type="button" disabled>Start Face Tracking</button>
+          <button class="station-action" id="startFacePreviewButton" type="button" disabled>Start with Preview</button>
           <button class="quiet-action" id="stopFaceTrackingButton" type="button" disabled>Stop Face Tracking</button>
         </div>
         <p id="faceTrackingResult" role="status">Awaiting Test</p>
+        <p id="facePreviewHint">Checking face preview support</p>
+        <canvas id="facePreviewCanvas" width="640" height="480" hidden style="max-width:100%;height:auto;background:#101820;border-radius:12px"></canvas>
+        <p id="facePreviewMetrics" role="status"></p>
         <pre id="faceVisionStatus" style="white-space:pre-wrap;overflow-wrap:anywhere">—</pre>
       </section>
 

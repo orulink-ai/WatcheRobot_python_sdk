@@ -46,6 +46,19 @@ class FakeTransport:
         self.closed = True
 
 
+@pytest.mark.parametrize("timeout", [10.0, 30.0, None])
+def test_preview_start_allows_cold_start_timeout(timeout):
+    transport = FakeTransport()
+    calls = []
+    transport.send_command = lambda message_type, data, timeout=None: calls.append(timeout) or {}
+    robot = WatcheRobot._from_transport(transport)
+    if timeout == 10.0:
+        robot.face_tracking.open_preview()
+    else:
+        robot.face_tracking.open_preview(timeout=timeout)
+    assert calls == [timeout]
+
+
 def test_default_start_allows_cold_model_catalog_validation(monkeypatch) -> None:
     transport = FakeTransport()
     send_command = transport.send_command
@@ -115,6 +128,18 @@ def emit_pair(transport: FakeTransport, sequence: int) -> None:
     )
 
 
+@pytest.mark.parametrize("raw", [[100, 110, 81, 91, 87, 0], [0, 0, 81, 91, 87, 0]])
+def test_face_box_preserves_sensor_center_at_half_pixels_and_edges(raw) -> None:
+    from watcherobot.vision import _face_box
+
+    box = _face_box(raw)
+    assert box is not None
+    assert box.center == tuple(raw[:2])
+    assert box.x == raw[0] - raw[2] / 2
+    assert box.y == raw[1] - raw[3] / 2
+    assert (box.width, box.height) == tuple(raw[2:4])
+
+
 def test_public_preview_pairs_typed_telemetry_and_jpeg() -> None:
     transport = FakeTransport()
     robot = WatcheRobot._from_transport(transport)
@@ -133,9 +158,10 @@ def test_public_preview_pairs_typed_telemetry_and_jpeg() -> None:
     assert frame.height == 416
     assert frame.jpeg.startswith(b"\xff\xd8")
     assert frame.faces == (
-        FaceBox(x=100, y=110, width=80, height=90, score=87, target=0),
+        FaceBox(x=60, y=65, width=80, height=90, score=87, target=0),
     )
     assert frame.telemetry.error_x_percent == 4.0
+    assert frame.faces[0].center == (100, 110)
     assert frame.telemetry.inference_ms == 33.0
     assert transport.commands[0] == (
         "ctrl.face_tracking.preview.start",

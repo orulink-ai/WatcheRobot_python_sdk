@@ -31,7 +31,13 @@ status remains queryable. Unified firmware can advertise inference support;
 the panel follows the actual device capability. A button or an existing SDK API
 does not add inference to preview-only firmware.
 The SDK also provides `robot.face_tracking.open_preview()` for optional diagnostic
-frames, but this panel currently tests headless start/stop, not diagnostic images.
+frames. **Start with Preview** opens the SDK preview at 640×480, draws matching
+face boxes, and shows sequence and frame age. The button requires
+`face_tracking.preview.v1`; older PTL firmware keeps headless tracking available.
+Stop before switching between headless and preview modes. Stop timeouts retain
+the camera/motion lease, and the frame endpoint never returns stale frames after stop.
+`POST /api/face-tracking/preview/start` and `GET /api/face-tracking/preview/frame`
+serve the loopback dashboard; they use the managed Application Device channel.
 See [the SDK lifecycle contract](../../docs/face-tracking-lifecycle.md) and
 [preview API](../../docs/face-tracking-preview.md).
 

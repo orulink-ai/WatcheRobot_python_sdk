@@ -1346,6 +1346,7 @@ class WatcheRobot:
         frame_stride: int,
         stop_policy: FaceTrackingStopPolicy,
         queue_size: int,
+        timeout: float | None = 10.0,
     ) -> FaceTrackingPreview:
         if "face_tracking.preview.v1" not in self.capabilities:
             raise WatcheRobotError(
@@ -1370,6 +1371,7 @@ class WatcheRobot:
                     "width": width,
                     "height": height,
                 },
+                timeout=timeout,
             )
         except Exception:
             with self._face_tracking_lock:

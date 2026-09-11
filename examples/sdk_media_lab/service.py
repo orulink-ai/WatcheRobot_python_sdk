@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import ipaddress
 import json
 import logging
@@ -18,7 +19,7 @@ import wave
 from collections import deque
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
@@ -265,6 +266,8 @@ class MediaLabService:
         self._face_lock = threading.RLock()
         self._face_lease: Any = None
         self._face_state = "idle"
+        self._face_preview: Any = None
+        self._face_preview_last_frame_at = 0.0
         self._append_event("system", "SDK Test Bench ready", "ok")
 
     def status(self) -> dict[str, object]:
@@ -308,6 +311,10 @@ class MediaLabService:
             "face_tracking": {
                 "state": face_state,
                 "supported": "face_tracking.control.v1" in self._robot.capabilities,
+                "preview_supported": "face_tracking.preview.v1" in self._robot.capabilities,
+                "preview_running": self._face_preview is not None and face_state == "running",
+                "preview_receiving": self._face_preview is not None and
+                    time.monotonic() - self._face_preview_last_frame_at < 2.0,
             },
             "artifacts": artifacts,
             "events": self.events(),
@@ -397,13 +404,17 @@ class MediaLabService:
         with self._state_lock:
             self._face_state = state
 
-    def start_face_tracking(self) -> dict[str, object]:
+    def start_face_tracking(self, *, preview: bool = False) -> dict[str, object]:
         with self._face_lock:
             self._ensure_device_online()
             self._ensure_capability("face_tracking.control.v1")
+            if preview:
+                self._ensure_capability("face_tracking.preview.v1")
             if self._face_lease is not None:
                 if self._face_state != "running":
                     raise MediaLabBusyError("Face tracking stop must be confirmed first")
+                if preview != (self._face_preview is not None):
+                    raise MediaLabBusyError("Stop face tracking before changing preview mode")
                 return {"state": self._face_state}
             lease = self._operation("face_tracking", resources=("camera", "motion"))
             lease.__enter__()
@@ -411,7 +422,13 @@ class MediaLabService:
             self._set_face_state("starting")
             try:
                 # Cold startup includes validating the four on-device model slots.
-                self._robot.face_tracking.start(timeout=10.0)
+                if preview:
+                    self._face_preview_last_frame_at = 0.0
+                    self._face_preview = self._robot.face_tracking.open_preview(
+                        width=640, height=480, frame_stride=1, stop_policy="hold", queue_size=1,
+                    )
+                else:
+                    self._robot.face_tracking.start(timeout=10.0)
             except Exception:
                 # A timeout does not prove the motors never started.
                 self._set_face_state("stop_required")
@@ -423,6 +440,22 @@ class MediaLabService:
             self._set_face_state("running")
             return {"state": "running"}
 
+    def face_preview_frame(self) -> dict[str, object]:
+        # One bounded read, no unbounded frame backlog or independent device connection.
+        with self._face_lock:
+            if self._face_preview is None or self._face_state != "running":
+                raise MediaLabBusyError("No running face preview")
+            try:
+                frame = self._face_preview.read(timeout=0.05)
+            except TimeoutError:
+                return {"ready": False}
+            self._face_preview_last_frame_at = time.monotonic()
+            return {"ready": True, "sequence": frame.sequence, "width": frame.width,
+                    "height": frame.height, "jpeg_base64": base64.b64encode(frame.jpeg).decode("ascii"),
+                    "faces": [asdict(face) for face in frame.faces],
+                    "telemetry": {field.name: getattr(frame.telemetry, field.name)
+                                  for field in fields(frame.telemetry) if field.name not in {"raw", "faces"}}}
+
     def stop_face_tracking(self) -> dict[str, object]:
         with self._face_lock:
             if self._face_lease is None:
@@ -431,6 +464,7 @@ class MediaLabService:
             self._robot.face_tracking.stop(policy="hold", timeout=2.0)
             self._face_lease.__exit__(None, None, None)
             self._face_lease = None
+            self._face_preview = None
             self._set_face_state("idle")
             return {"state": "idle"}
 
@@ -1115,6 +1149,14 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     @app.post("/api/face-tracking/start")
     async def start_face_tracking() -> dict[str, object]:
         return await _run_action(service.start_face_tracking)
+
+    @app.post("/api/face-tracking/preview/start")
+    async def start_face_preview() -> dict[str, object]:
+        return await _run_action(lambda: service.start_face_tracking(preview=True))
+
+    @app.get("/api/face-tracking/preview/frame")
+    async def face_preview_frame() -> dict[str, object]:
+        return await _run_action(service.face_preview_frame)
 
     @app.post("/api/face-tracking/stop")
     async def stop_face_tracking() -> dict[str, object]:

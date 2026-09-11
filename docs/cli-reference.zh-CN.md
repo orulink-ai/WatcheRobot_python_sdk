@@ -3,6 +3,11 @@
 本文档覆盖已安装的 `watcherobot` 命令。可使用
 `watcherobot <分组> <命令> --help` 查看当前安装版本的参数。
 
+视觉冷启动：`watcherobot robot vision model use 4` 和 `watcherobot robot face-track on`
+等待设备应答最多 30 秒，覆盖 Himax 初始化及模型槽位校验。普通视觉状态查询仍等待 5 秒。
+超时不意味着设备未执行；先运行 `watcherobot robot vision status` 确认结果。
+这些命令仍通过 Desktop channel 和 Daemon；有 Application 运行时由 Application 处理。
+
 Application 从创建到发布的完整流程见
 [SDK Application 使用与测试指南](application-marketplace/sdk-application-usage.zh-CN.md)；
 Desktop 使用的 JSONL 事件和错误合同见

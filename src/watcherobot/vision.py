@@ -190,10 +190,10 @@ class VisionDomain:
 
 @dataclass(frozen=True)
 class FaceBox:
-    """One face box in sensor pixel coordinates."""
+    """One face box with top-left x/y in sensor pixels, possibly half-pixels."""
 
-    x: int
-    y: int
+    x: float
+    y: float
     width: int
     height: int
     score: int
@@ -453,7 +453,9 @@ class FaceTrackingDomain:
         frame_stride: int = 1,
         stop_policy: FaceTrackingStopPolicy = "hold",
         queue_size: int = 1,
+        timeout: float | None = 10.0,
     ) -> FaceTrackingPreview:
+        _validate_timeout(timeout)
         _validate_preview_options(
             width=width,
             height=height,
@@ -467,6 +469,7 @@ class FaceTrackingDomain:
             frame_stride=frame_stride,
             stop_policy=stop_policy,
             queue_size=queue_size,
+            timeout=timeout,
         )
 
     def start(self, *, timeout: float | None = 10.0) -> None:
@@ -798,7 +801,9 @@ def _face_box(value: object) -> FaceBox | None:
     x, y, width, height, score, target = fields
     if width <= 0 or height <= 0:
         return None
-    return FaceBox(x, y, width, height, score, target)
+    # Device boxes use center coordinates; the public API uses top-left.
+    # Keep half-pixels and off-image edges so center and size remain unchanged.
+    return FaceBox(x - width / 2, y - height / 2, width, height, score, target)
 
 
 __all__ = [
