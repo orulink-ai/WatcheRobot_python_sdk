@@ -69,6 +69,13 @@ to eight can be selected when every intermediate frame matters.
 
 ## Lifecycle and safety
 
+`frame.faces` contains rectangles with **top-left** `x`/`y`, `width`, and
+`height` in sensor pixels. The SDK converts the device's center-based boxes
+once when decoding telemetry; `face.center` returns the original center.
+Odd dimensions can produce half-pixel coordinates and boxes at image edges
+can have negative origins. Draw them directly and let the canvas clip them;
+do not subtract half the size again. Raw telemetry retains device coordinates.
+
 `open_preview(timeout=10.0)` allows ten seconds for the start command, including
 cold camera initialization. Set a positive timeout to override this deadline,
 or `None` to disable it. This is separate from each `preview.read(timeout=...)`.
