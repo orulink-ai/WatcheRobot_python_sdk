@@ -216,70 +216,70 @@ watcherobot app stop
 
 ### 登录、发布与提交
 
-#### `watcherobot app login [--status | --force]`
+#### `watcherobot app login --provider huggingface [--status | --force]`
 
 通过 Watcher Desktop 的公开 OAuth Device Flow 登录 Hugging Face。默认输出授权地址和用户码；`--status` 只检查已保存身份；`--force` 强制发起新的登录。Token 只保存在 Watcher 专用的操作系统凭据项中。
 
 ```powershell
-watcherobot app login
-watcherobot app login --status
-watcherobot app login --force
+watcherobot app login --provider huggingface
+watcherobot app login --provider huggingface --status
+watcherobot app login --provider huggingface --force
 ```
 
-#### `watcherobot app logout`
+#### `watcherobot app logout --provider huggingface`
 
 只删除 Watcher 保存的 Hugging Face 凭据，不会影响 Hugging Face CLI 或其他程序的登录。
 
 ```powershell
-watcherobot app logout
+watcherobot app logout --provider huggingface
 ```
 
-#### `watcherobot app publish <目录>`
+#### `watcherobot app publish --provider huggingface <目录>`
 
 校验本地项目后，将精确源码快照发布到公开的 `<用户名>/WatcherRobot-<app_id>` Hugging Face Space。返回不可变 source commit；不会写入官方 Marketplace，也不启动 Runtime。
 
 ```powershell
-watcherobot app publish .\my_app
+watcherobot app publish --provider huggingface .\my_app
 ```
 
-#### `watcherobot app submit <目录> [--commit <sha>]`
+#### `watcherobot app submit --provider huggingface <目录> [--commit <sha>]`
 
 校验已发布的不可变快照，并创建或复用官方 Marketplace Pull Request。`author` 和 `description` 不能为空；省略 `--commit` 时提交当前 Space HEAD，提供 40 位 commit 时只审核该版本。该命令不会上传源码。
 
 ```powershell
-watcherobot app submit .\my_app
-watcherobot app submit .\my_app --commit <40 位 commit>
+watcherobot app submit --provider huggingface .\my_app
+watcherobot app submit --provider huggingface .\my_app --commit <40 位 commit>
 ```
 
-#### `watcherobot app marketplace [--details | --jsonl]`
+#### `watcherobot app marketplace --provider huggingface [--details | --jsonl]`
 
 读取并校验公开的已审核 Marketplace。默认是紧凑兼容性表；`--details` 展示完整 Manifest、源码 URL、commit 和依赖；`--jsonl` 是机器调用格式。无需登录，不启动 Runtime，也不写本地缓存。
 
 ```powershell
-watcherobot app marketplace
-watcherobot app marketplace --details
+watcherobot app marketplace --provider huggingface
+watcherobot app marketplace --provider huggingface --details
 ```
 
 ### 下载与管理已审核 Application
 
-#### `watcherobot app download --space-id <ID> --commit <sha> --target <空目录>`
+#### `watcherobot app download --provider huggingface --repo-id <ID> --commit <sha> --target <空目录>`
 
 将一个已审核的不可变 Space 版本下载到已存在的空 staging 目录。交付前会校验 commit、源码限制、Manifest、固定入口、SDK 兼容性和 Space/Application 身份；不会创建目标目录、安装 Application 或写入 `install.json`。
 
 ```powershell
-watcherobot app download `
-  --space-id <user>/WatcherRobot-<app_id> `
+watcherobot app download --provider huggingface `
+  --repo-id <user>/WatcherRobot-<app_id> `
   --commit <40 位 commit> `
   --target .\staging\app
 ```
 
-#### `watcherobot app install --space-id <ID> --commit <sha> --store-root <路径> --runtime-root <路径>`
+#### `watcherobot app install --provider huggingface --repo-id <ID> --commit <sha> --store-root <路径> --runtime-root <路径>`
 
 下载并校验已审核不可变版本，必要时复制传入的锁定 Runtime，为 Application 创建隔离 Python 环境，并原子写入安装记录。不会启动或连接 Runtime。
 
 ```powershell
-watcherobot app install `
-  --space-id <user>/WatcherRobot-<app_id> `
+watcherobot app install --provider huggingface `
+  --repo-id <user>/WatcherRobot-<app_id> `
   --commit <40 位 commit> `
   --store-root <app-store-directory> `
   --runtime-root <locked-app-runtime-directory>
@@ -351,5 +351,5 @@ Desktop 打包环境可使用 `watcher-distribution app` 执行短生命周期�
 
 ```powershell
 watcher-distribution app check .\my_app --jsonl
-watcher-distribution app marketplace --jsonl
+watcher-distribution app marketplace --provider huggingface --jsonl
 ```

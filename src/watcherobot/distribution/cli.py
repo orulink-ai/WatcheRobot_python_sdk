@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +14,9 @@ from watcherobot.runtime.daemon.application.manifest import (
 )
 
 from .check import check_application
-from .credentials import SystemCredentialStore
+from .credentials import CredentialStoreError, SystemCredentialStore
+from .gitee_repository import GiteeRepository
+from .gitee_auth import GiteeHubClient
 from .download import DownloadError, DownloadResult, download_application_snapshot
 from .events import (
     DistributionEvent,
@@ -46,6 +49,10 @@ from .marketplace import (
 )
 from .oauth_http import HuggingFaceOAuthClient
 from .ports import (
+    AccessToken,
+    HubAuthenticationError,
+    HubInvalidResponse,
+    HubNetworkError,
     CredentialStore,
     HubClient,
     MarketplaceHubClient,
@@ -72,8 +79,7 @@ DISTRIBUTION_COMMANDS = frozenset(
     }
 )
 _JSONL_HELP = (
-    "Emit stable JSON Lines for Desktop automation; for manual use, omit "
-    "--jsonl"
+    "Emit stable JSON Lines for Desktop automation; for manual use, omit " "--jsonl"
 )
 
 
@@ -95,9 +101,9 @@ def add_distribution_commands(
     _add_jsonl_argument(check)
     login_command = app_commands.add_parser(
         "login",
-        help="Sign in to Hugging Face for publishing",
+        help="Sign in to the selected distribution provider",
         description=(
-            "Authorize the SDK with Hugging Face Device Flow. Omit --jsonl "
+            "Use Hugging Face Device Flow or an interactive Gitee token. Omit --jsonl "
             "for interactive use."
         ),
     )
@@ -105,7 +111,7 @@ def add_distribution_commands(
     login_mode.add_argument(
         "--status",
         action="store_true",
-        help="Check the saved Hugging Face identity without signing in",
+        help="Check the selected provider identity without signing in",
     )
     login_mode.add_argument(
         "--force",
@@ -113,11 +119,17 @@ def add_distribution_commands(
         help="Replace an existing valid login",
     )
     _add_jsonl_argument(login_command)
+    login_command.add_argument(
+        "--provider", choices=("huggingface", "gitee"), required=True
+    )
     logout_command = app_commands.add_parser(
         "logout",
-        help="Remove only the SDK's saved Hugging Face credential",
+        help="Remove only the selected provider's SDK credential",
     )
     _add_jsonl_argument(logout_command)
+    logout_command.add_argument(
+        "--provider", choices=("huggingface", "gitee"), required=True
+    )
     publish = app_commands.add_parser(
         "publish",
         help="Publish Application source to its public Space",
@@ -178,7 +190,7 @@ def add_distribution_commands(
         help="Download and validate one immutable source snapshot",
     )
     download.add_argument(
-        "--space-id",
+        "--repo-id",
         required=True,
         help="Hugging Face Space, for example user/WatcherRobot-com.example.app",
     )
@@ -203,7 +215,7 @@ def add_distribution_commands(
         ),
     )
     install.add_argument(
-        "--space-id",
+        "--repo-id",
         required=True,
         help="Hugging Face Space, for example user/WatcherRobot-com.example.app",
     )
@@ -248,6 +260,10 @@ def add_distribution_commands(
     )
     uninstall.add_argument("--app-id", required=True, help="Installed Application ID")
     _add_jsonl_argument(uninstall)
+    for remote in (publish, submit, marketplace, download, install):
+        remote.add_argument(
+            "--provider", choices=("huggingface", "gitee"), required=True
+        )
 
 
 def _add_jsonl_argument(parser: argparse.ArgumentParser) -> None:
@@ -361,7 +377,10 @@ def _run_application_check(args: argparse.Namespace) -> int:
                 ("Version", result.version),
                 ("SDK requirement", result.requires_watcherobot),
                 ("Dependencies", _format_dependencies(result.dependencies)),
-                ("Host platforms", _format_host_platforms(result.supported_host_platforms)),
+                (
+                    "Host platforms",
+                    _format_host_platforms(result.supported_host_platforms),
+                ),
                 ("Author", result.author or "Not specified"),
                 ("Description", result.description or "Not specified"),
             ),
@@ -403,6 +422,8 @@ def _build_auth_dependencies() -> _AuthDependencies:
 
 
 def _run_application_login(args: argparse.Namespace) -> int:
+    if args.provider == "gitee":
+        return _run_gitee_auth(args)
     dependencies = _build_auth_dependencies()
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     result: LoginStatus | LoginResult
@@ -445,6 +466,8 @@ def _run_application_login(args: argparse.Namespace) -> int:
 
 
 def _run_application_logout(args: argparse.Namespace) -> int:
+    if args.provider == "gitee":
+        return _run_gitee_auth(args)
     dependencies = _build_auth_dependencies()
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     try:
@@ -455,6 +478,64 @@ def _run_application_logout(args: argparse.Namespace) -> int:
         event_writer.emit(ResultEvent(data=result.to_dict()))
     else:
         print("Signed out of Watcher's Hugging Face login")
+    return ExitCode.SUCCESS
+
+
+def _run_gitee_auth(args: argparse.Namespace) -> int:
+    writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    credentials = SystemCredentialStore(provider="gitee")
+    hub = GiteeHubClient()
+    try:
+        if args.app_command == "logout":
+            credentials.delete()
+            data = {"provider": "gitee", "logged_in": False}
+        else:
+            token = credentials.load()
+            if args.status and token is None:
+                data = {"provider": "gitee", "logged_in": False}
+            else:
+                if not args.status and (args.force or token is None):
+                    if args.jsonl or not sys.stdin.isatty():
+                        return _print_auth_error(
+                            ErrorCode.AUTH_REQUIRED,
+                            "Run app login --provider gitee in an interactive terminal",
+                            event_writer=writer,
+                        )
+                    value = getpass.getpass("Gitee Access Token: ").strip()
+                    if not value:
+                        raise HubAuthenticationError("Gitee token must not be empty")
+                    token = AccessToken(value)
+                    identity = hub.whoami(token)
+                    credentials.save(token)
+                else:
+                    assert token is not None
+                    identity = hub.whoami(token)
+                data = {
+                    "provider": "gitee",
+                    "logged_in": True,
+                    "username": identity.username,
+                }
+    except (KeyboardInterrupt, EOFError):
+        return _print_auth_error(
+            ErrorCode.OPERATION_CANCELLED, "Gitee login cancelled", event_writer=writer
+        )
+    except (
+        HubAuthenticationError,
+        HubInvalidResponse,
+        HubNetworkError,
+        CredentialStoreError,
+    ) as exc:
+        code = {
+            HubAuthenticationError: ErrorCode.AUTH_DENIED,
+            HubInvalidResponse: ErrorCode.AUTH_INVALID_RESPONSE,
+            HubNetworkError: ErrorCode.AUTH_NETWORK_ERROR,
+            CredentialStoreError: ErrorCode.CREDENTIAL_STORE_ERROR,
+        }[type(exc)]
+        return _print_auth_error(code, str(exc), event_writer=writer)
+    if writer is not None:
+        writer.emit(ResultEvent(data=data))
+    else:
+        print(f"Gitee: {data.get('username', 'not logged in')}")
     return ExitCode.SUCCESS
 
 
@@ -473,21 +554,26 @@ class _HumanPublishEventSink:
             print(event.message, file=sys.stderr)
 
 
-def _build_publish_dependencies() -> _PublishDependencies:
+def _build_publish_dependencies(provider: str) -> _PublishDependencies:
     return _PublishDependencies(
-        credentials=SystemCredentialStore(),
-        identity_hub=HuggingFaceHubClient(),
-        publish_hub=HuggingFacePublishHubClient(),
+        credentials=SystemCredentialStore(provider=provider),
+        identity_hub=(
+            GiteeHubClient() if provider == "gitee" else HuggingFaceHubClient()
+        ),
+        publish_hub=(
+            GiteeRepository() if provider == "gitee" else HuggingFacePublishHubClient()
+        ),
     )
 
 
 def _run_application_publish(args: argparse.Namespace) -> int:
-    dependencies = _build_publish_dependencies()
+    dependencies = _build_publish_dependencies(args.provider)
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     events: EventSink = event_writer or _HumanPublishEventSink()
     try:
         result = publish_application(
             args.application_dir,
+            provider=args.provider,
             credentials=dependencies.credentials,
             identity_hub=dependencies.identity_hub,
             publish_hub=dependencies.publish_hub,
@@ -534,9 +620,9 @@ def _run_application_publish(args: argparse.Namespace) -> int:
 
 def _print_publish_result(result: PublishResult) -> None:
     fields: tuple[tuple[str, str], ...] = (
-        ("Space", result.space_id),
+        ("Space", result.repo_id),
         ("Commit", result.commit),
-        ("Space URL", result.space_url),
+        ("Space URL", result.repository_url),
         ("Source", result.source_url),
     )
     _print_labeled_block("Application source published", fields)
@@ -551,9 +637,7 @@ def _print_publish_error(
 ) -> int:
     safe_details = dict(details or {})
     if event_writer is not None:
-        event_writer.emit(
-            ErrorEvent(code=code, message=message, details=safe_details)
-        )
+        event_writer.emit(ErrorEvent(code=code, message=message, details=safe_details))
     else:
         print(f"Application source publishing failed: {message}", file=sys.stderr)
         source_url = safe_details.get("source_url")
@@ -563,12 +647,13 @@ def _print_publish_error(
 
 
 def _run_application_submit(args: argparse.Namespace) -> int:
-    dependencies = _build_publish_dependencies()
+    dependencies = _build_publish_dependencies(args.provider)
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     events: EventSink = event_writer or _HumanPublishEventSink()
     try:
         result = submit_application(
             args.application_dir,
+            provider=args.provider,
             commit=args.commit,
             credentials=dependencies.credentials,
             identity_hub=dependencies.identity_hub,
@@ -616,7 +701,7 @@ def _run_application_submit(args: argparse.Namespace) -> int:
 
 def _print_submit_result(result: SubmitResult) -> None:
     fields: list[tuple[str, str]] = [
-        ("Space", result.space_id),
+        ("Space", result.repo_id),
         ("Commit", result.commit),
         ("Source", result.source_url),
         ("Catalog status", _format_catalog_status(result.pr_status)),
@@ -635,9 +720,7 @@ def _print_submit_error(
 ) -> int:
     safe_details = dict(details or {})
     if event_writer is not None:
-        event_writer.emit(
-            ErrorEvent(code=code, message=message, details=safe_details)
-        )
+        event_writer.emit(ErrorEvent(code=code, message=message, details=safe_details))
     else:
         print(f"Catalog submission failed: {message}", file=sys.stderr)
         source_url = safe_details.get("source_url")
@@ -658,23 +741,28 @@ class _HumanMarketplaceEventSink:
     """Render non-sensitive official marketplace progress."""
 
     def emit(self, event: DistributionEvent) -> None:
-        if (
-            isinstance(event, ProgressEvent)
-            and event.stage == "fetching_catalog"
-        ):
+        if isinstance(event, ProgressEvent) and event.stage == "fetching_catalog":
             print(f"{event.message}...", file=sys.stderr)
 
 
-def _build_marketplace_dependencies() -> _MarketplaceDependencies:
-    return _MarketplaceDependencies(hub=HuggingFaceMarketplaceHubClient())
+def _build_marketplace_dependencies(provider: str) -> _MarketplaceDependencies:
+    return _MarketplaceDependencies(
+        hub=(
+            GiteeRepository()
+            if provider == "gitee"
+            else HuggingFaceMarketplaceHubClient()
+        )
+    )
 
 
 def _run_application_marketplace(args: argparse.Namespace) -> int:
-    dependencies = _build_marketplace_dependencies()
+    dependencies = _build_marketplace_dependencies(args.provider)
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     events: EventSink = event_writer or _HumanMarketplaceEventSink()
     try:
-        result = load_official_marketplace(hub=dependencies.hub, events=events)
+        result = load_official_marketplace(
+            provider=args.provider, hub=dependencies.hub, events=events
+        )
     except KeyboardInterrupt:
         return _print_marketplace_error(
             ErrorCode.OPERATION_CANCELLED,
@@ -711,9 +799,7 @@ def _print_marketplace_result(
         _print_marketplace_details(result)
         return
 
-    header = (
-        f"{'STATUS':<14}{'VERSION':<13}{'NAME':<25}APPLICATION ID"
-    )
+    header = f"{'STATUS':<14}{'VERSION':<13}{'NAME':<25}APPLICATION ID"
     print(header)
     print("-" * len(header))
     for application in result.applications:
@@ -765,9 +851,7 @@ def _print_marketplace_error(
 ) -> int:
     safe_details = dict(details or {})
     if event_writer is not None:
-        event_writer.emit(
-            ErrorEvent(code=code, message=message, details=safe_details)
-        )
+        event_writer.emit(ErrorEvent(code=code, message=message, details=safe_details))
     else:
         print(message, file=sys.stderr)
     return exit_code_for(code)
@@ -786,17 +870,24 @@ class _HumanDownloadEventSink:
             print(event.message, file=sys.stderr)
 
 
-def _build_download_dependencies() -> _DownloadDependencies:
-    return _DownloadDependencies(hub=HuggingFaceMarketplaceHubClient())
+def _build_download_dependencies(provider: str) -> _DownloadDependencies:
+    return _DownloadDependencies(
+        hub=(
+            GiteeRepository()
+            if provider == "gitee"
+            else HuggingFaceMarketplaceHubClient()
+        )
+    )
 
 
 def _run_application_download(args: argparse.Namespace) -> int:
-    dependencies = _build_download_dependencies()
+    dependencies = _build_download_dependencies(args.provider)
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     events: EventSink = event_writer or _HumanDownloadEventSink()
     try:
         result = download_application_snapshot(
-            space_id=args.space_id,
+            provider=args.provider,
+            repo_id=args.repo_id,
             commit=args.commit,
             target=args.target,
             hub=dependencies.hub,
@@ -848,7 +939,7 @@ def _print_download_result(result: DownloadResult) -> None:
             ("Name", result.application.name),
             ("ID", result.application.app_id),
             ("Version", result.application.version),
-            ("Space", result.space_id),
+            ("Space", result.repo_id),
             ("Commit", result.commit),
             ("Source", result.source_url),
             ("Staging", str(result.target)),
@@ -865,9 +956,7 @@ def _print_download_error(
 ) -> int:
     safe_details = dict(details or {})
     if event_writer is not None:
-        event_writer.emit(
-            ErrorEvent(code=code, message=message, details=safe_details)
-        )
+        event_writer.emit(ErrorEvent(code=code, message=message, details=safe_details))
     else:
         print(f"Application download failed: {message}", file=sys.stderr)
     return exit_code_for(code)
@@ -886,17 +975,24 @@ class _HumanInstallEventSink:
             print(event.message, file=sys.stderr)
 
 
-def _build_install_dependencies() -> _InstallDependencies:
-    return _InstallDependencies(hub=HuggingFaceMarketplaceHubClient())
+def _build_install_dependencies(provider: str) -> _InstallDependencies:
+    return _InstallDependencies(
+        hub=(
+            GiteeRepository()
+            if provider == "gitee"
+            else HuggingFaceMarketplaceHubClient()
+        )
+    )
 
 
 def _run_application_install(args: argparse.Namespace) -> int:
-    dependencies = _build_install_dependencies()
+    dependencies = _build_install_dependencies(args.provider)
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
     events: EventSink = event_writer or _HumanInstallEventSink()
     try:
         result = install_application(
-            space_id=args.space_id,
+            provider=args.provider,
+            repo_id=args.repo_id,
             commit=args.commit,
             store_root=args.store_root,
             runtime_root=args.runtime_root,
@@ -927,7 +1023,9 @@ def _run_application_list(args: argparse.Namespace) -> int:
         return _print_install_error(exc.code, str(exc), event_writer=event_writer)
     if event_writer is not None:
         event_writer.emit(
-            ResultEvent(data={"applications": [item.to_dict() for item in applications]})
+            ResultEvent(
+                data={"applications": [item.to_dict() for item in applications]}
+            )
         )
     else:
         _print_install_inventory(applications)
@@ -1059,7 +1157,10 @@ def _format_dependencies(dependencies: tuple[str, ...]) -> str:
 
 def _format_host_platforms(platforms: tuple[str, ...]) -> str:
     labels = {"windows": "Windows", "macos": "macOS"}
-    return ", ".join(labels.get(platform, platform) for platform in platforms) or "Not declared"
+    return (
+        ", ".join(labels.get(platform, platform) for platform in platforms)
+        or "Not declared"
+    )
 
 
 def _format_catalog_status(status: str) -> str:

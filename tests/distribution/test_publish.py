@@ -31,7 +31,7 @@ def _publish(
     events: RecordingEvents | None = None,
 ):
     return publish_application(
-        root,
+        root, provider="huggingface",
         credentials=credentials or FakeCredentialStore(AccessToken("token")),
         identity_hub=identity_hub or FakeIdentityHub(),
         publish_hub=publish_hub,
@@ -52,9 +52,9 @@ def test_publish_only_uploads_source_and_returns_immutable_commit(
     result = _publish(tmp_path, hub, events=events)
 
     assert result.to_dict() == {
-        "space_id": SPACE_ID,
+        "repo_id": SPACE_ID,
         "commit": SPACE_COMMIT,
-        "space_url": f"https://huggingface.co/spaces/{SPACE_ID}",
+        "repository_url": f"https://huggingface.co/spaces/{SPACE_ID}",
         "source_url": (
             f"https://huggingface.co/spaces/{SPACE_ID}/tree/{SPACE_COMMIT}"
         ),

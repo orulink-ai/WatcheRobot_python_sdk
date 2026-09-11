@@ -40,7 +40,7 @@ def test_cli_install_jsonl_uses_sdk_store_service_without_daemon(
     calls: list[dict[str, object]] = []
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_install_dependencies",
-        lambda: SimpleNamespace(hub=object()),
+        lambda provider: SimpleNamespace(hub=object()),
         raising=False,
     )
 
@@ -55,15 +55,15 @@ def test_cli_install_jsonl_uses_sdk_store_service_without_daemon(
     )
     monkeypatch.setattr(
         "watcherobot.cli.ensure_runtime",
-        lambda: (_ for _ in ()).throw(AssertionError("install started Daemon")),
+        lambda provider: (_ for _ in ()).throw(AssertionError("install started Daemon")),
     )
 
     assert (
         main(
             [
                 "app",
-                "install",
-                "--space-id",
+                "install", "--provider", "huggingface",
+                "--repo-id",
                 SPACE_ID,
                 "--commit",
                 COMMIT,
@@ -113,7 +113,7 @@ def test_cli_install_jsonl_preserves_runtime_integrity_error(
 ) -> None:
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_install_dependencies",
-        lambda: SimpleNamespace(hub=object()),
+        lambda provider: SimpleNamespace(hub=object()),
     )
     monkeypatch.setattr(
         "watcherobot.distribution.cli.install_application",
@@ -128,8 +128,8 @@ def test_cli_install_jsonl_preserves_runtime_integrity_error(
     assert main(
         [
             "app",
-            "install",
-            "--space-id",
+            "install", "--provider", "huggingface",
+            "--repo-id",
             SPACE_ID,
             "--commit",
             COMMIT,
@@ -162,7 +162,7 @@ def test_cli_list_and_uninstall_jsonl_use_sdk_store_service(
         version="1.0.0",
         status="installed",
         application_root=store_root / "apps/com.example.demo",
-        space_id=SPACE_ID,
+        repo_id=SPACE_ID,
         commit=COMMIT,
     )
     monkeypatch.setattr(

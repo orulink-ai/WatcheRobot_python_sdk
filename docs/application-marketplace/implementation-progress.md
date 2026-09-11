@@ -89,7 +89,7 @@ OAuth 前置核对已完成：官方文档确认 Public App 支持 Device Code O
 - 新增登录状态查询与退出服务：无效或过期 Token 只清理 Watcher 自己的凭据条目；Hub 网络暂时失败时保留本地 Token 并返回稳定错误；退出同样只删除该精确条目。
 - 登录结果通过 `reused` 明确区分缓存复用与新授权；凭据读写异常、身份验证异常和 OAuth 非法响应均映射为稳定、脱敏的认证错误。
 - 本小步定向登录测试 14 项、SDK 全量 343 项通过，mypy 66 个源码文件通过。
-- CLI 已新增 `app login`、`app login --status`、`app logout`，登录可用 `--force` 跳过缓存；三者均提供人类输出和 `--jsonl` 机器输出，且在 Daemon 启动分支之前直接调用分发服务。
+- CLI 已新增 `app login --provider huggingface`、`app login --provider huggingface --status`、`app logout --provider huggingface`，登录可用 `--force` 跳过缓存；三者均提供人类输出和 `--jsonl` 机器输出，且在 Daemon 启动分支之前直接调用分发服务。
 - Device Flow 的 JSONL `progress` 只输出授权网址、用户码和有效期；成功与错误事件均不包含访问 Token、Device Code 或 traceback。远程认证错误按既定退出码返回。
 - CLI TDD 首次因 `login/logout` 子命令不存在而 5 项失败；最小实现后 CLI 与登录定向测试 19 项、SDK 全量 348 项通过，mypy 66 个源码文件、`pip check` 与迁移守卫 post 模式均通过。
 - 首次使用普通账号执行真实 Device Flow 时，浏览器授权成功，但 Token 轮询遇到一次临时网络错误后立即终止；随后同一端点的脱敏连通性复查成功，确认需要增强瞬时网络容错，而不是修改 OAuth scope 或凭据合同。
@@ -106,15 +106,15 @@ OAuth 前置核对已完成：官方文档确认 Public App 支持 Device Code O
 
 - 已确认 Space 唯一命名规则为 `<hf_username>/WatcherRobot-<app_id>`；例如 `tianguiti/WatcherRobot-com.orulink.demo`。
 - 同一 Hugging Face 身份与同一 `app.json.id` 始终映射到同一个 Space；若同名 Space 不是由 Watcher Desktop OAuth App 创建，则发布必须失败，不得改写开发者已有仓库。
-- CLI 仍保持 `watcherobot app publish <directory>`，V1 不增加要求开发者填写 Space ID 的参数。
+- CLI 仍保持 `watcherobot app publish --provider huggingface <directory>`，V1 不增加要求开发者填写 Space ID 的参数。
 - Space 只作为公开源码仓库：创建为 `static` 类型，但发布工具不生成 `index.html`、落地页或其他运行页面。开发者 README 正文保留，只在远端上传快照补齐 Hugging Face 必需元数据；没有 README 时生成远端最小仓库说明，不修改本地项目。Desktop 后续直接打开固定 commit 文件树。
 - 名单申请采用单开放 PR 规则：正式名单已是相同 commit 时返回 `already_listed`；相同 commit 的开放 PR 返回原 URL 和 `pending`；不同 commit 遇到开放 PR 时返回 `catalog_pr_conflict`，等待原 PR 合并或关闭。V1 不自动改写开放 PR，也不创建第二个并行 PR。
 - 已建立独立 `PublishHubClient` 发布端口，固定公开 Space 创建、精确源码替换、完整 commit 读取、带父 commit 的名单读取、开放 PR 枚举和名单 PR 创建六个远端边界；本地路径和生成内容不会出现在值对象表示中，commit 值对象只接受 40 位小写 SHA。TDD 首次因发布端口类型不存在而收集失败，最小实现后新旧端口测试 7 项和定向 mypy 通过。
 - 已实现确定性的 Space 上传快照准备：继续复用 S1 源码选择器；开发者 README 正文只在远端副本补齐 `sdk: static`，本地文件不变；无 README 时仅生成远端仓库说明；不生成 `index.html` 或落地页。未闭合的 README YAML 和非 UTF-8 内容作为本地源码错误拒绝。TDD 首次因 `publish_files` 模块不存在而收集失败，实现后上传快照与源码选择定向测试 5 项通过。
-- 已固定官方名单的纯函数合同：根对象必须是数组，每项只允许 `space_id + 40 位小写 commit`，重复 Space、短 SHA、未知字段和损坏 UTF-8/JSON 全部拒绝；首次收录追加记录，新版本原位更新且不重排其他 App。PR 标题编码 Space 与 commit；正式名单相同返回 `already_listed`，相同开放 PR 返回 `pending`，不同开放 PR 返回 `catalog_pr_conflict`。TDD 首次因模块不存在而收集失败，实现后 14 项名单规划测试通过。
+- 已固定官方名单的纯函数合同：根对象必须是数组，每项只允许 `repo_id + 40 位小写 commit`，重复 Space、短 SHA、未知字段和损坏 UTF-8/JSON 全部拒绝；首次收录追加记录，新版本原位更新且不重排其他 App。PR 标题编码 Space 与 commit；正式名单相同返回 `already_listed`，相同开放 PR 返回 `pending`，不同开放 PR 返回 `catalog_pr_conflict`。TDD 首次因模块不存在而收集失败，实现后 14 项名单规划测试通过。
 - 已完成不依赖真实网络的发布编排：严格检查和上传快照准备先于凭据/远端调用；登录身份唯一生成 `<username>/WatcherRobot-<app_id>`；随后依次确认 Space、替换源码、读取完整 commit、读取名单/开放 PR 并创建最小 PR。Fake 同时覆盖新建与更新 Space、缺少登录、同名仓库归属冲突、Space/上传/commit/PR 失败、名单损坏、名单父 commit 冲突、已收录、相同开放 PR 复用和不同开放 PR 冲突。新增 `space_ownership_conflict`、`catalog_invalid`、`catalog_pr_conflict` 稳定错误并统一映射远程退出码。编排、事件、名单和快照定向测试 34 项通过。
 - 已接入 `huggingface-hub>=1.26,<2` 的真实发布适配器；当前验证版本 1.26.0 明确要求 Python 3.10+，与 SDK 支持范围一致。每次 HfApi 实例都显式使用 Watcher 系统凭据 Token，不读取 HF CLI 默认登录；Space 强制公开且为 `static`，上传先列出远端文件、删除陈旧路径并提交精确文件集，名单下载固定到先观察到的完整 SHA，名单 PR 使用 `parent_commit + create_pr=True`。库自身会移除内容未变化的 add 操作并在空变更时返回现有 HEAD，保证相同源码重发不制造新 commit。TDD 首次因依赖和适配器不存在而收集失败；Fake API 14 项覆盖创建/更新、精确替换、固定 commit、名单下载、开放 PR、最小 PR、401/403/409 和网络错误脱敏。
-- CLI 已接入 `watcherobot app publish <directory>`：人类输出展示 Space、固定 commit 源码地址和名单 PR 状态；`--jsonl` 只输出结构化进度、结果或稳定错误，并保留源码已上传但名单冲突时的部分结果。命令直接复用唯一发布服务，不启动 Daemon；本地校验失败、远端失败、名单冲突和用户取消均有稳定退出码。TDD 首次新增 6 项全部失败，其中 5 项因解析器没有 `publish`、1 项因真实依赖构造器不存在；实现后发布与认证 CLI 定向测试 11 项通过。
+- CLI 已接入 `watcherobot app publish --provider huggingface <directory>`：人类输出展示 Space、固定 commit 源码地址和名单 PR 状态；`--jsonl` 只输出结构化进度、结果或稳定错误，并保留源码已上传但名单冲突时的部分结果。命令直接复用唯一发布服务，不启动 Daemon；本地校验失败、远端失败、名单冲突和用户取消均有稳定退出码。TDD 首次新增 6 项全部失败，其中 5 项因解析器没有 `publish`、1 项因真实依赖构造器不存在；实现后发布与认证 CLI 定向测试 11 项通过。
 - 已使用非 `Orulink` 管理员账号 `tianguiti` 完成真实发布闭环。首次发布创建公开源码 Space `tianguiti/WatcherRobot-com.orulink.marketplace_smoke`，固定 commit 为 `18c3966e898d6ca84b1868663d1b5b591f9f7606`；远端只有 `README.md`、`app.json`、`app.py`，没有 `index.html`。官方名单 PR 为 `Orulink/watcherobot-app-store` #1，PR 与主分支之间唯一变化是 `app-list.json`，主分支在未合并时仍为 `[]`。
 - 相同源码连续重发保持 commit `18c3966e898d6ca84b1868663d1b5b591f9f7606`，复用 PR #1 并返回 `pending`；修改源码后 Space 产生新 commit `082eae52e04948ea1e9e1578fac7a3af9ef745e2`，发布返回 `catalog_pr_conflict` 和原 PR URL，开放 PR 仍只有一个。`huggingface_hub` 的空提交提示只进入 stderr，JSONL stdout 逐行解析保持纯净。
 - 最小权限真实门禁通过：先用普通网页会话创建不属于 Watcher OAuth 的同名公开 Space，记录 HEAD `588d39d94c62d74cbe1b1ce81d55e38b80117aa1` 和四个文件；Watcher 发布返回 `space_ownership_conflict`、退出码 4，尝试后 HEAD 与文件清单完全不变。临时 Space 随后已删除；Watcher 专用系统凭据也已清理并确认 `logged_in=false`。
@@ -129,9 +129,9 @@ S3 已完成。下一步唯一入口：进入 S4，先用 TDD 固定官方名单
 - 已接入 `HuggingFaceMarketplaceHubClient` 无登录公开读取适配器，默认 `HfApi(token=False)`，明确禁止读取 HF CLI 或环境中的本机 Token。官方 Dataset 先观察 `main` 的完整 SHA，再以该 SHA 读取名单；Space 文件读取先确认仓库存在，再要求完整 commit 精确解析且只下载该 revision。仓库、commit 和必需文件不存在分别映射为内部稳定错误，浮动 revision 在联网前拒绝，传输错误不泄漏原始响应。TDD 首次因适配器模块不存在而收集失败，实现后公开适配器与名单服务 18 项通过；真实无凭据读取返回 Dataset commit `91e3d4d8732a04c21dc50c3ee93914606ee8993a` 和当前正式空名单。
 - 已建立 `download_application_snapshot()` 隔离下载与交付事务。调用者必须明确提供现有空目录；SDK 先在同一父目录的临时区域下载，核对返回 commit、文件数/总大小/符号链接、完整 Manifest、固定 `app.py`、SDK 兼容性以及 Space 名称与 App id，再复制到调用者 staging。远端、revision、Manifest 或复制失败均不会把未校验源码写入目标；成功结果不含 `install.json`，SDK 不决定 Desktop 正式目录。TDD 首次因 `download` 模块不存在而收集失败，实现后目标边界、浮动引用、固定交付、commit 不一致、Manifest 错误、身份错配、远端失败和重复固定快照 12 项通过。
 - Hugging Face 公开适配器已实现 `snapshot_download` 固定 revision 下载，只写 SDK 事务创建的现有空隔离目录，并再次确认 Space 存在、commit 精确解析和返回路径一致；下载后删除仅由 Hugging Face `local_dir` 模式生成的 `.cache/huggingface` 传输元数据。Fake API 覆盖固定 revision、非空目标和异常返回路径；真实下载 smoke Space 的已审核 commit `18c3966e898d6ca84b1868663d1b5b591f9f7606` 成功，只交付 `README.md`、`app.json`、`app.py`，Manifest id 为 `com.orulink.marketplace_smoke`，临时验收目录已清理。
-- CLI 已接入 `watcherobot app download --space-id ... --commit ... --target <staging>`，人类输出展示固定来源、完整 commit、目标目录和 Application 身份；`--jsonl` 只在 stdout 输出结构化进度、结果或稳定错误。命令复用唯一下载服务和无凭据公开 Hub 适配器，不启动 Daemon，不读取 Watcher OAuth 凭据，不创建目标目录，也不写 `install.json`。TDD 首次运行在第一项即因解析器没有 `download` 子命令失败；实现后新增 5 项及下载、公开适配器、发布和认证 CLI 定向共 38 项通过，mypy 73 个源码文件通过。
+- CLI 已接入 `watcherobot app download --provider huggingface --repo-id ... --commit ... --target <staging>`，人类输出展示固定来源、完整 commit、目标目录和 Application 身份；`--jsonl` 只在 stdout 输出结构化进度、结果或稳定错误。命令复用唯一下载服务和无凭据公开 Hub 适配器，不启动 Daemon，不读取 Watcher OAuth 凭据，不创建目标目录，也不写 `install.json`。TDD 首次运行在第一项即因解析器没有 `download` 子命令失败；实现后新增 5 项及下载、公开适配器、发布和认证 CLI 定向共 38 项通过，mypy 73 个源码文件通过。
 - 已用真实命令从 `tianguiti/WatcherRobot-com.orulink.marketplace_smoke` 下载已审核固定 commit `18c3966e898d6ca84b1868663d1b5b591f9f7606`：退出码为 0，stdout 的三条进度事件和一条结果事件均为独立 JSON 对象，Hugging Face 下载进度只进入 stderr；staging 仍只包含 `README.md`、`app.json`、`app.py`，结果 commit、固定源码 URL 与 Manifest id 均正确，临时验收目录已清理。
-- 用户已确认 Desktop 获取官方名单的公开命令名为 `watcherobot app marketplace --jsonl`；现有 `app list` 继续只表示经 Daemon 查询本机已安装 App，两者不得混用。CLI 直接复用 `load_official_marketplace()` 与无凭据公开 Hub 适配器，提供人类输出和严格 JSONL，不启动 Daemon、不读取登录凭据、不写缓存或修改本地状态；缓存及刷新失败后的旧结果回退继续由 Desktop 负责。TDD 首次运行在第一项即因解析器没有 `marketplace` 子命令失败；实现后新增 5 项、名单/下载/Daemon 边界定向 33 项和 SDK 全量 455 项通过，mypy 73 个源码文件、`pip check`、迁移守卫 post 模式与 `git diff --check` 均通过。
+- 用户已确认 Desktop 获取官方名单的公开命令名为 `watcherobot app marketplace --provider huggingface --jsonl`；现有 `app list` 继续只表示经 Daemon 查询本机已安装 App，两者不得混用。CLI 直接复用 `load_official_marketplace()` 与无凭据公开 Hub 适配器，提供人类输出和严格 JSONL，不启动 Daemon、不读取登录凭据、不写缓存或修改本地状态；缓存及刷新失败后的旧结果回退继续由 Desktop 负责。TDD 首次运行在第一项即因解析器没有 `marketplace` 子命令失败；实现后新增 5 项、名单/下载/Daemon 边界定向 33 项和 SDK 全量 455 项通过，mypy 73 个源码文件、`pip check`、迁移守卫 post 模式与 `git diff --check` 均通过。
 - 真实无登录命令验收返回退出码 0，stdout 仅有一条 `fetching_catalog` 进度事件和一条结果事件，stderr 为空；结果固定官方 Dataset commit 为 `91e3d4d8732a04c21dc50c3ee93914606ee8993a`，正式名单仍为空数组。首次验收脚本尝试使用当前 PowerShell/.NET 不可用的 `ProcessStartInfo.ArgumentList`，导致参数未传入并返回 argparse 退出码 2；改用兼容的 `Arguments` 后命令本身验收通过，该失败不属于 SDK 回归。
 
 S4 的公开名单服务、`app marketplace`、固定快照下载服务与 `app download` 路径已经闭合。下一步进入 S5，按既定文档实现 SDK Daemon 的受控 Application 启动合同，不改变内容无关路由边界。
@@ -164,15 +164,15 @@ S5 已完成。下一步唯一入口：进入 S6，在 `WatcheRobot_client` 建�
 - `check`、`login/logout`、`publish`、`marketplace`、`download` 的默认结果与错误前缀统一为英文标签；发布、广场和下载进度进入 stderr，成功摘要保留在 stdout。JSONL 的事件类型、stage、code、data、details 和退出码不变，`message` 统一为英文辅助文案。
 - `app --help` 现在说明开发、运行、认证、发布、广场、下载和当前 Application 启停的真实用途及 Daemon 边界；旧版目录 Catalog 的 `package/select` 不再注册或提供迁移兼容，安装、列表和卸载只保留 SDK 分发模块的新版固定快照合同。
 - 新增 [Application CLI Quick Reference](application-cli-reference.md)，英文/中文指南均改为默认人工模式优先，并把 `--jsonl` 单独标记为 Desktop 机器合同。
-- 应用广场最小信息门禁现由 `app submit` 持有：本地 `check/run` 和 `app publish` 允许 `description`、`author`、`icon` 缺省；提交 Catalog 审核时只要求 `description`、`author` 非空，`icon` 可选。新建 Catalog PR 直接展示固定快照的名称、ID、版本、作者、简介、SDK 要求、依赖和源码链接；存在自选图标时额外展示图标路径和固定版本图标，否则标记使用默认 WatcherRobot Application 图标。官方 `app-list.json` 继续只保存 `space_id + commit`，避免产生第二份可漂移元数据。
+- 应用广场最小信息门禁现由 `app submit` 持有：本地 `check/run` 和 `app publish` 允许 `description`、`author`、`icon` 缺省；提交 Catalog 审核时只要求 `description`、`author` 非空，`icon` 可选。新建 Catalog PR 直接展示固定快照的名称、ID、版本、作者、简介、SDK 要求、依赖和源码链接；存在自选图标时额外展示图标路径和固定版本图标，否则标记使用默认 WatcherRobot Application 图标。官方 `app-list.json` 继续只保存 `repo_id + commit`，避免产生第二份可漂移元数据。
 - 新增开发者入口 `watcherobot app init <new-directory>`，交互式收集或通过参数接收 ID、名称、作者、简介，并生成可直接 `check/run/publish` 的 `app.json`、`app.py`、README、默认 SVG 图标和 `.gitignore`。初始 App 版本固定为 `0.1.0`，SDK 范围根据当前版本计算；目标已存在、字段非法或生成校验失败时拒绝覆盖。该命令不加入 Desktop `watcher-distribution` sidecar，也不启动 Daemon。
 - TDD 首次运行新增与修改的帮助、表格、详细视图和英文摘要用例时有 8 项失败；实现后 Application CLI 聚焦用例、分发目录用例和 Runtime CLI 用例全部通过。SDK 全量 499 项、mypy 75 个源码文件、`pip check` 和 `git diff --check` 通过。
-- 真实公开调用已验证两个入口：`watcherobot app marketplace` 和 `--details` 分别显示当前两条正式记录的表格与完整固定来源；`watcher-distribution app marketplace --jsonl` 返回相同 Dataset commit `8ccb4394ef76284a61a9bb0c49c499174843efda`，事件字段保持原合同且所有辅助消息为英文。
+- 真实公开调用已验证两个入口：`watcherobot app marketplace --provider huggingface` 和 `--details` 分别显示当前两条正式记录的表格与完整固定来源；`watcher-distribution app marketplace --provider huggingface --jsonl` 返回相同 Dataset commit `8ccb4394ef76284a61a9bb0c49c499174843efda`，事件字段保持原合同且所有辅助消息为英文。
 
 ### 源码发布与 Catalog 提交职责拆分——当前合同
 
-- `watcherobot app publish <directory>` 现在只做本地校验、Hugging Face 登录校验、公开 Space 创建/更新、完整源码上传和固定 commit 解析；结果只包含 `space_id`、`commit`、`space_url`、`source_url`，不读取或修改官方 Catalog。
-- 新增 `watcherobot app submit <directory> [--commit <sha>]`。该命令不调用 Space 创建或源码上传，只读取固定 commit 上的 `app.json`；当 Manifest 提供 `icon` 时再读取并校验该图标。它要求远端 Manifest 与本地项目一致，再创建或复用官方 Catalog PR。省略 `--commit` 时解析当前 Space HEAD；显式参数只接受 40 位小写 SHA。
+- `watcherobot app publish --provider huggingface <directory>` 现在只做本地校验、Hugging Face 登录校验、公开 Space 创建/更新、完整源码上传和固定 commit 解析；结果只包含 `repo_id`、`commit`、`repository_url`、`source_url`，不读取或修改官方 Catalog。
+- 新增 `watcherobot app submit --provider huggingface <directory> [--commit <sha>]`。该命令不调用 Space 创建或源码上传，只读取固定 commit 上的 `app.json`；当 Manifest 提供 `icon` 时再读取并校验该图标。它要求远端 Manifest 与本地项目一致，再创建或复用官方 Catalog PR。省略 `--commit` 时解析当前 Space HEAD；显式参数只接受 40 位小写 SHA。
 - `description`、`author` 的完整性门禁从 `publish` 移到 `submit`；`icon` 在全部阶段均可选，填写时严格校验，未填写时由展示端使用默认图标。因此开发者可以先反复发布测试源码，稳定后再单独发起应用广场审核。
 - `watcher-distribution app` 同步公开 `submit`，继续保持短进程、JSONL 和不启动 Daemon 的边界。Desktop 后续应把“发布到 Hugging Face”和“提交应用广场审核”呈现为两个独立动作。
 - TDD 首次运行因 `watcherobot.distribution.submit` 不存在而在收集阶段失败；实现后服务与 CLI 聚焦测试证明 `publish` 只发生 `ensure/upload/head`，`submit` 不发生 `ensure/upload`，并覆盖显式 commit、固定源码核对、元数据门禁、已收录、PR 复用和 PR 冲突。
