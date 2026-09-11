@@ -1,5 +1,5 @@
 import { evaluateRtcAudioHealth } from "./rtc-audio-health.mjs";
-import { detectionLabel, testBenchModels } from "./model-preview.mjs";
+import { detectionLabel, testBenchModels, createPreviewLifecycle } from "./model-preview.mjs";
 import { createDisplayAudit } from "./display-audit.mjs";
 import { createMjpegTransport } from "./mjpeg-transport.mjs";
 let displayAudit = createDisplayAudit();
@@ -14,6 +14,7 @@ let modelPreviewEpoch = 0;
 let modelPreviewPending = false;
 let modelPreviewSequence = null;
 let modelPreviewFrameAt = 0;
+const modelPreviewLifecycle = createPreviewLifecycle();
 import { evaluateAnimationConfirmation } from "./animation-confirmation.mjs";
 import {
   clampAnimationIntervalMs,
@@ -644,7 +645,7 @@ function renderStatus(status) {
   elements.inferenceModel.disabled = inferenceState !== "idle";
   if (inferenceState === "idle" && modelPreviewActive) {
     modelPreviewActive = false;
-    modelPreviewEpoch++;
+    modelPreviewEpoch = modelPreviewLifecycle.stop();
     elements.inferenceCanvas.hidden = true;
   }
   elements.queryInferenceButton.disabled = inferenceRequestPending || !inferenceSupported || inferenceState !== "running";
@@ -2067,7 +2068,7 @@ async function inferenceAction(action, preview = false) {
     }
     if (action === "start" || action === "stop") {
       modelPreviewActive = action === "start" && preview;
-      modelPreviewEpoch++;
+      modelPreviewEpoch = modelPreviewActive ? modelPreviewLifecycle.start(Date.now()) : modelPreviewLifecycle.stop();
       modelPreviewSequence = null;
       modelPreviewFrameAt = Date.now();
       elements.inferenceCanvas.hidden = !modelPreviewActive;
@@ -2184,6 +2185,11 @@ updateLightPreview();
 
 // Each JPEG and its center-based boxes share one latest result.
 setInterval(async () => {
+  // This clock keeps running even when fetch/decode or a control request is pending.
+  if (modelPreviewLifecycle.expired(Date.now())) {
+    elements.inferenceCanvas.getContext("2d").clearRect(0, 0, 640, 480);
+    elements.inferenceMetrics.textContent = "Preview requested; no recent image received";
+  }
   if (!modelPreviewActive || modelPreviewPending || inferenceRequestPending) return;
   modelPreviewPending = true;
   const epoch = modelPreviewEpoch;
@@ -2201,6 +2207,7 @@ setInterval(async () => {
     image.src = `data:image/jpeg;base64,${result.jpeg_base64}`;
     await image.decode();
     if (!modelPreviewActive || epoch !== modelPreviewEpoch) return;
+    if (!modelPreviewLifecycle.accept(epoch, Date.now())) return;
     const canvas = elements.inferenceCanvas;
     canvas.width = result.frame_width; canvas.height = result.frame_height;
     const ctx = canvas.getContext("2d");
