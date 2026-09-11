@@ -7,11 +7,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import psutil
 import pytest
 import websockets
 from websockets.asyncio.client import connect
 
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
+from watcherobot.runtime.daemon.application.manifest import (
+    ApplicationCompatibilityError,
+)
 from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchError
 from watcherobot.runtime.daemon.application.session import (
     ApplicationChannel,
@@ -587,6 +591,51 @@ def test_daemon_pairing_control_does_not_stop_the_current_application(
             assert cancelled["device"]["last_error"] == "pairing_cancelled"
             assert runtime.application.process_id == application_pid
             assert await runtime.disconnect_device() is False
+        finally:
+            await runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_restart_rejects_incompatible_manifest_before_stopping_running_application(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        _write_relay_application(app_dir)
+        runtime = DaemonRuntime(
+            application_dir=app_dir,
+            current_app="test_app",
+            managed_app_root=Path(sys.executable).parent,
+            external_host="127.0.0.1",
+            external_port=0,
+            control_port=0,
+            pairing_udp_port=0,
+            preview_udp_port=0,
+        )
+        _select_python_application(runtime, app_dir)
+        await runtime.start()
+
+        try:
+            await runtime.start_application()
+            running_pid = runtime.application.process_id
+            assert running_pid is not None
+
+            manifest = json.loads(
+                app_dir.joinpath("app.json").read_text(encoding="utf-8")
+            )
+            manifest["requires_watcherobot"] = ">=999"
+            app_dir.joinpath("app.json").write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+
+            with pytest.raises(ApplicationCompatibilityError):
+                await runtime.restart_application()
+
+            assert runtime.application.process_id == running_pid
+            assert runtime.application_status()["state"] == "running"
+            assert psutil.pid_exists(running_pid)
         finally:
             await runtime.stop()
 
