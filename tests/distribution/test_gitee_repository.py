@@ -15,6 +15,19 @@ from watcherobot.distribution.ports import (
 SHA = "a" * 40
 
 
+@pytest.mark.parametrize("mode", ["40000", "040000"])
+def test_gitee_directory_modes_are_supported(tmp_path, mode):
+    api = Api({"tree": [
+        {"path": "web", "type": "tree", "mode": mode},
+        {"path": "web/app.js", "type": "blob", "mode": "100644",
+         "size": 4, "sha": hashlib.sha1(b"blob 4\0pass").hexdigest()},
+    ]})
+    public = SimpleNamespace(read_file=lambda **kwargs: b"pass")
+    GiteeRepository(api=api, public=public).download_repository_snapshot(
+        repo_id="alice/app", commit=SHA, target=tmp_path)
+    assert (tmp_path / "web/app.js").read_bytes() == b"pass"
+
+
 def test_submission_pushes_only_developer_fork():
     class ForkApi(Api):
         def request(self, method, path, token, data=None):

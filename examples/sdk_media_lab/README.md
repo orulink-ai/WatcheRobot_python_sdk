@@ -12,6 +12,10 @@ contained inside this directory; generated photos and recordings stay under
 the ignored `artifacts/` directory and are never included in a published
 source snapshot.
 
+The distribution manifest uses schema 2 and currently declares Windows only,
+matching the recorded hardware validation. macOS is not advertised until its
+runtime and hardware acceptance have been completed.
+
 The tested 2026-09-09 SDK/ESP32 pairing, concurrent video/audio results, and
 remaining limits are fixed in the [Himax media stage record](../../docs/himax-media-stage-20260909.md).
 

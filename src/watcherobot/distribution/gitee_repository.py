@@ -415,7 +415,7 @@ class GiteeRepository:
                     "Snapshot contains a reserved Windows filename"
                 )
             seen.add(key)
-            if item.get("type") == "tree" and item.get("mode") == "040000":
+            if item.get("type") == "tree" and item.get("mode") in ("40000", "040000"):
                 continue
             if item.get("type") != "blob" or item.get("mode") not in (
                 "100644",

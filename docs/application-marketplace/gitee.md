@@ -47,6 +47,14 @@ publish 不投稿；submit 不上传源码；必须先发布，且本地 app.jso
 
 ## 本轮验证记录
 
+### SDK Test Bench 普通开发者实测
+
+- qiqi779 发布 examples/sdk_media_lab 1.1.0，共 23 个文件，版本 f2ab6fc55349ca30f4028c82be3e0880aaf7e128。示例清单升级 schema 2，仅声明已有验证记录的 Windows。
+- SDK publish/submit 命令处理链路实际执行，凭据与前测目录仅通过测试进程注入，不覆盖系统 SDK 登录或正式目录配置。
+- [测试 PR !4](https://gitee.com/orulink-sz/watcherobot-catalog-preflight-20260911/pulls/4) 由 qiqi779 的 Fork 分支向团队前测目录提交；重复投稿返回同一 PR，未自动合并。
+- 完整 UI 下载发现 Gitee 目录 mode 返回 40000，已补充测试并修复误拒绝。分发与 UI 示例测试合计 350 项通过，分发类型检查通过。
+- 修复后匿名下载遇到 HTTP 403，后续匿名 commit 查询也为 403，原因尚未确定。完整 23 文件下载一致性、审核后收录、真实安装与启动仍未通过，不能将此前两文件前测替代本次验收。
+
 - 真实 SDK 发布与匿名下载：tianguiti/WatcherRobot-com.orulink.gitee-preflight-20260911，固定版本 e641fcb3ee31fb62340da0fb3a6e42a7a2216e9f。
 - 真实 Fork 投稿：[测试 PR !3](https://gitee.com/orulink-sz/watcherobot-catalog-preflight-20260911/pulls/3)，未自动合并。
 - 正式 Gitee 空目录只读成功，未写入测试应用。
