@@ -264,10 +264,12 @@ class GiteeRepository:
     def read_repository_file(
         self, token: AccessToken | None = None, *, repo_id: str, commit: str, path: str
     ) -> bytes:
-        return self.public.read_file(repo_id=repo_id, commit=commit, path=path)
+        _validate_reference(repo_id, commit, path)
+        return GitSnapshot().read_catalog(repo_id, path, commit).content
 
     def read_public_catalog(self, *, repo_id: str, path: str) -> CatalogDocument:
-        return self.public.read_public_catalog(repo_id=repo_id, path=path)
+        _validate_reference(repo_id, '0' * 40, path)
+        return GitSnapshot().read_catalog(repo_id, path)
 
     def read_catalog(
         self, token: AccessToken, *, repo_id: str, path: str

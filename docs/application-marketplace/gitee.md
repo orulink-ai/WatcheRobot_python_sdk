@@ -4,7 +4,7 @@
 
 ## 命令
 
-以下命令在 Windows、macOS 和 Linux 使用相同参数。Gitee 发布、投稿、下载和安装需安装 Git。
+以下命令在 Windows、macOS 和 Linux 使用相同参数。Gitee 发布、投稿、应用广场读取、下载和安装需安装 Git。
 
 ```text
 watcherobot app login --provider gitee
@@ -59,6 +59,10 @@ publish 不投稿；submit 不上传源码；必须先发布，且本地 app.jso
 - 修复后分发与 UI 示例测试 357 项通过，分发模块 mypy 通过。再次匿名下载仍被平台限流，隔离目录没有残留文件；未使用管理员凭据绕过。完整 23 文件下载一致性、真实安装与启动仍未通过，不能将此前两文件前测替代本次验收。
 
 ### Git 下载优化后的复测
+
+后续补齐：目录默认分支与固定版本 app.json 均改用匿名 Git 对象读取，目录与文件校验保持不变，写入和 PR 操作仍用 API。正式空目录完整加载通过；前测目录及 qiqi UI 清单读取通过，但其中旧条目 tianguiti/watcherobot-app-preflight-20260911 缺少 app.json，使整表按严格校验失败，未擅自清理远端条目。
+
+UI 示例已补充 Daemon 停止信号监听。隔离安装副本应用该修复并安装当前源码构建的 SDK 0.1.9 wheel 后，受管启动、首页和静态资源 HTTP 200、退出码 0、停止后端口关闭均通过。旧 Runtime 内 SDK 0.1.1a4 缺少 shutdown_requested 接口；不提供旧版兼容，正式交付必须更新 Runtime wheel 并重新发布示例。此验证不代表原远端固定 SHA 已包含修复。
 
 - 完整源码下载不再逐文件调用 REST API；浅拉取指定 SHA 后从本地 Git 对象导出，保留树模式、路径、大小和 blob 哈希校验。目录查询和投稿仍使用原 API，不改变人工审核流程。
 - qiqi779 的上述固定版本匿名下载成功：23 个文件，与本地 SDK UI 示例逐文件字节对比无差异。

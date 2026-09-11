@@ -34,6 +34,19 @@ def test_snapshot_uses_git_without_api_or_checkout(tmp_path, monkeypatch):
     assert not (target / '.git').exists()
 
 
+def test_catalog_uses_remote_default_branch_without_api(tmp_path, monkeypatch):
+    root, git, sha = repository(tmp_path)
+    git('branch', '-m', 'catalog-main')
+    from watcherobot.distribution.gitee_snapshot import GitSnapshot
+    monkeypatch.setattr(GitSnapshot, '_remote_url', staticmethod(lambda repo: root.as_uri()))
+    hub = GiteeRepository()
+    monkeypatch.setattr(hub.api, 'request', lambda *a: pytest.fail('No API expected'))
+    document = hub.read_public_catalog(repo_id='owner/app', path='app.json')
+    assert document.commit == sha
+    assert document.content == b'{}\n'
+    assert hub.read_repository_file(repo_id='owner/app', commit=sha, path='app.json') == b'{}\n'
+
+
 def test_git_snapshot_rejects_symlink_before_export(tmp_path, monkeypatch):
     root, git, sha = repository(tmp_path)
     blob = git('hash-object', '-w', 'app.json')

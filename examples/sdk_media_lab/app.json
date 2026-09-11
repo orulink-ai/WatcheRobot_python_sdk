@@ -3,7 +3,7 @@
   "id": "example.sdk_media_lab",
   "name": "SDK Test Bench",
   "version": "1.1.0",
-  "requires_watcherobot": ">=0.1.0a4,<0.2",
+  "requires_watcherobot": ">=0.1.9,<0.2",
   "dependencies": [],
   "supported_host_platforms": ["windows"],
   "description": "Validate WatcheRobot motion, lighting, animation, camera, audio, RTC, and resource lifecycle from one local dashboard.",
