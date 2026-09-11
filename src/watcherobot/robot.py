@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from ._internal.audio_status import AudioStatusKind, classify_audio_status
 from .errors import CommandError, WatcheRobotError
-from .audio import AudioPlayback, PCMAudio, load_pcm_wave
+from .audio import AudioPlayback, PCMAudio, load_audio_file
 from .job import Job, JobState
 from .inputs import InputDomain, parse_input_event
 from .media import AudioFormat, AudioRecording, ImageFrame, MicrophoneSession
@@ -34,6 +34,7 @@ from .vision import (
     FaceTrackingStopPolicy,
     VisionDomain,
 )
+from .recordings import RecordingsDomain
 
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -638,7 +639,7 @@ class AudioDomain(_Domain):
         return self._robot._start_local_audio(sound_id)
 
     def play_file(self, path: str | Path) -> AudioPlayback:
-        return self._robot._start_audio_playback(load_pcm_wave(path))
+        return self._robot._start_audio_playback(load_audio_file(path))
 
     def play_pcm(
         self,
@@ -879,6 +880,7 @@ class WatcheRobot:
         self.lights = LightsDomain(self)
         self.microphone = MicrophoneDomain(self)
         self.camera = CameraDomain(self)
+        self.recordings = RecordingsDomain(self)
         self.vision = VisionDomain(self)
         self.face_tracking = FaceTrackingDomain(self)
         self.inputs = InputDomain()
@@ -1492,6 +1494,8 @@ class WatcheRobot:
                 send_future.cancel()
 
     def _on_binary(self, frame: BinaryFrame) -> None:
+        if self.recordings._on_binary(frame):
+            return
         if frame.frame_type == FRAME_VIDEO:
             with self._face_tracking_lock:
                 preview = self._face_tracking_preview

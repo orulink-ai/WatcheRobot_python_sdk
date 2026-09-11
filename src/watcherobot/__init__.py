@@ -11,6 +11,7 @@ from .inference import DetectionBox, InferenceResult, InferenceSession
 from .job import Job, JobState
 from .inputs import BackTouchEvent, InputDomain, InputEvent, RollerEvent, ScreenTouchEvent
 from .media import AudioFormat, AudioFrame, AudioRecording, ImageFrame, MicrophoneSession
+from .recordings import DeviceRecording, RecordingDownload, RecordingInfo
 from .provisioning import (
     BluetoothConnectionTimeoutError,
     BluetoothDevice,
@@ -61,6 +62,7 @@ __all__ = [
     "ConnectionTimeoutError",
     "DeviceAmbiguityError",
     "DeviceNotFoundError",
+    "DeviceRecording",
     "FaceBox",
     "FaceTrackingFrame",
     "FaceTrackingPreview",
@@ -86,6 +88,8 @@ __all__ = [
     "ProvisioningRejectedError",
     "ProvisioningResponseTimeoutError",
     "ProvisioningResult",
+    "RecordingDownload",
+    "RecordingInfo",
     "RollerEvent",
     "ScreenTouchEvent",
     "WatcheRobotError",

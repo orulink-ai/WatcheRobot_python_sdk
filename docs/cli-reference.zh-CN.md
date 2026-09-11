@@ -1,5 +1,7 @@
 # WatcheRobot CLI 命令参考
 
+拍照、设备端录像/录音、音频播放、灯光、屏幕 Work 和录制管理命令见[机器人硬件 CLI](robot-hardware-cli.zh-CN.md)。
+
 本文档覆盖已安装的 `watcherobot` 命令。可使用
 `watcherobot <分组> <命令> --help` 查看当前安装版本的参数。
 
