@@ -18,6 +18,7 @@ from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 from .gitee_auth import GiteeHubClient
 from .gitee_public import GiteePublicRepository, _validate_reference
+from .gitee_snapshot import GitSnapshot
 from .ports import (
     AccessToken,
     CatalogDocument,
@@ -395,7 +396,12 @@ class GiteeRepository:
         _validate_reference(repo_id, commit, "app.json")
         if not target.is_dir() or any(target.iterdir()):
             raise HubInvalidResponse("Snapshot target must be empty")
-        tree = self._request("GET", f"repos/{repo_id}/git/trees/{commit}?recursive=1")
+        with GitSnapshot().open(repo_id, commit) as (tree, read_file):
+            return self._export_snapshot(repo_id, commit, target, tree, read_file)
+
+    def _export_snapshot(
+        self, repo_id: str, commit: str, target: Path, tree: Any, read_file: Any,
+    ) -> RepositoryRevision:
         if (
             not isinstance(tree, dict)
             or tree.get("truncated")
@@ -435,7 +441,7 @@ class GiteeRepository:
             ):
                 raise HubInvalidResponse("Symlinks and submodules are not supported")
             size = item.get("size")
-            if type(size) is not int or size < 0:
+            if type(size) is not int or not 0 <= size <= 1024 * 1024:
                 raise HubInvalidResponse("Invalid Gitee blob size")
             total += size
             files.append(item)
@@ -443,7 +449,7 @@ class GiteeRepository:
             raise HubInvalidResponse("Snapshot exceeds size limits")
         try:
             for item in files:
-                data = self.read_repository_file(
+                data = read_file(
                     repo_id=repo_id, commit=commit, path=item["path"]
                 )
                 if len(data) != item["size"]:

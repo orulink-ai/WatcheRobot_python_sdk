@@ -45,8 +45,8 @@ def test_gitee_directory_modes_are_supported(tmp_path, mode):
          "size": 4, "sha": hashlib.sha1(b"blob 4\0pass").hexdigest()},
     ]})
     public = SimpleNamespace(read_file=lambda **kwargs: b"pass")
-    GiteeRepository(api=api, public=public).download_repository_snapshot(
-        repo_id="alice/app", commit=SHA, target=tmp_path)
+    GiteeRepository()._export_snapshot(
+        "alice/app", SHA, tmp_path, api.payload, public.read_file)
     assert (tmp_path / "web/app.js").read_bytes() == b"pass"
 
 
@@ -164,8 +164,8 @@ def test_private_existing_repository_is_not_made_public():
 def test_download_rejects_unsafe_tree_before_writes(tmp_path, path, mode):
     api = Api({"tree": [{"path": path, "type": "blob", "mode": mode, "size": 1}]})
     with pytest.raises(HubInvalidResponse):
-        GiteeRepository(api=api).download_repository_snapshot(
-            repo_id="alice/app", commit=SHA, target=tmp_path
+        GiteeRepository()._export_snapshot(
+            "alice/app", SHA, tmp_path, api.payload, lambda **kwargs: pytest.fail('Unsafe read')
         )
     assert not list(tmp_path.iterdir())
     assert all(call[2] is None for call in api.calls)
@@ -186,12 +186,12 @@ def test_download_exact_sha_and_cleanup_on_failure(tmp_path):
         }
     )
     public = SimpleNamespace(read_file=lambda **kwargs: b"pass")
-    revision = GiteeRepository(api=api, public=public).download_repository_snapshot(
-        repo_id="alice/app", commit=SHA, target=tmp_path
+    revision = GiteeRepository()._export_snapshot(
+        "alice/app", SHA, tmp_path, api.payload, public.read_file
     )
     assert revision.commit == SHA
     assert (tmp_path / "app.py").read_bytes() == b"pass"
-    assert SHA in api.calls[0][1]
+    assert SHA in revision.url
 
 
 def test_wrong_fork_never_receives_writes():
@@ -246,7 +246,7 @@ def test_download_tree_hash_mismatch_rolls_back(tmp_path):
     )
     public = SimpleNamespace(read_file=lambda **kwargs: b"pass")
     with pytest.raises(HubInvalidResponse, match="immutable tree"):
-        GiteeRepository(api=api, public=public).download_repository_snapshot(
-            repo_id="alice/app", commit=SHA, target=tmp_path
+        GiteeRepository()._export_snapshot(
+            "alice/app", SHA, tmp_path, api.payload, public.read_file
         )
     assert not list(tmp_path.iterdir())
