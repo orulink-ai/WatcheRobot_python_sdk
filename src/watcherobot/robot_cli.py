@@ -16,11 +16,14 @@ from typing import Any, Callable, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from .desktop_session import DesktopRobotSession
+from .errors import CommandError
 from .recordings import RecordingMode, iter_wrec_records, mux_wrec_to_mp4, write_pcm_wav
 from .robot import WatcheRobot
 
 _HARDWARE_COMMANDS = {"capabilities", "camera", "audio", "light", "screen", "recording"}
 _TERMINAL_RECORDING_STATES = {"completed", "interrupted", "failed"}
+_TERMINAL_MAINTENANCE_STATES = {"completed", "succeeded", "failed", "cancelled"}
+_WORK_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,22}$")
 
 
 class RobotCliError(RuntimeError):
@@ -161,16 +164,34 @@ def run(
 
     session = DesktopRobotSession(_loopback_url(runtime_state.external_url), command_timeout=10.0)
     robot = WatcheRobot(session)
-    session.start()
     try:
+        session.start()
         return _run_connected(args, robot)
+    except RobotCliError:
+        raise
+    except (OSError, TimeoutError, ValueError) as error:
+        raise RobotCliError(str(error)) from error
     finally:
         robot.close()
 
 
 def _run_connected(args: argparse.Namespace, robot: WatcheRobot) -> int:
     if args.robot_command == "capabilities":
-        return _emit(args, {"capabilities": list(robot.capabilities), "device": robot.device_info}, "Robot capabilities")
+        payload: dict[str, Any] = {"capabilities": list(robot.capabilities), "device": robot.device_info}
+        try:
+            response = robot._command("resource.storage.get", {})
+            storage = response.get("data", {})
+            if isinstance(storage, dict):
+                storage = {key: value for key, value in storage.items() if key != "command_id"}
+                total = int(storage.get("total_bytes", 0) or 0)
+                free = int(storage.get("free_bytes", 0) or 0)
+                reserve = max(256 * 1024 * 1024, (total * 5 + 99) // 100) if total > 0 else 0
+                storage["recording_reserve_bytes"] = reserve
+                storage["recording_usable_bytes"] = max(0, free - reserve)
+                payload["storage"] = storage
+        except (CommandError, TimeoutError):
+            payload["storage"] = {"available": False}
+        return _emit(args, payload, "Robot capabilities")
     if args.robot_command == "camera":
         if args.camera_command in {"capture", "cap"}:
             path = args.output or _timestamp_path("photo", ".jpg")
@@ -186,10 +207,13 @@ def _run_connected(args: argparse.Namespace, robot: WatcheRobot) -> int:
         if args.audio_command == "play":
             playback = robot.audio.play_file(args.file)
             try:
-                playback.wait()
+                playback.wait(timeout=max(15.0, playback.expected_duration_seconds + 10.0))
             except KeyboardInterrupt:
                 playback.cancel()
                 raise
+            except TimeoutError as error:
+                playback.cancel()
+                raise RobotCliError("Audio playback did not complete before its safety timeout") from error
             return _emit(args, {"state": "completed", "stream_id": playback.id}, "Audio playback completed")
         robot.audio.stop()
         return _emit(args, {"state": "stopped"}, "Audio playback stopped")
@@ -205,7 +229,9 @@ def _run_connected(args: argparse.Namespace, robot: WatcheRobot) -> int:
             robot.lights.off()
             return _emit(args, {"state": "off", "zones": ["side", "bottom"]}, "Side and bottom lights are off")
         response = robot._command("ctrl.light.status.get", {})
-        return _emit(args, response.get("data", {}), "Light status")
+        data = response.get("data", {})
+        payload = {key: value for key, value in data.items() if key not in {"command_id", "type"}} if isinstance(data, dict) else {}
+        return _emit(args, payload, "Light status")
     if args.robot_command == "screen":
         if args.screen_command == "list":
             response = robot._command("resource.catalog.get", {})
@@ -295,7 +321,13 @@ def _download(args: argparse.Namespace, robot: WatcheRobot) -> int:
 def _run_maintenance(args: argparse.Namespace, control_url: str, request_json: Callable[..., dict[str, Any]]) -> int:
     transport, port, volume_id = _maintenance_target(args, control_url, request_json)
     if args.screen_command == "delete-work":
-        request_json(control_url, "/daemon/maintenance/works/delete", method="POST", payload={"transport": transport, "port": port, "volume_id": volume_id, "work_id": args.work_id}, timeout=10.0)
+        request_json(
+            control_url,
+            "/daemon/maintenance/works/delete",
+            method="POST",
+            payload={"transport": transport, "port": port, "volume_id": volume_id, "work_id": args.work_id},
+            timeout=75.0,
+        )
         return _emit(args, {"work_id": args.work_id, "deleted": True}, f"Work deleted: {args.work_id}")
     source = args.file
     if source.suffix.lower() not in {".gif", ".png", ".jpg", ".jpeg", ".webp"}:
@@ -304,6 +336,8 @@ def _run_maintenance(args: argparse.Namespace, control_url: str, request_json: C
     if len(payload) > 2 * 1024 * 1024:
         raise RobotCliError("Screen source exceeds the 2 MiB limit")
     work_id = args.work_id or _stable_work_id(source, payload)
+    if not _WORK_ID_PATTERN.fullmatch(work_id):
+        raise RobotCliError("Work ID must match ^[a-z][a-z0-9_]{0,22}$")
     mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
     duration_ms = _screen_duration_ms(payload)
     composition = {
@@ -315,11 +349,17 @@ def _run_maintenance(args: argparse.Namespace, control_url: str, request_json: C
     response = request_json(control_url, "/daemon/maintenance/work", method="POST", payload={"composition": composition, "port": port, "transport": transport, "volume_id": volume_id}, timeout=30.0)
     job = response.get("job", {})
     job_id = job.get("id")
-    while isinstance(job_id, str) and job.get("state") not in {"completed", "failed", "cancelled"}:
-        _progress(args, {"event": "install", **job})
+    job_state = _maintenance_job_state(job)
+    last_progress_revision: tuple[Any, ...] | None = None
+    while isinstance(job_id, str) and job_state not in _TERMINAL_MAINTENANCE_STATES:
+        revision = _maintenance_job_revision(job)
+        if revision != last_progress_revision:
+            _progress(args, {"event": "install", **job})
+            last_progress_revision = revision
         time.sleep(0.25)
         job = request_json(control_url, f"/daemon/maintenance/jobs/{job_id}").get("job", {})
-    if job.get("state") != "completed":
+        job_state = _maintenance_job_state(job)
+    if job_state not in {"completed", "succeeded"}:
         raise RobotCliError(f"Screen install failed: {job.get('error') or job.get('message') or 'unknown'}")
     return _emit(args, {"work_id": work_id, "state": "completed", "job_id": job_id}, f"Work installed: {work_id}")
 
@@ -336,6 +376,25 @@ def _maintenance_target(args: argparse.Namespace, control_url: str, request_json
     if not isinstance(value, str) or not value:
         raise RobotCliError("The maintenance serial port could not be identified")
     return "serial", value, ""
+
+
+def _maintenance_job_state(job: dict[str, Any]) -> str:
+    """Accept both legacy ``state`` and current maintenance ``status`` fields."""
+    value = job.get("state", job.get("status", ""))
+    return value if isinstance(value, str) else ""
+
+
+def _maintenance_job_revision(job: dict[str, Any]) -> tuple[Any, ...]:
+    logs = job.get("logs")
+    last_log = logs[-1] if isinstance(logs, list) and logs else None
+    return (
+        _maintenance_job_state(job),
+        job.get("phase"),
+        job.get("progress"),
+        job.get("updated_at_ms"),
+        len(logs) if isinstance(logs, list) else 0,
+        last_log,
+    )
 
 
 def _emit(args: argparse.Namespace, payload: dict[str, Any], human: str) -> int:

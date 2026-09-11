@@ -1092,6 +1092,11 @@ class WatcheRobot:
                 stream_id,
                 self._transport,
                 audio.sha256,
+                len(audio.data) / (
+                    audio.audio_format.sample_rate_hz
+                    * audio.audio_format.channels
+                    * audio.audio_format.sample_width_bytes
+                ),
                 self._cancel_audio_playback,
             )
             with self._audio_playback_lock:

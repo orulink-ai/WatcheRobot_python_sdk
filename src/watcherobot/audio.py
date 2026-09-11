@@ -46,10 +46,12 @@ class AudioPlayback(Job):
         stream_id: int,
         transport: CommandTransport,
         expected_sha256: str,
+        expected_duration_seconds: float,
         cancel_callback: Callable[[AudioPlayback], None],
     ) -> None:
         super().__init__(stream_id, transport, initial_state=JobState.STARTING)
         self.expected_sha256 = expected_sha256
+        self.expected_duration_seconds = expected_duration_seconds
         self._cancel_callback = cancel_callback
 
     def cancel(self) -> None:

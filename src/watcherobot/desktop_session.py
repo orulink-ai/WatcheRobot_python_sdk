@@ -196,16 +196,23 @@ class DesktopRobotSession:
                     self.device_info.update(data)
                 if message.get("type") == "evt.audio.buffer_status":
                     await self._update_audio_flow(data)
-                if message.get("type") in {"sys.ack", "sys.nack"}:
-                    future = self._pending.get(data.get("command_id"))
-                    if future is not None and not future.done():
-                        future.set_result(message)
-                elif message.get("type") == "sys.ping":
-                    await self._send(json.dumps({"type": "sys.pong", "code": 0, "data": data}, separators=(",", ":")))
-                else:
-                    self._message_callback(message)
+                if not self._resolve_pending(message):
+                    if message.get("type") == "sys.ping":
+                        await self._send(json.dumps({"type": "sys.pong", "code": 0, "data": data}, separators=(",", ":")))
+                    else:
+                        self._message_callback(message)
         finally:
             self._disconnect_callback()
+
+    def _resolve_pending(self, message: dict[str, Any]) -> bool:
+        """Resolve ACKs, NACKs, and established correlated device events."""
+        data = message.get("data", {})
+        command_id = data.get("command_id") if isinstance(data, dict) else None
+        future = self._pending.get(command_id) if isinstance(command_id, str) else None
+        if future is None or future.done():
+            return False
+        future.set_result(message)
+        return True
 
     async def _send(self, frame: str | bytes) -> None:
         if self._websocket is None:
