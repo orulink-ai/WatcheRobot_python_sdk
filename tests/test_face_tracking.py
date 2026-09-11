@@ -46,6 +46,19 @@ class FakeTransport:
         self.closed = True
 
 
+@pytest.mark.parametrize("timeout", [10.0, 30.0, None])
+def test_preview_start_allows_cold_start_timeout(timeout):
+    transport = FakeTransport()
+    calls = []
+    transport.send_command = lambda message_type, data, timeout=None: calls.append(timeout) or {}
+    robot = WatcheRobot._from_transport(transport)
+    if timeout == 10.0:
+        robot.face_tracking.open_preview()
+    else:
+        robot.face_tracking.open_preview(timeout=timeout)
+    assert calls == [timeout]
+
+
 def test_default_start_allows_cold_model_catalog_validation(monkeypatch) -> None:
     transport = FakeTransport()
     send_command = transport.send_command

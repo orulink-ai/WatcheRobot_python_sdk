@@ -484,7 +484,7 @@ async def _run_robot_vision_command(args: argparse.Namespace) -> int:
 async def _run_face_tracking_command(args: argparse.Namespace) -> int:
     if args.face_track_command == "on":
         await _run_robot_business_command("ctrl.face_tracking.start", {})
-        print("Face tracking started. The robot will follow faces with its servos.")
+        print("Face tracking started. Servo following depends on the firmware motion setting and valid face detections.")
         return 0
     if args.face_track_command == "off":
         await _run_robot_business_command(
@@ -529,16 +529,23 @@ async def _run_robot_business_command(
     )
     if not bool(device.get("online")):
         raise CliError("Robot is not connected; run 'watcherobot robot status' first")
+    # These device operations initialize Himax and validate all model slots.
+    # This is a client wait budget; the Daemon still routes opaque business frames.
+    timeout = 30.0 if message_type in {
+        "ctrl.vision.model.select", "ctrl.face_tracking.start",
+    } else 5.0
     try:
         return await _send_desktop_command(
             state.external_url,
             message_type,
             data,
+            timeout=timeout,
         )
     except TimeoutError as exc:
         raise CliError(
-            "Robot command timed out. If an Application is running, it must handle "
-            "or forward this Desktop command; otherwise stop the Application and retry."
+            f"Robot command timed out after {timeout:g}s; completion is unknown. "
+            "Check robot vision status before retrying. If an Application is running, "
+            "it must handle or forward this Desktop command."
         ) from exc
 
 

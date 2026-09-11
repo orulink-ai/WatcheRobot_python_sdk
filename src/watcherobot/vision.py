@@ -453,7 +453,9 @@ class FaceTrackingDomain:
         frame_stride: int = 1,
         stop_policy: FaceTrackingStopPolicy = "hold",
         queue_size: int = 1,
+        timeout: float | None = 10.0,
     ) -> FaceTrackingPreview:
+        _validate_timeout(timeout)
         _validate_preview_options(
             width=width,
             height=height,
@@ -467,6 +469,7 @@ class FaceTrackingDomain:
             frame_stride=frame_stride,
             stop_policy=stop_policy,
             queue_size=queue_size,
+            timeout=timeout,
         )
 
     def start(self, *, timeout: float | None = 10.0) -> None:

@@ -37,6 +37,46 @@ class FakeFaceTracking:
             raise TimeoutError("stop unconfirmed")
 
 
+def test_face_preview_capability_and_lifecycle(tmp_path):
+    from dataclasses import dataclass, field
+    from types import MappingProxyType
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities += ("face_tracking.control.v1",)
+    robot.face_tracking = FakeFaceTracking()
+    service = _service(module, tmp_path, robot)
+    client = _client_for_service(module, tmp_path, service)
+    assert client.post("/api/face-tracking/preview/start").status_code == 409
+    assert not service.status()["resource_owners"]
+    robot.capabilities += ("face_tracking.preview.v1",)
+    @dataclass
+    class Telemetry:
+        age_ms: int = 5
+        raw: object = field(default_factory=lambda: MappingProxyType({"seq": 42}))
+    frame = SimpleNamespace(jpeg=b"jpeg", sequence=42, width=640, height=480,
+                            faces=(), telemetry=Telemetry())
+    calls = []
+    def open_preview(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(read=lambda **kw: frame)
+    robot.face_tracking.open_preview = open_preview
+    assert client.post("/api/face-tracking/preview/start").status_code == 200
+    assert service.status()["face_tracking"]["preview_receiving"] is False
+    assert calls == [dict(width=640, height=480, frame_stride=1, stop_policy="hold", queue_size=1)]
+    assert client.post("/api/face-tracking/start").status_code == 409
+    data = client.get("/api/face-tracking/preview/frame").json()
+    assert data["sequence"] == 42 and data["jpeg_base64"] == "anBlZw=="
+    assert data["telemetry"] == {"age_ms": 5}
+    assert service.status()["face_tracking"]["preview_receiving"] is True
+    robot.face_tracking.fail_stop = True
+    assert client.post("/api/face-tracking/stop").status_code >= 400
+    assert "camera" in service.status()["resource_owners"]
+    robot.face_tracking.fail_stop = False
+    assert client.post("/api/face-tracking/stop").status_code == 200
+    assert client.get("/api/face-tracking/preview/frame").status_code == 409
+    assert not service.status()["resource_owners"]
+
+
 def test_face_tracking_controls_hold_camera_and_motion_until_stop(tmp_path):
     module = _load_service_module()
     robot = _robot()

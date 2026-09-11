@@ -4,6 +4,14 @@ const SUPPORTED_LOCALES = new Set(["en-US", "zh-CN"]);
 // legacy Chinese diagnostics from the device/service and powers the optional Chinese
 // presentation without putting Chinese literals back into the page or controller.
 const ENGLISH_PHRASES = new Map([
+  ["已请求预览，尚未收到最近的图像", "Preview requested; no recent image received"],
+  ["已请求预览，等待首帧图像", "Preview requested; waiting for the first image"],
+  ["端侧跟随可选同步画面预览。启动后云台会转动，停止后保持当前位置。开始前请停止实时视频。", "Run tracking on the robot, with optional matching preview frames. Starting tracking moves the gimbal; stopping holds its current position. Stop live video before starting tracking."],
+  ["带预览启动", "Start with Preview"],
+  ["正在检查人脸预览支持", "Checking face preview support"],
+  ["预览显示同帧人脸框。切换模式前请先停止跟随。", "Preview includes the matching face boxes. Stop tracking before changing modes."],
+  ["当前固件仅支持无画面跟随，更新固件后可启用人脸预览。", "This firmware supports tracking without preview. Update firmware to enable face preview."],
+  ["等待预览帧", "Waiting for a preview frame"],
   ["端侧模型测试", "On-device Model Test"],
   ["读取模型", "Read Models"],
   ["模型", "Model"],

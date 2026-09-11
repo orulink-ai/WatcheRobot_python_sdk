@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 from watcherobot import cli
 
 from .test_vision import vision_response
+
+
+def test_cold_model_commands_receive_thirty_second_budget(monkeypatch):
+    monkeypatch.setattr(cli, '_live_runtime_state', lambda: SimpleNamespace(control_url='http://local', external_url='ws://local'))
+    monkeypatch.setattr(cli, '_request_json', lambda *a, **k: {})
+    monkeypatch.setattr(cli, '_device_from_payload', lambda _: {'online': True})
+    received = []
+    async def send(url, kind, data, *, timeout=5.0):
+        received.append((kind, timeout))
+        return {}
+    monkeypatch.setattr(cli, '_send_desktop_command', send)
+    for kind in ('ctrl.vision.model.select', 'ctrl.face_tracking.start', 'ctrl.vision.status.get'):
+        asyncio.run(cli._run_robot_business_command(kind, {}))
+    assert received == [('ctrl.vision.model.select', 30.0), ('ctrl.face_tracking.start', 30.0), ('ctrl.vision.status.get', 5.0)]
 
 
 def test_parser_exposes_the_minimal_vision_commands() -> None:

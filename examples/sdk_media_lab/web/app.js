@@ -4,6 +4,9 @@ import { createMjpegTransport } from "./mjpeg-transport.mjs";
 let displayAudit = createDisplayAudit();
 let displayAuditPublishedAt = 0;
 let faceRequestPending = false;
+let faceFramePending = false;
+let facePreviewEpoch = 0;
+let facePreviewActive = false;
 let inferenceRequestPending = false;
 import { evaluateAnimationConfirmation } from "./animation-confirmation.mjs";
 import {
@@ -195,6 +198,10 @@ const elements = {
   capturePhotoButton: document.querySelector("#capturePhotoButton"),
   queryVisionButton: document.querySelector("#queryVisionButton"),
   startFaceTrackingButton: document.querySelector("#startFaceTrackingButton"),
+  startFacePreviewButton: document.querySelector("#startFacePreviewButton"),
+  facePreviewCanvas: document.querySelector("#facePreviewCanvas"),
+  facePreviewHint: document.querySelector("#facePreviewHint"),
+  facePreviewMetrics: document.querySelector("#facePreviewMetrics"),
   stopFaceTrackingButton: document.querySelector("#stopFaceTrackingButton"),
   queryModelsButton: document.querySelector("#queryModelsButton"),
   inferenceModel: document.querySelector("#inferenceModel"),
@@ -630,13 +637,31 @@ function renderStatus(status) {
   const faceSupported = hasCapability("face_tracking.control.v1");
   elements.faceTrackingCapability.textContent = !status.connected ? "Device Offline"
     : !faceSupported ? "Current firmware does not support face tracking"
-      : faceState === "running" ? "Face tracking is running"
+      : faceState === "running" ? (status.face_tracking?.preview_running && !status.face_tracking?.preview_receiving
+        ? "Preview requested; no recent image received" : "Face tracking is running")
         : faceState === "stop_required" ? "Tracking stop is unconfirmed; retry stop"
           : "Face tracking is available";
   elements.queryVisionButton.disabled = faceRequestPending || !status.connected || !hasCapability("vision.status.v1");
   elements.startFaceTrackingButton.disabled = faceRequestPending || !status.connected || !faceSupported
     || faceState !== "idle" || !availability.camera || !availability.motion;
   elements.stopFaceTrackingButton.disabled = faceRequestPending || !status.connected || faceState === "idle";
+  const previewSupported = hasCapability("face_tracking.preview.v1");
+  elements.startFacePreviewButton.disabled = elements.startFaceTrackingButton.disabled || !previewSupported;
+  elements.facePreviewHint.textContent = !status.connected ? "Device Offline" : previewSupported
+    ? "Preview includes the matching face boxes. Stop tracking before changing modes."
+    : "This firmware supports tracking without preview. Update firmware to enable face preview.";
+  const previewActive = !!status.connected && !!status.face_tracking?.preview_running;
+  if (previewActive !== facePreviewActive) {
+    facePreviewActive = previewActive;
+    facePreviewEpoch++;
+    elements.facePreviewCanvas.hidden = !previewActive;
+    elements.facePreviewCanvas.getContext("2d").clearRect(0, 0, 640, 480);
+    elements.facePreviewMetrics.textContent = previewActive ? "Waiting for a preview frame" : "";
+  }
+  if (previewActive && !status.face_tracking?.preview_receiving) {
+    elements.facePreviewMetrics.textContent = "Preview requested; no recent image received";
+    elements.facePreviewCanvas.getContext("2d").clearRect(0, 0, elements.facePreviewCanvas.width, elements.facePreviewCanvas.height);
+  }
   elements.recordMicrophoneButton.disabled = !availability.microphone || !hasCapability("microphone");
   elements.applyMotionButton.disabled = !availability.motion;
   elements.stopMotionButton.disabled = !status.connected || !hasCapability("motion");
@@ -2048,7 +2073,8 @@ async function faceTrackingAction(action) {
       { method: action === "status" ? "GET" : "POST" });
     if (action === "status") elements.faceVisionStatus.textContent = JSON.stringify(result, null, 2);
     setResult(elements.faceTrackingResult, action === "status" ? "Vision status updated"
-      : action === "start" ? "Face tracking is running" : "Face tracking stopped; position held", "ok");
+      : action === "preview/start" ? "Preview requested; waiting for the first image"
+        : action === "start" ? "Face tracking is running" : "Face tracking stopped; position held", "ok");
   } catch (error) {
     setResult(elements.faceTrackingResult, error.message, "error");
   } finally {
@@ -2058,7 +2084,35 @@ async function faceTrackingAction(action) {
 }
 elements.queryVisionButton.addEventListener("click", () => { faceTrackingAction("status").catch(() => {}); });
 elements.startFaceTrackingButton.addEventListener("click", () => { faceTrackingAction("start").catch(() => {}); });
+elements.startFacePreviewButton.addEventListener("click", () => { faceTrackingAction("preview/start").catch(() => {}); });
 elements.stopFaceTrackingButton.addEventListener("click", () => { faceTrackingAction("stop").catch(() => {}); });
+
+setInterval(async () => {
+  if (!facePreviewActive || faceFramePending || faceRequestPending) return;
+  faceFramePending = true;
+  const epoch = facePreviewEpoch;
+  try {
+    const frame = await api("/api/face-tracking/preview/frame");
+    if (!frame.ready || epoch !== facePreviewEpoch) return;
+    const image = new Image();
+    image.src = `data:image/jpeg;base64,${frame.jpeg_base64}`;
+    await image.decode();
+    if (!facePreviewActive || epoch !== facePreviewEpoch) return;
+    const canvas = elements.facePreviewCanvas;
+    canvas.width = frame.width; canvas.height = frame.height;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    context.strokeStyle = "#45e6a3"; context.lineWidth = 2;
+    for (const face of frame.faces) context.strokeRect(face.x, face.y, face.width, face.height);
+    canvas.dataset.sequence = String(frame.sequence);
+    setResult(elements.faceTrackingResult, "Face tracking is running", "ok");
+    elements.facePreviewMetrics.textContent = `#${frame.sequence} · ${frame.width} × ${frame.height} · ${frame.faces.length} faces · ${frame.telemetry.age_ms} ms`;
+  } catch (error) {
+    if (epoch === facePreviewEpoch) elements.facePreviewMetrics.textContent = error.message;
+  } finally {
+    faceFramePending = false;
+  }
+}, 150);
 elements.startLiveVideoButton.addEventListener("click", () => { startLiveVideo(); });
 elements.stopLiveVideoButton.addEventListener("click", () => { stopRtcSession(); });
 elements.startRtcAudioButton.addEventListener("click", () => { startRtcAudio(); });
