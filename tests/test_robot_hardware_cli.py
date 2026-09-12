@@ -10,6 +10,8 @@ from PIL import Image
 
 from watcherobot.cli import build_parser
 from watcherobot.errors import CommandError
+from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, BinaryFrame
+from watcherobot.recordings import RecordingInfo, WREC_PCM, WrecRecord, encode_wrec_record
 from watcherobot.robot_cli import (
     RobotCliError,
     _run_connected,
@@ -24,8 +26,8 @@ from watcherobot.robot_cli import (
     "arguments,attributes",
     [
         (["robot", "camera", "capture"], {"camera_command": "capture"}),
-        (["robot", "camera", "record", "--with-audio"], {"with_audio": True, "fps": 5}),
-        (["robot", "audio", "record", "--duration", "2"], {"duration": 2.0}),
+        (["robot", "camera", "record", "--with-audio"], {"with_audio": True, "fps": 5, "storage": "host"}),
+        (["robot", "audio", "record", "--duration", "2", "--storage", "device"], {"duration": 2.0, "storage": "device"}),
         (["robot", "light", "set", "--zone", "head", "--color", "#123456"], {"zone": "head"}),
         (["robot", "screen", "play-work", "demo", "--clip", "main"], {"clip": "main"}),
         (["robot", "recording", "download", "rec_1", "--jsonl"], {"recording_id": "rec_1", "jsonl": True}),
@@ -226,3 +228,110 @@ def test_capabilities_tolerates_older_firmware_without_storage(capsys) -> None:
 
     assert _run_connected(args, robot) == 0
     assert '"storage":{"available":false}' in capsys.readouterr().out
+
+
+def test_audio_record_defaults_to_reliable_host_stream_and_writes_atomic_wav(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output = tmp_path / "recording.wav"
+    encoded = encode_wrec_record(WrecRecord(WREC_PCM, 0, 0, 10, b"\x01\x00" * 160))
+    frames = iter([
+        BinaryFrame(FRAME_RECORDING, FLAG_FIRST, 9, 0, encoded[:17]),
+        BinaryFrame(FRAME_RECORDING, FLAG_LAST, 9, 1, encoded[17:]),
+    ])
+    info = RecordingInfo("host_1", "audio", "recording")
+
+    class Recording:
+        id = "host_1"
+        stream_id = 9
+
+        def __init__(self) -> None:
+            self.info = info
+            self.closed = False
+
+        def read(self, timeout=None):
+            del timeout
+            return next(frames)
+
+        def stop(self):
+            raise AssertionError("duration-completed recording must not be stopped")
+
+        def status(self):
+            return self.info
+
+        def close(self):
+            self.closed = True
+
+    recording = Recording()
+    calls: list[tuple[str, dict[str, object]]] = []
+    heartbeats: list[str] = []
+
+    def start_host(mode: str, **kwargs):
+        calls.append((mode, kwargs))
+        return recording
+
+    robot = SimpleNamespace(recordings=SimpleNamespace(
+        start_host=start_host,
+        heartbeat=heartbeats.append,
+    ))
+    clock = iter((0.0, 6.0, 7.0))
+    monkeypatch.setattr("watcherobot.robot_cli.time.monotonic", lambda: next(clock))
+    args = build_parser().parse_args(
+        ["robot", "audio", "record", "--duration", "0.01", "-o", str(output), "--json"]
+    )
+
+    assert _run_connected(args, robot) == 0
+    assert calls == [("audio", {"duration": 0.01})]
+    assert heartbeats == ["host_1"]
+    assert output.is_file()
+    assert output.with_name(".recording.wrec").is_file()
+    assert not output.with_name(".recording.wrec.part").exists()
+    assert recording.closed
+
+
+def test_host_recording_disconnect_preserves_partial_without_publishing_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output = tmp_path / "interrupted.wav"
+    payload = encode_wrec_record(WrecRecord(WREC_PCM, 0, 0, 10, b"\x01\x00" * 160))
+
+    class Recording:
+        id = "host_2"
+        stream_id = 10
+        info = RecordingInfo("host_2", "audio", "recording")
+
+        def __init__(self) -> None:
+            self.reads = 0
+            self.stop_calls = 0
+            self.closed = False
+
+        def read(self, timeout=None):
+            del timeout
+            self.reads += 1
+            if self.reads == 1:
+                return BinaryFrame(FRAME_RECORDING, FLAG_FIRST, 10, 0, payload)
+            raise RuntimeError("robot connection is closed")
+
+        def stop(self):
+            self.stop_calls += 1
+            raise RuntimeError("robot connection is closed")
+
+        def close(self):
+            self.closed = True
+
+    recording = Recording()
+    robot = SimpleNamespace(recordings=SimpleNamespace(start_host=lambda *_args, **_kwargs: recording))
+    monkeypatch.setattr("watcherobot.robot_cli.time.monotonic", lambda: 0.0)
+    args = build_parser().parse_args(
+        ["robot", "audio", "record", "--duration", "30", "-o", str(output)]
+    )
+
+    with pytest.raises(RuntimeError, match="connection is closed"):
+        _run_connected(args, robot)
+
+    partial = output.with_name(".interrupted.wrec.part")
+    assert partial.read_bytes() == payload
+    assert not output.exists()
+    assert not output.with_name(".interrupted.wrec").exists()
+    assert recording.stop_calls == 1
+    assert recording.closed

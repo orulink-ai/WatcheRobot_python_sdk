@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, BinaryFrame
+from watcherobot.protocol import FLAG_CANCEL, FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, BinaryFrame
 from watcherobot.recordings import (
     RecordingsDomain,
     WREC_JPEG,
@@ -92,6 +92,132 @@ def test_download_receiver_exists_before_device_can_send_first_chunk(tmp_path: P
 
     assert result.downloaded_bytes == len(payload)
     assert (tmp_path / "segment-0000.wrec").read_bytes() == payload
+
+
+def test_host_recording_receiver_exists_before_device_can_send_first_chunk() -> None:
+    payload = encode_wrec_record(WrecRecord(WREC_PCM, 0, 0, 1, b"\x00\x00"))
+
+    class Robot:
+        capabilities = ("recording.host.v1",)
+        domain: RecordingsDomain
+
+        def _require_capability(self, capability: str) -> None:
+            assert capability == "recording.host.v1"
+
+        def _command(self, message_type: str, data: dict[str, object], timeout=None):
+            del timeout
+            assert message_type == "ctrl.recording.start"
+            assert data["storage"] == "host"
+            stream_id = int(data["stream_id"])
+            assert self.domain._on_binary(
+                BinaryFrame(FRAME_RECORDING, FLAG_FIRST | FLAG_LAST, stream_id, 0, payload)
+            )
+            return {"data": {
+                "recording_id": "host_1", "mode": "audio", "state": "recording",
+                "storage": "host", "stream_id": stream_id,
+            }}
+
+    robot = Robot()
+    robot.domain = RecordingsDomain(robot)
+    recording = robot.domain.start_host("audio")
+
+    frame = recording.read(timeout=0.1)
+    assert frame.payload == payload
+    assert frame.flags & FLAG_LAST
+    recording.close()
+
+
+def test_host_recording_rejects_transport_sequence_gap() -> None:
+    class Robot:
+        capabilities = ("recording.host.v1",)
+
+        def _require_capability(self, _capability: str) -> None:
+            pass
+
+        def _command(self, _message_type: str, data: dict[str, object], timeout=None):
+            del timeout
+            return {"data": {
+                "recording_id": "host_1", "mode": "video", "state": "recording",
+                "storage": "host", "stream_id": data["stream_id"],
+            }}
+
+    domain = RecordingsDomain(Robot())
+    recording = domain.start_host("video")
+    assert domain._on_binary(BinaryFrame(FRAME_RECORDING, 0, recording.stream_id, 1, b"bad"))
+
+    with pytest.raises(ValueError, match="sequence mismatch"):
+        recording.read(timeout=0.1)
+    recording.close()
+
+
+def test_host_recording_cancel_marker_is_an_explicit_failure() -> None:
+    class Robot:
+        capabilities = ("recording.host.v1",)
+
+        def _require_capability(self, _capability: str) -> None:
+            pass
+
+        def _command(self, _message_type: str, data: dict[str, object], timeout=None):
+            del timeout
+            return {"data": {
+                "recording_id": "host_1", "mode": "audio", "state": "recording",
+                "storage": "host", "stream_id": data["stream_id"],
+            }}
+
+    domain = RecordingsDomain(Robot())
+    recording = domain.start_host("audio")
+    assert domain._on_binary(
+        BinaryFrame(FRAME_RECORDING, FLAG_LAST | FLAG_CANCEL, recording.stream_id, 0, b"")
+    )
+
+    with pytest.raises(RuntimeError, match="cancelled"):
+        recording.read(timeout=0.1)
+    recording.close()
+
+
+def test_host_recording_queue_overflow_cannot_look_like_success() -> None:
+    class Robot:
+        capabilities = ("recording.host.v1",)
+
+        def _require_capability(self, _capability: str) -> None:
+            pass
+
+        def _command(self, _message_type: str, data: dict[str, object], timeout=None):
+            del timeout
+            return {"data": {
+                "recording_id": "host_1", "mode": "audio", "state": "recording",
+                "storage": "host", "stream_id": data["stream_id"],
+            }}
+
+    domain = RecordingsDomain(Robot())
+    recording = domain.start_host("audio")
+    for sequence in range(65):
+        assert domain._on_binary(
+            BinaryFrame(FRAME_RECORDING, 0, recording.stream_id, sequence, b"payload")
+        )
+
+    with pytest.raises(ValueError, match="sequence mismatch"):
+        recording.read(timeout=0.1)
+    recording.close()
+
+
+def test_host_recording_start_failure_releases_reserved_stream() -> None:
+    class Robot:
+        capabilities = ("recording.host.v1",)
+
+        def _require_capability(self, _capability: str) -> None:
+            pass
+
+        def _command(self, _message_type: str, _data: dict[str, object], timeout=None):
+            del timeout
+            raise RuntimeError("device rejected recording")
+
+    domain = RecordingsDomain(Robot())
+
+    with pytest.raises(RuntimeError, match="device rejected"):
+        domain.start_host("audio")
+
+    assert domain._downloads == {}
 
 
 def test_mux_uses_recording_timestamps_for_browser_compatible_av(tmp_path: Path) -> None:

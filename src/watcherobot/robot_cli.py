@@ -17,6 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from .desktop_session import DesktopRobotSession
 from .errors import CommandError
+from .protocol import FLAG_LAST
 from .recordings import RecordingMode, iter_wrec_records, mux_wrec_to_mp4, write_pcm_wav
 from .robot import WatcheRobot
 
@@ -49,13 +50,13 @@ def register_commands(subparsers: Any) -> None:
     capture.add_argument("--height", type=int, default=0)
     capture.add_argument("--quality", type=int, default=0)
     _output_flags(capture)
-    record = camera_sub.add_parser("record", help="Record reliable JPEG video on device storage")
+    record = camera_sub.add_parser("record", help="Record reliable JPEG video to the host or device")
     _record_options(record, default_suffix=".mp4")
     record.add_argument("--with-audio", action="store_true")
 
     audio = subparsers.add_parser("audio", help="Record or play robot audio")
     audio_sub = audio.add_subparsers(dest="audio_command", required=True)
-    audio_record = audio_sub.add_parser("record", help="Record robot microphone audio on device storage")
+    audio_record = audio_sub.add_parser("record", help="Record robot microphone audio to the host or device")
     _record_options(audio_record, default_suffix=".wav", video_options=False)
     play = audio_sub.add_parser("play", help="Decode and play WAV, MP3, or OGG")
     play.add_argument("file", type=Path)
@@ -120,6 +121,10 @@ def _record_options(parser: argparse.ArgumentParser, *, default_suffix: str, vid
     parser.set_defaults(default_suffix=default_suffix)
     parser.add_argument("-o", "--output", type=Path)
     parser.add_argument("--duration", type=float)
+    parser.add_argument(
+        "--storage", choices=("host", "device"), default="host",
+        help="Persist live media on this computer (default) or retain it on device SD",
+    )
     if video_options:
         parser.add_argument("--width", type=int, default=640)
         parser.add_argument("--height", type=int, default=480)
@@ -269,6 +274,8 @@ def _run_connected(args: argparse.Namespace, robot: WatcheRobot) -> int:
 
 
 def _record_and_download(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> int:
+    if args.storage == "host":
+        return _record_to_host(args, robot, mode)
     video = mode in {"video", "av"}
     output = args.output or _timestamp_path("video" if video else "audio", ".mp4" if video else ".wav")
     kwargs = {"duration": args.duration}
@@ -294,6 +301,85 @@ def _record_and_download(args: argparse.Namespace, robot: WatcheRobot, mode: str
         json=getattr(args, "json", False), jsonl=getattr(args, "jsonl", False),
     )
     return _download(download_args, robot)
+
+
+def _record_to_host(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> int:
+    video = mode in {"video", "av"}
+    output = args.output or _timestamp_path("video" if video else "audio", ".mp4" if video else ".wav")
+    raw_path = output.with_name(f".{output.stem}.wrec")
+    partial = raw_path.with_name(raw_path.name + ".part")
+    partial.parent.mkdir(parents=True, exist_ok=True)
+    kwargs: dict[str, Any] = {"duration": args.duration}
+    if video:
+        kwargs.update(width=args.width, height=args.height, fps=args.fps, quality=args.quality)
+    recording = robot.recordings.start_host(cast(RecordingMode, mode), **kwargs)
+    _progress(args, {"event": "started", "storage": "host", **recording.info.as_dict()})
+    info = recording.info
+    last_progress = time.monotonic()
+    stop_requested = False
+    try:
+        with partial.open("wb") as sink:
+            while True:
+                try:
+                    frame = recording.read(timeout=1.0)
+                except KeyboardInterrupt:
+                    if stop_requested:
+                        raise
+                    info = recording.stop()
+                    stop_requested = True
+                    _progress(args, {"event": "stopping", "storage": "host", **info.as_dict()})
+                    continue
+                except TimeoutError:
+                    now = time.monotonic()
+                    if now - last_progress >= 5.0:
+                        info = recording.status()
+                        _progress(args, {"event": "progress", "storage": "host", **info.as_dict()})
+                        if info.state in _TERMINAL_RECORDING_STATES:
+                            raise RobotCliError("Host recording ended without a terminal stream marker")
+                        robot.recordings.heartbeat(recording.id)
+                        last_progress = now
+                    continue
+                sink.write(frame.payload)
+                now = time.monotonic()
+                if now - last_progress >= 5.0:
+                    info = recording.status()
+                    _progress(args, {"event": "progress", "storage": "host", **info.as_dict()})
+                    if info.state in _TERMINAL_RECORDING_STATES and not frame.flags & FLAG_LAST:
+                        raise RobotCliError("Host recording ended without a terminal stream marker")
+                    if info.state not in _TERMINAL_RECORDING_STATES:
+                        robot.recordings.heartbeat(recording.id)
+                    last_progress = now
+                if frame.flags & FLAG_LAST:
+                    break
+    except BaseException:
+        try:
+            recording.stop()
+        except Exception:
+            pass
+        raise
+    finally:
+        recording.close()
+    partial.replace(raw_path)
+    records = list(iter_wrec_records([raw_path]))
+    if mode == "audio":
+        write_pcm_wav(records, output)
+    else:
+        mux_wrec_to_mp4(
+            records,
+            output,
+            width=info.width or args.width,
+            height=info.height or args.height,
+            fps=info.fps or args.fps,
+            with_audio=mode == "av",
+        )
+    payload = {
+        "id": recording.id,
+        "storage": "host",
+        "path": str(output.resolve()),
+        "raw_path": str(raw_path.resolve()),
+        "bytes": raw_path.stat().st_size,
+    }
+    return _emit(args, payload, f"Recording saved: {output}")
 
 
 def _download(args: argparse.Namespace, robot: WatcheRobot) -> int:

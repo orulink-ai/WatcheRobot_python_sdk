@@ -23,6 +23,7 @@ from .protocol import FLAG_CANCEL, FLAG_LAST, FRAME_RECORDING, BinaryFrame
 RecordingMode = Literal["video", "audio", "av"]
 RECORDING_CAPABILITY = "recording.device.v1"
 RECORDING_AV_CAPABILITY = "recording.device.av.v1"
+HOST_RECORDING_CAPABILITY = "recording.host.v1"
 DOWNLOAD_RESUME_CAPABILITY = "recording.download.resume.v1"
 WREC_HEADER = struct.Struct("<4sBBHIQII")
 WREC_MAGIC = b"WREC"
@@ -104,6 +105,66 @@ class DeviceRecording:
     def stop(self) -> RecordingInfo:
         self.info = self._domain.stop(self.id)
         return self.info
+
+
+class HostRecording:
+    """A reliable WREC stream whose bytes are persisted by the host.
+
+    WSPK runs over WebSocket/TCP, so transport loss is retransmitted while the
+    connection remains alive.  This class additionally fails closed on an
+    application-frame sequence gap or a device cancellation marker.
+    """
+
+    def __init__(self, info: RecordingInfo, receiver: "_DownloadStream", domain: "RecordingsDomain") -> None:
+        self.info = info
+        self._receiver = receiver
+        self._domain = domain
+        self._next_sequence = 0
+        self._closed = False
+
+    @property
+    def id(self) -> str:
+        return self.info.id
+
+    @property
+    def stream_id(self) -> int:
+        return self._receiver.stream_id
+
+    def read(self, timeout: float | None = None) -> BinaryFrame:
+        if self._closed:
+            raise RuntimeError("host recording stream is closed")
+        try:
+            frame = self._receiver.frames.get(timeout=timeout)
+        except queue.Empty as error:
+            raise TimeoutError("host recording stream stalled") from error
+        if frame.sequence != self._next_sequence:
+            raise ValueError(
+                f"host recording sequence mismatch: expected {self._next_sequence}, got {frame.sequence}"
+            )
+        self._next_sequence = (self._next_sequence + 1) & 0xFFFFFFFF
+        if frame.flags & FLAG_CANCEL:
+            raise RuntimeError("host recording was cancelled by the device")
+        return frame
+
+    def status(self) -> RecordingInfo:
+        self.info = self._domain.status(self.id)
+        return self.info
+
+    def stop(self) -> RecordingInfo:
+        self.info = self._domain.request_stop(self.id)
+        return self.info
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._domain._release_stream(self.stream_id)
+
+    def __enter__(self) -> "HostRecording":
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        self.close()
 
 
 @dataclass(frozen=True)
@@ -250,25 +311,72 @@ class RecordingsDomain:
                     return receiver
         raise WatcheRobotError("no recording download stream is available")
 
-    def start(self, mode: RecordingMode = "video", *, width: int = 640, height: int = 480, fps: int = 5, quality: int = 80, duration: float | None = None) -> DeviceRecording:
+    def _release_stream(self, stream_id: int) -> None:
+        with self._lock:
+            self._downloads.pop(stream_id, None)
+
+    @staticmethod
+    def _validate_start_options(
+        mode: RecordingMode, width: int, height: int, fps: int, quality: int, duration: float | None
+    ) -> None:
         if mode not in {"video", "audio", "av"}:
             raise ValueError("mode must be video, audio, or av")
-        self._robot._require_capability(RECORDING_CAPABILITY)
-        if mode == "av":
-            self._robot._require_capability(RECORDING_AV_CAPABILITY)
         if not 1 <= fps <= 10 or not 1 <= quality <= 100 or width <= 0 or height <= 0:
             raise ValueError("invalid recording dimensions, fps, or quality")
         if duration is not None and duration <= 0:
             raise ValueError("duration must be positive")
+
+    def start(self, mode: RecordingMode = "video", *, width: int = 640, height: int = 480, fps: int = 5, quality: int = 80, duration: float | None = None) -> DeviceRecording:
+        self._validate_start_options(mode, width, height, fps, quality, duration)
+        self._robot._require_capability(RECORDING_CAPABILITY)
+        if mode == "av":
+            self._robot._require_capability(RECORDING_AV_CAPABILITY)
         payload: dict[str, Any] = {"mode": mode, "width": width, "height": height, "fps": fps, "quality": quality}
         if duration is not None:
             payload["duration_ms"] = round(duration * 1000)
         response = self._robot._command("ctrl.recording.start", payload, timeout=10.0)
         return DeviceRecording(RecordingInfo.from_payload(response.get("data", {})), self)
 
+    def start_host(
+        self,
+        mode: RecordingMode = "video",
+        *,
+        width: int = 640,
+        height: int = 480,
+        fps: int = 5,
+        quality: int = 80,
+        duration: float | None = None,
+    ) -> HostRecording:
+        """Start reliable media capture streamed directly to the host."""
+
+        self._validate_start_options(mode, width, height, fps, quality, duration)
+        self._robot._require_capability(HOST_RECORDING_CAPABILITY)
+        if mode == "av":
+            self._robot._require_capability(RECORDING_AV_CAPABILITY)
+        receiver = self._reserve_download()
+        payload: dict[str, Any] = {
+            "mode": mode,
+            "storage": "host",
+            "stream_id": receiver.stream_id,
+            "width": width,
+            "height": height,
+            "fps": fps,
+            "quality": quality,
+        }
+        if duration is not None:
+            payload["duration_ms"] = round(duration * 1000)
+        try:
+            response = self._robot._command("ctrl.recording.start", payload, timeout=10.0)
+            data = response.get("data", {})
+            if data.get("stream_id") != receiver.stream_id or data.get("storage") != "host":
+                raise WatcheRobotError("device did not accept the requested host recording stream")
+            return HostRecording(RecordingInfo.from_payload(data), receiver, self)
+        except BaseException:
+            self._release_stream(receiver.stream_id)
+            raise
+
     def stop(self, recording_id: str) -> RecordingInfo:
-        response = self._robot._command("ctrl.recording.stop", {"recording_id": recording_id}, timeout=30.0)
-        info = RecordingInfo.from_payload(response.get("data", {}))
+        info = self.request_stop(recording_id)
         deadline = time.monotonic() + 30.0
         while info.state in {"recording", "finalizing"} and time.monotonic() < deadline:
             time.sleep(0.1)
@@ -276,6 +384,12 @@ class RecordingsDomain:
         if info.state in {"recording", "finalizing"}:
             raise TimeoutError(f"recording {recording_id} did not finish finalizing")
         return info
+
+    def request_stop(self, recording_id: str) -> RecordingInfo:
+        """Request finalization without requiring a persistent device manifest."""
+
+        response = self._robot._command("ctrl.recording.stop", {"recording_id": recording_id}, timeout=30.0)
+        return RecordingInfo.from_payload(response.get("data", {}))
 
     def heartbeat(self, recording_id: str) -> None:
         self._robot._command("ctrl.recording.heartbeat", {"recording_id": recording_id})
@@ -372,8 +486,7 @@ class RecordingsDomain:
                     pass
                 raise
             finally:
-                with self._lock:
-                    self._downloads.pop(stream_id, None)
+                self._release_stream(stream_id)
             digest = hashlib.sha256(partial.read_bytes()).hexdigest()
             if isinstance(expected_sha, str) and digest != expected_sha:
                 raise WatcheRobotError(f"SHA-256 mismatch for {name}")
