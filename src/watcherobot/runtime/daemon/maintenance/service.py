@@ -1468,7 +1468,7 @@ def _install_work(
                      f"正在写入作品：{sent}/{len(package.payload)} 字节。")
         progress("installing", 82, "作品上传完成，设备正在校验并更新作品目录。")
         protocol.send("COMMIT")
-        completed = protocol.receive(300, ("DONE",))
+        completed = _wait_for_sd_activation(protocol, package.work_id, progress)
         if len(completed) < 3 or completed[2] != package.work_id:
             raise MaintenanceError("Device completed a different work installation.")
         progress("activating", 98, f"作品 {package.name} 已保存到 SD 卡。")
