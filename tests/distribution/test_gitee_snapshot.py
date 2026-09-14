@@ -61,7 +61,7 @@ def test_git_snapshot_rejects_symlink_before_export(tmp_path, monkeypatch):
     assert not list(target.iterdir())
 
 
-@pytest.mark.parametrize('name,size', [('CON.txt', 1), ('huge.bin', 1024 * 1024 + 1)])
+@pytest.mark.parametrize('name,size', [('CON.txt', 1), ('huge.bin', 100 * 1024 * 1024 + 1)])
 def test_export_limits_apply_before_read(tmp_path, name, size):
     tree = {'tree': [dict(path=name, size=size, type='blob', mode='100644', sha='a' * 40)]}
     with pytest.raises(HubInvalidResponse):
@@ -77,3 +77,23 @@ def test_nonempty_target_is_preserved_without_network(tmp_path, monkeypatch):
     with pytest.raises(HubInvalidResponse):
         GiteeRepository().download_repository_snapshot(repo_id='owner/app', commit='a' * 40, target=tmp_path)
     assert (tmp_path / 'keep').read_bytes() == b'keep'
+
+
+def test_git_reads_unicode_resource_larger_than_old_rest_limit(tmp_path, monkeypatch):
+    root, git, _ = repository(tmp_path)
+    name = '资源/示例音频 (1).bin'
+    content = bytes(range(256)) * 8192
+    (root / '资源').mkdir()
+    (root / name).write_bytes(content)
+    git('add', '.')
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+        'commit', '-m', 'resource')
+    sha = git('rev-parse', 'HEAD')
+    from watcherobot.distribution.gitee_snapshot import GitSnapshot
+    monkeypatch.setattr(GitSnapshot, '_remote_url', staticmethod(lambda repo: root.as_uri()))
+    hub = GiteeRepository()
+    assert hub.read_repository_file(repo_id='owner/app', commit=sha, path=name) == content
+    target = tmp_path / 'download'
+    target.mkdir()
+    hub.download_repository_snapshot(repo_id='owner/app', commit=sha, target=target)
+    assert (target / name).read_bytes() == content

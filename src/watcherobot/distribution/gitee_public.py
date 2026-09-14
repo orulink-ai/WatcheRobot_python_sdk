@@ -98,7 +98,8 @@ def _validate_reference(repo_id: object, commit: object, path: object) -> None:
         or not isinstance(commit, str)
         or re.fullmatch(r"[0-9a-f]{40}", commit) is None
         or not isinstance(path, str)
-        or re.fullmatch(r"[A-Za-z0-9_. /-]+", path) is None
+        or any(ord(char) < 32 or ord(char) == 127 or char in '\\:*?"<>|'
+               for char in path)
         or any(part in {"", ".", ".."} for part in path.split("/"))
     ):
         raise HubInvalidResponse("Invalid immutable Gitee file reference")

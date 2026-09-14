@@ -174,6 +174,16 @@ def test_publish_atomic_non_force_push():
     assert ("read-tree", "--empty") in [args for args, _ in git.calls]
 
 
+def test_publish_accepts_unicode_resource_above_one_mib():
+    git = Git()
+    GiteeRepository(git=git).replace_repository_files(
+        AccessToken('test'), repo_id='alice/app',
+        files=(UploadFile.from_bytes('资源/示例 (1).bin', b'x' * (2 * 1024 * 1024)),),
+        commit_message='resource',
+    )
+    assert any(args[0] == 'push' for args, _ in git.calls)
+
+
 def test_publish_rejects_git_metadata_before_remote_write():
     git = Git()
     with pytest.raises(HubInvalidResponse):
@@ -265,7 +275,7 @@ def test_publish_rejects_undownloadable_file_before_git():
         GiteeRepository(git=git).replace_repository_files(
             AccessToken("test"),
             repo_id="alice/app",
-            files=(UploadFile.from_bytes("asset.bin", b"x" * (1024 * 1024 + 1)),),
+            files=(UploadFile.from_bytes("asset.bin", b"x" * (100 * 1024 * 1024 + 1)),),
             commit_message="publish",
         )
     assert not git.calls

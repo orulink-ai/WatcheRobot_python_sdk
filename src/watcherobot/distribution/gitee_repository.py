@@ -17,6 +17,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 from .gitee_auth import GiteeHubClient
+from .download import MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_FILES
 from .gitee_public import GiteePublicRepository, _validate_reference
 from .gitee_snapshot import GitSnapshot
 from .ports import (
@@ -208,12 +209,8 @@ class GiteeRepository:
             (f.path_in_repo, f.content if f.content is not None else _upload_bytes(f))
             for f in files
         ]
-        if len(prepared) > 1000 or sum(len(v) for _, v in prepared) > 100 * 1024 * 1024:
+        if len(prepared) > MAX_SNAPSHOT_FILES or sum(len(v) for _, v in prepared) > MAX_SNAPSHOT_BYTES:
             raise HubInvalidResponse("Application snapshot exceeds limits")
-        if any(len(content) > 1024 * 1024 for _, content in prepared):
-            raise HubInvalidResponse(
-                "Gitee publication currently supports files up to 1 MiB"
-            )
         for path, _ in prepared:
             _validate_reference(repo_id, "0" * 40, path)
             if any(part.casefold() == ".git" for part in path.split("/")):
@@ -448,11 +445,11 @@ class GiteeRepository:
             ):
                 raise HubInvalidResponse("Symlinks and submodules are not supported")
             size = item.get("size")
-            if type(size) is not int or not 0 <= size <= 1024 * 1024:
+            if type(size) is not int or not 0 <= size <= MAX_SNAPSHOT_BYTES:
                 raise HubInvalidResponse("Invalid Gitee blob size")
             total += size
             files.append(item)
-        if len(files) > 1000 or total > 100 * 1024 * 1024:
+        if len(files) > MAX_SNAPSHOT_FILES or total > MAX_SNAPSHOT_BYTES:
             raise HubInvalidResponse("Snapshot exceeds size limits")
         try:
             for item in files:

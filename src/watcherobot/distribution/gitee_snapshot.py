@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .ports import CatalogDocument, HubFileNotFound, HubInvalidResponse, HubNetworkError
+from .download import MAX_SNAPSHOT_BYTES
 
 
 class GitSnapshot:
@@ -74,7 +75,7 @@ class GitSnapshot:
                 raise HubFileNotFound('Gitee 应用目录文件不存在')
             item = matches[0]
             if (item['type'] != 'blob' or item['mode'] not in ('100644', '100755')
-                    or type(item['size']) is not int or not 0 <= item['size'] <= 1024 * 1024):
+                    or type(item['size']) is not int or not 0 <= item['size'] <= MAX_SNAPSHOT_BYTES):
                 raise HubInvalidResponse('Gitee 应用目录文件类型或大小无效')
             data = read_file(repo_id=repo_id, commit=tree['commit'], path=path)
             digest = hashlib.sha1(f'blob {len(data)}\0'.encode() + data, usedforsecurity=False).hexdigest()
