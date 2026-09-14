@@ -727,3 +727,13 @@ def test_update_does_not_interrupt_running_application() -> None:
     assert client.post('/daemon/prepare-update').status_code == 409
     assert not controller.shutdown_requested
     assert controller.lifecycle_calls == []
+
+
+def test_shutdown_closes_application_admission_immediately() -> None:
+    controller = _ControllerStub()
+    controller.state = ApplicationState.RUNNING
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+    assert client.post("/daemon/stop").status_code == 202
+    assert controller.shutdown_requested
+    assert client.post("/daemon/application/start").status_code == 409
+    assert client.post("/daemon/application/restart").status_code == 409

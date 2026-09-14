@@ -73,18 +73,14 @@ def test_shared_launch_orders_and_registered_project(tmp_path, monkeypatch, sdk_
         cli._request_json(
             first.control_url, "/daemon/application/start", method="POST", timeout=20
         )
-        with pytest.raises(RuntimeError, match="Stop"):
-            ensure_command(command, activate=True)
+        assert ensure_command(command, activate=True) is True
         assert cli._live_runtime_state().pid == first.pid
-        cli._request_json(
-            first.control_url, "/daemon/application/stop", method="POST", timeout=20
-        )
-        # Switch while idle; successful activation must publish a different PID.
-        ensure_command(command, activate=True)
+        # Explicit reload stops the active Application and replaces the instance.
+        assert ensure_command(command, activate=True, force=True) is False
         assert cli._live_runtime_state().pid != first.pid
         pointer = tmp_path / "INSTANCE_ROOT" / "current-launcher.json"
         previous = pointer.read_bytes()
-        with pytest.raises(OSError):
+        with pytest.raises(ValueError, match="validation failed"):
             ensure_command([str(tmp_path / "missing-python")], activate=True)
         assert pointer.read_bytes() == previous
         assert cli._live_runtime_state() is not None

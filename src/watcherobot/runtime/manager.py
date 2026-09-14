@@ -14,6 +14,75 @@ from .daemon.instance import default_runtime_instance_root, default_runtime_stat
 from .repository import operation_lock
 from .cleanup import cleanup_after
 
+
+def describe_command(command: list[str]) -> dict[str, str]:
+    """Exercise the candidate interpreter/imports before interrupting anything."""
+    options: dict[str, Any] = {}
+    if os.name == "nt":
+        options["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        result = subprocess.run(
+            [*command, "--describe-runtime"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=True,
+            **options,
+        )
+        identity = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        raise ValueError(
+            "Candidate Runtime validation failed; existing Runtime unchanged"
+        ) from error
+    if not isinstance(identity, dict) or not all(
+        isinstance(identity.get(key), str) and identity[key]
+        for key in ("sdk_version", "build_id")
+    ):
+        raise ValueError("Candidate Runtime did not report a valid build identity")
+    return identity
+
+
+def stop_shared_runtime() -> None:
+    """Stop the currently verified instance, regardless of its original client."""
+    with operation_lock(timeout=120):
+        _stop_and_wait()
+
+
+def _stop_and_wait() -> None:
+    """Wait for both the Daemon and frozen bootloader to release their files.
+
+    Capture process objects before shutdown so PID reuse cannot select a new
+    process. No process is forcibly terminated from untrusted status metadata.
+    """
+    import psutil
+    from watcherobot.cli import _live_runtime_state, _request_json, stop_runtime
+
+    live = _live_runtime_state()
+    processes = []
+    if live is not None:
+        status = _request_json(live.control_url, "/daemon/status")
+        try:
+            process = psutil.Process(live.pid)
+            processes.append(process)
+            parent = process.parent()
+            if (
+                parent is not None
+                and status.get("runtime", {}).get("source") == "bundle"
+                and parent.exe() == process.exe()
+            ):
+                processes.append(parent)
+        except psutil.NoSuchProcess:
+            pass
+    if not stop_runtime():
+        raise RuntimeError("Previous Runtime has not exited; inspect runtime.log")
+    _, alive = psutil.wait_procs(processes, timeout=15)
+    if alive:
+        raise RuntimeError(
+            "Previous Runtime process still holds files; operation cancelled"
+        )
+
+
 _LAUNCH_ENVIRONMENT = (
     "PYTHONIOENCODING",
     "PYTHONUTF8",
@@ -90,14 +159,16 @@ def _save_launcher(command: list[str], environment: dict[str, str] | None) -> No
 
 
 @cleanup_after
-def ensure_command(command: list[str], *, activate: bool = False) -> None:
+def ensure_command(
+    command: list[str], *, activate: bool = False, force: bool = False
+) -> bool:
     """Reuse the live instance; remember the last successful launcher across clients.
 
-    Activation is explicit and requires the current application to be stopped first.
+    Activation is explicit and stops the current application on a version change or forced activation.
     The pointer is committed only after the target has answered its status endpoint.
     Only the documented path/configuration environment whitelist is persisted.
     """
-    from watcherobot.cli import _live_runtime_state, _request_json, stop_runtime
+    from watcherobot.cli import _live_runtime_state, _request_json
     from .cleanup import register_environment
 
     # Protect source venvs and default application resources before publication GC.
@@ -106,7 +177,8 @@ def ensure_command(command: list[str], *, activate: bool = False) -> None:
 
     root = default_runtime_instance_root()
     pointer = root / "current-launcher.json"
-    with operation_lock():
+    with operation_lock(timeout=120):
+        target_identity = describe_command(command) if activate else None
         try:
             previous = read_launcher(pointer) if pointer.is_file() else None
         except (OSError, ValueError):
@@ -116,42 +188,17 @@ def ensure_command(command: list[str], *, activate: bool = False) -> None:
         live = _live_runtime_state()
         if live is not None:
             if not activate:
-                return
+                return True
             status = _request_json(live.control_url, "/daemon/status")
-            import psutil
-
-            previous_processes = []
-            try:
-                previous_process = psutil.Process(live.pid)
-                previous_processes.append(previous_process)
-                parent = previous_process.parent()
-                if (
-                    parent is not None
-                    and status.get("runtime", {}).get("source") == "bundle"
-                    and parent.exe() == previous_process.exe()
-                ):
-                    previous_processes.append(parent)
-            except psutil.NoSuchProcess:
-                pass
-            if status.get("application", {}).get("state") in (
-                "starting",
-                "running",
-                "stopping",
+            if (
+                not force
+                and target_identity is not None
+                and status.get("runtime", {}).get("sdk_version")
+                == target_identity["sdk_version"]
             ):
-                raise RuntimeError(
-                    "Stop the current Application before switching Runtime"
-                )
-            if status.get("runtime", {}).get("management_protocol") == 1:
-                _request_json(live.control_url, "/daemon/prepare-update", method="POST")
-            if not stop_runtime():
-                raise RuntimeError(
-                    "Previous Runtime has not exited; activation cancelled"
-                )
-            _, alive = psutil.wait_procs(previous_processes, timeout=15)
-            if alive:
-                raise RuntimeError(
-                    "Previous Runtime process still holds files; activation cancelled"
-                )
+                return True
+            # Shutdown closes admission and drains the managed Application.
+            _stop_and_wait()
         selected = command
         launch_environment = {
             key: os.environ[key] for key in _LAUNCH_ENVIRONMENT if key in os.environ
@@ -196,8 +243,16 @@ def ensure_command(command: list[str], *, activate: bool = False) -> None:
                         raise RuntimeError(
                             "Another launcher won the Runtime lock; activation was not committed"
                         )
+                    if (
+                        target_identity is not None
+                        and status.get("runtime", {}).get("build_id")
+                        != target_identity["build_id"]
+                    ):
+                        raise RuntimeError(
+                            "Runtime build changed between validation and readiness"
+                        )
                     save_launcher(selected, launch_environment)
-                    return
+                    return False
                 if process.poll() is not None:
                     raise RuntimeError(
                         "Runtime launcher exited before readiness; see runtime.log"
@@ -217,7 +272,14 @@ def ensure_command(command: list[str], *, activate: bool = False) -> None:
                     for child in reversed(children):
                         child.terminate()
                     parent.terminate()
-                    psutil.wait_procs([parent, *children], timeout=10)
+                    _, alive = psutil.wait_procs([parent, *children], timeout=10)
+                    for remaining in alive:
+                        remaining.kill()
+                    _, alive = psutil.wait_procs(alive, timeout=5)
+                    if alive:
+                        raise RuntimeError(
+                            "Failed candidate still running; rollback cancelled"
+                        )
                 except psutil.NoSuchProcess:
                     pass
             if activate and previous is not None and _live_runtime_state() is None:
@@ -227,7 +289,8 @@ def ensure_command(command: list[str], *, activate: bool = False) -> None:
                 for key in _LAUNCH_ENVIRONMENT:
                     environment.pop(key, None)
                 environment.update(old_environment)
-                environment.pop("WATCHER_RUNTIME_LAUNCH_ID", None)
+                recovery_id = uuid.uuid4().hex
+                environment["WATCHER_RUNTIME_LAUNCH_ID"] = recovery_id
                 with (log_root / "runtime.log").open("ab") as log:
                     restored = subprocess.Popen(
                         old_command,
@@ -239,7 +302,20 @@ def ensure_command(command: list[str], *, activate: bool = False) -> None:
                         **options,
                     )
                 deadline = time.monotonic() + 30
-                while _live_runtime_state() is None:
+                while True:
+                    recovered = _live_runtime_state()
+                    if recovered is not None:
+                        recovered_status = _request_json(
+                            recovered.control_url, "/daemon/status"
+                        )
+                        if (
+                            recovered_status.get("runtime", {}).get("launch_id")
+                            != recovery_id
+                        ):
+                            raise RuntimeError(
+                                "Rollback identity mismatch; inspect runtime.log"
+                            )
+                        break
                     if restored.poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError(
                             "Activation failed and previous Runtime could not recover; see runtime.log"

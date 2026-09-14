@@ -248,6 +248,9 @@ class DaemonControlAPI:
     ) -> None:
         self._controller = controller
         self._runtime_metadata = runtime_metadata
+        from watcherobot.runtime.identity import runtime_identity
+
+        self._build_identity = runtime_identity()
         self._draining = False
         self._starting_requests = 0
 
@@ -399,6 +402,7 @@ class DaemonControlAPI:
 
         @app.post("/daemon/stop", status_code=202)
         async def stop_daemon() -> dict[str, bool]:
+            self._draining = True
             self._controller.request_shutdown()
             return {"stopping": True}
 
@@ -638,7 +642,9 @@ class DaemonControlAPI:
         if self._runtime_metadata is not None:
             metadata = self._runtime_metadata()
             response["runtime"] = {
+                **self._build_identity,
                 "sdk_version": __version__,
+                "draining": self._draining,
                 "launch_id": os.environ.get("WATCHER_RUNTIME_LAUNCH_ID", ""),
                 "application_protocol": 1,
                 "management_protocol": 1,

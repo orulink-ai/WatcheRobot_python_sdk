@@ -122,7 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     daemon_commands.add_parser("start")
-    daemon_commands.add_parser("activate", help="Explicitly switch the shared Daemon to this SDK after stopping Applications")
+    daemon_commands.add_parser("activate", help="Force reload this SDK Runtime, stopping the current Application")
     daemon_commands.add_parser("status")
     daemon_commands.add_parser("stop")
 
@@ -329,34 +329,31 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(arguments)
     try:
         if args.command == "daemon":
-            if args.daemon_command == "activate":
+            if args.daemon_command in ("start", "activate"):
                 from watcherobot.runtime.manager import ensure_command
 
-                ensure_command([sys.executable, "-m", "watcherobot.runtime.daemon"], activate=True)
-                _print_json(runtime_status())
-                return 0
-            if args.daemon_command == "start":
-                state, reused = ensure_runtime()
-                _print_json(
-                    {
-                        "running": True,
-                        "reused": reused,
-                        "pid": state.pid,
-                        "control_url": state.control_url,
-                    }
-                )
+                try:
+                    reused = ensure_command(
+                        [sys.executable, "-m", "watcherobot.runtime.daemon"],
+                        activate=True,
+                        force=args.daemon_command == "activate",
+                    )
+                except (OSError, ValueError, RuntimeError) as error:
+                    raise CliError(str(error)) from error
+                _print_json({**runtime_status(), "reused": reused})
                 return 0
             if args.daemon_command == "status":
                 status = runtime_status()
                 _print_json(status)
                 return 0 if status["running"] else 1
             if args.daemon_command == "stop":
-                stopped = stop_runtime()
-                _print_json(
-                    {"running": not stopped, "stopping": not stopped}
-                    if not stopped
-                    else {"running": False}
-                )
+                from watcherobot.runtime.manager import stop_shared_runtime
+
+                try:
+                    stop_shared_runtime()
+                except (OSError, ValueError, RuntimeError) as error:
+                    raise CliError(str(error)) from error
+                _print_json({"running": False})
                 return 0
         if args.command == "app" and args.app_command == "run":
             return run_application(args.application)

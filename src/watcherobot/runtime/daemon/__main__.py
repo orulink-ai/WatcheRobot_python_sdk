@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import signal
 import sys
@@ -30,6 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prepare-bundle", type=Path, help="Publish an immutable shared bundle and print its path; do not start a Daemon")
     parser.add_argument("--ensure-shared", action="store_true")
     parser.add_argument("--activate-shared", action="store_true")
+    parser.add_argument("--stop-shared", action="store_true")
+    parser.add_argument("--describe-runtime", action="store_true")
     parser.add_argument(
         "--state-root",
         type=Path,
@@ -229,6 +232,18 @@ async def run_runtime(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.describe_runtime:
+        from watcherobot.runtime.identity import runtime_identity
+
+        print(json.dumps(runtime_identity()))
+        return 0
+    if args.stop_shared:
+        from watcherobot.runtime.manager import stop_shared_runtime
+
+        os.environ["WATCHER_RUNTIME_INSTANCE_ROOT"] = str(args.instance_root.resolve())
+        os.environ["WATCHER_RUNTIME_STATE_ROOT"] = str(args.state_root.resolve())
+        stop_shared_runtime()
+        return 0
     if args.prepare_bundle is not None:
         from watcherobot.runtime.repository import prepare_bundle
 
