@@ -29,6 +29,8 @@ from .download import (
 )
 from .events import ErrorCode, EventSink, ProgressEvent
 from .ports import MarketplaceHubClient
+from watcherobot.runtime.cleanup import store_operation
+
 _RUNTIME_MANIFEST = "runtime.json"
 _RUNTIME_TREE_PREFIX = b"watcher-application-runtime-tree-sha256-v1\0"
 _MAX_OUTPUT_BYTES = 1024 * 1024
@@ -249,6 +251,7 @@ class _StorePaths:
         return self.apps / application_id
 
 
+@store_operation
 def install_application(
     *,
     space_id: str,
@@ -355,6 +358,7 @@ def list_installed_applications(store_root: Path) -> tuple[InstalledApplication,
     return tuple(applications)
 
 
+@store_operation
 def uninstall_application(
     *,
     store_root: Path,

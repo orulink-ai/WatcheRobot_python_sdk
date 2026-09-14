@@ -12,6 +12,7 @@ from typing import Any
 
 from .daemon.instance import default_runtime_instance_root, default_runtime_state_root
 from .repository import operation_lock
+from .cleanup import cleanup_after
 
 _LAUNCH_ENVIRONMENT = (
     "PYTHONIOENCODING",
@@ -56,6 +57,13 @@ def save_launcher(
     command: list[str], environment: dict[str, str] | None = None
 ) -> None:
     """Commit the launcher while the caller holds the operation lock."""
+    from .cleanup import reference_lock
+
+    with reference_lock():
+        _save_launcher(command, environment)
+
+
+def _save_launcher(command: list[str], environment: dict[str, str] | None) -> None:
     pointer = default_runtime_instance_root() / "current-launcher.json"
     pointer.parent.mkdir(parents=True, exist_ok=True)
     captured = (
@@ -67,9 +75,21 @@ def save_launcher(
     temporary.write_text(
         json.dumps({"command": command, "environment": captured}), encoding="utf-8"
     )
+    if pointer.exists():
+        try:
+            old_command, old_environment = read_launcher(pointer)
+        except (OSError, ValueError):
+            old_command, old_environment = command, {}
+        if old_command != command:
+            old = {"command": old_command, "environment": old_environment}
+            backup = pointer.with_name("previous-launcher.json")
+            backup_temporary = backup.with_suffix(".tmp")
+            backup_temporary.write_text(json.dumps(old), encoding="utf-8")
+            backup_temporary.replace(backup)
     temporary.replace(pointer)
 
 
+@cleanup_after
 def ensure_command(command: list[str], *, activate: bool = False) -> None:
     """Reuse the live instance; remember the last successful launcher across clients.
 
@@ -78,6 +98,11 @@ def ensure_command(command: list[str], *, activate: bool = False) -> None:
     Only the documented path/configuration environment whitelist is persisted.
     """
     from watcherobot.cli import _live_runtime_state, _request_json, stop_runtime
+    from .cleanup import register_environment
+
+    # Protect source venvs and default application resources before publication GC.
+    if Path(command[0]).is_file():
+        register_environment(Path(command[0]))
 
     root = default_runtime_instance_root()
     pointer = root / "current-launcher.json"

@@ -1372,12 +1372,15 @@ def ensure_runtime(
     ephemeral_ports: bool = False,
 ) -> tuple[RuntimeProcessState, bool]:
     from watcherobot.runtime.repository import operation_lock
+    from watcherobot.runtime.cleanup import collect_runtime_garbage
 
     with operation_lock():
-        return _ensure_runtime_locked(
+        result = _ensure_runtime_locked(
             state_root=state_root, managed_app_root=managed_app_root,
             ephemeral_ports=ephemeral_ports,
         )
+    collect_runtime_garbage()
+    return result
 
 
 def _ensure_runtime_locked(

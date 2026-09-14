@@ -1,7 +1,7 @@
 """SDK-owned immutable Runtime storage and cross-process lifecycle operations.
 
-Published directories are never moved, repaired in place or automatically deleted:
-running Windows executables and application virtualenvs may still reference them.
+Published directories are never moved or repaired in place. Conservative collection
+in runtime.cleanup retains running executables, rollback and application references.
 """
 
 from __future__ import annotations
@@ -89,12 +89,15 @@ def prepare_bundle(source: Path, repository: Path | None = None) -> Path:
         if target.exists():
             if bundle_digest(target) != identity:
                 raise ValueError("Published Runtime integrity check failed")
+            os.utime(target, None)
             return target
         staging = root / (".staging-" + uuid.uuid4().hex)
         try:
             shutil.copytree(source, staging, symlinks=True)
             if bundle_digest(staging) != identity:
                 raise ValueError("Staged Runtime integrity check failed")
+            # copytree preserves source timestamps; grace must start at publication.
+            os.utime(staging, None)
             os.replace(staging, target)
         finally:
             if staging.exists():

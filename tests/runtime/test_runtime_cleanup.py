@@ -1,0 +1,109 @@
+import json
+import os
+import time
+
+from watcherobot.runtime import cleanup
+
+
+def version(root, name):
+    path = root / (name * 64)
+    path.mkdir(parents=True)
+    (path / "python.exe").write_bytes(b"test")
+    os.utime(path, (1, 1))
+    return path
+
+
+def test_publication_grace_starts_now_not_at_source_mtime(tmp_path, monkeypatch):
+    from watcherobot.runtime.repository import prepare_bundle
+
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance"))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "runtime").write_bytes(b"bundle")
+    os.utime(source, (1, 1))
+    published = prepare_bundle(source)
+    assert time.time() - published.stat().st_mtime < 10
+    assert cleanup.collect_runtime_garbage()["deleted"] == []
+
+
+def test_cleanup_retains_current_rollback_and_application_references(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    root = tmp_path / "bundles"
+    old, current, rollback, referenced = [version(root, c) for c in "abcd"]
+    for name, path in [("current", current), ("previous", rollback)]:
+        (tmp_path / (name + "-launcher.json")).write_text(
+            json.dumps({"command": [str(path / "python.exe")]})
+        )
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyvenv.cfg").write_text("home = " + str(referenced))
+    cleanup.register_reference(project)
+    report = cleanup.collect_runtime_garbage()
+    assert str(old) in report["deleted"]
+    assert all(p.exists() for p in [current, rollback, referenced])
+
+
+def test_uncertain_process_inventory_prevents_deletion(tmp_path, monkeypatch):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    old = version(tmp_path / "bundles", "a")
+    monkeypatch.setattr(cleanup, "process_references", lambda: None)
+    assert cleanup.collect_runtime_garbage()["deleted"] == []
+    assert old.exists()
+
+
+def test_store_references_trash_and_grace_period_are_preserved(tmp_path, monkeypatch):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance"))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    store = tmp_path / "store"
+    old, used, recent = [version(store / "runtimes", c) for c in "abc"]
+    os.utime(recent, (time.time(), time.time()))
+    record = store / "trash" / "app" / "install.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"runtime": {"root": str(used)}}))
+    cleanup.register_reference(store, store=True)
+    assert str(old) in cleanup.collect_runtime_garbage()["deleted"]
+    assert used.exists() and recent.exists()
+
+
+def test_corrupt_reference_prevents_cleanup(tmp_path, monkeypatch):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    old = version(tmp_path / "bundles", "a")
+    (tmp_path / "current-launcher.json").write_text("broken")
+    assert cleanup.collect_runtime_garbage()["deleted"] == []
+    assert old.exists()
+
+
+def test_running_mapping_and_failed_delete_are_retained(tmp_path, monkeypatch):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    busy, locked = [version(tmp_path / "bundles", c) for c in "ab"]
+    monkeypatch.setattr(cleanup, "process_references", lambda: [busy / "python.exe"])
+
+    def deny(path):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(cleanup.shutil, "rmtree", deny)
+    report = cleanup.collect_runtime_garbage()
+    assert report["deleted"] == []
+    assert report["skipped"][0]["path"] == str(locked)
+    assert busy.exists() and locked.exists()
+
+
+def test_launcher_rotation_accepts_legacy_and_corrupt_pointer(tmp_path, monkeypatch):
+    from watcherobot.runtime.manager import save_launcher
+
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    old, new = [version(tmp_path / "bundles", c) for c in "ab"]
+    pointer = tmp_path / "current-launcher.json"
+    pointer.write_text(json.dumps([str(old / "python.exe")]))
+    save_launcher([str(new / "python.exe")], {})
+    previous = tmp_path / "previous-launcher.json"
+    assert json.loads(previous.read_text())["command"] == [str(old / "python.exe")]
+    pointer.write_text("broken")
+    save_launcher([str(new / "python.exe")], {})
+    assert json.loads(pointer.read_text())["command"] == [str(new / "python.exe")]
+    assert json.loads(previous.read_text())["command"] == [str(old / "python.exe")]
