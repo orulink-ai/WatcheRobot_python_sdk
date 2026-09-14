@@ -15,7 +15,7 @@ from watcherobot.distribution.ports import (
     HubNetworkError,
     HubRepositoryConflict,
     RepositoryRevision,
-    SpaceRepository,
+    SourceRepository,
     UploadFile,
 )
 
@@ -94,59 +94,59 @@ class FakePublishHub:
     calls: list[tuple[str, object]] = field(default_factory=list)
     uploaded_files: tuple[UploadFile, ...] = ()
 
-    def ensure_public_space(
+    def ensure_public_repository(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         sdk: str,
-    ) -> SpaceRepository:
-        self.calls.append(("ensure", (space_id, sdk)))
+    ) -> SourceRepository:
+        self.calls.append(("ensure", (repo_id, sdk)))
         if self.failure == "ensure":
             raise HubNetworkError("unavailable")
         if self.failure == "ownership":
             raise HubRepositoryConflict("not owned by this OAuth app")
-        return SpaceRepository(space_id=space_id, created=self.space_created)
+        return SourceRepository(repo_id=repo_id, created=self.space_created)
 
-    def replace_space_files(
+    def replace_repository_files(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         files: tuple[UploadFile, ...],
         commit_message: str,
     ) -> None:
-        self.calls.append(("upload", (space_id, commit_message)))
+        self.calls.append(("upload", (repo_id, commit_message)))
         self.uploaded_files = files
         if self.failure == "upload":
             raise HubNetworkError("upload failed")
 
-    def get_space_head(
+    def get_repository_head(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
     ) -> RepositoryRevision:
-        self.calls.append(("head", space_id))
+        self.calls.append(("head", repo_id))
         if self.failure == "commit":
             raise HubInvalidResponse("missing commit")
         return RepositoryRevision(
             commit=SPACE_COMMIT,
             url=(
-                f"https://huggingface.co/spaces/{space_id}/tree/"
+                f"https://huggingface.co/spaces/{repo_id}/tree/"
                 f"{SPACE_COMMIT}"
             ),
         )
 
-    def read_space_file(
+    def read_repository_file(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         path: str,
     ) -> bytes:
-        self.calls.append(("read_space_file", (space_id, commit, path)))
+        self.calls.append(("read_repository_file", (repo_id, commit, path)))
         if self.failure == "source":
             raise HubNetworkError("source unavailable")
         if path == "app.json":

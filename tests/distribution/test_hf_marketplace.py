@@ -153,8 +153,8 @@ def test_public_space_file_is_read_only_at_the_exact_commit(
     api = FakePublicHfApi(downloaded_path=downloaded)
     client, _factory = _client(api)
 
-    result = client.read_space_file(
-        space_id=SPACE_ID,
+    result = client.read_repository_file(
+        repo_id=SPACE_ID,
         commit=COMMIT,
         path="app.json",
     )
@@ -193,8 +193,8 @@ def test_fixed_snapshot_downloads_to_isolation_and_removes_hub_metadata(
     api = FakePublicHfApi(materialize_snapshot=True)
     client, _factory = _client(api)
 
-    revision = client.download_space_snapshot(
-        space_id=SPACE_ID,
+    revision = client.download_repository_snapshot(
+        repo_id=SPACE_ID,
         commit=COMMIT,
         target=target,
     )
@@ -281,8 +281,8 @@ def test_snapshot_download_rejects_non_empty_adapter_target(
     client, factory = _client(api)
 
     with pytest.raises(HubInvalidResponse, match="empty"):
-        client.download_space_snapshot(
-            space_id=SPACE_ID,
+        client.download_repository_snapshot(
+            repo_id=SPACE_ID,
             commit=COMMIT,
             target=target,
         )
@@ -299,8 +299,8 @@ def test_snapshot_download_rejects_unexpected_return_path(
     client, _factory = _client(api)
 
     with pytest.raises(HubInvalidResponse, match="target directory"):
-        client.download_space_snapshot(
-            space_id=SPACE_ID,
+        client.download_repository_snapshot(
+            repo_id=SPACE_ID,
             commit=COMMIT,
             target=target,
         )
@@ -311,8 +311,8 @@ def test_floating_space_revision_is_rejected_before_network() -> None:
     client, factory = _client(api)
 
     with pytest.raises(HubInvalidResponse, match="full commit"):
-        client.read_space_file(
-            space_id=SPACE_ID,
+        client.read_repository_file(
+            repo_id=SPACE_ID,
             commit="main",
             path="app.json",
         )
@@ -325,8 +325,8 @@ def test_missing_public_space_has_specific_error() -> None:
     client, _factory = _client(FakePublicHfApi(repo_exists_value=False))
 
     with pytest.raises(HubRepositoryNotFound):
-        client.read_space_file(
-            space_id=SPACE_ID,
+        client.read_repository_file(
+            repo_id=SPACE_ID,
             commit=COMMIT,
             path="app.json",
         )
@@ -337,8 +337,8 @@ def test_missing_fixed_commit_has_specific_error() -> None:
     client, _factory = _client(api)
 
     with pytest.raises(HubRevisionNotFound):
-        client.read_space_file(
-            space_id=SPACE_ID,
+        client.read_repository_file(
+            repo_id=SPACE_ID,
             commit=COMMIT,
             path="app.json",
         )
@@ -349,8 +349,8 @@ def test_missing_fixed_file_has_specific_error() -> None:
     client, _factory = _client(api)
 
     with pytest.raises(HubFileNotFound):
-        client.read_space_file(
-            space_id=SPACE_ID,
+        client.read_repository_file(
+            repo_id=SPACE_ID,
             commit=COMMIT,
             path="app.json",
         )

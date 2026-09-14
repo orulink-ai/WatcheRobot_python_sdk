@@ -100,13 +100,13 @@ def test_ensure_space_is_public_static_and_uses_only_explicit_token(
     api = FakeHfApi(repo_exists_value=existed)
     client, factory = _client(api)
 
-    result = client.ensure_public_space(
+    result = client.ensure_public_repository(
         AccessToken("watcher-oauth-token"),
-        space_id=SPACE_ID,
+        repo_id=SPACE_ID,
         sdk="static",
     )
 
-    assert result.space_id == SPACE_ID
+    assert result.repo_id == SPACE_ID
     assert result.created is (not existed)
     assert factory.tokens == ["watcher-oauth-token"]
     assert api.calls == [
@@ -127,7 +127,7 @@ def test_ensure_space_is_public_static_and_uses_only_explicit_token(
     ]
 
 
-def test_replace_space_files_deletes_stale_paths_and_adds_exact_snapshot(
+def test_replace_repository_files_deletes_stale_paths_and_adds_exact_snapshot(
     tmp_path: Path,
 ) -> None:
     app_path = tmp_path / "app.py"
@@ -135,9 +135,9 @@ def test_replace_space_files_deletes_stale_paths_and_adds_exact_snapshot(
     api = FakeHfApi(repo_files=["README.md", "stale.txt"])
     client, _factory = _client(api)
 
-    client.replace_space_files(
+    client.replace_repository_files(
         AccessToken("watcher-oauth-token"),
-        space_id=SPACE_ID,
+        repo_id=SPACE_ID,
         files=(
             UploadFile.from_bytes("README.md", b"---\nsdk: static\n---\n"),
             UploadFile.from_path("app.py", app_path),
@@ -165,12 +165,12 @@ def test_replace_space_files_deletes_stale_paths_and_adds_exact_snapshot(
     assert adds[1].path_or_fileobj == str(app_path)
 
 
-def test_get_space_head_returns_fixed_tree_url() -> None:
+def test_get_repository_head_returns_fixed_tree_url() -> None:
     client, _factory = _client(FakeHfApi(repo_sha=COMMIT))
 
-    revision = client.get_space_head(
+    revision = client.get_repository_head(
         AccessToken("watcher-oauth-token"),
-        space_id=SPACE_ID,
+        repo_id=SPACE_ID,
     )
 
     assert revision.commit == COMMIT
@@ -179,17 +179,17 @@ def test_get_space_head_returns_fixed_tree_url() -> None:
     )
 
 
-def test_get_space_head_rejects_floating_or_missing_sha() -> None:
+def test_get_repository_head_rejects_floating_or_missing_sha() -> None:
     client, _factory = _client(FakeHfApi(repo_sha="main"))
 
     with pytest.raises(HubInvalidResponse, match="full commit"):
-        client.get_space_head(
+        client.get_repository_head(
             AccessToken("watcher-oauth-token"),
-            space_id=SPACE_ID,
+            repo_id=SPACE_ID,
         )
 
 
-def test_read_space_file_pins_the_requested_commit(
+def test_read_repository_file_pins_the_requested_commit(
     tmp_path: Path,
 ) -> None:
     downloaded = tmp_path / "app.json"
@@ -197,9 +197,9 @@ def test_read_space_file_pins_the_requested_commit(
     api = FakeHfApi(downloaded_path=downloaded)
     client, factory = _client(api)
 
-    content = client.read_space_file(
+    content = client.read_repository_file(
         AccessToken("watcher-oauth-token"),
-        space_id=SPACE_ID,
+        repo_id=SPACE_ID,
         commit=COMMIT,
         path="app.json",
     )
@@ -329,15 +329,15 @@ def test_space_http_errors_are_sanitized(
 
     with pytest.raises(expected_error) as captured:
         if operation == "create_repo":
-            client.ensure_public_space(
+            client.ensure_public_repository(
                 AccessToken("watcher-oauth-token"),
-                space_id=SPACE_ID,
+                repo_id=SPACE_ID,
                 sdk="static",
             )
         else:
-            client.replace_space_files(
+            client.replace_repository_files(
                 AccessToken("watcher-oauth-token"),
-                space_id=SPACE_ID,
+                repo_id=SPACE_ID,
                 files=(UploadFile.from_bytes("README.md", b"readme"),),
                 commit_message="Publish",
             )
@@ -381,9 +381,9 @@ def test_transport_failure_maps_to_sanitized_network_error() -> None:
     client, _factory = _client(api)
 
     with pytest.raises(HubNetworkError) as captured:
-        client.get_space_head(
+        client.get_repository_head(
             AccessToken("watcher-oauth-token"),
-            space_id=SPACE_ID,
+            repo_id=SPACE_ID,
         )
 
     assert "watcher-oauth-token" not in str(captured.value)

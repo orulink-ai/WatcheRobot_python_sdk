@@ -27,7 +27,7 @@ from .ports import (
     HubNetworkError,
     HubRepositoryConflict,
     RepositoryRevision,
-    SpaceRepository,
+    SourceRepository,
     UploadFile,
 )
 
@@ -42,18 +42,18 @@ class HuggingFacePublishHubClient:
     def __init__(self, *, api_factory: ApiFactory | None = None) -> None:
         self._api_factory = api_factory or _default_api_factory
 
-    def ensure_public_space(
+    def ensure_public_repository(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         sdk: str,
-    ) -> SpaceRepository:
+    ) -> SourceRepository:
         api = self._api_factory(token.value)
         try:
-            existed = bool(api.repo_exists(repo_id=space_id, repo_type="space"))
+            existed = bool(api.repo_exists(repo_id=repo_id, repo_type="space"))
             api.create_repo(
-                repo_id=space_id,
+                repo_id=repo_id,
                 repo_type="space",
                 private=False,
                 exist_ok=True,
@@ -61,13 +61,13 @@ class HuggingFacePublishHubClient:
             )
         except Exception as exc:
             _raise_hub_error(exc, repository_conflict=True)
-        return SpaceRepository(space_id=space_id, created=not existed)
+        return SourceRepository(repo_id=repo_id, created=not existed)
 
-    def replace_space_files(
+    def replace_repository_files(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         files: tuple[UploadFile, ...],
         commit_message: str,
     ) -> None:
@@ -80,7 +80,7 @@ class HuggingFacePublishHubClient:
         api = self._api_factory(token.value)
         try:
             remote_paths = api.list_repo_files(
-                repo_id=space_id,
+                repo_id=repo_id,
                 repo_type="space",
                 revision="main",
             )
@@ -106,7 +106,7 @@ class HuggingFacePublishHubClient:
                     )
                 )
             api.create_commit(
-                repo_id=space_id,
+                repo_id=repo_id,
                 repo_type="space",
                 revision="main",
                 operations=operations,
@@ -117,16 +117,16 @@ class HuggingFacePublishHubClient:
         except Exception as exc:
             _raise_hub_error(exc, repository_conflict=True)
 
-    def get_space_head(
+    def get_repository_head(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
     ) -> RepositoryRevision:
         api = self._api_factory(token.value)
         try:
             info = api.repo_info(
-                repo_id=space_id,
+                repo_id=repo_id,
                 repo_type="space",
                 revision="main",
             )
@@ -135,21 +135,21 @@ class HuggingFacePublishHubClient:
         commit = _full_commit(getattr(info, "sha", None))
         return RepositoryRevision(
             commit=commit,
-            url=f"https://huggingface.co/spaces/{space_id}/tree/{commit}",
+            url=f"https://huggingface.co/spaces/{repo_id}/tree/{commit}",
         )
 
-    def read_space_file(
+    def read_repository_file(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         path: str,
     ) -> bytes:
         api = self._api_factory(token.value)
         try:
             downloaded = api.hf_hub_download(
-                repo_id=space_id,
+                repo_id=repo_id,
                 repo_type="space",
                 filename=path,
                 revision=commit,

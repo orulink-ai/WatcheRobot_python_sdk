@@ -9,7 +9,7 @@ from watcherobot.distribution.ports import (
     CatalogPullRequest,
     PublishHubClient,
     RepositoryRevision,
-    SpaceRepository,
+    SourceRepository,
     UploadFile,
 )
 
@@ -18,41 +18,41 @@ from watcherobot.distribution.ports import (
 class FakePublishHubClient:
     calls: list[tuple[str, object]] = field(default_factory=list)
 
-    def ensure_public_space(
+    def ensure_public_repository(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         sdk: str,
-    ) -> SpaceRepository:
-        self.calls.append(("ensure_public_space", (token, space_id, sdk)))
-        return SpaceRepository(space_id=space_id, created=True)
+    ) -> SourceRepository:
+        self.calls.append(("ensure_public_repository", (token, repo_id, sdk)))
+        return SourceRepository(repo_id=repo_id, created=True)
 
-    def replace_space_files(
+    def replace_repository_files(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
         files: tuple[UploadFile, ...],
         commit_message: str,
     ) -> None:
         self.calls.append(
             (
-                "replace_space_files",
-                (token, space_id, files, commit_message),
+                "replace_repository_files",
+                (token, repo_id, files, commit_message),
             )
         )
 
-    def get_space_head(
+    def get_repository_head(
         self,
         token: AccessToken,
         *,
-        space_id: str,
+        repo_id: str,
     ) -> RepositoryRevision:
-        self.calls.append(("get_space_head", (token, space_id)))
+        self.calls.append(("get_repository_head", (token, repo_id)))
         return RepositoryRevision(
             commit="a" * 40,
-            url=f"https://huggingface.co/spaces/{space_id}/tree/{'a' * 40}",
+            url=f"https://huggingface.co/spaces/{repo_id}/tree/{'a' * 40}",
         )
 
     def read_catalog(
@@ -117,24 +117,24 @@ def test_publish_port_accepts_injected_fake_for_complete_remote_boundary(
     source_path.write_text("print('demo')\n", encoding="utf-8")
     token = AccessToken("hf_secret-token")
     hub: PublishHubClient = FakePublishHubClient()
-    space_id = "developer/WatcherRobot-com.orulink.demo"
+    repo_id = "developer/WatcherRobot-com.orulink.demo"
     upload_files = (
         UploadFile.from_path("app.py", source_path),
         UploadFile.from_bytes("README.md", b"---\nsdk: static\n---\n"),
     )
 
-    space = hub.ensure_public_space(
+    space = hub.ensure_public_repository(
         token,
-        space_id=space_id,
+        repo_id=repo_id,
         sdk="static",
     )
-    hub.replace_space_files(
+    hub.replace_repository_files(
         token,
-        space_id=space_id,
+        repo_id=repo_id,
         files=upload_files,
         commit_message="Publish com.orulink.demo 1.0.0",
     )
-    revision = hub.get_space_head(token, space_id=space_id)
+    revision = hub.get_repository_head(token, repo_id=repo_id)
     catalog = hub.read_catalog(
         token,
         repo_id="Orulink/watcherobot-app-store",
@@ -149,14 +149,14 @@ def test_publish_port_accepts_injected_fake_for_complete_remote_boundary(
         token,
         repo_id="Orulink/watcherobot-app-store",
         path="app-list.json",
-        content=b'[{"space_id":"developer/WatcherRobot-com.orulink.demo",'
+        content=b'[{"repo_id":"developer/WatcherRobot-com.orulink.demo",'
         b'"commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]\n',
         parent_commit=catalog.commit,
         title="Publish developer/WatcherRobot-com.orulink.demo",
         description="Request catalog review.",
     )
 
-    assert space == SpaceRepository(space_id=space_id, created=True)
+    assert space == SourceRepository(repo_id=repo_id, created=True)
     assert revision.commit == "a" * 40
     assert revision.url.endswith("/tree/" + "a" * 40)
     assert catalog.content == b"[]\n"

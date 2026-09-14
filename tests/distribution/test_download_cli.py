@@ -18,8 +18,8 @@ COMMIT = "a" * 40
 
 
 def _result(target: Path) -> DownloadResult:
-    return DownloadResult(
-        space_id=SPACE_ID,
+    return DownloadResult(provider="huggingface",
+        repo_id=SPACE_ID,
         commit=COMMIT,
         source_url=(
             f"https://huggingface.co/spaces/{SPACE_ID}/tree/{COMMIT}"
@@ -50,14 +50,14 @@ def _install_success(monkeypatch, target: Path):
             ProgressEvent(
                 stage="downloading_snapshot",
                 message="Downloading immutable Application source",
-                data={"space_id": SPACE_ID, "commit": COMMIT},
+                data={"repo_id": SPACE_ID, "commit": COMMIT},
             )
         )
         return _result(target)
 
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_download_dependencies",
-        lambda: dependencies,
+        lambda provider: dependencies,
         raising=False,
     )
     monkeypatch.setattr(
@@ -87,8 +87,8 @@ def test_cli_download_jsonl_reuses_service_and_never_starts_daemon(
     exit_code = main(
         [
             "app",
-            "download",
-            "--space-id",
+            "download", "--provider", "huggingface",
+            "--repo-id",
             SPACE_ID,
             "--commit",
             COMMIT,
@@ -101,7 +101,7 @@ def test_cli_download_jsonl_reuses_service_and_never_starts_daemon(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert captured.err == ""
-    assert calls[0]["space_id"] == SPACE_ID
+    assert calls[0]["repo_id"] == SPACE_ID
     assert calls[0]["commit"] == COMMIT
     assert calls[0]["target"] == tmp_path
     assert _json_lines(captured.out) == [
@@ -109,7 +109,7 @@ def test_cli_download_jsonl_reuses_service_and_never_starts_daemon(
             "type": "progress",
             "stage": "downloading_snapshot",
             "message": "Downloading immutable Application source",
-            "data": {"space_id": SPACE_ID, "commit": COMMIT},
+            "data": {"repo_id": SPACE_ID, "commit": COMMIT},
         },
         {"type": "result", "ok": True, "data": _result(tmp_path).to_dict()},
     ]
@@ -125,8 +125,8 @@ def test_cli_download_human_output_shows_fixed_source_and_target(
     exit_code = main(
         [
             "app",
-            "download",
-            "--space-id",
+            "download", "--provider", "huggingface",
+            "--repo-id",
             SPACE_ID,
             "--commit",
             COMMIT,
@@ -151,7 +151,7 @@ def test_cli_download_jsonl_maps_stable_download_error(
 ) -> None:
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_download_dependencies",
-        lambda: SimpleNamespace(hub=object()),
+        lambda provider: SimpleNamespace(hub=object()),
         raising=False,
     )
 
@@ -159,7 +159,7 @@ def test_cli_download_jsonl_maps_stable_download_error(
         raise DownloadError(
             ErrorCode.REMOTE_ERROR,
             "Unable to download immutable Application source",
-            details={"space_id": SPACE_ID, "commit": COMMIT},
+            details={"repo_id": SPACE_ID, "commit": COMMIT},
         )
 
     monkeypatch.setattr(
@@ -171,8 +171,8 @@ def test_cli_download_jsonl_maps_stable_download_error(
     exit_code = main(
         [
             "app",
-            "download",
-            "--space-id",
+            "download", "--provider", "huggingface",
+            "--repo-id",
             SPACE_ID,
             "--commit",
             COMMIT,
@@ -191,7 +191,7 @@ def test_cli_download_jsonl_maps_stable_download_error(
             "ok": False,
             "code": "remote_error",
             "message": "Unable to download immutable Application source",
-            "details": {"space_id": SPACE_ID, "commit": COMMIT},
+            "details": {"repo_id": SPACE_ID, "commit": COMMIT},
         }
     ]
 
@@ -203,7 +203,7 @@ def test_cli_download_keyboard_interrupt_is_jsonl_cancellation(
 ) -> None:
     monkeypatch.setattr(
         "watcherobot.distribution.cli._build_download_dependencies",
-        lambda: SimpleNamespace(hub=object()),
+        lambda provider: SimpleNamespace(hub=object()),
         raising=False,
     )
 
@@ -219,8 +219,8 @@ def test_cli_download_keyboard_interrupt_is_jsonl_cancellation(
     exit_code = main(
         [
             "app",
-            "download",
-            "--space-id",
+            "download", "--provider", "huggingface",
+            "--repo-id",
             SPACE_ID,
             "--commit",
             COMMIT,
@@ -239,6 +239,6 @@ def test_cli_download_keyboard_interrupt_is_jsonl_cancellation(
 def test_default_download_dependencies_use_public_hub_adapter() -> None:
     from watcherobot.distribution.cli import _build_download_dependencies
 
-    dependencies = _build_download_dependencies()
+    dependencies = _build_download_dependencies("huggingface")
 
     assert isinstance(dependencies.hub, HuggingFaceMarketplaceHubClient)

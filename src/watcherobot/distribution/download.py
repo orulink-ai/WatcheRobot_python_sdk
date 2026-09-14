@@ -13,6 +13,7 @@ from .catalog_submission import (
 )
 from .check import ApplicationCheckResult, check_application
 from .events import ErrorCode, EventSink, ProgressEvent
+from .providers import get_provider
 from .ports import HubError, MarketplaceHubClient
 from .source_files import ApplicationSourceError
 
@@ -40,7 +41,8 @@ class DownloadError(RuntimeError):
 class DownloadResult:
     """One validated fixed snapshot delivered to caller staging."""
 
-    space_id: str
+    provider: str
+    repo_id: str
     commit: str
     source_url: str
     target: Path
@@ -48,7 +50,8 @@ class DownloadResult:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "space_id": self.space_id,
+            "provider": self.provider,
+            "repo_id": self.repo_id,
             "commit": self.commit,
             "source_url": self.source_url,
             "target": str(self.target),
@@ -63,7 +66,8 @@ class _NullEvents:
 
 def download_application_snapshot(
     *,
-    space_id: str,
+    provider: str,
+    repo_id: str,
     commit: str,
     target: Path,
     hub: MarketplaceHubClient,
@@ -72,9 +76,10 @@ def download_application_snapshot(
 ) -> DownloadResult:
     """Download, validate and then deliver one immutable Space snapshot."""
 
+    get_provider(provider)
     destination = _require_empty_target(target)
     try:
-        reference = validate_catalog_reference(space_id, commit)
+        reference = validate_catalog_reference(repo_id, commit)
     except CatalogDocumentError as exc:
         raise DownloadError(
             ErrorCode.CATALOG_INVALID,
@@ -83,7 +88,7 @@ def download_application_snapshot(
 
     sink: EventSink = events or _NullEvents()
     details: dict[str, object] = {
-        "space_id": reference.space_id,
+        "repo_id": reference.repo_id,
         "commit": reference.commit,
     }
     sink.emit(
@@ -101,8 +106,8 @@ def download_application_snapshot(
         isolated_target = temporary_directory / "snapshot"
         isolated_target.mkdir()
         try:
-            revision = hub.download_space_snapshot(
-                space_id=reference.space_id,
+            revision = hub.download_repository_snapshot(
+                repo_id=reference.repo_id,
                 commit=reference.commit,
                 target=isolated_target,
             )
@@ -132,7 +137,7 @@ def download_application_snapshot(
             watcherobot_version=watcherobot_version,
         )
         expected_space_name = f"WatcherRobot-{application.app_id}"
-        if reference.space_id.split("/", 1)[1] != expected_space_name:
+        if reference.repo_id.split("/", 1)[1] != expected_space_name:
             raise DownloadError(
                 ErrorCode.CATALOG_INVALID,
                 "Downloaded Application ID does not match the Space",
@@ -165,7 +170,8 @@ def download_application_snapshot(
         shutil.rmtree(temporary_directory, ignore_errors=True)
 
     return DownloadResult(
-        space_id=reference.space_id,
+        provider=provider,
+        repo_id=reference.repo_id,
         commit=reference.commit,
         source_url=revision.url,
         target=destination,

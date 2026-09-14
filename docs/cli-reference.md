@@ -264,7 +264,7 @@ watcherobot app stop
 
 ### Authenticate, publish, and submit
 
-#### `watcherobot app login [--status | --force]`
+#### `watcherobot app login --provider huggingface [--status | --force]`
 
 Uses the Watcher Desktop public OAuth Device Flow to authorize publishing to
 Hugging Face. The default flow prints a URL and user code; `--status` checks
@@ -272,31 +272,31 @@ the saved identity without opening a flow; `--force` replaces a valid saved
 login. The token is stored only in Watcher's operating-system credential entry.
 
 ```powershell
-watcherobot app login
-watcherobot app login --status
-watcherobot app login --force
+watcherobot app login --provider huggingface
+watcherobot app login --provider huggingface --status
+watcherobot app login --provider huggingface --force
 ```
 
-#### `watcherobot app logout`
+#### `watcherobot app logout --provider huggingface`
 
 Removes only Watcher's saved Hugging Face credential. It does not sign out the
 Hugging Face CLI or another program.
 
 ```powershell
-watcherobot app logout
+watcherobot app logout --provider huggingface
 ```
 
-#### `watcherobot app publish <directory>`
+#### `watcherobot app publish --provider huggingface <directory>`
 
 Validates the local project and uploads its exact source snapshot to the public
 `<username>/WatcherRobot-<app_id>` Hugging Face Space. It returns the immutable
 source commit, but does not create a catalog entry or start the Runtime.
 
 ```powershell
-watcherobot app publish .\my_app
+watcherobot app publish --provider huggingface .\my_app
 ```
 
-#### `watcherobot app submit <directory> [--commit <sha>]`
+#### `watcherobot app submit --provider huggingface <directory> [--commit <sha>]`
 
 Verifies a published immutable snapshot and opens or reuses the official
 Marketplace pull request. `author` and `description` must be present. Omit
@@ -304,11 +304,11 @@ Marketplace pull request. `author` and `description` must be present. Omit
 review one exact revision. This command never uploads source.
 
 ```powershell
-watcherobot app submit .\my_app
-watcherobot app submit .\my_app --commit <40-character-commit>
+watcherobot app submit --provider huggingface .\my_app
+watcherobot app submit --provider huggingface .\my_app --commit <40-character-commit>
 ```
 
-#### `watcherobot app marketplace [--details | --jsonl]`
+#### `watcherobot app marketplace --provider huggingface [--details | --jsonl]`
 
 Reads and validates the reviewed public Marketplace. Default output is a
 compact compatibility table; `--details` adds the full manifest, source URL,
@@ -316,13 +316,13 @@ commit, and dependencies. `--jsonl` is the machine form. It needs no login,
 does not start the Runtime, and does not write a cache.
 
 ```powershell
-watcherobot app marketplace
-watcherobot app marketplace --details
+watcherobot app marketplace --provider huggingface
+watcherobot app marketplace --provider huggingface --details
 ```
 
 ### Download and manage reviewed Applications
 
-#### `watcherobot app download --space-id <id> --commit <sha> --target <empty-directory>`
+#### `watcherobot app download --provider huggingface --repo-id <id> --commit <sha> --target <empty-directory>`
 
 Downloads one reviewed immutable Space revision into an existing, empty staging
 directory. Before delivery, it verifies the commit, source limits, manifest,
@@ -330,13 +330,13 @@ fixed entrypoint, SDK compatibility, and Space/Application identity. It does
 not create the target, install the Application, or write `install.json`.
 
 ```powershell
-watcherobot app download `
-  --space-id <user>/WatcherRobot-<app_id> `
+watcherobot app download --provider huggingface `
+  --repo-id <user>/WatcherRobot-<app_id> `
   --commit <40-character-commit> `
   --target .\staging\app
 ```
 
-#### `watcherobot app install --space-id <id> --commit <sha> --store-root <path> --runtime-root <path>`
+#### `watcherobot app install --provider huggingface --repo-id <id> --commit <sha> --store-root <path> --runtime-root <path>`
 
 Downloads a reviewed immutable revision, verifies it, copies the supplied
 locked Runtime when needed, creates the Application's isolated Python
@@ -344,8 +344,8 @@ environment, and atomically writes the installation record. It never starts
 or contacts the Runtime.
 
 ```powershell
-watcherobot app install `
-  --space-id <user>/WatcherRobot-<app_id> `
+watcherobot app install --provider huggingface `
+  --repo-id <user>/WatcherRobot-<app_id> `
   --commit <40-character-commit> `
   --store-root <app-store-directory> `
   --runtime-root <locked-app-runtime-directory>
@@ -432,5 +432,5 @@ Its syntax, options, behavior, and JSONL output are identical to the matching
 
 ```powershell
 watcher-distribution app check .\my_app --jsonl
-watcher-distribution app marketplace --jsonl
+watcher-distribution app marketplace --provider huggingface --jsonl
 ```

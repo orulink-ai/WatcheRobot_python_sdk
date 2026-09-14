@@ -22,6 +22,7 @@ from .catalog_submission import (
 )
 from .check import ApplicationCheckResult, check_application
 from .events import ErrorCode, EventSink, ProgressEvent
+from .providers import get_provider
 from .ports import (
     CredentialStore,
     HubAuthenticationError,
@@ -60,7 +61,7 @@ class SubmitError(RuntimeError):
 class SubmitResult:
     """Catalog state for one immutable published Application revision."""
 
-    space_id: str
+    repo_id: str
     commit: str
     source_url: str
     pr_url: str
@@ -68,7 +69,7 @@ class SubmitResult:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "space_id": self.space_id,
+            "repo_id": self.repo_id,
             "commit": self.commit,
             "source_url": self.source_url,
             "pr_url": self.pr_url,
@@ -79,6 +80,7 @@ class SubmitResult:
 def submit_application(
     application_dir: Path,
     *,
+    provider: str,
     commit: str | None,
     credentials: CredentialStore,
     identity_hub: HubClient,
@@ -88,6 +90,7 @@ def submit_application(
 ) -> SubmitResult:
     """Validate a published snapshot and submit only its catalog reference."""
 
+    get_provider(provider)
     events.emit(
         ProgressEvent(stage="checking", message="Validating Application")
     )
@@ -100,7 +103,7 @@ def submit_application(
     events.emit(
         ProgressEvent(
             stage="authenticating",
-            message="Verifying Hugging Face login",
+            message="Verifying selected provider login",
         )
     )
     try:
@@ -111,38 +114,38 @@ def submit_application(
     except PublishError as exc:
         raise SubmitError(exc.code, str(exc), details=exc.details) from exc
 
-    space_id = f"{identity.username}/WatcherRobot-{local_application.app_id}"
+    repo_id = f"{identity.username}/WatcherRobot-{local_application.app_id}"
     if commit is None:
         events.emit(
             ProgressEvent(
                 stage="resolving_commit",
                 message="Resolving the immutable source commit",
-                data={"space_id": space_id},
+                data={"repo_id": repo_id},
             )
         )
         try:
-            revision = publish_hub.get_space_head(token, space_id=space_id)
+            revision = publish_hub.get_repository_head(token, repo_id=repo_id)
         except HubError as exc:
             raise _remote_error(
                 "Unable to resolve the published Space commit",
                 exc,
-                details={"space_id": space_id},
+                details={"repo_id": repo_id},
             )
     else:
         try:
             revision = RepositoryRevision(
                 commit=commit,
-                url=f"https://huggingface.co/spaces/{space_id}/tree/{commit}",
+                url=get_provider(provider).source_url(repo_id, commit),
             )
         except ValueError as exc:
             raise SubmitError(
                 ErrorCode.APP_MANIFEST_INVALID,
                 "Catalog submission commit must be a full lowercase 40-character SHA",
-                details={"space_id": space_id},
+                details={"repo_id": repo_id},
             ) from exc
 
     source_details: dict[str, object] = {
-        "space_id": space_id,
+        "repo_id": repo_id,
         "commit": revision.commit,
         "source_url": revision.url,
     }
@@ -154,9 +157,9 @@ def submit_application(
         )
     )
     try:
-        manifest_document = publish_hub.read_space_file(
+        manifest_document = publish_hub.read_repository_file(
             token,
-            space_id=space_id,
+            repo_id=repo_id,
             commit=revision.commit,
             path="app.json",
         )
@@ -187,9 +190,9 @@ def submit_application(
         )
     if remote_application.icon:
         try:
-            publish_hub.read_space_file(
+            publish_hub.read_repository_file(
                 token,
-                space_id=space_id,
+                repo_id=repo_id,
                 commit=revision.commit,
                 path=remote_application.icon,
             )
@@ -204,24 +207,24 @@ def submit_application(
         ProgressEvent(
             stage="updating_catalog",
             message="Preparing the official marketplace submission",
-            data={"space_id": space_id, "commit": revision.commit},
+            data={"repo_id": repo_id, "commit": revision.commit},
         )
     )
     try:
         catalog = publish_hub.read_catalog(
             token,
-            repo_id=CATALOG_REPO_ID,
+            repo_id=get_provider(provider).catalog,
             path=CATALOG_PATH,
         )
         open_pull_requests = publish_hub.list_open_catalog_pull_requests(
             token,
-            repo_id=CATALOG_REPO_ID,
+            repo_id=get_provider(provider).catalog,
             author=identity.username,
         )
         plan = plan_catalog_submission(
             catalog,
             open_pull_requests=open_pull_requests,
-            space_id=space_id,
+            repo_id=repo_id,
             commit=revision.commit,
         )
     except CatalogDocumentError as exc:
@@ -246,7 +249,7 @@ def submit_application(
 
     if plan.status == "already_listed":
         return SubmitResult(
-            space_id=space_id,
+            repo_id=repo_id,
             commit=revision.commit,
             source_url=revision.url,
             pr_url="",
@@ -255,7 +258,7 @@ def submit_application(
     if plan.status == "pending":
         assert plan.pull_request is not None
         return SubmitResult(
-            space_id=space_id,
+            repo_id=repo_id,
             commit=revision.commit,
             source_url=revision.url,
             pr_url=plan.pull_request.url,
@@ -266,14 +269,15 @@ def submit_application(
     try:
         pull_request = publish_hub.create_catalog_pull_request(
             token,
-            repo_id=CATALOG_REPO_ID,
+            repo_id=get_provider(provider).catalog,
             path=CATALOG_PATH,
             content=plan.content,
             parent_commit=plan.parent_commit,
-            title=catalog_pull_request_title(space_id, revision.commit),
+            title=catalog_pull_request_title(repo_id, revision.commit),
             description=_catalog_pull_request_description(
                 remote_application,
-                space_id=space_id,
+                provider=provider,
+                repo_id=repo_id,
                 commit=revision.commit,
                 source_url=revision.url,
             ),
@@ -291,7 +295,7 @@ def submit_application(
             details=source_details,
         )
     return SubmitResult(
-        space_id=space_id,
+        repo_id=repo_id,
         commit=revision.commit,
         source_url=revision.url,
         pr_url=pull_request.url,
@@ -321,7 +325,8 @@ def _validate_submission_metadata(
 def _catalog_pull_request_description(
     application: ApplicationManifestMetadata,
     *,
-    space_id: str,
+    provider: str,
+    repo_id: str,
     commit: str,
     source_url: str,
 ) -> str:
@@ -329,7 +334,7 @@ def _catalog_pull_request_description(
     icon_value = "Default WatcherRobot icon"
     if application.icon:
         icon_url = (
-            f"https://huggingface.co/spaces/{space_id}/resolve/{commit}/"
+            f"{get_provider(provider).repository_url(repo_id)}/{'resolve' if provider == 'huggingface' else 'raw'}/{commit}/"
             f"{quote(application.icon, safe='/')}"
         )
         icon_preview = f"![Application icon]({icon_url})\n\n"
@@ -369,7 +374,7 @@ def _catalog_pull_request_description(
         f"{icon_preview}"
         f"{table}\n\n"
         f"[View fixed source]({source_url})\n\n"
-        f"Space: `{space_id}`  \n"
+        f"Space: `{repo_id}`  \n"
         f"Commit: `{commit}`"
     )
 

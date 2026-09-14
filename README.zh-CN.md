@@ -240,9 +240,9 @@ cd my_app
 watcherobot app run
 watcherobot app login
 watcherobot app check .            # 发布前校验
-watcherobot app publish .          # 上传不可变源码快照
-watcherobot app submit .           # 将快照提交 Marketplace 审核
-watcherobot app install com.example.my_app   # 替换为实际 Application ID
+watcherobot app publish --provider huggingface .          # 上传不可变源码快照
+watcherobot app submit --provider huggingface .           # 将快照提交 Marketplace 审核
+watcherobot app install --provider huggingface com.example.my_app   # 替换为实际 Application ID
 watcherobot app list               # 列出已安装应用
 watcherobot app uninstall com.example.my_app
 ```

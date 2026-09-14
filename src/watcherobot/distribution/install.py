@@ -7,6 +7,8 @@ isolated environment creation, install records, inventory, and removal.
 
 from __future__ import annotations
 
+from .providers import get_provider
+
 import hashlib
 import json
 import os
@@ -157,7 +159,8 @@ class InstalledApplication:
     version: str
     status: str
     application_root: Path
-    space_id: str = ""
+    repo_id: str = ""
+    provider: str = ""
     commit: str = ""
 
     def to_dict(self) -> dict[str, object]:
@@ -172,7 +175,8 @@ class InstalledApplication:
                 "kind": "python",
                 "executable": str(_environment_python(self.application_root / ".venv")),
             },
-            "space_id": self.space_id,
+            "repo_id": self.repo_id,
+            "provider": self.provider,
             "commit": self.commit,
         }
 
@@ -251,7 +255,8 @@ class _StorePaths:
 
 def install_application(
     *,
-    space_id: str,
+    provider: str,
+    repo_id: str,
     commit: str,
     store_root: Path,
     runtime_root: Path,
@@ -261,6 +266,7 @@ def install_application(
 ) -> ApplicationInstallResult:
     """Install one immutable remote Application into a single managed root."""
 
+    get_provider(provider)
     paths = _open_store(store_root)
     _emit(events, "preparing_runtime", "Preparing locked Application Runtime")
     runtime = _prepare_runtime(paths, runtime_root)
@@ -271,7 +277,8 @@ def install_application(
     source.mkdir(parents=True, exist_ok=False)
     try:
         snapshot = download_application_snapshot(
-            space_id=space_id,
+            provider=provider,
+            repo_id=repo_id,
             commit=commit,
             target=source,
             hub=hub,
@@ -280,6 +287,14 @@ def install_application(
         )
         application_id = snapshot.application.app_id
         _require_application_id(application_id)
+        destination = paths.app(application_id)
+        if destination.exists():
+            existing = _read_installed_application(destination)
+            if existing.provider != provider or existing.repo_id != repo_id:
+                raise ApplicationInstallError(
+                    ErrorCode.APP_CONTENT_FORBIDDEN,
+                    "Application ID belongs to a different source; uninstall it before switching provider or publisher",
+                )
         environment = candidate / ".venv"
         runner = environment_runner or SystemApplicationEnvironmentRunner()
         resolved_dependencies = _create_environment(
@@ -765,7 +780,8 @@ def _write_install_record(
             datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         ),
         "source": {
-            "space_id": snapshot.space_id,
+            "provider": snapshot.provider,
+            "repo_id": snapshot.repo_id,
             "commit": snapshot.commit,
             "source_url": snapshot.source_url,
         },
@@ -840,7 +856,8 @@ def _read_installed_application(root: Path) -> InstalledApplication:
             version=_required_text(record["version"]),
             status="installed",
             application_root=root,
-            space_id=_required_text(source["space_id"]),
+            repo_id=_required_text(source["repo_id"]),
+            provider=get_provider(_required_text(source["provider"])).name,
             commit=_required_text(source["commit"]),
         )
     except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:

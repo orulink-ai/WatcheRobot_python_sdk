@@ -28,8 +28,8 @@ def test_application_cli_reference_separates_human_and_machine_usage() -> None:
     reference = CLI_REFERENCE_PATH.read_text(encoding="utf-8")
 
     assert "For manual use, omit `--jsonl`" in reference
-    assert "watcherobot app marketplace --details" in reference
-    assert "watcherobot app marketplace --jsonl" in reference
+    assert "watcherobot app marketplace --provider huggingface --details" in reference
+    assert "watcherobot app marketplace --provider huggingface --jsonl" in reference
     assert "Human-friendly English" in reference
     assert "Stable JSON Lines" in reference
     for command in (
@@ -58,8 +58,8 @@ def test_sdk_application_usage_guide_is_executable_and_matches_store_boundary() 
     for command in (
         "app check",
         "app run",
-        "app login --status",
-        "app login --jsonl",
+        "app login --provider huggingface --status",
+        "app login --provider huggingface --jsonl",
         "app publish",
         "app submit",
         "app marketplace --jsonl",
@@ -81,7 +81,7 @@ def test_sdk_application_usage_guide_is_executable_and_matches_store_boundary() 
 def test_chinese_usage_guide_directs_humans_to_interactive_english_login() -> None:
     guide = CHINESE_USAGE_GUIDE_PATH.read_text(encoding="utf-8")
 
-    assert ".\\.venv\\Scripts\\watcherobot.exe app login\n" in guide
+    assert ".\\.venv\\Scripts\\watcherobot.exe app login --provider huggingface\n" in guide
     assert "Authorize Hugging Face in your browser" in guide
     assert "Open: https://hf.co/oauth/device" in guide
     assert "Desktop 或其他机器调用方才使用 `--jsonl`" in guide

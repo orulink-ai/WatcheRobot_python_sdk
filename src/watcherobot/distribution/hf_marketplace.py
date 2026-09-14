@@ -69,10 +69,10 @@ class HuggingFaceMarketplaceHubClient:
             _raise_public_error(exc, not_found="file")
         return CatalogDocument(content=content, commit=commit)
 
-    def read_space_file(
+    def read_repository_file(
         self,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         path: str,
     ) -> bytes:
@@ -81,12 +81,12 @@ class HuggingFaceMarketplaceHubClient:
         api = self._api_factory()
         _require_exact_space_commit(
             api,
-            space_id=space_id,
+            repo_id=repo_id,
             commit=expected_commit,
         )
         try:
             downloaded = api.hf_hub_download(
-                repo_id=space_id,
+                repo_id=repo_id,
                 repo_type="space",
                 filename=path,
                 revision=expected_commit,
@@ -97,10 +97,10 @@ class HuggingFaceMarketplaceHubClient:
         except Exception as exc:
             _raise_public_error(exc, not_found="file")
 
-    def download_space_snapshot(
+    def download_repository_snapshot(
         self,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         target: Path,
     ) -> RepositoryRevision:
@@ -124,12 +124,12 @@ class HuggingFaceMarketplaceHubClient:
         api = self._api_factory()
         _require_exact_space_commit(
             api,
-            space_id=space_id,
+            repo_id=repo_id,
             commit=expected_commit,
         )
         try:
             downloaded = api.snapshot_download(
-                repo_id=space_id,
+                repo_id=repo_id,
                 repo_type="space",
                 revision=expected_commit,
                 local_dir=destination,
@@ -148,7 +148,7 @@ class HuggingFaceMarketplaceHubClient:
         return RepositoryRevision(
             commit=expected_commit,
             url=(
-                f"https://huggingface.co/spaces/{space_id}/tree/"
+                f"https://huggingface.co/spaces/{repo_id}/tree/"
                 f"{expected_commit}"
             ),
         )
@@ -200,18 +200,18 @@ def _read_downloaded_file(value: object) -> bytes:
 def _require_exact_space_commit(
     api: Any,
     *,
-    space_id: str,
+    repo_id: str,
     commit: str,
 ) -> None:
     try:
-        exists = api.repo_exists(repo_id=space_id, repo_type="space")
+        exists = api.repo_exists(repo_id=repo_id, repo_type="space")
     except Exception as exc:
         _raise_public_error(exc, not_found="repository")
     if not exists:
         raise HubRepositoryNotFound("Hugging Face Space does not exist")
     try:
         info = api.repo_info(
-            repo_id=space_id,
+            repo_id=repo_id,
             repo_type="space",
             revision=commit,
         )

@@ -58,17 +58,17 @@ class FakeMarketplaceHub:
             raise HubNetworkError("network unavailable")
         return self.catalog
 
-    def read_space_file(
+    def read_repository_file(
         self,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         path: str,
     ) -> bytes:
-        self.calls.append(("file", (space_id, commit, path)))
-        if self.failure == space_id:
+        self.calls.append(("file", (repo_id, commit, path)))
+        if self.failure == repo_id:
             raise HubNetworkError("space unavailable")
-        return self.manifests[(space_id, commit)]
+        return self.manifests[(repo_id, commit)]
 
 
 @dataclass
@@ -91,7 +91,7 @@ def test_empty_official_catalog_needs_no_login_or_space_reads() -> None:
     hub = FakeMarketplaceHub(catalog=_catalog([]))
     events = RecordingEvents()
 
-    result = load_official_marketplace(
+    result = load_official_marketplace(provider="huggingface",
         hub=hub,
         events=events,
         watcherobot_version="1.5.0",
@@ -114,8 +114,8 @@ def test_official_catalog_reads_each_manifest_at_its_fixed_commit() -> None:
     hub = FakeMarketplaceHub(
         catalog=_catalog(
             [
-                {"space_id": FIRST_SPACE, "commit": FIRST_COMMIT},
-                {"space_id": SECOND_SPACE, "commit": SECOND_COMMIT},
+                {"repo_id": FIRST_SPACE, "commit": FIRST_COMMIT},
+                {"repo_id": SECOND_SPACE, "commit": SECOND_COMMIT},
             ]
         ),
         manifests={
@@ -131,7 +131,7 @@ def test_official_catalog_reads_each_manifest_at_its_fixed_commit() -> None:
         },
     )
 
-    result = load_official_marketplace(
+    result = load_official_marketplace(provider="huggingface",
         hub=hub,
         watcherobot_version="1.5.0",
     )
@@ -144,7 +144,7 @@ def test_official_catalog_reads_each_manifest_at_its_fixed_commit() -> None:
     assert [app.compatible for app in result.applications] == [True, False]
     first = result.applications[0].to_dict()
     assert first == {
-        "space_id": FIRST_SPACE,
+        "repo_id": FIRST_SPACE,
         "commit": FIRST_COMMIT,
         "source_url": (
             f"https://huggingface.co/spaces/{FIRST_SPACE}/tree/{FIRST_COMMIT}"
@@ -175,12 +175,12 @@ def test_official_catalog_reads_each_manifest_at_its_fixed_commit() -> None:
         b"{}",
         json.dumps(
             [
-                {"space_id": FIRST_SPACE, "commit": FIRST_COMMIT},
-                {"space_id": FIRST_SPACE, "commit": SECOND_COMMIT},
+                {"repo_id": FIRST_SPACE, "commit": FIRST_COMMIT},
+                {"repo_id": FIRST_SPACE, "commit": SECOND_COMMIT},
             ]
         ).encode("utf-8"),
         json.dumps(
-            [{"space_id": FIRST_SPACE, "commit": "main"}]
+            [{"repo_id": FIRST_SPACE, "commit": "main"}]
         ).encode("utf-8"),
     ],
 )
@@ -190,7 +190,7 @@ def test_invalid_official_catalog_stops_before_space_reads(content: bytes) -> No
     )
 
     with pytest.raises(MarketplaceError) as captured:
-        load_official_marketplace(hub=hub, watcherobot_version="1.5.0")
+        load_official_marketplace(provider="huggingface", hub=hub, watcherobot_version="1.5.0")
 
     assert captured.value.code is ErrorCode.CATALOG_INVALID
     assert [name for name, _ in hub.calls] == ["catalog"]
@@ -199,7 +199,7 @@ def test_invalid_official_catalog_stops_before_space_reads(content: bytes) -> No
 def test_invalid_fixed_manifest_has_catalog_error_with_source_details() -> None:
     hub = FakeMarketplaceHub(
         catalog=_catalog(
-            [{"space_id": FIRST_SPACE, "commit": FIRST_COMMIT}]
+            [{"repo_id": FIRST_SPACE, "commit": FIRST_COMMIT}]
         ),
         manifests={
             (FIRST_SPACE, FIRST_COMMIT): _manifest(
@@ -211,11 +211,11 @@ def test_invalid_fixed_manifest_has_catalog_error_with_source_details() -> None:
     )
 
     with pytest.raises(MarketplaceError) as captured:
-        load_official_marketplace(hub=hub, watcherobot_version="1.5.0")
+        load_official_marketplace(provider="huggingface", hub=hub, watcherobot_version="1.5.0")
 
     assert captured.value.code is ErrorCode.CATALOG_INVALID
     assert captured.value.details == {
-        "space_id": FIRST_SPACE,
+        "repo_id": FIRST_SPACE,
         "commit": FIRST_COMMIT,
     }
 
@@ -223,7 +223,7 @@ def test_invalid_fixed_manifest_has_catalog_error_with_source_details() -> None:
 def test_manifest_id_must_match_the_reviewed_space_name() -> None:
     hub = FakeMarketplaceHub(
         catalog=_catalog(
-            [{"space_id": FIRST_SPACE, "commit": FIRST_COMMIT}]
+            [{"repo_id": FIRST_SPACE, "commit": FIRST_COMMIT}]
         ),
         manifests={
             (FIRST_SPACE, FIRST_COMMIT): _manifest(
@@ -234,7 +234,7 @@ def test_manifest_id_must_match_the_reviewed_space_name() -> None:
     )
 
     with pytest.raises(MarketplaceError) as captured:
-        load_official_marketplace(hub=hub, watcherobot_version="1.5.0")
+        load_official_marketplace(provider="huggingface", hub=hub, watcherobot_version="1.5.0")
 
     assert captured.value.code is ErrorCode.CATALOG_INVALID
     assert captured.value.details["id"] == "com.example.different"
@@ -244,7 +244,7 @@ def test_manifest_id_must_match_the_reviewed_space_name() -> None:
 def test_public_hub_failure_has_stable_remote_error(failure: str) -> None:
     hub = FakeMarketplaceHub(
         catalog=_catalog(
-            [{"space_id": FIRST_SPACE, "commit": FIRST_COMMIT}]
+            [{"repo_id": FIRST_SPACE, "commit": FIRST_COMMIT}]
         ),
         manifests={
             (FIRST_SPACE, FIRST_COMMIT): _manifest(
@@ -256,7 +256,7 @@ def test_public_hub_failure_has_stable_remote_error(failure: str) -> None:
     )
 
     with pytest.raises(MarketplaceError) as captured:
-        load_official_marketplace(hub=hub, watcherobot_version="1.5.0")
+        load_official_marketplace(provider="huggingface", hub=hub, watcherobot_version="1.5.0")
 
     assert captured.value.code is ErrorCode.REMOTE_ERROR
     assert "network unavailable" not in str(captured.value)

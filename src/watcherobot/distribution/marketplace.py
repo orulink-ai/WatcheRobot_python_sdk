@@ -18,6 +18,7 @@ from .catalog_submission import (
     parse_catalog_entries,
 )
 from .events import ErrorCode, EventSink, ProgressEvent
+from .providers import get_provider
 from .ports import HubError, MarketplaceHubClient
 
 
@@ -40,7 +41,7 @@ class MarketplaceError(RuntimeError):
 class MarketplaceApplication:
     """One reviewed fixed Application version for Desktop presentation."""
 
-    space_id: str
+    repo_id: str
     commit: str
     source_url: str
     schema_version: int
@@ -60,16 +61,17 @@ class MarketplaceApplication:
     def from_metadata(
         cls,
         *,
-        space_id: str,
+        repo_id: str,
         commit: str,
         metadata: ApplicationManifestMetadata,
+        provider: str,
         watcherobot_version: str,
     ) -> MarketplaceApplication:
         return cls(
-            space_id=space_id,
+            repo_id=repo_id,
             commit=commit,
             source_url=(
-                f"https://huggingface.co/spaces/{space_id}/tree/{commit}"
+                get_provider(provider).source_url(repo_id, commit)
             ),
             schema_version=metadata.schema_version,
             app_id=metadata.app_id,
@@ -87,7 +89,7 @@ class MarketplaceApplication:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "space_id": self.space_id,
+            "repo_id": self.repo_id,
             "commit": self.commit,
             "source_url": self.source_url,
             "schema_version": self.schema_version,
@@ -126,12 +128,14 @@ class _NullEvents:
 
 def load_official_marketplace(
     *,
+    provider: str,
     hub: MarketplaceHubClient,
     events: EventSink | None = None,
     watcherobot_version: str | None = None,
 ) -> OfficialMarketplace:
     """Read the official list and each app.json at its reviewed commit."""
 
+    get_provider(provider)
     sink: EventSink = events or _NullEvents()
     sink.emit(
         ProgressEvent(
@@ -141,7 +145,7 @@ def load_official_marketplace(
     )
     try:
         document = hub.read_public_catalog(
-            repo_id=CATALOG_REPO_ID,
+            repo_id=get_provider(provider).catalog,
             path=CATALOG_PATH,
         )
     except HubError as exc:
@@ -163,7 +167,7 @@ def load_official_marketplace(
     seen_app_ids: set[str] = set()
     for entry in entries:
         source_details: dict[str, object] = {
-            "space_id": entry.space_id,
+            "repo_id": entry.repo_id,
             "commit": entry.commit,
         }
         sink.emit(
@@ -174,8 +178,8 @@ def load_official_marketplace(
             )
         )
         try:
-            manifest_document = hub.read_space_file(
-                space_id=entry.space_id,
+            manifest_document = hub.read_repository_file(
+                repo_id=entry.repo_id,
                 commit=entry.commit,
                 path="app.json",
             )
@@ -199,8 +203,8 @@ def load_official_marketplace(
                 "An Application manifest in the official marketplace must use schema_version 2",
                 details=source_details,
             )
-        expected_space_id = f"WatcherRobot-{metadata.app_id}"
-        if entry.space_id.split("/", 1)[1] != expected_space_id:
+        expected_repo_id = f"WatcherRobot-{metadata.app_id}"
+        if entry.repo_id.split("/", 1)[1] != expected_repo_id:
             raise MarketplaceError(
                 ErrorCode.CATALOG_INVALID,
                 "A marketplace Space does not match its Application ID",
@@ -215,9 +219,10 @@ def load_official_marketplace(
         seen_app_ids.add(metadata.app_id)
         applications.append(
             MarketplaceApplication.from_metadata(
-                space_id=entry.space_id,
+                repo_id=entry.repo_id,
                 commit=entry.commit,
                 metadata=metadata,
+                provider=provider,
                 watcherobot_version=installed_version,
             )
         )

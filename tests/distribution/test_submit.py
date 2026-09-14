@@ -43,7 +43,7 @@ def _submit(
     events: RecordingEvents | None = None,
 ):
     return submit_application(
-        root,
+        root, provider="huggingface",
         commit=commit,
         credentials=credentials or FakeCredentialStore(AccessToken("token")),
         identity_hub=identity_hub or FakeIdentityHub(),
@@ -63,7 +63,7 @@ def test_submit_uses_published_snapshot_and_never_uploads_source(
     result = _submit(tmp_path, hub, events=events)
 
     assert result.to_dict() == {
-        "space_id": SPACE_ID,
+        "repo_id": SPACE_ID,
         "commit": SPACE_COMMIT,
         "source_url": (
             f"https://huggingface.co/spaces/{SPACE_ID}/tree/{SPACE_COMMIT}"
@@ -76,8 +76,8 @@ def test_submit_uses_published_snapshot_and_never_uploads_source(
     }
     assert [name for name, _ in hub.calls] == [
         "head",
-        "read_space_file",
-        "read_space_file",
+        "read_repository_file",
+        "read_repository_file",
         "read_catalog",
         "list_prs",
         "create_pr",
@@ -98,7 +98,7 @@ def test_submit_uses_published_snapshot_and_never_uploads_source(
         SPACE_COMMIT,
     )
     assert json.loads(create_pr_call[2]) == [
-        {"space_id": SPACE_ID, "commit": SPACE_COMMIT}
+        {"repo_id": SPACE_ID, "commit": SPACE_COMMIT}
     ]
     description = create_pr_call[5]
     assert isinstance(description, str)
@@ -123,7 +123,7 @@ def test_submit_can_target_an_explicit_published_commit(tmp_path: Path) -> None:
     assert result.commit == fixed_commit
     assert "head" not in [name for name, _ in hub.calls]
     assert hub.calls[0] == (
-        "read_space_file",
+        "read_repository_file",
         (SPACE_ID, fixed_commit, "app.json"),
     )
 
@@ -166,7 +166,7 @@ def test_submit_allows_missing_icon_and_uses_default_display(
     assert result.pr_status == "pending"
     assert [name for name, _ in hub.calls] == [
         "head",
-        "read_space_file",
+        "read_repository_file",
         "read_catalog",
         "list_prs",
         "create_pr",
@@ -190,7 +190,7 @@ def test_submit_rejects_local_manifest_that_differs_from_fixed_source(
 
     assert captured.value.code is ErrorCode.APP_MANIFEST_INVALID
     assert "does not match the published commit" in str(captured.value)
-    assert [name for name, _ in hub.calls] == ["head", "read_space_file"]
+    assert [name for name, _ in hub.calls] == ["head", "read_repository_file"]
 
 
 def test_catalog_already_contains_commit_without_creating_pr(
@@ -200,7 +200,7 @@ def test_catalog_already_contains_commit_without_creating_pr(
     hub = FakePublishHub(
         catalog=CatalogDocument(
             content=json.dumps(
-                [{"space_id": SPACE_ID, "commit": SPACE_COMMIT}]
+                [{"repo_id": SPACE_ID, "commit": SPACE_COMMIT}]
             ).encode("utf-8"),
             commit=CATALOG_COMMIT,
         )

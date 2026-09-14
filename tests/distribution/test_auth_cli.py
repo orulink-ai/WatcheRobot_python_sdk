@@ -86,7 +86,7 @@ def test_cli_app_login_jsonl_emits_instructions_and_never_starts_daemon(
 ) -> None:
     _install_fakes(monkeypatch)
 
-    exit_code = main(["app", "login", "--jsonl"])
+    exit_code = main(["app", "login", "--provider", "huggingface", "--jsonl"])
 
     captured = capsys.readouterr()
     events = _json_lines(captured.out)
@@ -126,7 +126,7 @@ def test_cli_app_login_status_jsonl_reuses_watcher_credential(
         token=AccessToken("hf_stored-token"),
     )
 
-    exit_code = main(["app", "login", "--status", "--jsonl"])
+    exit_code = main(["app", "login", "--provider", "huggingface", "--status", "--jsonl"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -154,7 +154,7 @@ def test_cli_app_logout_jsonl_deletes_exact_watcher_credential(
         token=AccessToken("hf_stored-token"),
     )
 
-    exit_code = main(["app", "logout", "--jsonl"])
+    exit_code = main(["app", "logout", "--provider", "huggingface", "--jsonl"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -172,7 +172,7 @@ def test_cli_app_logout_jsonl_deletes_exact_watcher_credential(
 def test_cli_app_login_status_human_output_is_english(monkeypatch, capsys) -> None:
     _install_fakes(monkeypatch, token=AccessToken("hf_stored-token"))
 
-    exit_code = main(["app", "login", "--status"])
+    exit_code = main(["app", "login", "--provider", "huggingface", "--status"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -186,7 +186,7 @@ def test_cli_app_logout_human_output_is_english(monkeypatch, capsys) -> None:
         token=AccessToken("hf_stored-token"),
     )
 
-    exit_code = main(["app", "logout"])
+    exit_code = main(["app", "logout", "--provider", "huggingface"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -210,7 +210,7 @@ def test_cli_app_login_jsonl_maps_sanitized_remote_error(
         raising=False,
     )
 
-    exit_code = main(["app", "login", "--jsonl"])
+    exit_code = main(["app", "login", "--provider", "huggingface", "--jsonl"])
 
     captured = capsys.readouterr()
     assert exit_code == 4
@@ -232,7 +232,7 @@ def test_cli_app_login_human_output_shows_authorization_and_identity(
 ) -> None:
     _install_fakes(monkeypatch)
 
-    exit_code = main(["app", "login"])
+    exit_code = main(["app", "login", "--provider", "huggingface"])
 
     captured = capsys.readouterr()
     assert exit_code == 0

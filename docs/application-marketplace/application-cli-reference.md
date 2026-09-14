@@ -27,11 +27,11 @@ watcherobot app init .\my_app
 cd my_app
 watcherobot app run
 watcherobot app check .
-watcherobot app login
-watcherobot app publish .
-watcherobot app submit .
-watcherobot app marketplace
-watcherobot app marketplace --details
+watcherobot app login --provider huggingface
+watcherobot app publish --provider huggingface .
+watcherobot app submit --provider huggingface .
+watcherobot app marketplace --provider huggingface
+watcherobot app marketplace --provider huggingface --details
 ```
 
 ## Supported commands
@@ -88,7 +88,7 @@ refuses to modify any existing target path.
 Use the default compact view for routine inspection:
 
 ```powershell
-watcherobot app marketplace
+watcherobot app marketplace --provider huggingface
 ```
 
 ```text
@@ -105,7 +105,7 @@ Incompatible  2.0.0        Future App               com.example.future
 Use the detailed view when reviewing source or choosing a snapshot:
 
 ```powershell
-watcherobot app marketplace --details
+watcherobot app marketplace --provider huggingface --details
 ```
 
 It includes the exact `Space`, `Source`, `Commit`, SDK requirement, author,
@@ -114,16 +114,16 @@ description, and dependencies for every reviewed Application.
 Watcher Desktop uses the machine form:
 
 ```powershell
-watcherobot app marketplace --jsonl
+watcherobot app marketplace --provider huggingface --jsonl
 ```
 
 ## Publishing and catalog review
 
 ```powershell
-watcherobot app login
+watcherobot app login --provider huggingface
 watcherobot app check .\my_app
-watcherobot app publish .\my_app
-watcherobot app submit .\my_app
+watcherobot app publish --provider huggingface .\my_app
+watcherobot app submit --provider huggingface .\my_app
 ```
 
 `publish` creates or updates the developer's public Space and returns its exact
@@ -140,7 +140,7 @@ HEAD.
 
 A new catalog PR renders the reviewed Manifest and immutable source link. It
 renders the fixed-revision icon when supplied, otherwise it marks the default
-icon fallback; `app-list.json` remains a minimal `space_id + commit` index.
+icon fallback; `app-list.json` remains a minimal `repo_id + commit` index.
 `submit` reports one of these catalog states:
 
 - `Pending review`: the official Dataset PR exists and still needs maintainer review.
@@ -154,8 +154,8 @@ branch is not an installable marketplace version.
 Create an empty staging directory, then use values from the reviewed marketplace:
 
 ```powershell
-watcherobot app download `
-  --space-id <user>/WatcherRobot-<app_id> `
+watcherobot app download --provider huggingface `
+  --repo-id <user>/WatcherRobot-<app_id> `
   --commit <40-character-commit> `
   --target .\staging\app
 ```
@@ -171,8 +171,8 @@ atomic local install.
 root and the locked Runtime directory that Desktop packages with the SDK:
 
 ```powershell
-watcherobot app install `
-  --space-id <user>/WatcherRobot-<app_id> `
+watcherobot app install --provider huggingface `
+  --repo-id <user>/WatcherRobot-<app_id> `
   --commit <40-character-commit> `
   --store-root <app-store-directory> `
   --runtime-root <locked-app-runtime-directory>
@@ -210,7 +210,7 @@ Examples:
 
 ```powershell
 watcher-distribution app check .\my_app --jsonl
-watcher-distribution app marketplace --jsonl
+watcher-distribution app marketplace --provider huggingface --jsonl
 watcher-distribution app list --store-root <app-store-directory> --jsonl
 ```
 
