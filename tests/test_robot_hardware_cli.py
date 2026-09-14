@@ -169,6 +169,21 @@ def test_hardware_cli_translates_camera_timeout_to_stable_error(monkeypatch) -> 
         run(args, runtime_state=SimpleNamespace(control_url="http://x", external_url="ws://x"), request_json=request)
 
 
+def test_camera_cli_allows_ptl_cold_start_before_timing_out(tmp_path: Path) -> None:
+    output = tmp_path / "photo.jpg"
+    args = build_parser().parse_args(["robot", "camera", "capture", "-o", str(output)])
+    observed: dict[str, object] = {}
+
+    def capture(**kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(data=b"jpeg", content_type="image/jpeg")
+
+    robot = SimpleNamespace(camera=SimpleNamespace(capture=capture))
+    assert _run_connected(args, robot) == 0
+    assert observed["timeout"] == 15.0
+    assert output.read_bytes() == b"jpeg"
+
+
 def test_audio_play_uses_media_duration_bounded_wait(tmp_path: Path) -> None:
     source = tmp_path / "tone.wav"
     source.write_bytes(b"placeholder")

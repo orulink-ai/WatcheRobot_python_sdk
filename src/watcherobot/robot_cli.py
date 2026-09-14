@@ -201,7 +201,7 @@ def _run_connected(args: argparse.Namespace, robot: WatcheRobot) -> int:
         if args.camera_command in {"capture", "cap"}:
             path = args.output or _timestamp_path("photo", ".jpg")
             partial = path.with_name(path.name + ".part")
-            image = robot.camera.capture(width=args.width, height=args.height, quality=args.quality)
+            image = robot.camera.capture(width=args.width, height=args.height, quality=args.quality, timeout=15.0)
             partial.write_bytes(image.data)
             partial.replace(path)
             return _emit(args, {"path": str(path.resolve()), "bytes": len(image.data), "content_type": image.content_type}, f"Photo saved: {path}")
