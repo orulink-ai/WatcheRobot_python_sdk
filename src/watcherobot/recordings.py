@@ -135,12 +135,12 @@ class HostRecording:
         if self._closed:
             raise RuntimeError("host recording stream is closed")
         if self._receiver.interrupted.is_set() and self._receiver.frames.empty():
-            raise RuntimeError("host recording interrupted: device connection lost; local partial WREC is retained")
+            raise WatcheRobotError("host recording interrupted: device connection lost; local partial WREC is retained")
         try:
             frame = self._receiver.frames.get(timeout=timeout)
         except queue.Empty as error:
             if self._receiver.interrupted.is_set():
-                raise RuntimeError("host recording interrupted: device connection lost; local partial WREC is retained") from error
+                raise WatcheRobotError("host recording interrupted: device connection lost; local partial WREC is retained") from error
             raise TimeoutError("host recording stream stalled") from error
         if frame.sequence != self._next_sequence:
             raise ValueError(
@@ -148,7 +148,7 @@ class HostRecording:
             )
         self._next_sequence = (self._next_sequence + 1) & 0xFFFFFFFF
         if frame.flags & FLAG_CANCEL:
-            raise RuntimeError("host recording was cancelled by the device")
+            raise WatcheRobotError("host recording was cancelled by the device")
         return frame
 
     def status(self) -> RecordingInfo:

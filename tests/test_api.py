@@ -94,7 +94,7 @@ def test_daemon_device_offline_event_interrupts_active_recording() -> None:
     recording = HostRecording(RecordingInfo("host_lost", "audio", "recording"), receiver, robot.recordings)
     transport.message_callback({"type": "daemon.device.state", "data": {"online": False}})
 
-    with pytest.raises(RuntimeError, match="device connection lost"):
+    with pytest.raises(WatcheRobotError, match="device connection lost"):
         recording.read(timeout=0.01)
     recording.close()
     robot.close()
@@ -109,7 +109,7 @@ def test_desktop_socket_disconnect_interrupts_active_recording() -> None:
     recording = HostRecording(RecordingInfo("host_lost", "audio", "recording"), receiver, robot.recordings)
     transport.disconnect_callback()
 
-    with pytest.raises(RuntimeError, match="device connection lost"):
+    with pytest.raises(WatcheRobotError, match="device connection lost"):
         recording.read(timeout=0.01)
     recording.close()
 

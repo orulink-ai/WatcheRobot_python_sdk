@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from watcherobot.errors import WatcheRobotError
 from watcherobot.protocol import FLAG_CANCEL, FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, BinaryFrame
 from watcherobot.recordings import (
     RecordingsDomain,
@@ -137,7 +138,7 @@ def test_host_recording_fails_closed_after_daemon_reports_device_offline() -> No
     recording = HostRecording(RecordingInfo("host_lost", "audio", "recording"), receiver, domain)
     domain.device_connection_lost()
 
-    with pytest.raises(RuntimeError, match="device connection lost"):
+    with pytest.raises(WatcheRobotError, match="device connection lost"):
         recording.read(timeout=0.01)
     recording.close()
 
@@ -153,7 +154,7 @@ def test_host_recording_preserves_queued_frames_before_disconnect_error() -> Non
     domain.device_connection_lost()
 
     assert recording.read(timeout=0.01) == frame
-    with pytest.raises(RuntimeError, match="device connection lost"):
+    with pytest.raises(WatcheRobotError, match="device connection lost"):
         recording.read(timeout=0.01)
     recording.close()
 
@@ -201,7 +202,7 @@ def test_host_recording_cancel_marker_is_an_explicit_failure() -> None:
         BinaryFrame(FRAME_RECORDING, FLAG_LAST | FLAG_CANCEL, recording.stream_id, 0, b"")
     )
 
-    with pytest.raises(RuntimeError, match="cancelled"):
+    with pytest.raises(WatcheRobotError, match="cancelled"):
         recording.read(timeout=0.1)
     recording.close()
 
