@@ -265,7 +265,12 @@ def _run_connected(args: argparse.Namespace, robot: WatcheRobot) -> int:
             return _emit(args, info.as_dict(), f"Recording {info.id}: {info.state}")
         if args.recording_command == "stop":
             info = robot.recordings.stop(args.recording_id)
-            return _emit(args, info.as_dict(), f"Recording stopped: {info.id}")
+            human = (
+                f"Host recording stop requested: {info.id}; check the original CLI for the final file"
+                if info.id.startswith("host_")
+                else f"Recording stopped: {info.id}"
+            )
+            return _emit(args, info.as_dict(), human)
         if args.recording_command == "delete":
             robot.recordings.delete(args.recording_id)
             return _emit(args, {"id": args.recording_id, "deleted": True}, f"Recording deleted: {args.recording_id}")

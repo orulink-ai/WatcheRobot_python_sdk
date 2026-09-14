@@ -39,6 +39,15 @@ def test_hardware_command_tree(arguments: list[str], attributes: dict[str, objec
         assert getattr(parsed, name) == value
 
 
+def test_host_recording_stop_reports_request_not_verified_completion(capsys: pytest.CaptureFixture[str]) -> None:
+    args = build_parser().parse_args(["robot", "recording", "stop", "host_1"])
+    info = RecordingInfo("host_1", "audio", "finalizing")
+    robot = SimpleNamespace(recordings=SimpleNamespace(stop=lambda _id: info))
+
+    assert _run_connected(args, robot) == 0
+    assert "stop requested" in capsys.readouterr().out.lower()
+
+
 def test_hardware_cli_rejects_active_application_before_opening_device_session() -> None:
     args = build_parser().parse_args(["robot", "capabilities"])
     def request(_base: str, path: str, **_kwargs):

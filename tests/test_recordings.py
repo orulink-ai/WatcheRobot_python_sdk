@@ -220,6 +220,19 @@ def test_host_recording_start_failure_releases_reserved_stream() -> None:
     assert domain._downloads == {}
 
 
+def test_stop_host_recording_does_not_poll_ephemeral_status() -> None:
+    class Robot:
+        def _command(self, message_type: str, _data: dict[str, object], timeout=None):
+            del timeout
+            assert message_type == "ctrl.recording.stop"
+            return {"data": {"recording_id": "host_1", "mode": "audio", "state": "finalizing"}}
+
+    info = RecordingsDomain(Robot()).stop("host_1")
+
+    assert info.id == "host_1"
+    assert info.state == "finalizing"
+
+
 def test_mux_uses_recording_timestamps_for_browser_compatible_av(tmp_path: Path) -> None:
     jpeg_buffer = io.BytesIO()
     Image.new("RGB", (32, 32), "blue").save(jpeg_buffer, format="JPEG")

@@ -377,6 +377,10 @@ class RecordingsDomain:
 
     def stop(self, recording_id: str) -> RecordingInfo:
         info = self.request_stop(recording_id)
+        if recording_id.startswith("host_"):
+            # Host streams have no on-device manifest; final status may vanish
+            # as soon as the terminal frame is sent to the original receiver.
+            return info
         deadline = time.monotonic() + 30.0
         while info.state in {"recording", "finalizing"} and time.monotonic() < deadline:
             time.sleep(0.1)

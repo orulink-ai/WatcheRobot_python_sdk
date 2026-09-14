@@ -9,6 +9,8 @@ watcherobot robot capabilities
 
 Daemon 只透明转发业务文本和 WSPK 二进制帧；CLI 不会建立绕过 Daemon 的设备连接。Application 运行时命令会明确拒绝，避免两个控制方同时占用媒体和硬件资源。
 
+机器人端请打开 **SDK Control** 应用（设备屏幕上也可能显示为 “Desktop Link”）。它会应答 `sys.sdk.ready.get` 并声明 `recording.host.v1` 等硬件能力。轻量 `client.app` 的配对界面同样叫 Desktop Link，但不提供这组硬件命令；若 `robot capabilities` 显示空能力列表，请先确认打开的是 SDK Control，再重新配对。
+
 ## 常用命令
 
 ```powershell
@@ -44,7 +46,7 @@ watcherobot robot recording delete rec_123
 
 明确传入 `--storage device` 时沿用设备 SD 可靠录制和可续传下载。下载或 MP4/WAV 封装失败会保留本地 WREC 临时目录和设备副本，重新运行 `recording download` 即可继续；只有显式 `recording delete` 才删除设备副本。
 
-`camera record --with-audio` 的 `av` 是设备端 JPEG 与 16 kHz 单声道 PCM 同步采集，不是 RTC 全双工通话。电脑使用记录中的单调时间戳生成 H.264/yuv420p + AAC MP4。无 `--duration` 时持续到 Ctrl+C 或 15 秒控制 heartbeat 超时；只有 `--storage device` 会受 SD 保护线约束，并保留 `max(256 MiB, SD 总容量 5%)`。
+`camera record --with-audio` 的 `av` 是设备端 JPEG 与 16 kHz 单声道 PCM 同步采集，不是 RTC 全双工通话。电脑使用记录中的单调时间戳生成 H.264/yuv420p + AAC MP4。主机录制即使指定 `--duration`，CLI 失联 15 秒后仍会停止采集；设备端录制仅在未指定时长时以相同心跳保护。只有 `--storage device` 会受 SD 保护线约束，并保留 `max(256 MiB, SD 总容量 5%)`。另一个终端对主机录制执行 `recording stop host_...` 只表示设备已收到停止请求，最终文件仍须由原录制 CLI 收到终止标记后生成。
 
 音频播放接受 WAV、MP3、OGG，由电脑转换为 24 kHz、16-bit、mono PCM，并继续遵守 4 MiB PCM 上限。灯区为 `side`、`bottom`、`all`，`head` 是 `side` 的兼容别名；摄像头和麦克风隐私指示灯由固件自动控制，`light status` 只读展示，任何 CLI 命令都不能覆盖。
 
