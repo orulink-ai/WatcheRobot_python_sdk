@@ -707,3 +707,23 @@ def test_control_rest_does_not_own_application_catalog_mutation() -> None:
         ).status_code
         == 404
     )
+
+
+def test_prepared_update_blocks_start_and_can_be_cancelled() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+    assert client.post('/daemon/prepare-update').status_code == 200
+    assert client.post('/daemon/application/start').status_code == 409
+    assert client.post('/daemon/application/restart').status_code == 409
+    assert controller.lifecycle_calls == []
+    assert client.post('/daemon/cancel-update').status_code == 200
+    assert client.post('/daemon/application/start').status_code == 200
+
+
+def test_update_does_not_interrupt_running_application() -> None:
+    controller = _ControllerStub()
+    controller.state = ApplicationState.RUNNING
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+    assert client.post('/daemon/prepare-update').status_code == 409
+    assert not controller.shutdown_requested
+    assert controller.lifecycle_calls == []

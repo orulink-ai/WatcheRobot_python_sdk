@@ -302,9 +302,9 @@ def submit_application(
 def _validate_submission_metadata(
     application: ApplicationCheckResult | ApplicationManifestMetadata,
 ) -> None:
-    if application.schema_version != 2:
+    if application.schema_version not in (2, 3):
         raise ApplicationManifestError(
-            "Catalog submission requires app.json schema_version 2"
+            "Catalog submission requires app.json schema_version 2 or 3"
         )
     missing = [
         field

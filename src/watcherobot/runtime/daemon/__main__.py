@@ -27,6 +27,9 @@ from watcherobot.runtime.daemon.runtime import DaemonRuntime
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="watcherobot-runtime")
+    parser.add_argument("--prepare-bundle", type=Path, help="Publish an immutable shared bundle and print its path; do not start a Daemon")
+    parser.add_argument("--ensure-shared", action="store_true")
+    parser.add_argument("--activate-shared", action="store_true")
     parser.add_argument(
         "--state-root",
         type=Path,
@@ -226,6 +229,23 @@ async def run_runtime(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.prepare_bundle is not None:
+        from watcherobot.runtime.repository import prepare_bundle
+
+        print(prepare_bundle(args.prepare_bundle))
+        return 0
+    if args.ensure_shared or args.activate_shared:
+        from watcherobot.runtime.manager import ensure_command
+
+        os.environ["WATCHER_RUNTIME_INSTANCE_ROOT"] = str(args.instance_root.resolve())
+        os.environ["WATCHER_RUNTIME_STATE_ROOT"] = str(args.state_root.resolve())
+        forwarded = [value for value in (argv if argv is not None else sys.argv[1:])
+                     if value not in ("--ensure-shared", "--activate-shared")]
+        command = [sys.executable]
+        if not getattr(sys, "frozen", False):
+            command.extend(["-m", "watcherobot.runtime.daemon"])
+        ensure_command(command + forwarded, activate=args.activate_shared)
+        return 0
     try:
         # Convert the invariant failure into an actionable argparse message.
         _validate_source_default_options(args)

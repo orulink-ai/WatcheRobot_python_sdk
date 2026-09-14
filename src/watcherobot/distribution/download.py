@@ -130,6 +130,7 @@ def download_application_snapshot(
         application = check_application(
             isolated_target,
             watcherobot_version=watcherobot_version,
+            daemon=True,
         )
         expected_space_name = f"WatcherRobot-{application.app_id}"
         if reference.space_id.split("/", 1)[1] != expected_space_name:

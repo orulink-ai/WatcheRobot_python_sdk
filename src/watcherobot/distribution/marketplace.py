@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from packaging.specifiers import SpecifierSet
 
 from watcherobot import __version__
 from watcherobot.runtime.daemon.application.manifest import (
@@ -81,7 +82,7 @@ class MarketplaceApplication:
             description=metadata.description,
             author=metadata.author,
             icon=metadata.icon,
-            compatible=metadata.supports_watcherobot(watcherobot_version),
+            compatible=(SpecifierSet(metadata.application_protocol).contains('1') if metadata.schema_version == 3 else metadata.supports_watcherobot(watcherobot_version)),
             host_compatible=metadata.supports_current_host_platform(),
         )
 
@@ -193,10 +194,10 @@ def load_official_marketplace(
                 "An Application manifest in the official marketplace is invalid",
                 details=source_details,
             ) from exc
-        if metadata.schema_version != 2:
+        if metadata.schema_version not in (2, 3):
             raise MarketplaceError(
                 ErrorCode.CATALOG_INVALID,
-                "An Application manifest in the official marketplace must use schema_version 2",
+                "An Application manifest in the official marketplace must use schema_version 2 or 3",
                 details=source_details,
             )
         expected_space_id = f"WatcherRobot-{metadata.app_id}"

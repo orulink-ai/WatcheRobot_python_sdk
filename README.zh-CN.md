@@ -1,5 +1,7 @@
 # WatcheRobot Python SDK
 
+运行时维护：[共享 Daemon、应用依赖与升级指南](docs/shared-runtime.zh-CN.md)。
+
 用 Python 控制 WatcheRobot 桌面机器人：几行代码就能让机器人做动作、说话、看世界。
 
 > 🌐 [English](README.md) | 中文

@@ -110,6 +110,20 @@ def test_empty_official_catalog_needs_no_login_or_space_reads() -> None:
     assert [event.stage for event in events.events] == ["fetching_catalog"]
 
 
+def test_schema_three_catalog_uses_daemon_protocol_not_application_sdk() -> None:
+    payload = json.loads(_manifest("com.example.first", name="First"))
+    payload["schema_version"] = 3
+    payload["requires_sdk"] = payload.pop("requires_watcherobot")
+    payload["requires_daemon"] = {"application_protocol": ">=1,<2"}
+    hub = FakeMarketplaceHub(
+        catalog=_catalog([{"space_id": FIRST_SPACE, "commit": FIRST_COMMIT}]),
+        manifests={(FIRST_SPACE, FIRST_COMMIT): json.dumps(payload).encode()},
+    )
+    result = load_official_marketplace(hub=hub, watcherobot_version="0.1.9")
+    assert result.applications[0].compatible
+    assert result.applications[0].schema_version == 3
+
+
 def test_official_catalog_reads_each_manifest_at_its_fixed_commit() -> None:
     hub = FakeMarketplaceHub(
         catalog=_catalog(
