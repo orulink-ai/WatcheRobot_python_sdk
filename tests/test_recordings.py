@@ -121,6 +121,8 @@ def test_host_recording_receiver_exists_before_device_can_send_first_chunk() -> 
     robot.domain = RecordingsDomain(robot)
     recording = robot.domain.start_host("audio")
 
+    assert recording._receiver.frames.maxsize == 1024
+
     frame = recording.read(timeout=0.1)
     assert frame.payload == payload
     assert frame.flags & FLAG_LAST
@@ -191,7 +193,7 @@ def test_host_recording_queue_overflow_cannot_look_like_success() -> None:
 
     domain = RecordingsDomain(Robot())
     recording = domain.start_host("audio")
-    for sequence in range(65):
+    for sequence in range(recording._receiver.frames.maxsize + 1):
         assert domain._on_binary(
             BinaryFrame(FRAME_RECORDING, 0, recording.stream_id, sequence, b"payload")
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -255,7 +256,7 @@ def test_capabilities_tolerates_older_firmware_without_storage(capsys) -> None:
 
 
 def test_audio_record_defaults_to_reliable_host_stream_and_writes_atomic_wav(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path,
 ) -> None:
     output = tmp_path / "recording.wav"
     encoded = encode_wrec_record(WrecRecord(WREC_PCM, 0, 0, 10, b"\x01\x00" * 160))
@@ -298,15 +299,13 @@ def test_audio_record_defaults_to_reliable_host_stream_and_writes_atomic_wav(
         start_host=start_host,
         heartbeat=heartbeats.append,
     ))
-    clock = iter((0.0, 6.0, 7.0))
-    monkeypatch.setattr("watcherobot.robot_cli.time.monotonic", lambda: next(clock))
     args = build_parser().parse_args(
         ["robot", "audio", "record", "--duration", "0.01", "-o", str(output), "--json"]
     )
 
     assert _run_connected(args, robot) == 0
     assert calls == [("audio", {"duration": 0.01})]
-    assert heartbeats == ["host_1"]
+    assert heartbeats == []  # An immediately completed stream needs no lease renewal.
     assert output.is_file()
     assert output.with_name(".recording.wrec").is_file()
     assert not output.with_name(".recording.wrec.part").exists()
@@ -363,7 +362,7 @@ def test_host_recording_disconnect_preserves_partial_without_publishing_output(
 
 @pytest.mark.parametrize("terminal_on_first_frame", [False, True])
 def test_host_recording_waits_for_terminal_marker_when_status_disappears(
-    tmp_path: Path, monkeypatch, terminal_on_first_frame: bool
+    tmp_path: Path, terminal_on_first_frame: bool
 ) -> None:
     output = tmp_path / "finished.wav"
     payload = encode_wrec_record(WrecRecord(WREC_PCM, 0, 0, 10, b"\x01\x00" * 160))
@@ -393,10 +392,56 @@ def test_host_recording_waits_for_terminal_marker_when_status_disappears(
         start_host=lambda *_args, **_kwargs: Recording(),
         heartbeat=lambda _id: None,
     ))
-    clock = iter((0.0, 6.0, 7.0))
-    monkeypatch.setattr("watcherobot.robot_cli.time.monotonic", lambda: next(clock))
     args = build_parser().parse_args(["robot", "audio", "record", "--duration", "0.01", "-o", str(output)])
 
     assert _run_connected(args, robot) == 0
     assert output.is_file()
     assert output.with_name(".finished.wrec").is_file()
+
+
+def test_host_recording_drains_frames_while_status_request_is_blocked(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "concurrent.wav"
+    media = encode_wrec_record(WrecRecord(WREC_PCM, 0, 0, 10, b"\x01\x00" * 160))
+    status_started = threading.Event()
+    heartbeat_sent = threading.Event()
+    second_frame_read = threading.Event()
+    read_calls = 0
+
+    class Recording:
+        id = "host_concurrent"
+        stream_id = 11
+        info = RecordingInfo("host_concurrent", "audio", "recording")
+
+        def read(self, timeout=None):
+            nonlocal read_calls
+            del timeout
+            read_calls += 1
+            if read_calls == 1:
+                return BinaryFrame(FRAME_RECORDING, FLAG_FIRST, 11, 0, media)
+            assert status_started.wait(1.0), "status poll never started"
+            assert heartbeat_sent.wait(1.0), "blocked status prevented heartbeat"
+            second_frame_read.set()
+            return BinaryFrame(FRAME_RECORDING, FLAG_LAST, 11, 1, b"")
+
+        def status(self):
+            status_started.set()
+            assert second_frame_read.wait(1.0), "status blocked frame draining"
+            return RecordingInfo("host_concurrent", "audio", "completed")
+
+        def stop(self):
+            raise AssertionError("completed recording must not be stopped")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("watcherobot.robot_cli._HOST_PROGRESS_INTERVAL_SECONDS", 0.01, raising=False)
+    monkeypatch.setattr("watcherobot.robot_cli._HOST_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+    robot = SimpleNamespace(recordings=SimpleNamespace(
+        start_host=lambda *_args, **_kwargs: Recording(),
+        heartbeat=lambda _id: heartbeat_sent.set(),
+    ))
+    args = build_parser().parse_args(["robot", "audio", "record", "--duration", "0.01", "-o", str(output)])
+
+    assert _run_connected(args, robot) == 0
+    assert output.is_file()
+    assert second_frame_read.is_set()

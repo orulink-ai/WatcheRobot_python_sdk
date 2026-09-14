@@ -9,6 +9,7 @@ import io
 import json
 import mimetypes
 import re
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +26,8 @@ _HARDWARE_COMMANDS = {"capabilities", "camera", "audio", "light", "screen", "rec
 _TERMINAL_RECORDING_STATES = {"completed", "interrupted", "failed"}
 _TERMINAL_MAINTENANCE_STATES = {"completed", "succeeded", "failed", "cancelled"}
 _WORK_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,22}$")
+_HOST_PROGRESS_INTERVAL_SECONDS = 10.0
+_HOST_HEARTBEAT_INTERVAL_SECONDS = 5.0
 
 
 class RobotCliError(RuntimeError):
@@ -320,48 +323,78 @@ def _record_to_host(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> 
     recording = robot.recordings.start_host(cast(RecordingMode, mode), **kwargs)
     _progress(args, {"event": "started", "storage": "host", **recording.info.as_dict()})
     info = recording.info
-    last_progress = time.monotonic()
     terminal_seen_at: float | None = None
     stop_requested = False
+    progress_stop = threading.Event()
+    terminal_received = threading.Event()
+    terminal_reported = threading.Event()
+    progress_error: list[BaseException] = []
 
-    def report_progress(now: float) -> None:
-        nonlocal info, last_progress, terminal_seen_at
-        if now - last_progress < 5.0:
-            return
-        current = _host_recording_status(recording)
-        if current is None or current.state in _TERMINAL_RECORDING_STATES:
-            if terminal_seen_at is None:
-                terminal_seen_at = now
-            elif now - terminal_seen_at >= 10.0:
-                raise RobotCliError("Host recording ended without a terminal stream marker")
-        else:
-            terminal_seen_at = None
-        if current is not None:
-            info = current
-            _progress(args, {"event": "progress", "storage": "host", **info.as_dict()})
-        if terminal_seen_at is None:
-            robot.recordings.heartbeat(recording.id)
-        last_progress = now
+    def report_progress() -> None:
+        nonlocal info, terminal_seen_at
+        while not progress_stop.wait(_HOST_PROGRESS_INTERVAL_SECONDS):
+            try:
+                current = _host_recording_status(recording)
+                if terminal_received.is_set() or progress_stop.is_set():
+                    return
+                now = time.monotonic()
+                if current is None or current.state in _TERMINAL_RECORDING_STATES:
+                    terminal_reported.set()
+                    if terminal_seen_at is None:
+                        terminal_seen_at = now
+                    elif now - terminal_seen_at >= 10.0:
+                        raise RobotCliError("Host recording ended without a terminal stream marker")
+                else:
+                    terminal_reported.clear()
+                    terminal_seen_at = None
+                if current is not None:
+                    info = current
+                    _progress(args, {"event": "progress", "storage": "host", **info.as_dict()})
+            except BaseException as error:
+                if not terminal_received.is_set():
+                    progress_error.append(error)
+                return
 
+    def maintain_heartbeat() -> None:
+        while not progress_stop.wait(_HOST_HEARTBEAT_INTERVAL_SECONDS):
+            if terminal_received.is_set() or terminal_reported.is_set():
+                return
+            try:
+                robot.recordings.heartbeat(recording.id)
+            except CommandError as error:
+                if error.reason == "recording_not_found":
+                    return  # Status worker waits for the terminal stream marker.
+                progress_error.append(error)
+                return
+            except BaseException as error:
+                progress_error.append(error)
+                return
+
+    progress_worker = threading.Thread(target=report_progress, daemon=True, name="watcherobot-recording-progress")
+    heartbeat_worker = threading.Thread(target=maintain_heartbeat, daemon=True, name="watcherobot-recording-heartbeat")
+    progress_worker.start()
+    heartbeat_worker.start()
     try:
         with partial.open("wb") as sink:
             while True:
+                if progress_error:
+                    raise progress_error[0]
                 try:
                     frame = recording.read(timeout=1.0)
                 except KeyboardInterrupt:
                     if stop_requested:
                         raise
+                    progress_stop.set()
                     info = recording.stop()
                     stop_requested = True
                     _progress(args, {"event": "stopping", "storage": "host", **info.as_dict()})
                     continue
                 except TimeoutError:
-                    report_progress(time.monotonic())
                     continue
                 sink.write(frame.payload)
                 if frame.flags & FLAG_LAST:
+                    terminal_received.set()
                     break
-                report_progress(time.monotonic())
     except BaseException:
         try:
             recording.stop()
@@ -369,6 +402,9 @@ def _record_to_host(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> 
             pass
         raise
     finally:
+        progress_stop.set()
+        progress_worker.join(timeout=12.0)
+        heartbeat_worker.join(timeout=12.0)
         recording.close()
     partial.replace(raw_path)
     records = list(iter_wrec_records([raw_path]))

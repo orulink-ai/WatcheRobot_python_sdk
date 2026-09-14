@@ -24,6 +24,7 @@ RecordingMode = Literal["video", "audio", "av"]
 RECORDING_CAPABILITY = "recording.device.v1"
 RECORDING_AV_CAPABILITY = "recording.device.av.v1"
 HOST_RECORDING_CAPABILITY = "recording.host.v1"
+HOST_RECORDING_QUEUE_FRAMES = 1024  # At most 16 MiB for 16 KiB WSPK chunks.
 DOWNLOAD_RESUME_CAPABILITY = "recording.download.resume.v1"
 WREC_HEADER = struct.Struct("<4sBBHIQII")
 WREC_MAGIC = b"WREC"
@@ -288,9 +289,9 @@ def mux_wrec_to_mp4(records: Iterable[WrecRecord], output_path: str | Path, *, w
 
 
 class _DownloadStream:
-    def __init__(self, stream_id: int) -> None:
+    def __init__(self, stream_id: int, *, max_frames: int = 64) -> None:
         self.stream_id = stream_id
-        self.frames: queue.Queue[BinaryFrame] = queue.Queue(maxsize=64)
+        self.frames: queue.Queue[BinaryFrame] = queue.Queue(maxsize=max_frames)
 
 
 class RecordingsDomain:
@@ -300,13 +301,13 @@ class RecordingsDomain:
         self._lock = threading.Lock()
         self._next_stream_id = 1
 
-    def _reserve_download(self) -> _DownloadStream:
+    def _reserve_download(self, *, max_frames: int = 64) -> _DownloadStream:
         with self._lock:
             for _ in range(65535):
                 stream_id = self._next_stream_id
                 self._next_stream_id = 1 if stream_id == 65535 else stream_id + 1
                 if stream_id not in self._downloads:
-                    receiver = _DownloadStream(stream_id)
+                    receiver = _DownloadStream(stream_id, max_frames=max_frames)
                     self._downloads[stream_id] = receiver
                     return receiver
         raise WatcheRobotError("no recording download stream is available")
@@ -353,7 +354,7 @@ class RecordingsDomain:
         self._robot._require_capability(HOST_RECORDING_CAPABILITY)
         if mode == "av":
             self._robot._require_capability(RECORDING_AV_CAPABILITY)
-        receiver = self._reserve_download()
+        receiver = self._reserve_download(max_frames=HOST_RECORDING_QUEUE_FRAMES)
         payload: dict[str, Any] = {
             "mode": mode,
             "storage": "host",
