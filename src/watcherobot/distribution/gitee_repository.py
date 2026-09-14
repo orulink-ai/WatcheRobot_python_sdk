@@ -228,13 +228,35 @@ class GiteeRepository:
             )
             root /= "repo"
             self.git.run(root, "read-tree", "--empty")
+            expected: dict[str, str] = {}
             for path, content in prepared:
                 destination = root / path
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(content)
-            # Only the explicitly collected publication files exist here. Do not
-            # let a bundled .gitignore silently remove them from the snapshot.
-            self.git.run(root, "add", "--all", "--force")
+                digest = hashlib.sha1(
+                    f"blob {len(content)}\0".encode() + content, usedforsecurity=False,
+                ).hexdigest()
+                actual = self.git.run(root, "hash-object", "-w", "--no-filters", "--", path)
+                if actual != digest:
+                    raise HubInvalidResponse("Published blob differs from source bytes")
+                self.git.run(root, "update-index", "--add", "--cacheinfo", "100644", digest, path)
+                expected[path] = digest
+            # Build the index from raw blobs, never running attributes or filters.
+            staged = self.git.run(root, "ls-files", "--stage", "-z")
+            actual_files: dict[str, str] = {}
+            for record in staged.split("\0"):
+                if not record:
+                    continue
+                try:
+                    metadata, path = record.split("\t", 1)
+                    mode, digest, stage = metadata.split()
+                except ValueError:
+                    raise HubInvalidResponse("Invalid publication index") from None
+                if mode != "100644" or stage != "0" or path in actual_files:
+                    raise HubInvalidResponse("Invalid publication index")
+                actual_files[path] = digest
+            if actual_files != expected:
+                raise HubInvalidResponse("Publication index differs from source snapshot")
             self.git.run(
                 root,
                 "-c",

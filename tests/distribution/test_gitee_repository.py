@@ -15,6 +15,37 @@ from watcherobot.distribution.ports import (
 SHA = "a" * 40
 
 
+@pytest.mark.parametrize("attributes,content", [
+    (b"*.txt text eol=lf\n", b"first\r\nsecond\r\n"),
+    (b"*.txt working-tree-encoding=UTF-16LE\n", "hello".encode("utf-16le")),
+    (b"*.txt ident\n", b"$Id: original $\n"),
+])
+def test_publish_preserves_bytes_despite_attributes(tmp_path, attributes, content):
+    import subprocess
+    from watcherobot.distribution.gitee_repository import GiteeGit
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+
+    class LocalGit(GiteeGit):
+        def run(self, root, *args, token=None):
+            args = tuple(str(remote) if arg.startswith("https://gitee.com/") else arg
+                         for arg in args)
+            return super().run(root, *args, token=None)
+
+    hub = GiteeRepository(git=LocalGit())
+    for payload in (b"initial", content):
+        hub.replace_repository_files(
+            AccessToken("test"), repo_id="alice/app",
+            files=(UploadFile.from_bytes(".gitattributes", attributes),
+                   UploadFile.from_bytes("asset.txt", payload)), commit_message="fixture",
+        )
+        stored = subprocess.check_output([
+            "git", "--git-dir", str(remote), "show", "HEAD:asset.txt",
+        ])
+        assert stored == payload
+
+
 def test_publish_preserves_explicit_files_even_when_gitignored(tmp_path):
     import subprocess
     from watcherobot.distribution.gitee_repository import GiteeGit
@@ -149,11 +180,19 @@ class Api:
 class Git:
     def __init__(self):
         self.calls = []
+        self.index = {}
 
     def run(self, root, *args, token=None):
         self.calls.append((args, token))
         if args[0] == "clone":
             (root / "repo").mkdir()
+        if args[0] == "hash-object":
+            data = (root / args[-1]).read_bytes()
+            return hashlib.sha1(f"blob {len(data)}\0".encode() + data, usedforsecurity=False).hexdigest()
+        if args[0] == "update-index":
+            self.index[args[-1]] = args[-2]
+        if args[0] == "ls-files":
+            return "".join(f"100644 {sha} 0\t{path}\0" for path, sha in self.index.items())
         return ""
 
 
@@ -172,6 +211,24 @@ def test_publish_atomic_non_force_push():
     ]
     assert all(token.value not in repr(args) for args, _ in git.calls)
     assert ("read-tree", "--empty") in [args for args, _ in git.calls]
+    assert not any(args[0] == "add" for args, _ in git.calls)
+
+
+@pytest.mark.parametrize("corrupt_command", ["hash-object", "ls-files"])
+def test_publish_integrity_failure_never_pushes(corrupt_command):
+    class CorruptGit(Git):
+        def run(self, root, *args, token=None):
+            result = super().run(root, *args, token=token)
+            return "" if args[0] == corrupt_command else result
+
+    git = CorruptGit()
+    with pytest.raises(HubInvalidResponse):
+        GiteeRepository(git=git).replace_repository_files(
+            AccessToken("test"), repo_id="alice/app",
+            files=(UploadFile.from_bytes("asset.txt", b"original"),),
+            commit_message="test",
+        )
+    assert not any(args[0] == "push" for args, _ in git.calls)
 
 
 def test_publish_accepts_unicode_resource_above_one_mib():

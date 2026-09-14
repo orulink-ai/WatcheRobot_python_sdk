@@ -70,8 +70,12 @@ def test_shared_directories_publish_and_export(tmp_path, directories_first):
 
     class LocalGit:
         def run(self, root, *args, **kwargs):
+            from watcherobot.distribution.gitee_repository import GiteeGit
             if args[0] == "clone":
                 (root / "repo").mkdir()
+                GiteeGit().run(root / "repo", "init", "--template=")
+            if args[0] in {"hash-object", "update-index", "ls-files", "read-tree"}:
+                return GiteeGit().run(root, *args)
             return ""
 
     GiteeRepository(git=LocalGit()).replace_repository_files(
