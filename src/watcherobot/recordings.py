@@ -134,9 +134,13 @@ class HostRecording:
     def read(self, timeout: float | None = None) -> BinaryFrame:
         if self._closed:
             raise RuntimeError("host recording stream is closed")
+        if self._receiver.interrupted.is_set() and self._receiver.frames.empty():
+            raise RuntimeError("host recording interrupted: device connection lost; local partial WREC is retained")
         try:
             frame = self._receiver.frames.get(timeout=timeout)
         except queue.Empty as error:
+            if self._receiver.interrupted.is_set():
+                raise RuntimeError("host recording interrupted: device connection lost; local partial WREC is retained") from error
             raise TimeoutError("host recording stream stalled") from error
         if frame.sequence != self._next_sequence:
             raise ValueError(
@@ -292,6 +296,7 @@ class _DownloadStream:
     def __init__(self, stream_id: int, *, max_frames: int = 64) -> None:
         self.stream_id = stream_id
         self.frames: queue.Queue[BinaryFrame] = queue.Queue(maxsize=max_frames)
+        self.interrupted = threading.Event()
 
 
 class RecordingsDomain:
@@ -315,6 +320,13 @@ class RecordingsDomain:
     def _release_stream(self, stream_id: int) -> None:
         with self._lock:
             self._downloads.pop(stream_id, None)
+
+    def device_connection_lost(self) -> None:
+        """Fail active transfers closed when Daemon reports a device socket reset."""
+        with self._lock:
+            receivers = tuple(self._downloads.values())
+        for receiver in receivers:
+            receiver.interrupted.set()
 
     @staticmethod
     def _validate_start_options(

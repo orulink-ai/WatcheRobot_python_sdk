@@ -59,6 +59,32 @@ def test_hardware_cli_rejects_active_application_before_opening_device_session()
         run(args, runtime_state=SimpleNamespace(control_url="http://x", external_url="ws://x"), request_json=request)
 
 
+def test_hardware_cli_never_reports_an_empty_timeout_error(monkeypatch) -> None:
+    args = build_parser().parse_args(["robot", "capabilities"])
+
+    class Session:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def set_callbacks(self, *_args):
+            pass
+
+        def start(self):
+            raise TimeoutError()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("watcherobot.robot_cli.DesktopRobotSession", Session)
+    monkeypatch.setattr("watcherobot.robot_cli.WatcheRobot", lambda session: SimpleNamespace(close=session.close))
+
+    def request(_base: str, path: str, **_kwargs):
+        return {"application": {"state": "stopped"}} if path == "/daemon/status" else {"device": {"online": True}}
+
+    with pytest.raises(RobotCliError, match="timed out"):
+        run(args, runtime_state=SimpleNamespace(control_url="http://x", external_url="ws://x"), request_json=request)
+
+
 def test_stable_work_id_is_legal_and_content_addressed() -> None:
     first = _stable_work_id(Path("我的 动画.GIF"), b"one")
     second = _stable_work_id(Path("我的 动画.GIF"), b"two")

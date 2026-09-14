@@ -178,7 +178,8 @@ def run(
     except RobotCliError:
         raise
     except (OSError, TimeoutError, ValueError) as error:
-        raise RobotCliError(str(error)) from error
+        detail = str(error).strip() or f"Robot command timed out ({type(error).__name__})"
+        raise RobotCliError(detail) from error
     finally:
         robot.close()
 

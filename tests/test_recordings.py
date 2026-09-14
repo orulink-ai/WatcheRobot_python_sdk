@@ -129,6 +129,35 @@ def test_host_recording_receiver_exists_before_device_can_send_first_chunk() -> 
     recording.close()
 
 
+def test_host_recording_fails_closed_after_daemon_reports_device_offline() -> None:
+    domain = RecordingsDomain(object())
+    receiver = domain._reserve_download(max_frames=2)
+    from watcherobot.recordings import HostRecording, RecordingInfo
+
+    recording = HostRecording(RecordingInfo("host_lost", "audio", "recording"), receiver, domain)
+    domain.device_connection_lost()
+
+    with pytest.raises(RuntimeError, match="device connection lost"):
+        recording.read(timeout=0.01)
+    recording.close()
+
+
+def test_host_recording_preserves_queued_frames_before_disconnect_error() -> None:
+    domain = RecordingsDomain(object())
+    receiver = domain._reserve_download(max_frames=2)
+    from watcherobot.recordings import HostRecording, RecordingInfo
+
+    recording = HostRecording(RecordingInfo("host_lost", "audio", "recording"), receiver, domain)
+    frame = BinaryFrame(FRAME_RECORDING, FLAG_FIRST, receiver.stream_id, 0, b"queued")
+    domain._on_binary(frame)
+    domain.device_connection_lost()
+
+    assert recording.read(timeout=0.01) == frame
+    with pytest.raises(RuntimeError, match="device connection lost"):
+        recording.read(timeout=0.01)
+    recording.close()
+
+
 def test_host_recording_rejects_transport_sequence_gap() -> None:
     class Robot:
         capabilities = ("recording.host.v1",)

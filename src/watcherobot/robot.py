@@ -1421,6 +1421,11 @@ class WatcheRobot:
         return True
 
     def _on_message(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "daemon.device.state":
+            data = message.get("data", {})
+            if isinstance(data, dict) and data.get("online") is False:
+                self.recordings.device_connection_lost()
+            return
         if message.get("type") == "evt.face_tracking.preview.frame":
             with self._face_tracking_lock:
                 preview = self._face_tracking_preview
@@ -1574,6 +1579,7 @@ class WatcheRobot:
             self._image_queue.put_nowait(image)
 
     def _on_disconnect(self) -> None:
+        self.recordings.device_connection_lost()
         with self._media_lock:
             was_closed = self._closed
             self._closed = True
