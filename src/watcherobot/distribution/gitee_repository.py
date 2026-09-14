@@ -212,8 +212,9 @@ class GiteeRepository:
         if len(prepared) > MAX_SNAPSHOT_FILES or sum(len(v) for _, v in prepared) > MAX_SNAPSHOT_BYTES:
             raise HubInvalidResponse("Application snapshot exceeds limits")
         seen: set[str] = set()
+        nodes: dict[str, tuple[str, bool]] = {}
         for path, _ in prepared:
-            _validate_snapshot_path(repo_id, "0" * 40, path, seen)
+            _validate_snapshot_path(repo_id, "0" * 40, path, seen, nodes)
         with tempfile.TemporaryDirectory(prefix="watcher-gitee-publish-") as tmp:
             root = Path(tmp)
             self.git.run(
@@ -413,10 +414,14 @@ class GiteeRepository:
             raise HubInvalidResponse("Incomplete Gitee source tree")
         files = []
         seen: set[str] = set()
+        nodes: dict[str, tuple[str, bool]] = {}
         total = 0
         for item in tree["tree"]:
             path = item.get("path")
-            _validate_snapshot_path(repo_id, commit, path, seen)
+            _validate_snapshot_path(
+                repo_id, commit, path, seen, nodes,
+                is_directory=item.get("type") == "tree",
+            )
             if item.get("type") == "tree" and item.get("mode") in ("40000", "040000"):
                 continue
             if item.get("type") != "blob" or item.get("mode") not in (
@@ -459,6 +464,7 @@ class GiteeRepository:
 
 def _validate_snapshot_path(
     repo_id: str, commit: str, path: str, seen: set[str],
+    nodes: dict[str, tuple[str, bool]], *, is_directory: bool = False,
 ) -> None:
     """Apply identical portable path rules before publication or export."""
     _validate_reference(repo_id, commit, path)
@@ -476,6 +482,15 @@ def _validate_snapshot_path(
     }
     if any(part.split(".")[0].casefold() in reserved for part in parts):
         raise HubInvalidResponse("Snapshot contains a reserved Windows filename")
+    # Publication lists files only; Git export also lists explicit directories.
+    # Record implicit parents so both representations enforce the same tree.
+    for depth in range(1, len(parts) + 1):
+        prefix = "/".join(parts[:depth])
+        node = (prefix, depth < len(parts) or is_directory)
+        previous = nodes.get(prefix.casefold())
+        if previous is not None and previous != node:
+            raise HubInvalidResponse("Conflicting snapshot directory spelling or type")
+        nodes[prefix.casefold()] = node
     seen.add(key)
 
 
