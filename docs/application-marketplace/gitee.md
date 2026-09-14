@@ -48,6 +48,21 @@ publish 不投稿；submit 不上传源码；必须先发布，且本地 app.jso
 
 ## 本轮验证记录
 
+### 2026-09-14 正式 Gitee 链路复验
+
+验收代码为 SDK `513f29fc74080d341ffef7b561b38e5cc07e67d4`，Windows / Python 3.12.13。以下结果优先于后文历史记录。
+
+- qiqi779 重新发布当前 UI 示例，固定提交 `cba9f1216c1a9d3a15408a14b0a14b1c3b280641`，包含 shutdown_requested 停止处理。
+- SDK 向正式目录创建 [PR !1](https://gitee.com/orulink-sz/watcherobot-app-store/pulls/1)，返回 pending；随后平台侧于 09:42:23 合并，验收进程未执行合并。
+- 再次投稿返回 already_listed，无新增 PR；匿名 marketplace 回读正式目录提交 `b4d5e0e8659782af5e1c57902c59fd4698537f86`，显示该固定版本，SDK 与主机兼容性均为 true。
+- 从当前 SDK 构建 0.1.9 wheel，SHA256 为 `9702b134408d3af68cd21359fb4626dfbe8c3d8dd20c94ba8222da6e025e2275`；配合重新下载且源包哈希、解包树哈希均匹配原清单的 Python 3.12.13，组装隔离 Runtime。未覆盖桌面 Runtime。
+- 旧验收 Python 副本完整性不匹配被安装器拒绝；未修改校验规则或以重算哈希放行，改用已校验的干净源包后安装成功。
+- 真实 CLI install 完成匿名固定版本下载、独立环境、依赖安装及来源记录；23 个源文件与本地发布源逐字节一致，安装副本未补丁修改。
+- 用安装后的 wheel 提供的 ApplicationRuntimeManager 受管启动该应用：running；首页、JS、CSS 均 HTTP 200；停止退出码 0、进程释放、监听端口关闭。没有连接硬件；注入的设备状态地址不提供真实设备服务，不计作设备功能验收。
+- 验收脚本最初使用父进程端口枚举未发现 Windows 子进程监听，改为解析本次启动日志的地址后完成 HTTP 检查；未修改 SDK 或示例来绕过。
+
+剩余项：正式目录 master 的 API 返回 protected=false，需要组织管理员明确并启用分支保护策略。当前只证明投稿经 PR 收录，不证明服务端已禁止管理员或写入成员直写。Desktop 正式打包、硬件和 macOS/Linux 不在本次验收范围。标准 SDK 登录槽未改动，前测凭据仅用于验收进程。
+
 以下按验证阶段保留历史结果，不代表每个阶段的限制仍然存在。当前源码以后续补齐结果为准；正式发布验收仍需核实 HF 线上目录、Gitee 分支保护和新版 Runtime/示例发布。这些验收与 SDK 本轮功能对齐区分记录。
 
 ### HF / Gitee 功能对齐结论
