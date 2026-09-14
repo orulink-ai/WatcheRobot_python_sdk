@@ -211,10 +211,9 @@ class GiteeRepository:
         ]
         if len(prepared) > MAX_SNAPSHOT_FILES or sum(len(v) for _, v in prepared) > MAX_SNAPSHOT_BYTES:
             raise HubInvalidResponse("Application snapshot exceeds limits")
+        seen: set[str] = set()
         for path, _ in prepared:
-            _validate_reference(repo_id, "0" * 40, path)
-            if any(part.casefold() == ".git" for part in path.split("/")):
-                raise HubInvalidResponse("Git metadata cannot be published")
+            _validate_snapshot_path(repo_id, "0" * 40, path, seen)
         with tempfile.TemporaryDirectory(prefix="watcher-gitee-publish-") as tmp:
             root = Path(tmp)
             self.git.run(
@@ -413,30 +412,11 @@ class GiteeRepository:
         ):
             raise HubInvalidResponse("Incomplete Gitee source tree")
         files = []
-        seen = set()
+        seen: set[str] = set()
         total = 0
         for item in tree["tree"]:
             path = item.get("path")
-            _validate_reference(repo_id, commit, path)
-            key = path.casefold()
-            if key in seen or any(
-                p.casefold() == ".git" or p.endswith((".", " "))
-                for p in path.split("/")
-            ):
-                raise HubInvalidResponse("Unsafe or duplicate snapshot path")
-            reserved = {
-                "con",
-                "prn",
-                "aux",
-                "nul",
-                *(f"com{i}" for i in range(1, 10)),
-                *(f"lpt{i}" for i in range(1, 10)),
-            }
-            if any(p.split(".")[0].casefold() in reserved for p in path.split("/")):
-                raise HubInvalidResponse(
-                    "Snapshot contains a reserved Windows filename"
-                )
-            seen.add(key)
+            _validate_snapshot_path(repo_id, commit, path, seen)
             if item.get("type") == "tree" and item.get("mode") in ("40000", "040000"):
                 continue
             if item.get("type") != "blob" or item.get("mode") not in (
@@ -475,6 +455,28 @@ class GiteeRepository:
                 shutil.rmtree(child) if child.is_dir() else child.unlink()
             raise
         return RepositoryRevision(commit, f"https://gitee.com/{repo_id}/tree/{commit}")
+
+
+def _validate_snapshot_path(
+    repo_id: str, commit: str, path: str, seen: set[str],
+) -> None:
+    """Apply identical portable path rules before publication or export."""
+    _validate_reference(repo_id, commit, path)
+    key = path.casefold()
+    parts = path.split("/")
+    if key in seen or any(
+        part.casefold() == ".git" or part.endswith((".", " "))
+        for part in parts
+    ):
+        raise HubInvalidResponse("Unsafe or duplicate snapshot path")
+    reserved = {
+        "con", "prn", "aux", "nul",
+        *(f"com{i}" for i in range(1, 10)),
+        *(f"lpt{i}" for i in range(1, 10)),
+    }
+    if any(part.split(".")[0].casefold() in reserved for part in parts):
+        raise HubInvalidResponse("Snapshot contains a reserved Windows filename")
+    seen.add(key)
 
 
 def _upload_bytes(file: UploadFile) -> bytes:

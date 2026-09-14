@@ -132,9 +132,9 @@ def add_distribution_commands(
     )
     publish = app_commands.add_parser(
         "publish",
-        help="Publish Application source to its public Space",
+        help="Publish Application source to its public repository",
         description=(
-            "Validate and publish one public immutable source snapshot. This "
+            "Validate and publish one public immutable repository snapshot. This "
             "command does not modify the official marketplace catalog."
         ),
     )
@@ -162,7 +162,7 @@ def add_distribution_commands(
         "--commit",
         help=(
             "Exact 40-character published commit; omit to submit the current "
-            "Space HEAD"
+            "repository HEAD"
         ),
     )
     _add_jsonl_argument(submit)
@@ -192,7 +192,7 @@ def add_distribution_commands(
     download.add_argument(
         "--repo-id",
         required=True,
-        help="Hugging Face Space, for example user/WatcherRobot-com.example.app",
+        help="Application repository, for example user/WatcherRobot-com.example.app",
     )
     download.add_argument(
         "--commit",
@@ -217,7 +217,7 @@ def add_distribution_commands(
     install.add_argument(
         "--repo-id",
         required=True,
-        help="Hugging Face Space, for example user/WatcherRobot-com.example.app",
+        help="Application repository, for example user/WatcherRobot-com.example.app",
     )
     install.add_argument(
         "--commit",
