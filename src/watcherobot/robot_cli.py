@@ -18,7 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 from .desktop_session import DesktopRobotSession
 from .errors import CommandError
 from .protocol import FLAG_LAST
-from .recordings import RecordingMode, iter_wrec_records, mux_wrec_to_mp4, write_pcm_wav
+from .recordings import HostRecording, RecordingInfo, RecordingMode, iter_wrec_records, mux_wrec_to_mp4, write_pcm_wav
 from .robot import WatcheRobot
 
 _HARDWARE_COMMANDS = {"capabilities", "camera", "audio", "light", "screen", "recording"}
@@ -316,7 +316,28 @@ def _record_to_host(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> 
     _progress(args, {"event": "started", "storage": "host", **recording.info.as_dict()})
     info = recording.info
     last_progress = time.monotonic()
+    terminal_seen_at: float | None = None
     stop_requested = False
+
+    def report_progress(now: float) -> None:
+        nonlocal info, last_progress, terminal_seen_at
+        if now - last_progress < 5.0:
+            return
+        current = _host_recording_status(recording)
+        if current is None or current.state in _TERMINAL_RECORDING_STATES:
+            if terminal_seen_at is None:
+                terminal_seen_at = now
+            elif now - terminal_seen_at >= 10.0:
+                raise RobotCliError("Host recording ended without a terminal stream marker")
+        else:
+            terminal_seen_at = None
+        if current is not None:
+            info = current
+            _progress(args, {"event": "progress", "storage": "host", **info.as_dict()})
+        if terminal_seen_at is None:
+            robot.recordings.heartbeat(recording.id)
+        last_progress = now
+
     try:
         with partial.open("wb") as sink:
             while True:
@@ -330,27 +351,12 @@ def _record_to_host(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> 
                     _progress(args, {"event": "stopping", "storage": "host", **info.as_dict()})
                     continue
                 except TimeoutError:
-                    now = time.monotonic()
-                    if now - last_progress >= 5.0:
-                        info = recording.status()
-                        _progress(args, {"event": "progress", "storage": "host", **info.as_dict()})
-                        if info.state in _TERMINAL_RECORDING_STATES:
-                            raise RobotCliError("Host recording ended without a terminal stream marker")
-                        robot.recordings.heartbeat(recording.id)
-                        last_progress = now
+                    report_progress(time.monotonic())
                     continue
                 sink.write(frame.payload)
-                now = time.monotonic()
-                if now - last_progress >= 5.0:
-                    info = recording.status()
-                    _progress(args, {"event": "progress", "storage": "host", **info.as_dict()})
-                    if info.state in _TERMINAL_RECORDING_STATES and not frame.flags & FLAG_LAST:
-                        raise RobotCliError("Host recording ended without a terminal stream marker")
-                    if info.state not in _TERMINAL_RECORDING_STATES:
-                        robot.recordings.heartbeat(recording.id)
-                    last_progress = now
                 if frame.flags & FLAG_LAST:
                     break
+                report_progress(time.monotonic())
     except BaseException:
         try:
             recording.stop()
@@ -380,6 +386,15 @@ def _record_to_host(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> 
         "bytes": raw_path.stat().st_size,
     }
     return _emit(args, payload, f"Recording saved: {output}")
+
+
+def _host_recording_status(recording: HostRecording) -> RecordingInfo | None:
+    try:
+        return recording.status()
+    except CommandError as error:
+        if error.reason == "recording_not_found":
+            return None
+        raise
 
 
 def _download(args: argparse.Namespace, robot: WatcheRobot) -> int:

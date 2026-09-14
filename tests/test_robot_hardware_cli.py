@@ -350,3 +350,44 @@ def test_host_recording_disconnect_preserves_partial_without_publishing_output(
     assert not output.with_name(".interrupted.wrec").exists()
     assert recording.stop_calls == 1
     assert recording.closed
+
+
+@pytest.mark.parametrize("terminal_on_first_frame", [False, True])
+def test_host_recording_waits_for_terminal_marker_when_status_disappears(
+    tmp_path: Path, monkeypatch, terminal_on_first_frame: bool
+) -> None:
+    output = tmp_path / "finished.wav"
+    payload = encode_wrec_record(WrecRecord(WREC_PCM, 0, 0, 10, b"\x01\x00" * 160))
+    frames = [BinaryFrame(FRAME_RECORDING, FLAG_LAST if terminal_on_first_frame else FLAG_FIRST, 11, 0, payload)]
+    if not terminal_on_first_frame:
+        frames.append(BinaryFrame(FRAME_RECORDING, FLAG_LAST, 11, 1, b""))
+
+    class Recording:
+        id = "host_ended"
+        stream_id = 11
+        info = RecordingInfo("host_ended", "audio", "recording")
+
+        def read(self, timeout=None):
+            del timeout
+            return frames.pop(0)
+
+        def status(self):
+            raise CommandError("recording.status", "recording_not_found")
+
+        def stop(self):
+            raise AssertionError("completed recording must not be stopped")
+
+        def close(self):
+            pass
+
+    robot = SimpleNamespace(recordings=SimpleNamespace(
+        start_host=lambda *_args, **_kwargs: Recording(),
+        heartbeat=lambda _id: None,
+    ))
+    clock = iter((0.0, 6.0, 7.0))
+    monkeypatch.setattr("watcherobot.robot_cli.time.monotonic", lambda: next(clock))
+    args = build_parser().parse_args(["robot", "audio", "record", "--duration", "0.01", "-o", str(output)])
+
+    assert _run_connected(args, robot) == 0
+    assert output.is_file()
+    assert output.with_name(".finished.wrec").is_file()
