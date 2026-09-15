@@ -1,5 +1,7 @@
 # WatcheRobot Python SDK
 
+Runtime maintainers: [Shared Daemon, application dependencies and upgrade guide](docs/shared-runtime.zh-CN.md).
+
 Control your WatcheRobot desktop robot with Python: a few lines of code to make it move, speak, and see.
 
 [![PyPI](https://img.shields.io/pypi/v/watcherobot)](https://pypi.org/project/watcherobot/)

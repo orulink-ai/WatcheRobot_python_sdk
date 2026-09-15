@@ -191,7 +191,7 @@ def test_environment_runner_retries_one_transient_nonzero_exit(
     assert attempts == 2
 
 
-def test_invalid_cached_runtime_is_archived_and_rebuilt(tmp_path: Path) -> None:
+def test_legacy_runtime_is_preserved_when_publishing_new_runtime(tmp_path: Path) -> None:
     source = tmp_path / "published-source"
     _write_source(source)
     runtime = tmp_path / "runtime-source"
@@ -212,9 +212,9 @@ def test_invalid_cached_runtime_is_archived_and_rebuilt(tmp_path: Path) -> None:
 
     archived_runtimes = list(store_root.joinpath("trash").glob("*-runtime"))
     assert installed.application_id == "com.example.demo"
-    assert store_root.joinpath("runtime/runtime.json").is_file()
-    assert len(archived_runtimes) == 1
-    assert archived_runtimes[0].joinpath("invalid.txt").read_text(encoding="utf-8") == "stale"
+    assert list(store_root.glob("runtimes/*/runtime.json"))
+    assert len(archived_runtimes) == 0
+    assert stale_runtime.joinpath("invalid.txt").read_text(encoding="utf-8") == "stale"
 
 
 @pytest.mark.parametrize(
