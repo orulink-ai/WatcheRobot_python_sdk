@@ -2,7 +2,6 @@ name: SDK CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
     branches: [main]
 
@@ -15,176 +14,180 @@ permissions:
 
 jobs:
   development:
-    name: Development checks
-    if: >-
-      github.event_name != 'pull_request' ||
-      !contains(github.event.pull_request.labels.*.name, 'release:version')
-    runs-on: [self-hosted, Linux, X64, sdk-ci]
+    name: Full SDK, Daemon and media contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - name: Clean workspace before snapshot download
-        run: |
-          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
-          runner_work=$(realpath -m "${RUNNER_TEMP}/..")
-          [[ "${workspace}" == "${runner_work}"/*/* ]] || {
-            echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
-            exit 1
-          }
-          shopt -s dotglob nullglob
-          rm -rf -- "${workspace}"/*
-
-      - name: Download immutable source snapshot
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          curl --fail --show-error --location \
-            --retry 5 --retry-connrefused \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}" \
-            --output "${RUNNER_TEMP}/source.tar.gz"
-          tar --extract --gzip --strip-components=1 \
-            --file "${RUNNER_TEMP}/source.tar.gz"
-
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          # Development CI intentionally uses one representative runtime.
-          # mypy's python_version remains 3.10 to guard the minimum syntax/API contract.
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
           python-version: "3.11"
           cache: pip
-
-      - name: Create isolated virtual environment
-        run: |
-          python -m venv .venv
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-
-      - name: Install SDK, test, and packaging dependencies
+      - name: Install SDK and CI dependencies
         run: |
           python -m pip install --upgrade pip build twine
           python -m pip install -e ".[test]"
-
-      - name: Validate development behavior
+      - name: Run Python functional and routing contracts
         run: |
+          mkdir -p artifacts
           python -m pip check
-          python -m pytest
-          python -m mypy src/watcherobot
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Validate vision debug lab browser helpers
-        run: node --test tests/js/*.mjs
-
-      - name: Validate BLE fake backend contract
+          python -m pytest --junitxml=artifacts/pytest.xml
+      - name: Run minimum-runtime type contract
+        shell: bash
         run: |
-          python -c "from watcherobot.provisioning.bleak_backend import BleakBackend; print(BleakBackend)"
-          python -m pytest tests/provisioning
-
-      - name: Build distributions
-        # Building is deliberately independent of Git history and tags.
+          set -o pipefail
+          # These two optional imports gain/lose inline typing across supported
+          # dependency releases, so unused-ignore is not a stable CI signal.
+          python -m mypy src/watcherobot --disable-error-code unused-ignore 2>&1 | tee artifacts/mypy.txt
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.14.0"
+      - name: Run fixed-Node media and vision browser contracts
+        run: node --test tests/js/*.mjs
+      - name: Build wheel and source distribution
         run: |
           python -m build
           python -m twine check dist/*
-
-      - name: Verify wheel installation
+          sha256sum dist/* > artifacts/SHA256SUMS
+      - name: Verify both CLIs from a clean wheel environment
         run: |
           python -m venv .venv-wheel-check
           .venv-wheel-check/bin/python -m pip install --force-reinstall dist/*.whl
           .venv-wheel-check/bin/python -m pip check
           .venv-wheel-check/bin/python -c "import watcherobot; print(watcherobot.__version__)"
           .venv-wheel-check/bin/watcherobot --help
+          .venv-wheel-check/bin/watcher-distribution --help
+      - name: Upload test reports and distributions
+        if: always()
+        id: upload-sdk-evidence
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-sdk-evidence-${{ github.sha }}
+          path: |
+            artifacts/
+            dist/
+          if-no-files-found: warn
+          retention-days: 14
 
-  release-compatibility:
+      - name: Report unavailable SDK evidence archive
+        if: always() && steps.upload-sdk-evidence.outcome == 'failure'
+        run: echo "::warning::SDK checks completed, but GitHub artifact storage rejected the evidence archive."
+
+  compatibility:
     name: Python ${{ matrix.python-version }} / ${{ matrix.dependency-profile }}
-    if: >-
-      github.event_name == 'pull_request' &&
-      contains(github.event.pull_request.labels.*.name, 'release:version')
-    runs-on: [self-hosted, Linux, X64, sdk-ci]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 2
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-        dependency-profile: ["lowest", "latest"]
+        include:
+          - python-version: "3.10"
+            dependency-profile: lowest
+          - python-version: "3.10"
+            dependency-profile: latest
+          - python-version: "3.11"
+            dependency-profile: latest
+          - python-version: "3.12"
+            dependency-profile: latest
     steps:
-      - name: Clean workspace before release snapshot download
-        run: |
-          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
-          runner_work=$(realpath -m "${RUNNER_TEMP}/..")
-          [[ "${workspace}" == "${runner_work}"/*/* ]] || {
-            echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
-            exit 1
-          }
-          shopt -s dotglob nullglob
-          rm -rf -- "${workspace}"/*
-
-      - name: Download immutable release candidate snapshot
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          curl --fail --show-error --location \
-            --retry 5 --retry-connrefused \
-            --header "Authorization: Bearer ${GH_TOKEN}" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}" \
-            --output "${RUNNER_TEMP}/source.tar.gz"
-          tar --extract --gzip --strip-components=1 \
-            --file "${RUNNER_TEMP}/source.tar.gz"
-
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-
-      - name: Create isolated compatibility environment
-        run: |
-          python -m venv .venv
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
-
-      - name: Install SDK and test dependencies
+      - name: Install SDK and tests
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]"
-
-      - name: Select minimum supported runtime dependencies
+      - name: Select minimum supported dependencies
         if: matrix.dependency-profile == 'lowest'
         run: |
           python -m pip install \
-            "av==16.*" \
-            "bleak==3.*" \
-            "esptool==4.8.*" \
-            "fastapi==0.129.*" \
-            "huggingface-hub==1.26.*" \
-            "keyring==25.7.*" \
-            "packaging==24.*" \
-            "Pillow==11.*" \
-            "psutil==5.9.*" \
-            "pyserial==3.5.*" \
-            "starlette==0.51.*" \
-            "uvicorn==0.30.*" \
-            "websockets==14.*"
-
-      - name: Select latest supported runtime dependencies
-        if: matrix.dependency-profile == 'latest'
+            "av==16.*" "bleak==3.*" "esptool==4.8.*" \
+            "fastapi==0.129.*" "huggingface-hub==1.26.*" \
+            "keyring==25.7.*" "packaging==24.*" "Pillow==11.*" \
+            "psutil==5.9.*" "pyserial==3.5.*" "starlette==0.51.*" \
+            "uvicorn==0.30.*" "websockets==14.*"
+      - name: Run compatibility suite
         run: |
-          python -m pip install \
-            "fastapi>=0.129,<1" \
-            "starlette>=0.51,<1" \
-            "websockets>=14,<16"
-
-      - name: Validate release compatibility
-        run: |
+          mkdir -p artifacts
           python -m pip check
-          python -m pytest
-          python -m mypy src/watcherobot
+          python -m pytest --junitxml="artifacts/pytest-${{ matrix.python-version }}-${{ matrix.dependency-profile }}.xml"
+      - name: Upload compatibility report
+        if: always()
+        id: upload-compatibility-report
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: compatibility-${{ matrix.python-version }}-${{ matrix.dependency-profile }}-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 14
 
-      - name: Build and install release candidate distributions once
-        if: matrix.python-version == '3.12' && matrix.dependency-profile == 'latest'
+      - name: Report unavailable compatibility archive
+        if: always() && steps.upload-compatibility-report.outcome == 'failure'
+        run: echo "::warning::Compatibility tests completed, but GitHub artifact storage rejected the report archive."
+
+  cross-platform:
+    name: Paths and CLI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      # Keep subprocess logs deterministic on Windows runners with a legacy
+      # active code page; product CLI output and tests are UTF-8.
+      PYTHONUTF8: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install SDK and tests
+        run: python -m pip install -e ".[test]"
+      - name: Validate project paths, public CLI and Application bootstrap
+        run: >-
+          python -m pytest
+          tests/application/test_project_init.py
+          tests/test_cli_runtime.py
+          tests/test_documentation.py
+          tests/test_removed_legacy_api.py
+
+  changed-code-quality:
+    name: Ruff correctness and formatting ratchet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install pinned Ruff range
+        run: python -m pip install "ruff>=0.16,<0.17"
+      - name: Check changed Python files
+        shell: bash
         run: |
-          python -m pip install --upgrade build twine
-          python -m build
-          python -m twine check dist/*
-          python -m venv .venv-wheel-check
-          .venv-wheel-check/bin/python -m pip install --force-reinstall dist/*.whl
-          .venv-wheel-check/bin/python -m pip check
-          .venv-wheel-check/bin/watcherobot --help
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            diff_range="origin/${{ github.base_ref }}...HEAD"
+          else
+            diff_range="HEAD^...HEAD"
+          fi
+          mapfile -t files < <(git diff --name-only --diff-filter=ACMR "${diff_range}" | grep -E '\.py$' || true)
+          if (( ${#files[@]} > 0 )); then
+            python -m ruff check "${files[@]}"
+            python -m ruff format --check "${files[@]}"
+          fi

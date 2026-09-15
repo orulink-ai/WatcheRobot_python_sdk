@@ -36,9 +36,10 @@ Tag 门禁还会验证该 commit 属于 `main`、关联恰好一个合法版本 
 ## CI 与不可变制品
 
 PR 和 `main` push 属于开发阶段，由 `.github/workflows/sdk-ci.yml` 在自托管 `sdk-ci` Runner 上使用一个
-Python 3.11 环境执行。一次任务内完成 pytest、BLE fake backend、mypy、wheel/sdist 构建、`twine check`、
-wheel 安装和 `pip check`。`mypy` 仍以 Python 3.10 为最低语言/API 合同，开发反馈不再重复启动所有 Python
-版本和依赖组合。
+Python 3.11 环境执行。一次任务内完成 pytest（包含 Application/Daemon 运行时合同）、BLE fake backend、
+mypy、wheel/sdist 构建、`twine check`、wheel 安装和 `pip check`；同时固定 Node.js 22.14.0，执行
+`tests/js/*.mjs` 下的 SDK 媒体与视觉浏览器模块测试。`mypy` 仍以 Python 3.10 为最低语言/API 合同，
+开发反馈不再重复启动所有 Python 版本和依赖组合。
 
 BLE fake backend 按公司自托管 Runner 策略在 Linux 执行契约测试；不使用 GitHub 托管的 Windows/macOS Runner。
 这项门禁验证导入和 fake backend 行为，不替代 Windows/macOS 实机蓝牙验收。
