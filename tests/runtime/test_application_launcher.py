@@ -13,6 +13,7 @@ from watcherobot.runtime.daemon.application.launcher import (
     ApplicationLauncher,
     ApplicationLauncherKind,
 )
+from watcherobot.runtime.registration import authorized_launch
 
 
 def _write_application(root: Path, *, app_id: str) -> Path:
@@ -49,6 +50,81 @@ def _python_name() -> str:
 
 def _bundled_name() -> str:
     return "watcher-default-app.exe" if os.name == "nt" else "watcher-default-app"
+
+
+def test_local_launch_grant_cannot_authorize_a_later_selection(
+    tmp_path: Path,
+) -> None:
+    application_dir = _write_application(
+        tmp_path / "developer-source",
+        app_id="com.example.demo",
+    )
+    executable = _write_executable(
+        tmp_path / "unmanaged-runtime",
+        _python_name(),
+    )
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+    )
+    grant = {
+        "application_dir": str(application_dir),
+        "launcher": {"kind": "python", "executable": str(executable)},
+        "environment": {"WATCHER_SERVER_DATA_DIR": str(tmp_path / "data")},
+    }
+
+    token = authorized_launch.set(grant)
+    try:
+        selected = launcher.build_spec(
+            application_dir=application_dir,
+            kind="python",
+            executable=executable,
+        )
+    finally:
+        authorized_launch.reset(token)
+
+    assert dict(selected.environment) == grant["environment"]
+    with pytest.raises(ApplicationLaunchError, match="controlled root"):
+        launcher.build_spec(
+            application_dir=application_dir,
+            kind="python",
+            executable=executable,
+        )
+
+
+def test_locally_authorized_spec_can_be_refreshed_for_start(
+    tmp_path: Path,
+) -> None:
+    application_dir = _write_application(
+        tmp_path / "developer-source",
+        app_id="com.example.demo",
+    )
+    executable = _write_executable(
+        tmp_path / "unmanaged-runtime",
+        _python_name(),
+    )
+    launcher = ApplicationLauncher(
+        managed_app_root=tmp_path / "application-store",
+        bundled_resource_root=tmp_path / "resources",
+    )
+    grant = {
+        "application_dir": str(application_dir),
+        "launcher": {"kind": "python", "executable": str(executable)},
+        "environment": {"WATCHER_SERVER_DATA_DIR": str(tmp_path / "data")},
+    }
+    token = authorized_launch.set(grant)
+    try:
+        selected = launcher.build_spec(
+            application_dir=application_dir,
+            kind="python",
+            executable=executable,
+        )
+    finally:
+        authorized_launch.reset(token)
+
+    refreshed = launcher.refresh_spec(selected)
+
+    assert refreshed == selected
 
 
 def test_python_launcher_builds_only_the_fixed_app_entrypoint(
