@@ -16,7 +16,7 @@ from .daemon.instance import (
 )
 from .repository import operation_lock
 from .cleanup import cleanup_after
-from .background_process import background_process_options
+from .background_process import CREATE_NO_WINDOW, background_process_options
 
 
 class RuntimeActivationCancelled(RuntimeError):
@@ -43,7 +43,7 @@ def describe_command(command: list[str]) -> dict[str, str]:
         return runtime_identity()
     options: dict[str, Any] = {}
     if os.name == "nt":
-        options["creationflags"] = subprocess.CREATE_NO_WINDOW
+        options["creationflags"] = CREATE_NO_WINDOW
     try:
         result = subprocess.run(
             [*command, "--describe-runtime"],
