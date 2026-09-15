@@ -33,6 +33,7 @@ _V2_REQUIRED_FIELDS = _V1_REQUIRED_FIELDS | frozenset(
 )
 _OPTIONAL_FIELDS = frozenset({"description", "author", "icon"})
 _ALLOWED_FIELDS = _V2_REQUIRED_FIELDS | _OPTIONAL_FIELDS
+_V3_REQUIRED_FIELDS = (_V2_REQUIRED_FIELDS - {"requires_watcherobot"}) | {"requires_sdk", "requires_daemon"}
 _SUPPORTED_HOST_PLATFORMS = frozenset({"windows", "macos"})
 
 
@@ -75,6 +76,7 @@ class ApplicationManifestMetadata:
     version: str
     requires_watcherobot: str
     dependencies: tuple[str, ...]
+    application_protocol: str = ""
     supported_host_platforms: tuple[str, ...] = ()
     description: str = ""
     author: str = ""
@@ -95,7 +97,7 @@ class ApplicationManifestMetadata:
         return host_platform is not None and host_platform in self.supported_host_platforms
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "schema_version": self.schema_version,
             "id": self.app_id,
             "name": self.name,
@@ -107,6 +109,10 @@ class ApplicationManifestMetadata:
             "author": self.author,
             "icon": self.icon,
         }
+        if self.schema_version == 3:
+            result["requires_sdk"] = result.pop("requires_watcherobot")
+            result["requires_daemon"] = {"application_protocol": self.application_protocol}
+        return result
 
 
 @dataclass(frozen=True)
@@ -118,6 +124,7 @@ class ApplicationManifest:
     requires_watcherobot: str
     dependencies: tuple[str, ...]
     entrypoint: Path
+    application_protocol: str = ""
     supported_host_platforms: tuple[str, ...] = ()
     description: str = ""
     author: str = ""
@@ -129,6 +136,7 @@ class ApplicationManifest:
         application_dir: Path,
         *,
         watcherobot_version: str | None = None,
+        daemon: bool = False,
     ) -> "ApplicationManifest":
         application_root = Path(application_dir).resolve()
         manifest_path = application_root / "app.json"
@@ -150,12 +158,14 @@ class ApplicationManifest:
             raise ApplicationManifestError(
                 f"invalid Application manifest: {manifest_path}"
             ) from exc
-        metadata = parse_application_manifest(
-            document,
-            watcherobot_version=(
-                watcherobot_version or _installed_watcherobot_version()
-            ),
-        )
+        metadata = parse_application_manifest(document)
+        if daemon and metadata.schema_version == 3:
+            if not SpecifierSet(metadata.application_protocol).contains("1"):
+                raise ApplicationCompatibilityError("Application protocol requires a different Daemon")
+        else:
+            metadata = parse_application_manifest(
+                document, watcherobot_version=watcherobot_version or _installed_watcherobot_version(),
+            )
 
         icon = metadata.icon
         if icon:
@@ -177,6 +187,7 @@ class ApplicationManifest:
             requires_watcherobot=metadata.requires_watcherobot,
             dependencies=metadata.dependencies,
             entrypoint=entrypoint_path,
+            application_protocol=metadata.application_protocol,
             supported_host_platforms=metadata.supported_host_platforms,
             description=metadata.description,
             author=metadata.author,
@@ -210,15 +221,19 @@ def _metadata_from_payload(
     *,
     watcherobot_version: str | None,
 ) -> ApplicationManifestMetadata:
-    unknown_fields = sorted(set(payload) - _ALLOWED_FIELDS)
     schema_version_value = payload.get("schema_version")
-    if schema_version_value not in (1, 2):
-        raise ApplicationManifestError("schema_version must be 1 or 2")
+    if schema_version_value not in (1, 2, 3):
+        raise ApplicationManifestError("schema_version must be 1, 2 or 3")
     assert isinstance(schema_version_value, int)
     schema_version = schema_version_value
     required_fields = (
         _V1_REQUIRED_FIELDS if schema_version == 1 else _V2_REQUIRED_FIELDS
     )
+    allowed_fields = _ALLOWED_FIELDS
+    if schema_version == 3:
+        required_fields = _V3_REQUIRED_FIELDS
+        allowed_fields = _V3_REQUIRED_FIELDS | _OPTIONAL_FIELDS
+    unknown_fields = sorted(set(payload) - allowed_fields)
     missing_fields = sorted(required_fields - set(payload))
     if unknown_fields:
         raise ApplicationManifestError(
@@ -233,9 +248,21 @@ def _metadata_from_payload(
     name = str(payload.get("name") or "").strip()
     version = str(payload.get("version") or "").strip()
     requires_watcherobot = str(
-        payload.get("requires_watcherobot") or ""
+        payload.get("requires_sdk" if schema_version == 3 else "requires_watcherobot") or ""
     ).strip()
     dependencies = payload.get("dependencies")
+    application_protocol = ""
+    if schema_version == 3:
+        daemon_requirement = payload.get("requires_daemon")
+        if not isinstance(daemon_requirement, dict) or set(daemon_requirement) != {"application_protocol"}:
+            raise ApplicationManifestError("requires_daemon must declare application_protocol")
+        application_protocol = str(daemon_requirement["application_protocol"])
+        try:
+            if not application_protocol:
+                raise InvalidSpecifier("empty protocol")
+            SpecifierSet(application_protocol)
+        except InvalidSpecifier as exc:
+            raise ApplicationManifestError("invalid application_protocol range") from exc
 
     if _APPLICATION_ID_PATTERN.fullmatch(app_id) is None:
         raise ApplicationManifestError(
@@ -304,6 +331,7 @@ def _metadata_from_payload(
         version=version,
         requires_watcherobot=requires_watcherobot,
         dependencies=tuple(normalized_dependencies),
+        application_protocol=application_protocol,
         supported_host_platforms=supported_host_platforms,
         description=str(payload.get("description") or "").strip(),
         author=str(payload.get("author") or "").strip(),
