@@ -11,10 +11,22 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .daemon.instance import default_runtime_instance_root, default_runtime_state_root
+from .daemon.instance import (
+    RuntimeProcessState, default_runtime_instance_root, default_runtime_state_root,
+)
 from .repository import operation_lock
 from .cleanup import cleanup_after
 from .background_process import background_process_options
+
+
+class RuntimeActivationCancelled(RuntimeError):
+    """The requesting launcher explicitly cancelled its pending activation."""
+
+
+def _check_activation_cancelled() -> None:
+    marker = os.environ.get("WATCHER_RUNTIME_CANCEL_FILE")
+    if marker and Path(marker).exists():
+        raise RuntimeActivationCancelled("Runtime activation cancelled by launcher")
 
 
 def describe_command(command: list[str]) -> dict[str, str]:
@@ -83,7 +95,10 @@ def _stop_and_wait() -> None:
     processes = []
     if live is not None:
         try:
-            processes = capture_runtime(live.pid, urlsplit(live.control_url).port)
+            control_port = urlsplit(live.control_url).port
+            if control_port is None:
+                raise RuntimeError("Runtime control endpoint has no explicit port")
+            processes = capture_runtime(live.pid, control_port)
         except psutil.NoSuchProcess:
             pass
     try:
@@ -174,13 +189,12 @@ def _save_launcher(command: list[str], environment: dict[str, str] | None) -> No
     temporary.replace(pointer)
 
 
-def _candidate_live_state():
+def _candidate_live_state() -> RuntimeProcessState | None:
     """Poll an already spawned candidate without mistaking bind for readiness.
 
     Pre-launch discovery remains strict. This probe never authorizes a process:
     the caller still verifies launch_id and build_id before committing activation.
-    Unverifiable responses expire at the candidate deadline and only that owned
-    candidate is cleaned up.
+    Transient probe errors keep waiting while the candidate remains alive.
     """
     from watcherobot.cli import CliError, _live_runtime_state
 
@@ -268,8 +282,10 @@ def ensure_command(
                     env=environment,
                     **options,
                 )
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
+            # Cold extraction and file scanning have no predictable duration.
+            # Fail on process exit or identity errors, not elapsed startup time.
+            while True:
+                _check_activation_cancelled()
                 live = _candidate_live_state()
                 if live is not None:
                     try:
@@ -296,10 +312,7 @@ def ensure_command(
                         "Runtime launcher exited before readiness; see runtime.log"
                     )
                 time.sleep(0.05)
-            raise RuntimeError(
-                "Runtime readiness timed out; see runtime.log before retrying"
-            )
-        except Exception:
+        except Exception as error:
             # Reap only our own candidate, including frozen/venv child processes.
             import psutil
 
@@ -320,7 +333,12 @@ def ensure_command(
                         )
                 except psutil.NoSuchProcess:
                     pass
-            if activate and previous is not None and _live_runtime_state() is None:
+            if (
+                not isinstance(error, RuntimeActivationCancelled)
+                and activate
+                and previous is not None
+                and _live_runtime_state() is None
+            ):
                 # The pointer still describes the previous healthy deployment.
                 # A subsequent ensure uses it, rather than the failed candidate.
                 old_command, old_environment = previous
@@ -339,7 +357,6 @@ def ensure_command(
                         env=environment,
                         **options,
                     )
-                deadline = time.monotonic() + 30
                 while True:
                     recovered = _candidate_live_state()
                     if recovered is not None:
@@ -354,7 +371,7 @@ def ensure_command(
                                 "Rollback identity mismatch; inspect runtime.log"
                             )
                         break
-                    if restored.poll() is not None or time.monotonic() >= deadline:
+                    if restored.poll() is not None:
                         raise RuntimeError(
                             "Activation failed and previous Runtime could not recover; see runtime.log"
                         )

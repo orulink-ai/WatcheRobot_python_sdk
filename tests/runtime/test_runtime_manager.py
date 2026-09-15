@@ -41,7 +41,7 @@ def lifecycle(tmp_path, monkeypatch):
         cli,
         "_live_runtime_state",
         lambda: SimpleNamespace(
-            control_url="http://unused",
+            control_url="http://unused:8767",
             pid=99999999,
         ),
     )
@@ -153,8 +153,10 @@ def test_failed_readiness_reaps_only_the_candidate_tree(tmp_path, monkeypatch):
             "build_id": "test",
         },
     )
-    clock = iter([0, 0, 31])
-    monkeypatch.setattr(manager.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(
+        manager, "_candidate_live_state",
+        Mock(side_effect=RuntimeError("candidate probe failed")),
+    )
     monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
     candidate = Mock(pid=12345)
     candidate.poll.return_value = None
@@ -166,7 +168,7 @@ def test_failed_readiness_reaps_only_the_candidate_tree(tmp_path, monkeypatch):
     monkeypatch.setattr(psutil, "Process", lookup)
     monkeypatch.setattr(psutil, "wait_procs", lambda *_, **__: ([], []))
 
-    with pytest.raises(RuntimeError, match="readiness timed out"):
+    with pytest.raises(RuntimeError, match="candidate probe failed"):
         manager.ensure_command(["missing-test-candidate"], activate=True)
 
     lookup.assert_called_once_with(candidate.pid)
@@ -194,3 +196,47 @@ def test_cli_reports_lifecycle_failure_without_traceback(
     )
     assert cli.main(["daemon", operation]) == 2
     assert json.loads(capsys.readouterr().err) == {"error": "Runtime still holds files"}
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_slow_candidate_has_no_readiness_deadline(tmp_path, monkeypatch, cancel):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance"))
+    monkeypatch.setenv("WATCHER_RUNTIME_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
+    monkeypatch.setattr(cli, "_live_runtime_state", lambda: None)
+    monkeypatch.setattr(manager, "describe_command", lambda _: {
+        "sdk_version": "0.1.9", "build_id": "test",
+    })
+    elapsed = [0]
+    monkeypatch.setattr(manager.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(manager.time, "sleep", lambda _: elapsed.__setitem__(0, elapsed[0] + 61))
+    ready = SimpleNamespace(control_url="http://unused")
+    monkeypatch.setattr(manager, "_candidate_live_state", Mock(side_effect=[None, None, ready]))
+    candidate = Mock(pid=12345)
+    candidate.poll.return_value = None
+    spawn = Mock(return_value=candidate)
+    monkeypatch.setattr(manager.subprocess, "Popen", spawn)
+    monkeypatch.setattr(cli, "_request_json", lambda *args: {"runtime": {
+        "build_id": "test",
+        "launch_id": spawn.call_args.kwargs["env"]["WATCHER_RUNTIME_LAUNCH_ID"],
+    }})
+    monkeypatch.setattr(manager, "save_launcher", Mock())
+    if cancel:
+        import psutil
+
+        marker = tmp_path / "cancel"
+        marker.touch()
+        monkeypatch.setenv("WATCHER_RUNTIME_CANCEL_FILE", str(marker))
+        parent = Mock()
+        parent.children.return_value = []
+        monkeypatch.setattr(psutil, "Process", Mock(return_value=parent))
+        monkeypatch.setattr(psutil, "wait_procs", lambda *_, **__: ([], []))
+        with pytest.raises(manager.RuntimeActivationCancelled):
+            manager.ensure_command(["test-candidate"], activate=True)
+        parent.terminate.assert_called_once()
+        manager.save_launcher.assert_not_called()
+        assert spawn.call_count == 1
+        return
+    assert manager.ensure_command(["test-candidate"], activate=True) is False
+    assert elapsed[0] >= 122
+    assert spawn.call_count == 1

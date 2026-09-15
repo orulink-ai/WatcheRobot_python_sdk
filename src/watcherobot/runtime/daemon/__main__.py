@@ -9,8 +9,11 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from watcherobot.runtime.daemon.control.rest import RuntimeInstanceGroup
+if TYPE_CHECKING:
+    from watcherobot.runtime.daemon.control.rest import RuntimeInstanceGroup
+    from watcherobot.runtime.daemon.runtime import DaemonRuntime
 from watcherobot.runtime.daemon.instance import (
     RuntimeAlreadyRunningError,
     RuntimeInstanceLock,
@@ -23,7 +26,14 @@ from watcherobot.runtime.daemon.instance import (
     system_runtime_state_root,
 )
 from watcherobot.runtime.daemon.pairing.bindings_store import DeviceBindingsStore
-from watcherobot.runtime.daemon.runtime import DaemonRuntime
+
+
+def __getattr__(name: str) -> Any:
+    if name == "DaemonRuntime":
+        from watcherobot.runtime.daemon.runtime import DaemonRuntime
+
+        return DaemonRuntime
+    raise AttributeError(name)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -96,6 +106,8 @@ def _validate_source_default_options(args: argparse.Namespace) -> None:
 
 
 async def run_runtime(args: argparse.Namespace) -> int:
+    # Bundle publication and identity probes do not need the server dependency tree.
+    runtime_type = getattr(sys.modules[__name__], "DaemonRuntime")
     # Keep programmatic callers subject to the same invariant as the CLI.
     _validate_source_default_options(args)
     state_root = Path(args.state_root).resolve()
@@ -151,7 +163,7 @@ async def run_runtime(args: argparse.Namespace) -> int:
     published_state: RuntimeProcessState | None = None
     published_stores: list[RuntimeStateStore] = []
     try:
-        runtime = DaemonRuntime(
+        runtime = runtime_type(
             application_dir=state_root / "unselected",
             current_app=None,
             external_port=args.external_port,
