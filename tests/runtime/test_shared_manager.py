@@ -86,3 +86,59 @@ def test_shared_launch_orders_and_registered_project(tmp_path, monkeypatch, sdk_
         assert cli._live_runtime_state() is not None
     finally:
         cli.stop_runtime()
+
+
+def test_real_version_takeover_and_downgrade(tmp_path, monkeypatch):
+    """Exercise real process replacement without changing the checked-out version."""
+    from watcherobot import __version__
+    from watcherobot.runtime.manager import stop_shared_runtime
+
+    for key in ("STATE_ROOT", "INSTANCE_ROOT"):
+        monkeypatch.setenv("WATCHER_RUNTIME_" + key, str(tmp_path / key))
+    for key in ("CONTROL_PORT", "EXTERNAL_PORT", "PAIRING_PORT", "PREVIEW_UDP_PORT"):
+        monkeypatch.setenv("WATCHER_RUNTIME_" + key, "0")
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2] / "src"))
+    import shutil
+
+    source = Path(__file__).resolve().parents[2] / "src"
+    old_source = tmp_path / "old-src"
+    shutil.copytree(
+        source / "watcherobot",
+        old_source / "watcherobot",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    version_file = old_source / "watcherobot/__init__.py"
+    version_file.write_text(
+        version_file.read_text(encoding="utf-8").replace(__version__, "0.0.1"),
+        encoding="utf-8",
+    )
+    current = [sys.executable, "-m", "watcherobot.runtime.daemon"]
+    old = current
+    monkeypatch.setenv("PYTHONPATH", str(old_source))
+    try:
+        assert ensure_command(old, activate=True) is False
+        first = cli._live_runtime_state()
+        monkeypatch.setenv("PYTHONPATH", str(source))
+        assert ensure_command(current, activate=True) is False
+        second = cli._live_runtime_state()
+        assert first.pid != second.pid
+        assert (
+            cli._request_json(second.control_url, "/daemon/status")["runtime"][
+                "sdk_version"
+            ]
+            == __version__
+        )
+        assert ensure_command(current, activate=True) is True
+        assert cli._live_runtime_state().pid == second.pid
+        monkeypatch.setenv("PYTHONPATH", str(old_source))
+        assert ensure_command(old, activate=True) is False
+        third = cli._live_runtime_state()
+        assert third.pid != second.pid
+        assert (
+            cli._request_json(third.control_url, "/daemon/status")["runtime"][
+                "sdk_version"
+            ]
+            == "0.0.1"
+        )
+    finally:
+        stop_shared_runtime()

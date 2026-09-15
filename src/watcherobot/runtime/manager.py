@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -17,6 +18,16 @@ from .cleanup import cleanup_after
 
 def describe_command(command: list[str]) -> dict[str, str]:
     """Exercise the candidate interpreter/imports before interrupting anything."""
+    if (
+        getattr(sys, "frozen", False)
+        and command
+        and Path(command[0]).resolve() == Path(sys.executable).resolve()
+    ):
+        # This frozen candidate has already booted and imported the Daemon.
+        # Hash it here; a nested copy only repeats onefile extraction.
+        from .identity import runtime_identity
+
+        return runtime_identity()
     options: dict[str, Any] = {}
     if os.name == "nt":
         options["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -56,31 +67,35 @@ def _stop_and_wait() -> None:
     process. No process is forcibly terminated from untrusted status metadata.
     """
     import psutil
-    from watcherobot.cli import _live_runtime_state, _request_json, stop_runtime
+    from urllib.parse import urlsplit
+    from watcherobot.cli import CliError, _live_runtime_state, stop_runtime
+    from .process_shutdown import capture_runtime, force_stop
 
-    live = _live_runtime_state()
+    try:
+        live = _live_runtime_state()
+    except CliError:
+        from .process_shutdown import stop_legacy_listener
+
+        if stop_legacy_listener():
+            return
+        raise
     processes = []
     if live is not None:
-        status = _request_json(live.control_url, "/daemon/status")
         try:
-            process = psutil.Process(live.pid)
-            processes.append(process)
-            parent = process.parent()
-            if (
-                parent is not None
-                and status.get("runtime", {}).get("source") == "bundle"
-                and parent.exe() == process.exe()
-            ):
-                processes.append(parent)
+            processes = capture_runtime(live.pid, urlsplit(live.control_url).port)
         except psutil.NoSuchProcess:
             pass
-    if not stop_runtime():
+    try:
+        stopped = stop_runtime()
+    except CliError:
+        if not processes:
+            raise
+        stopped = False
+    if not stopped and not processes:
         raise RuntimeError("Previous Runtime has not exited; inspect runtime.log")
-    _, alive = psutil.wait_procs(processes, timeout=15)
+    _, alive = psutil.wait_procs(processes, timeout=15 if stopped else 0)
     if alive:
-        raise RuntimeError(
-            "Previous Runtime process still holds files; operation cancelled"
-        )
+        force_stop(alive)
 
 
 _LAUNCH_ENVIRONMENT = (
@@ -158,6 +173,22 @@ def _save_launcher(command: list[str], environment: dict[str, str] | None) -> No
     temporary.replace(pointer)
 
 
+def _candidate_live_state():
+    """Poll an already spawned candidate without mistaking bind for readiness.
+
+    Pre-launch discovery remains strict. This probe never authorizes a process:
+    the caller still verifies launch_id and build_id before committing activation.
+    Unverifiable responses expire at the candidate deadline and only that owned
+    candidate is cleaned up.
+    """
+    from watcherobot.cli import CliError, _live_runtime_state
+
+    try:
+        return _live_runtime_state()
+    except CliError:
+        return None
+
+
 @cleanup_after
 def ensure_command(
     command: list[str], *, activate: bool = False, force: bool = False
@@ -168,7 +199,7 @@ def ensure_command(
     The pointer is committed only after the target has answered its status endpoint.
     Only the documented path/configuration environment whitelist is persisted.
     """
-    from watcherobot.cli import _live_runtime_state, _request_json
+    from watcherobot.cli import CliError, _live_runtime_state, _request_json
     from .cleanup import register_environment
 
     # Protect source venvs and default application resources before publication GC.
@@ -185,7 +216,13 @@ def ensure_command(
             if not activate:
                 raise
             previous = None
-        live = _live_runtime_state()
+        try:
+            live = _live_runtime_state()
+        except CliError:
+            if not activate:
+                raise
+            _stop_and_wait()
+            live = _live_runtime_state()
         if live is not None:
             if not activate:
                 return True
@@ -212,6 +249,9 @@ def ensure_command(
         for key in _LAUNCH_ENVIRONMENT:
             environment.pop(key, None)
         environment.update(launch_environment)
+        # A detached frozen child must own its extraction directory. Otherwise
+        # the short-lived manager can remove DLLs still used by the Daemon.
+        environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
         launch_id = uuid.uuid4().hex
         environment["WATCHER_RUNTIME_LAUNCH_ID"] = launch_id
         if os.name == "nt":
@@ -236,9 +276,13 @@ def ensure_command(
                 )
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
-                live = _live_runtime_state()
+                live = _candidate_live_state()
                 if live is not None:
-                    status = _request_json(live.control_url, "/daemon/status")
+                    try:
+                        status = _request_json(live.control_url, "/daemon/status")
+                    except CliError:
+                        time.sleep(0.05)
+                        continue
                     if status.get("runtime", {}).get("launch_id") != launch_id:
                         raise RuntimeError(
                             "Another launcher won the Runtime lock; activation was not committed"
@@ -303,7 +347,7 @@ def ensure_command(
                     )
                 deadline = time.monotonic() + 30
                 while True:
-                    recovered = _live_runtime_state()
+                    recovered = _candidate_live_state()
                     if recovered is not None:
                         recovered_status = _request_json(
                             recovered.control_url, "/daemon/status"

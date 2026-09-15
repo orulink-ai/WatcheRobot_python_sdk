@@ -1368,46 +1368,15 @@ def ensure_runtime(
     managed_app_root: Path | None = None,
     ephemeral_ports: bool = False,
 ) -> tuple[RuntimeProcessState, bool]:
-    from watcherobot.runtime.repository import operation_lock
-    from watcherobot.runtime.cleanup import collect_runtime_garbage
+    from watcherobot.runtime.manager import ensure_command
 
-    with operation_lock():
-        result = _ensure_runtime_locked(
-            state_root=state_root, managed_app_root=managed_app_root,
-            ephemeral_ports=ephemeral_ports,
-        )
-    collect_runtime_garbage()
-    return result
-
-
-def _ensure_runtime_locked(
-    *,
-    state_root: Path | None = None,
-    managed_app_root: Path | None = None,
-    ephemeral_ports: bool = False,
-) -> tuple[RuntimeProcessState, bool]:
     resolved_state_root = (state_root or default_runtime_state_root()).resolve()
     existing = _live_runtime_state(resolved_state_root)
     if existing is not None:
         return existing, True
-    # Once a shared launcher has been activated, SDK development reuses it even
-    # when the user's project installs a different SDK release.
-    if (default_runtime_instance_root() / "current-launcher.json").is_file():
-        # Already serialized by ensure_runtime; the manager takes this same lock.
-        # Launch through the recorded command here without selecting project Python.
-        from watcherobot.runtime.manager import read_launcher
-
-        selected_command, launch_environment = read_launcher(
-            default_runtime_instance_root() / "current-launcher.json"
-        )
-    else:
-        selected_command = None
-
-    resolved_state_root.mkdir(parents=True, exist_ok=True)
-    log_path = resolved_state_root / "runtime.log"
     daemon_python = _canonical_launcher_path(Path(sys.executable))
     command = [
-        os.fspath(_background_python_executable(daemon_python)),
+        os.fspath(daemon_python),
         "-m",
         "watcherobot.runtime.daemon",
         "--state-root",
@@ -1432,54 +1401,14 @@ def _ensure_runtime_locked(
                 "0",
             )
         )
-    if selected_command is not None:
-        command = selected_command
-    creation_flags = 0
-    process_options: dict[str, Any] = {}
-    if selected_command is not None:
-        from watcherobot.runtime.manager import _LAUNCH_ENVIRONMENT
-
-        environment = dict(os.environ)
-        for key in _LAUNCH_ENVIRONMENT:
-            environment.pop(key, None)
-        environment.update(launch_environment)
-        process_options["env"] = environment
-    if os.name == "nt":
-        creation_flags = (
-            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP")
-            | getattr(subprocess, "DETACHED_PROCESS")
-            | getattr(subprocess, "CREATE_NO_WINDOW")
-        )
-    else:
-        process_options["start_new_session"] = True
-
-    with log_path.open("ab") as log_file:
-        subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=log_file,
-            close_fds=True,
-            creationflags=creation_flags,
-            **process_options,
-        )
-
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        state = _live_runtime_state(resolved_state_root)
-        if state is not None:
-            if selected_command is None:
-                from watcherobot.runtime.manager import save_launcher
-
-                save_launcher(command)
-            return state, False
-        time.sleep(0.05)
-    details = ""
     try:
-        details = log_path.read_text(encoding="utf-8", errors="replace")[-1000:]
-    except OSError:
-        pass
-    raise CliError(f"Runtime failed to start. {details}".strip())
+        reused = ensure_command(command)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise CliError(str(error)) from error
+    state = _live_runtime_state(resolved_state_root)
+    if state is None:
+        raise CliError("Runtime activation completed without a ready Daemon")
+    return state, reused
 
 
 def _background_python_executable(
