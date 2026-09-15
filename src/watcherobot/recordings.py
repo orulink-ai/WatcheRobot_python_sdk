@@ -24,6 +24,7 @@ RecordingMode = Literal["video", "audio", "av"]
 RECORDING_CAPABILITY = "recording.device.v1"
 RECORDING_AV_CAPABILITY = "recording.device.av.v1"
 HOST_RECORDING_CAPABILITY = "recording.host.v1"
+RECORDING_SCREEN_PREVIEW_CAPABILITY = "recording.screen_preview.v1"
 # Firmware emits one complete WREC record per logical WebSocket message.  Keep
 # enough headroom for short host scheduling stalls without allowing a slow
 # consumer to retain hundreds of MiB when JPEG records approach their limit.
@@ -59,6 +60,7 @@ class RecordingInfo:
     jpeg_average_bytes: int = 0
     quality: int = 0
     estimated_remaining_ms: int = 0
+    screen_preview: bool = False
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "RecordingInfo":
@@ -94,6 +96,7 @@ class RecordingInfo:
             jpeg_average_bytes=max(0, int(payload.get("jpeg_average_bytes", 0))),
             quality=max(0, int(payload.get("quality", 0))),
             estimated_remaining_ms=max(0, int(payload.get("estimated_remaining_ms", 0))),
+            screen_preview=payload.get("screen_preview") is True,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -108,6 +111,7 @@ class RecordingInfo:
             "source_fps_x100": self.source_fps_x100, "sent_fps_x100": self.sent_fps_x100,
             "jpeg_average_bytes": self.jpeg_average_bytes,
             "quality": self.quality, "estimated_remaining_ms": self.estimated_remaining_ms,
+            "screen_preview": self.screen_preview,
         }
 
 
@@ -376,12 +380,28 @@ class RecordingsDomain:
         if duration is not None and duration <= 0:
             raise ValueError("duration must be positive")
 
-    def start(self, mode: RecordingMode = "video", *, width: int = 640, height: int = 480, fps: int = 5, quality: int = 80, duration: float | None = None) -> DeviceRecording:
+    def start(
+        self,
+        mode: RecordingMode = "video",
+        *,
+        width: int = 640,
+        height: int = 480,
+        fps: int = 5,
+        quality: int = 80,
+        duration: float | None = None,
+        screen_preview: bool = False,
+    ) -> DeviceRecording:
         self._validate_start_options(mode, width, height, fps, quality, duration)
+        if screen_preview and mode == "audio":
+            raise ValueError("screen preview requires video or av recording mode")
         self._robot._require_capability(RECORDING_CAPABILITY)
         if mode == "av":
             self._robot._require_capability(RECORDING_AV_CAPABILITY)
+        if screen_preview:
+            self._robot._require_capability(RECORDING_SCREEN_PREVIEW_CAPABILITY)
         payload: dict[str, Any] = {"mode": mode, "width": width, "height": height, "fps": fps, "quality": quality}
+        if screen_preview:
+            payload["screen_preview"] = True
         if duration is not None:
             payload["duration_ms"] = round(duration * 1000)
         response = self._robot._command("ctrl.recording.start", payload, timeout=10.0)
@@ -396,6 +416,7 @@ class RecordingsDomain:
         fps: int = 24,
         quality: int = 80,
         duration: float | None = None,
+        screen_preview: bool = False,
     ) -> HostRecording:
         """Start latest-frame media capture streamed directly to the host.
 
@@ -404,9 +425,13 @@ class RecordingsDomain:
         """
 
         self._validate_start_options(mode, width, height, fps, quality, duration)
+        if screen_preview and mode == "audio":
+            raise ValueError("screen preview requires video or av recording mode")
         self._robot._require_capability(HOST_RECORDING_CAPABILITY)
         if mode == "av":
             self._robot._require_capability(RECORDING_AV_CAPABILITY)
+        if screen_preview:
+            self._robot._require_capability(RECORDING_SCREEN_PREVIEW_CAPABILITY)
         receiver = self._reserve_download(max_frames=HOST_RECORDING_QUEUE_FRAMES)
         payload: dict[str, Any] = {
             "mode": mode,
@@ -417,6 +442,8 @@ class RecordingsDomain:
             "fps": fps,
             "quality": quality,
         }
+        if screen_preview:
+            payload["screen_preview"] = True
         if duration is not None:
             payload["duration_ms"] = round(duration * 1000)
         try:
