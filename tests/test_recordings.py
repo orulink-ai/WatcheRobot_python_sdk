@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import io
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from PIL import Image
 from watcherobot.errors import WatcheRobotError
 from watcherobot.protocol import FLAG_CANCEL, FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, BinaryFrame
 from watcherobot.recordings import (
+    RecordingInfo,
     RecordingsDomain,
     WREC_JPEG,
     WREC_PCM,
@@ -22,6 +24,37 @@ from watcherobot.recordings import (
 
 def test_recording_frame_type_is_stable() -> None:
     assert FRAME_RECORDING == 7
+
+
+def test_recording_info_preserves_live_video_throughput_metrics() -> None:
+    info = RecordingInfo.from_payload({
+        "recording_id": "host_metrics",
+        "mode": "av",
+        "state": "recording",
+        "source_video_frames": 240,
+        "sent_video_frames": 198,
+        "source_fps_x100": 2400,
+        "sent_fps_x100": 1980,
+        "jpeg_average_bytes": 24_000,
+    })
+
+    assert info.source_video_frames == 240
+    assert info.sent_video_frames == 198
+    assert info.source_fps_x100 == 2400
+    assert info.sent_fps_x100 == 1980
+    assert info.jpeg_average_bytes == 24_000
+    assert info.as_dict()["sent_fps_x100"] == 1980
+
+
+def test_mp4_mux_does_not_materialize_an_unbounded_recording() -> None:
+    source = inspect.getsource(mux_wrec_to_mp4)
+    assert "sorted(records" not in source
+    assert "list(records" not in source
+
+
+def test_mp4_mux_uses_visually_transparent_host_encoding_quality() -> None:
+    source = inspect.getsource(mux_wrec_to_mp4)
+    assert '"crf": "18"' in source
 
 
 def test_wrec_round_trip_preserves_timestamps_and_media(tmp_path: Path) -> None:
@@ -109,6 +142,7 @@ def test_host_recording_receiver_exists_before_device_can_send_first_chunk() -> 
             del timeout
             assert message_type == "ctrl.recording.start"
             assert data["storage"] == "host"
+            assert data["fps"] == 24
             stream_id = int(data["stream_id"])
             assert self.domain._on_binary(
                 BinaryFrame(FRAME_RECORDING, FLAG_FIRST | FLAG_LAST, stream_id, 0, payload)
@@ -122,12 +156,34 @@ def test_host_recording_receiver_exists_before_device_can_send_first_chunk() -> 
     robot.domain = RecordingsDomain(robot)
     recording = robot.domain.start_host("audio")
 
-    assert recording._receiver.frames.maxsize == 1024
+    assert recording._receiver.frames.maxsize == 128
 
     frame = recording.read(timeout=0.1)
     assert frame.payload == payload
     assert frame.flags & FLAG_LAST
     recording.close()
+
+
+def test_device_recording_keeps_reliable_storage_default_at_five_fps() -> None:
+    class Robot:
+        def _require_capability(self, capability: str) -> None:
+            assert capability == "recording.device.v1"
+
+        def _command(self, message_type: str, data: dict[str, object], timeout=None):
+            assert timeout == 10.0
+            assert message_type == "ctrl.recording.start"
+            assert data["fps"] == 5
+            return {"data": {"recording_id": "rec_1", "mode": "video", "state": "recording"}}
+
+    recording = RecordingsDomain(Robot()).start()
+    assert recording.id == "rec_1"
+
+
+def test_recording_accepts_native_camera_rate_and_rejects_higher_rate() -> None:
+    RecordingsDomain._validate_start_options("av", 640, 480, 24, 80, None)
+
+    with pytest.raises(ValueError, match="invalid recording"):
+        RecordingsDomain._validate_start_options("av", 640, 480, 25, 80, None)
 
 
 def test_host_recording_fails_closed_after_daemon_reports_device_offline() -> None:
@@ -285,3 +341,33 @@ def test_mux_uses_recording_timestamps_for_browser_compatible_av(tmp_path: Path)
     with av.open(str(output)) as container:
         assert {stream.codec_context.name for stream in container.streams} == {"h264", "aac"}
         assert container.duration is not None and container.duration >= 200_000
+
+
+def test_mux_handles_sustained_interleaved_av_without_dts_regression(tmp_path: Path) -> None:
+    jpeg_buffer = io.BytesIO()
+    Image.new("RGB", (32, 32), "green").save(jpeg_buffer, format="JPEG")
+    jpeg = jpeg_buffer.getvalue()
+    pcm_60ms = b"\x00\x00" * 960
+    records = sorted([
+        *(
+            WrecRecord(WREC_JPEG, 0, sequence, 1_000_000 + sequence * 33_000, jpeg)
+            for sequence in range(72)
+        ),
+        *(
+            WrecRecord(WREC_PCM, 0, sequence, 1_000_000 + sequence * 60_000, pcm_60ms)
+            for sequence in range(50)
+        ),
+    ], key=lambda record: (record.timestamp_us, record.kind, record.sequence))
+
+    output = mux_wrec_to_mp4(
+        records, tmp_path / "sustained-av.mp4", width=32, height=32, fps=24, with_audio=True
+    )
+
+    import av
+
+    with av.open(str(output)) as container:
+        video = next(stream for stream in container.streams if stream.type == "video")
+        audio = next(stream for stream in container.streams if stream.type == "audio")
+        assert video.codec_context.name == "h264"
+        assert audio.codec_context.name == "aac"
+        assert video.codec_context.has_b_frames is False

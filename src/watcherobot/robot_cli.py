@@ -131,7 +131,10 @@ def _record_options(parser: argparse.ArgumentParser, *, default_suffix: str, vid
     if video_options:
         parser.add_argument("--width", type=int, default=640)
         parser.add_argument("--height", type=int, default=480)
-        parser.add_argument("--fps", type=int, choices=range(1, 11), default=5)
+        parser.add_argument(
+            "--fps", type=int, choices=range(1, 25),
+            help="Capture ceiling (default: host 24 FPS; device storage 5 FPS)",
+        )
         parser.add_argument("--quality", type=int, choices=range(1, 101), default=80)
     _output_flags(parser, streaming=True)
 
@@ -289,7 +292,7 @@ def _record_and_download(args: argparse.Namespace, robot: WatcheRobot, mode: str
     output = args.output or _timestamp_path("video" if video else "audio", ".mp4" if video else ".wav")
     kwargs = {"duration": args.duration}
     if video:
-        kwargs.update(width=args.width, height=args.height, fps=args.fps, quality=args.quality)
+        kwargs.update(width=args.width, height=args.height, fps=_effective_recording_fps(args), quality=args.quality)
     recording = robot.recordings.start(cast(RecordingMode, mode), **kwargs)
     _progress(args, {"event": "started", **recording.info.as_dict()})
     try:
@@ -320,7 +323,7 @@ def _record_to_host(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> 
     partial.parent.mkdir(parents=True, exist_ok=True)
     kwargs: dict[str, Any] = {"duration": args.duration}
     if video:
-        kwargs.update(width=args.width, height=args.height, fps=args.fps, quality=args.quality)
+        kwargs.update(width=args.width, height=args.height, fps=_effective_recording_fps(args), quality=args.quality)
     recording = robot.recordings.start_host(cast(RecordingMode, mode), **kwargs)
     _progress(args, {"event": "started", "storage": "host", **recording.info.as_dict()})
     info = recording.info
@@ -408,7 +411,7 @@ def _record_to_host(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> 
         heartbeat_worker.join(timeout=12.0)
         recording.close()
     partial.replace(raw_path)
-    records = list(iter_wrec_records([raw_path]))
+    records = iter_wrec_records([raw_path])
     if mode == "audio":
         write_pcm_wav(records, output)
     else:
@@ -417,7 +420,7 @@ def _record_to_host(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> 
             output,
             width=info.width or args.width,
             height=info.height or args.height,
-            fps=info.fps or args.fps,
+            fps=info.fps or _effective_recording_fps(args),
             with_audio=mode == "av",
         )
     payload = {
@@ -445,7 +448,7 @@ def _download(args: argparse.Namespace, robot: WatcheRobot) -> int:
     raw_dir = args.raw_dir or output.with_name(f".{output.stem}.wrec")
     result = robot.recordings.download(info.id, raw_dir, progress=lambda event: _progress(args, {"event": "download", **event}))
     paths = sorted(raw_dir.glob("*.wrec"))
-    records = list(iter_wrec_records(paths, tolerate_truncated_tail=info.state == "interrupted"))
+    records = iter_wrec_records(paths, tolerate_truncated_tail=info.state == "interrupted")
     if info.mode == "audio":
         write_pcm_wav(records, output)
     else:
@@ -459,6 +462,14 @@ def _download(args: argparse.Namespace, robot: WatcheRobot) -> int:
         )
     payload = {"id": info.id, "path": str(output.resolve()), "raw_directory": str(raw_dir.resolve()), "resumed_bytes": result.resumed_bytes, "downloaded_bytes": result.downloaded_bytes}
     return _emit(args, payload, f"Recording downloaded: {output}")
+
+
+def _effective_recording_fps(args: argparse.Namespace) -> int:
+    """Resolve the media strategy default without hiding an explicit CLI value."""
+
+    if args.fps is not None:
+        return int(args.fps)
+    return 24 if args.storage == "host" else 5
 
 
 def _run_maintenance(args: argparse.Namespace, control_url: str, request_json: Callable[..., dict[str, Any]]) -> int:

@@ -40,13 +40,13 @@ watcherobot robot recording download rec_123 -o recovered.mp4
 watcherobot robot recording delete rec_123
 ```
 
-拍照、录像和录音的结果直接写入运行 CLI 的电脑；未传 `-o` 时在当前目录生成带时间戳的文件名。`camera record` 和 `audio record` 默认使用 `--storage host`：设备按单调时间戳生成 WREC 记录，经独立可靠队列实时发送，CLI 先写入 `.wrec.part`，完整收到终止标记并校验后原子重命名，再生成 MP4 或 WAV。该模式不消耗设备 SD 空间。
+拍照、录像和录音的结果直接写入运行 CLI 的电脑；未传 `-o` 时在当前目录生成带时间戳的文件名。`camera record` 和 `audio record` 默认使用 `--storage host`：设备按单调时间戳生成 WREC 记录，CLI 先写入 `.wrec.part`，完整收到终止标记并校验后原子重命名，再生成 MP4 或 WAV。该模式不消耗设备 SD 空间。
 
-预览和录制采用不同策略。预览允许覆盖旧帧以维持低延迟；录制先按指定目标 FPS 从更快的摄像头原始流主动采样，已经选中的帧不允许静默丢弃。实际采集帧率可能因摄像头或链路耗时略低于目标，最终视频依据设备时间戳保留真实时长。WebSocket/TCP 会在连接存续期间重传网络丢包，WSPK 分片序号和 WREC 媒体序号负责检测遗漏。CLI 的收帧写盘循环与状态查询、心跳续租分别运行，状态查询卡顿不会占住收帧线程；主机最多暂存 1024 个录制分片（约 16 MiB）。队列溢出、序号缺口、发送失败或断线都会让录制明确失败，并保留 `.wrec.part` 供诊断，不会输出一个伪成功文件。首版不承诺 Wi-Fi 完全断开后的跨连接续录。
+主机录像与实时预览使用相同的“最新帧优先”策略：默认以相机原生 24 FPS 为上限，带声音录像也按该上限持续取最新画面。可靠发送本身形成自然背压；发送较慢时，尚未发送的旧视频帧由更新画面覆盖，不再叠加长期降档，避免网络抖动累积成越来越大的观看延迟。音频包使用可靠 FIFO，并在发送视频前优先排空，保持连续并作为音画同步基准。`--fps` 是用户指定的采集上限，不保证无线链路一定达到该数值；最终 MP4 根据设备单调时间戳保留真实时长和视频间隔。JSON/JSONL 状态同时给出 `source_fps_x100`、`sent_fps_x100`、采集/发送帧数和 `jpeg_average_bytes`，可直接区分相机出帧与局域网出口瓶颈。WebSocket/TCP 负责当前逻辑记录的可靠传输，WSPK 序号和已输出 WREC 媒体序号负责检测损坏；发送失败或断线仍会让录制明确失败，并保留 `.wrec.part` 供诊断。CLI 的收帧写盘循环与状态查询、心跳续租分别运行，状态查询卡顿不会占住收帧线程；主机接收队列最多暂存 128 个逻辑记录，按固件单记录上限计算最坏不超过 64 MiB。首版不承诺 Wi-Fi 完全断开后的跨连接续录。
 
 明确传入 `--storage device` 时沿用设备 SD 可靠录制和可续传下载。下载或 MP4/WAV 封装失败会保留本地 WREC 临时目录和设备副本，重新运行 `recording download` 即可继续；只有显式 `recording delete` 才删除设备副本。
 
-`camera record --with-audio` 的 `av` 是设备端 JPEG 与 16 kHz 单声道 PCM 同步采集，不是 RTC 全双工通话。电脑使用记录中的单调时间戳生成 H.264/yuv420p + AAC MP4。主机录制即使指定 `--duration`，CLI 失联 15 秒后仍会停止采集；设备端录制仅在未指定时长时以相同心跳保护。只有 `--storage device` 会受 SD 保护线约束，并保留 `max(256 MiB, SD 总容量 5%)`。另一个终端对主机录制执行 `recording stop host_...` 只表示设备已收到停止请求，最终文件仍须由原录制 CLI 收到终止标记后生成。
+`camera record --with-audio` 的 `av` 是设备端 JPEG 与 16 kHz 单声道 PCM 同步采集，不是 RTC 全双工通话。电脑使用记录中的单调时间戳，以 CRF 18 生成 H.264/yuv420p + AAC MP4，在兼容系统播放器的同时尽量保留源 JPEG 细节。主机录制即使指定 `--duration`，CLI 失联 15 秒后仍会停止采集；设备端录制仅在未指定时长时以相同心跳保护。只有 `--storage device` 会受 SD 保护线约束，并保留 `max(256 MiB, SD 总容量 5%)`。另一个终端对主机录制执行 `recording stop host_...` 只表示设备已收到停止请求，最终文件仍须由原录制 CLI 收到终止标记后生成。
 
 音频播放接受 WAV、MP3、OGG，由电脑转换为 24 kHz、16-bit、mono PCM，并继续遵守 4 MiB PCM 上限。灯区为 `side`、`bottom`、`all`，`head` 是 `side` 的兼容别名；摄像头和麦克风隐私指示灯由固件自动控制，`light status` 只读展示，任何 CLI 命令都不能覆盖。
 

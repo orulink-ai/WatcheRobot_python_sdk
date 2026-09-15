@@ -24,7 +24,10 @@ RecordingMode = Literal["video", "audio", "av"]
 RECORDING_CAPABILITY = "recording.device.v1"
 RECORDING_AV_CAPABILITY = "recording.device.av.v1"
 HOST_RECORDING_CAPABILITY = "recording.host.v1"
-HOST_RECORDING_QUEUE_FRAMES = 1024  # At most 16 MiB for 16 KiB WSPK chunks.
+# Firmware emits one complete WREC record per logical WebSocket message.  Keep
+# enough headroom for short host scheduling stalls without allowing a slow
+# consumer to retain hundreds of MiB when JPEG records approach their limit.
+HOST_RECORDING_QUEUE_FRAMES = 128
 DOWNLOAD_RESUME_CAPABILITY = "recording.download.resume.v1"
 WREC_HEADER = struct.Struct("<4sBBHIQII")
 WREC_MAGIC = b"WREC"
@@ -47,6 +50,13 @@ class RecordingInfo:
     width: int = 0
     height: int = 0
     fps: int = 0
+    target_fps: int = 0
+    dropped_video_frames: int = 0
+    source_video_frames: int = 0
+    sent_video_frames: int = 0
+    source_fps_x100: int = 0
+    sent_fps_x100: int = 0
+    jpeg_average_bytes: int = 0
     quality: int = 0
     estimated_remaining_ms: int = 0
 
@@ -75,6 +85,13 @@ class RecordingInfo:
             width=max(0, int(payload.get("width", 0))),
             height=max(0, int(payload.get("height", 0))),
             fps=max(0, int(payload.get("fps", 0))),
+            target_fps=max(0, int(payload.get("target_fps", payload.get("fps", 0)))),
+            dropped_video_frames=max(0, int(payload.get("dropped_video_frames", 0))),
+            source_video_frames=max(0, int(payload.get("source_video_frames", 0))),
+            sent_video_frames=max(0, int(payload.get("sent_video_frames", 0))),
+            source_fps_x100=max(0, int(payload.get("source_fps_x100", 0))),
+            sent_fps_x100=max(0, int(payload.get("sent_fps_x100", 0))),
+            jpeg_average_bytes=max(0, int(payload.get("jpeg_average_bytes", 0))),
             quality=max(0, int(payload.get("quality", 0))),
             estimated_remaining_ms=max(0, int(payload.get("estimated_remaining_ms", 0))),
         )
@@ -86,6 +103,10 @@ class RecordingInfo:
             "segments": list(self.segments), "sha256": self.sha256,
             "stop_reason": self.stop_reason, "created_at": self.created_at,
             "width": self.width, "height": self.height, "fps": self.fps,
+            "target_fps": self.target_fps, "dropped_video_frames": self.dropped_video_frames,
+            "source_video_frames": self.source_video_frames, "sent_video_frames": self.sent_video_frames,
+            "source_fps_x100": self.source_fps_x100, "sent_fps_x100": self.sent_fps_x100,
+            "jpeg_average_bytes": self.jpeg_average_bytes,
             "quality": self.quality, "estimated_remaining_ms": self.estimated_remaining_ms,
         }
 
@@ -243,26 +264,41 @@ def write_pcm_wav(records: Iterable[WrecRecord], output_path: str | Path, *, sam
     return target
 
 
-def mux_wrec_to_mp4(records: Iterable[WrecRecord], output_path: str | Path, *, width: int, height: int, fps: int = 5, with_audio: bool = False) -> Path:
+def mux_wrec_to_mp4(records: Iterable[WrecRecord], output_path: str | Path, *, width: int, height: int, fps: int = 24, with_audio: bool = False) -> Path:
     """Encode timestamped JPEG/PCM records into browser-compatible MP4."""
     import av
 
     target = Path(output_path)
     partial = target.with_name(target.name + ".part")
     partial.parent.mkdir(parents=True, exist_ok=True)
-    items = sorted(records, key=lambda item: (item.timestamp_us, item.kind, item.sequence))
+    items = iter(records)
+    first_item = next(items, None)
     container = av.open(str(partial), mode="w", format="mp4")
     try:
         video = container.add_stream("libx264", rate=fps)
         video.width = width
         video.height = height
         video.pix_fmt = "yuv420p"
+        video.time_base = Fraction(1, 1_000_000)
+        video.codec_context.time_base = Fraction(1, 1_000_000)
+        # WREC frames and PCM chunks are interleaved by device timestamps.  A
+        # default x264 encoder may hold several B-frames while AAC has already
+        # advanced the MP4 timeline, then emit a video packet whose DTS moves
+        # backwards.  Low-latency host recordings do not benefit from that
+        # reordering, so make every video packet immediately muxable.
+        video.codec_context.max_b_frames = 0
+        # CRF 18 keeps the H.264 result visually close to the source JPEGs.
+        # Encoding runs on the computer, so prefer source detail over the
+        # smaller default CRF 23 output used by generic x264 workloads.
+        video.options = {"preset": "veryfast", "tune": "zerolatency", "bf": "0", "crf": "18"}
         audio = container.add_stream("aac", rate=16000) if with_audio else None
         if audio is not None:
             audio.layout = "mono"
-        media_start_us = min((item.timestamp_us for item in items), default=0)
+        media_start_us = first_item.timestamp_us if first_item is not None else 0
         decoder = av.CodecContext.create("mjpeg", "r")
-        for item in items:
+        pending = first_item
+        while pending is not None:
+            item = pending
             relative_us = max(0, item.timestamp_us - media_start_us)
             if item.kind == WREC_JPEG:
                 packet = av.Packet(item.payload)
@@ -281,6 +317,7 @@ def mux_wrec_to_mp4(records: Iterable[WrecRecord], output_path: str | Path, *, w
                 frame.planes[0].update(item.payload)
                 for encoded in audio.encode(frame):
                     container.mux(encoded)
+            pending = next(items, None)
         for encoded in video.encode():
             container.mux(encoded)
         if audio is not None:
@@ -334,7 +371,7 @@ class RecordingsDomain:
     ) -> None:
         if mode not in {"video", "audio", "av"}:
             raise ValueError("mode must be video, audio, or av")
-        if not 1 <= fps <= 10 or not 1 <= quality <= 100 or width <= 0 or height <= 0:
+        if not 1 <= fps <= 24 or not 1 <= quality <= 100 or width <= 0 or height <= 0:
             raise ValueError("invalid recording dimensions, fps, or quality")
         if duration is not None and duration <= 0:
             raise ValueError("duration must be positive")
@@ -356,11 +393,15 @@ class RecordingsDomain:
         *,
         width: int = 640,
         height: int = 480,
-        fps: int = 5,
+        fps: int = 24,
         quality: int = 80,
         duration: float | None = None,
     ) -> HostRecording:
-        """Start reliable media capture streamed directly to the host."""
+        """Start latest-frame media capture streamed directly to the host.
+
+        Video keeps only the newest pending frame; reliable transport provides
+        natural backpressure while audio remains continuous and prioritized.
+        """
 
         self._validate_start_options(mode, width, height, fps, quality, duration)
         self._robot._require_capability(HOST_RECORDING_CAPABILITY)

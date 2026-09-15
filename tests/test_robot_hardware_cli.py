@@ -15,6 +15,7 @@ from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, BinaryF
 from watcherobot.recordings import RecordingInfo, WREC_PCM, WrecRecord, encode_wrec_record
 from watcherobot.robot_cli import (
     RobotCliError,
+    _effective_recording_fps,
     _run_connected,
     _run_maintenance,
     _screen_duration_ms,
@@ -27,7 +28,7 @@ from watcherobot.robot_cli import (
     "arguments,attributes",
     [
         (["robot", "camera", "capture"], {"camera_command": "capture"}),
-        (["robot", "camera", "record", "--with-audio"], {"with_audio": True, "fps": 5, "storage": "host"}),
+        (["robot", "camera", "record", "--with-audio"], {"with_audio": True, "fps": None, "storage": "host"}),
         (["robot", "audio", "record", "--duration", "2", "--storage", "device"], {"duration": 2.0, "storage": "device"}),
         (["robot", "light", "set", "--zone", "head", "--color", "#123456"], {"zone": "head"}),
         (["robot", "screen", "play-work", "demo", "--clip", "main"], {"clip": "main"}),
@@ -38,6 +39,16 @@ def test_hardware_command_tree(arguments: list[str], attributes: dict[str, objec
     parsed = build_parser().parse_args(arguments)
     for name, value in attributes.items():
         assert getattr(parsed, name) == value
+
+
+def test_recording_default_fps_depends_on_storage_without_overriding_explicit_value() -> None:
+    host = build_parser().parse_args(["robot", "camera", "record", "--with-audio"])
+    device = build_parser().parse_args(["robot", "camera", "record", "--storage", "device"])
+    explicit = build_parser().parse_args(["robot", "camera", "record", "--storage", "device", "--fps", "18"])
+
+    assert _effective_recording_fps(host) == 24
+    assert _effective_recording_fps(device) == 5
+    assert _effective_recording_fps(explicit) == 18
 
 
 def test_host_recording_stop_reports_request_not_verified_completion(capsys: pytest.CaptureFixture[str]) -> None:
