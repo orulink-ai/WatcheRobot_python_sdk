@@ -72,6 +72,12 @@ from watcherobot.runtime.daemon.instance import (
     runtime_instance_id,
 )
 from watcherobot.vision import VisionStatus
+from watcherobot.robot_cli import (
+    RobotCliError,
+    handles as handles_robot_hardware_command,
+    register_commands as register_robot_hardware_commands,
+    run as run_robot_hardware_command,
+)
 
 
 APPLICATION_START_TIMEOUT_SECONDS = 90.0
@@ -319,6 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     face_track_commands.add_parser("on", help="Start face tracking")
     face_track_commands.add_parser("off", help="Stop and hold the current pose")
+    register_robot_hardware_commands(robot_commands)
     return parser
 
 
@@ -397,6 +404,15 @@ def main(argv: list[str] | None = None) -> int:
             except ValueError as exc:
                 raise CliError(str(exc)) from exc
         if args.command == "robot":
+            if handles_robot_hardware_command(args):
+                hardware_state = _live_runtime_state()
+                if hardware_state is None:
+                    raise CliError("Runtime is not running; run 'watcherobot daemon start' first")
+                return run_robot_hardware_command(
+                    args,
+                    runtime_state=hardware_state,
+                    request_json=_request_json,
+                )
             if args.robot_command == "status":
                 return robot_status()
             if args.robot_command == "vision":
@@ -428,6 +444,7 @@ def main(argv: list[str] | None = None) -> int:
         ApplicationProjectInitError,
         BluetoothProvisioningError,
         CliError,
+        RobotCliError,
         WatcheRobotError,
     ) as exc:
         print(

@@ -1,5 +1,7 @@
 # WatcheRobot CLI reference
 
+For camera capture, reliable device-side video/audio recording, speaker playback, lights, screen works, and recording management, see the [robot hardware CLI guide](robot-hardware-cli.zh-CN.md).
+
 This is the complete reference for the installed `watcherobot` command. Use
 `watcherobot <group> <command> --help` to inspect the options exposed by the
 installed SDK version.

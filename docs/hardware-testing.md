@@ -98,3 +98,7 @@ payloads without decoding them; the managed Application's SDK decodes them.
 
 Camera and microphone tests may capture people nearby. Obtain consent and
 protect or remove generated artifacts after validation.
+
+The standalone hardware CLI acceptance matrix, including device-side WREC recording,
+resume, storage reserve, lights, and screen content, is documented in the
+[robot hardware CLI guide](robot-hardware-cli.zh-CN.md#验收重点).

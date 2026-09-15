@@ -5,6 +5,7 @@ import json
 
 from websockets.asyncio.client import connect
 
+from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, build_wspk
 from watcherobot.runtime.daemon.connections import ExternalClientRole, ExternalWebSocketServer
 
 
@@ -71,7 +72,9 @@ def test_no_application_routes_desktop_and_device_frames_unchanged() -> None:
             assert await asyncio.wait_for(device.recv(), timeout=1) == desktop_binary
 
             device_text = '{"type":"evt.test","data":{"online":true}}'
-            device_binary = b"\x10\x20\x30"
+            device_binary = build_wspk(
+                FRAME_RECORDING, FLAG_FIRST | FLAG_LAST, 42, 0, b"recording-chunk"
+            )
             await device.send(device_text)
             await device.send(device_binary)
             assert await asyncio.wait_for(desktop.recv(), timeout=1) == device_text

@@ -46,10 +46,12 @@ class AudioPlayback(Job):
         stream_id: int,
         transport: CommandTransport,
         expected_sha256: str,
+        expected_duration_seconds: float,
         cancel_callback: Callable[[AudioPlayback], None],
     ) -> None:
         super().__init__(stream_id, transport, initial_state=JobState.STARTING)
         self.expected_sha256 = expected_sha256
+        self.expected_duration_seconds = expected_duration_seconds
         self._cancel_callback = cancel_callback
 
     def cancel(self) -> None:
@@ -59,23 +61,47 @@ class AudioPlayback(Job):
 
 
 def load_pcm_wave(path: str | Path) -> PCMAudio:
-    """Read a WAV file in the single playback format supported by protocol v1."""
+    """Read a WAV file already encoded in the protocol-v1 playback format."""
     source = Path(path)
     try:
         with wave.open(str(source), "rb") as wav_file:
-            sample_rate = wav_file.getframerate()
-            channels = wav_file.getnchannels()
-            sample_width = wav_file.getsampwidth()
-            compression = wav_file.getcomptype()
-            if compression != "NONE":
-                raise ValueError("v1 playback requires an uncompressed PCM WAV file")
-            if sample_rate != OUTPUT_AUDIO_FORMAT.sample_rate_hz:
+            if wav_file.getframerate() != OUTPUT_AUDIO_FORMAT.sample_rate_hz:
                 raise ValueError("v1 playback WAV must use 24000 Hz")
-            if channels != OUTPUT_AUDIO_FORMAT.channels:
+            if wav_file.getnchannels() != OUTPUT_AUDIO_FORMAT.channels:
                 raise ValueError("v1 playback WAV must be mono")
-            if sample_width != OUTPUT_AUDIO_FORMAT.sample_width_bytes:
+            if wav_file.getsampwidth() != OUTPUT_AUDIO_FORMAT.sample_width_bytes:
                 raise ValueError("v1 playback WAV must use 16-bit samples")
-            data = wav_file.readframes(wav_file.getnframes())
+            if wav_file.getcomptype() != "NONE":
+                raise ValueError("v1 playback requires an uncompressed PCM WAV file")
+            return PCMAudio(wav_file.readframes(wav_file.getnframes()))
     except wave.Error as error:
         raise ValueError(f"invalid WAV file: {source}") from error
-    return PCMAudio(data)
+
+
+def load_audio_file(path: str | Path) -> PCMAudio:
+    """Decode WAV, MP3, or OGG and resample to protocol-v1 playback PCM."""
+    source = Path(path)
+    if source.suffix.lower() not in {".wav", ".mp3", ".ogg"}:
+        raise ValueError("audio file must be WAV, MP3, or OGG")
+    try:
+        import av
+
+        chunks: list[bytes] = []
+        with av.open(str(source)) as container:
+            streams = [stream for stream in container.streams if stream.type == "audio"]
+            if not streams:
+                raise ValueError(f"audio file has no audio stream: {source}")
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=24000)
+            for frame in container.decode(streams[0]):
+                if not isinstance(frame, av.AudioFrame):
+                    continue
+                converted = resampler.resample(frame)
+                for output in converted:
+                    chunks.append(bytes(output.planes[0])[: output.samples * 2])
+            for output in resampler.resample(None):
+                chunks.append(bytes(output.planes[0])[: output.samples * 2])
+        return PCMAudio(b"".join(chunks))
+    except (OSError, ValueError) as error:
+        if isinstance(error, ValueError) and str(error).startswith(("audio file", "PCM audio")):
+            raise
+        raise ValueError(f"invalid or unsupported audio file: {source}") from error
