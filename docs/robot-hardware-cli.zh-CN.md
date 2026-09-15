@@ -17,6 +17,7 @@ Daemon 只透明转发业务文本和 WSPK 二进制帧；CLI 不会建立绕过
 watcherobot robot camera capture -o photo.jpg
 watcherobot robot camera record -o video.mp4 --duration 10
 watcherobot robot camera record -o video-with-audio.mp4 --with-audio --duration 10
+watcherobot robot camera record -o framed-video.mp4 --screen-preview --duration 10
 watcherobot robot audio record -o microphone.wav --duration 10
 watcherobot robot camera record --storage device -o device-video.mp4 --duration 10
 watcherobot robot audio play .\prompt.mp3
@@ -47,6 +48,8 @@ watcherobot robot recording delete rec_123
 明确传入 `--storage device` 时沿用设备 SD 可靠录制和可续传下载。下载或 MP4/WAV 封装失败会保留本地 WREC 临时目录和设备副本，重新运行 `recording download` 即可继续；只有显式 `recording delete` 才删除设备副本。
 
 `camera record --with-audio` 的 `av` 是设备端 JPEG 与 16 kHz 单声道 PCM 同步采集，不是 RTC 全双工通话。电脑使用记录中的单调时间戳，以 CRF 18 生成 H.264/yuv420p + AAC MP4，在兼容系统播放器的同时尽量保留源 JPEG 细节。主机录制即使指定 `--duration`，CLI 失联 15 秒后仍会停止采集；设备端录制仅在未指定时长时以相同心跳保护。只有 `--storage device` 会受 SD 保护线约束，并保留 `max(256 MiB, SD 总容量 5%)`。另一个终端对主机录制执行 `recording stop host_...` 只表示设备已收到停止请求，最终文件仍须由原录制 CLI 收到终止标记后生成。
+
+摄像头录像可显式添加 `--screen-preview`。支持 `recording.screen_preview.v1` 的固件会在机器人屏幕显示低帧率最新画面、REC 标识和录制时长；该显示链路只用于构图，不参与电脑端录像传输，繁忙时会丢弃屏幕旧帧，且显示失败不会中断录像。首版默认关闭，以免在未验证的网络和温度环境中影响录像性能。旧固件缺少能力标识时，CLI 会明确拒绝并提示升级。
 
 音频播放接受 WAV、MP3、OGG，由电脑转换为 24 kHz、16-bit、mono PCM，并继续遵守 4 MiB PCM 上限。灯区为 `side`、`bottom`、`all`，`head` 是 `side` 的兼容别名；摄像头和麦克风隐私指示灯由固件自动控制，`light status` 只读展示，任何 CLI 命令都不能覆盖。
 

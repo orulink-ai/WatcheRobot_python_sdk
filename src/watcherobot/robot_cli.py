@@ -56,6 +56,11 @@ def register_commands(subparsers: Any) -> None:
     record = camera_sub.add_parser("record", help="Record reliable JPEG video to the host or device")
     _record_options(record, default_suffix=".mp4")
     record.add_argument("--with-audio", action="store_true")
+    record.add_argument(
+        "--screen-preview",
+        action="store_true",
+        help="Show a low-rate latest-frame preview with REC status on the robot screen",
+    )
 
     audio = subparsers.add_parser("audio", help="Record or play robot audio")
     audio_sub = audio.add_subparsers(dest="audio_command", required=True)
@@ -292,7 +297,13 @@ def _record_and_download(args: argparse.Namespace, robot: WatcheRobot, mode: str
     output = args.output or _timestamp_path("video" if video else "audio", ".mp4" if video else ".wav")
     kwargs = {"duration": args.duration}
     if video:
-        kwargs.update(width=args.width, height=args.height, fps=_effective_recording_fps(args), quality=args.quality)
+        kwargs.update(
+            width=args.width,
+            height=args.height,
+            fps=_effective_recording_fps(args),
+            quality=args.quality,
+            screen_preview=args.screen_preview,
+        )
     recording = robot.recordings.start(cast(RecordingMode, mode), **kwargs)
     _progress(args, {"event": "started", **recording.info.as_dict()})
     try:
@@ -323,7 +334,13 @@ def _record_to_host(args: argparse.Namespace, robot: WatcheRobot, mode: str) -> 
     partial.parent.mkdir(parents=True, exist_ok=True)
     kwargs: dict[str, Any] = {"duration": args.duration}
     if video:
-        kwargs.update(width=args.width, height=args.height, fps=_effective_recording_fps(args), quality=args.quality)
+        kwargs.update(
+            width=args.width,
+            height=args.height,
+            fps=_effective_recording_fps(args),
+            quality=args.quality,
+            screen_preview=args.screen_preview,
+        )
     recording = robot.recordings.start_host(cast(RecordingMode, mode), **kwargs)
     _progress(args, {"event": "started", "storage": "host", **recording.info.as_dict()})
     info = recording.info

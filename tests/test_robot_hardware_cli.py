@@ -28,7 +28,10 @@ from watcherobot.robot_cli import (
     "arguments,attributes",
     [
         (["robot", "camera", "capture"], {"camera_command": "capture"}),
-        (["robot", "camera", "record", "--with-audio"], {"with_audio": True, "fps": None, "storage": "host"}),
+        (
+            ["robot", "camera", "record", "--with-audio", "--screen-preview"],
+            {"with_audio": True, "screen_preview": True, "fps": None, "storage": "host"},
+        ),
         (["robot", "audio", "record", "--duration", "2", "--storage", "device"], {"duration": 2.0, "storage": "device"}),
         (["robot", "light", "set", "--zone", "head", "--color", "#123456"], {"zone": "head"}),
         (["robot", "screen", "play-work", "demo", "--clip", "main"], {"clip": "main"}),
@@ -49,6 +52,62 @@ def test_recording_default_fps_depends_on_storage_without_overriding_explicit_va
     assert _effective_recording_fps(host) == 24
     assert _effective_recording_fps(device) == 5
     assert _effective_recording_fps(explicit) == 18
+
+
+def test_camera_record_forwards_screen_preview_only_when_requested(tmp_path: Path) -> None:
+    output = tmp_path / "preview.wav"
+    payload = encode_wrec_record(WrecRecord(WREC_PCM, 0, 0, 10, b"\x01\x00" * 160))
+
+    class Recording:
+        id = "host_preview"
+        stream_id = 12
+        info = RecordingInfo("host_preview", "av", "recording", screen_preview=True)
+
+        def __init__(self) -> None:
+            self.frames = iter([
+                BinaryFrame(FRAME_RECORDING, FLAG_FIRST, 12, 0, payload),
+                BinaryFrame(FRAME_RECORDING, FLAG_LAST, 12, 1, b""),
+            ])
+
+        def read(self, timeout=None):
+            del timeout
+            return next(self.frames)
+
+        def status(self):
+            return self.info
+
+        def stop(self):
+            raise AssertionError("completed recording must not be stopped")
+
+        def close(self):
+            pass
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def start_host(mode: str, **kwargs):
+        calls.append((mode, kwargs))
+        return Recording()
+
+    robot = SimpleNamespace(recordings=SimpleNamespace(start_host=start_host, heartbeat=lambda _id: None))
+    args = build_parser().parse_args([
+        "robot", "camera", "record", "--with-audio", "--screen-preview",
+        "--duration", "0.01", "-o", str(output.with_suffix(".mp4")),
+    ])
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("watcherobot.robot_cli.mux_wrec_to_mp4", lambda *_args, **_kwargs: None)
+    try:
+        assert _run_connected(args, robot) == 0
+    finally:
+        monkeypatch.undo()
+
+    assert calls == [("av", {
+        "duration": 0.01,
+        "width": 640,
+        "height": 480,
+        "fps": 24,
+        "quality": 80,
+        "screen_preview": True,
+    })]
 
 
 def test_host_recording_stop_reports_request_not_verified_completion(capsys: pytest.CaptureFixture[str]) -> None:

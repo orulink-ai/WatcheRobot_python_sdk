@@ -11,6 +11,7 @@ from PIL import Image
 from watcherobot.errors import WatcheRobotError
 from watcherobot.protocol import FLAG_CANCEL, FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, BinaryFrame
 from watcherobot.recordings import (
+    RECORDING_SCREEN_PREVIEW_CAPABILITY,
     RecordingInfo,
     RecordingsDomain,
     WREC_JPEG,
@@ -36,6 +37,7 @@ def test_recording_info_preserves_live_video_throughput_metrics() -> None:
         "source_fps_x100": 2400,
         "sent_fps_x100": 1980,
         "jpeg_average_bytes": 24_000,
+        "screen_preview": True,
     })
 
     assert info.source_video_frames == 240
@@ -43,7 +45,48 @@ def test_recording_info_preserves_live_video_throughput_metrics() -> None:
     assert info.source_fps_x100 == 2400
     assert info.sent_fps_x100 == 1980
     assert info.jpeg_average_bytes == 24_000
+    assert info.screen_preview is True
     assert info.as_dict()["sent_fps_x100"] == 1980
+    assert info.as_dict()["screen_preview"] is True
+
+
+def test_host_recording_screen_preview_requires_capability_and_sets_protocol_flag() -> None:
+    class Robot:
+        capabilities = ("recording.host.v1", RECORDING_SCREEN_PREVIEW_CAPABILITY)
+
+        def __init__(self) -> None:
+            self.required: list[str] = []
+            self.domain = RecordingsDomain(self)
+
+        def _require_capability(self, capability: str) -> None:
+            self.required.append(capability)
+
+        def _command(self, message_type: str, data: dict[str, object], timeout=None):
+            assert message_type == "ctrl.recording.start"
+            assert timeout == 10.0
+            assert data["screen_preview"] is True
+            return {"data": {
+                "recording_id": "host_preview",
+                "mode": "video",
+                "state": "recording",
+                "storage": "host",
+                "stream_id": data["stream_id"],
+                "screen_preview": True,
+            }}
+
+    robot = Robot()
+    recording = robot.domain.start_host("video", screen_preview=True)
+
+    assert robot.required == ["recording.host.v1", RECORDING_SCREEN_PREVIEW_CAPABILITY]
+    assert recording.info.screen_preview is True
+    recording.close()
+
+
+def test_recording_rejects_screen_preview_for_audio_only_mode() -> None:
+    domain = RecordingsDomain(object())
+
+    with pytest.raises(ValueError, match="screen preview requires video"):
+        domain.start_host("audio", screen_preview=True)
 
 
 def test_mp4_mux_does_not_materialize_an_unbounded_recording() -> None:
