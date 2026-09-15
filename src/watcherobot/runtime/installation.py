@@ -13,6 +13,7 @@ import psutil
 from .daemon.instance import RuntimeInstanceLock, default_runtime_instance_root
 from .manager import _stop_and_wait
 from .repository import operation_lock
+from .background_process import background_process_options
 
 
 def hold_installation(owner: psutil.Process, handshake: Path) -> None:
@@ -48,11 +49,7 @@ def begin_installation(pid: int, handshake: Path) -> None:
         command.extend(["-m", "watcherobot.runtime.daemon"])
     command.extend(["--guard-installation", str(pid), str(handshake)])
     environment = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
-    options = (
-        {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS}
-        if os.name == "nt"
-        else {"start_new_session": True}
-    )
+    options = background_process_options()
     with (handshake / "guard.log").open("ab") as log:
         process = subprocess.Popen(
             command,

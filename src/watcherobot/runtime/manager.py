@@ -14,6 +14,7 @@ from typing import Any
 from .daemon.instance import default_runtime_instance_root, default_runtime_state_root
 from .repository import operation_lock
 from .cleanup import cleanup_after
+from .background_process import background_process_options
 
 
 def describe_command(command: list[str]) -> dict[str, str]:
@@ -254,14 +255,7 @@ def ensure_command(
         environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
         launch_id = uuid.uuid4().hex
         environment["WATCHER_RUNTIME_LAUNCH_ID"] = launch_id
-        if os.name == "nt":
-            options["creationflags"] = (
-                subprocess.DETACHED_PROCESS
-                | subprocess.CREATE_NEW_PROCESS_GROUP
-                | subprocess.CREATE_NO_WINDOW
-            )
-        else:
-            options["start_new_session"] = True
+        options.update(background_process_options())
         process = None
         try:
             with (log_root / "runtime.log").open("ab") as log:
