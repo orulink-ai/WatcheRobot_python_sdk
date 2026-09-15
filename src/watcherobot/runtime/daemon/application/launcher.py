@@ -7,7 +7,6 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from .manifest import ApplicationManifest
 
@@ -86,8 +85,6 @@ class ApplicationLauncher:
         )
         self._default_app_id = default_app_id
         self._is_windows = os.name == "nt" if is_windows is None else is_windows
-        self._local_grant: dict[str, Any] | None = None
-
     def build_spec(
         self,
         *,
@@ -115,7 +112,7 @@ class ApplicationLauncher:
         requested_executable = Path(os.path.abspath(executable))
         from watcherobot.runtime.registration import authorized_launch
 
-        grant = authorized_launch.get() or self._local_grant
+        grant = authorized_launch.get()
         if grant is not None and {k: v for k, v in grant.items() if k != "environment"} == {
             "application_dir": str(application_dir),
             "launcher": {"kind": launcher_kind.value, "executable": str(executable)},
@@ -128,7 +125,6 @@ class ApplicationLauncher:
                 _python_executable_for_trusted_source_default(requested_executable, is_windows=self._is_windows)
                 if launcher_kind is ApplicationLauncherKind.PYTHON else resolved
             )
-            self._local_grant = grant
             register_reference(selected_dir)
             register_environment(requested_executable)
             return ApplicationLaunchSpec(manifest.app_id, selected_dir, launcher_kind, requested_executable, command_executable, tuple(grant.get("environment", {}).items()))
@@ -192,6 +188,49 @@ class ApplicationLauncher:
             kind=launcher_kind,
             executable=spec_executable,
             command_executable=command_executable,
+        )
+
+    def refresh_spec(
+        self,
+        spec: ApplicationLaunchSpec,
+    ) -> ApplicationLaunchSpec:
+        """Revalidate one already selected spec without authorizing a new selection."""
+
+        selected_dir = _require_absolute_directory(spec.application_dir)
+        manifest = ApplicationManifest.load(selected_dir, daemon=True)
+        if manifest.app_id != spec.app_id:
+            raise ApplicationLaunchError(
+                "Application manifest id does not match selected launch spec"
+            )
+        requested_executable = Path(os.path.abspath(spec.executable))
+        resolved = _require_executable_file(
+            requested_executable,
+            is_windows=self._is_windows,
+        )
+        _require_platform_executable_name(
+            resolved,
+            kind=spec.kind,
+            is_windows=self._is_windows,
+        )
+        command_executable = (
+            _python_executable_for_trusted_source_default(
+                requested_executable,
+                is_windows=self._is_windows,
+            )
+            if spec.kind is ApplicationLauncherKind.PYTHON
+            else resolved
+        )
+        if command_executable != spec.command_executable:
+            raise ApplicationLaunchError(
+                "Application launcher command changed after selection"
+            )
+        return ApplicationLaunchSpec(
+            app_id=manifest.app_id,
+            application_dir=selected_dir,
+            kind=spec.kind,
+            executable=requested_executable,
+            command_executable=command_executable,
+            environment=spec.environment,
         )
 
 

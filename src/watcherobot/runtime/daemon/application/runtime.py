@@ -171,11 +171,14 @@ class ApplicationRuntimeManager:
                 raise ApplicationStartError(
                     "Application manifest id does not match current app"
                 )
-            refreshed_spec = self._application_launcher.build_spec(
-                application_dir=self._launch_spec.application_dir,
-                kind=self._launch_spec.kind,
-                executable=self._launch_spec.executable,
-            )
+            try:
+                refreshed_spec = self._application_launcher.refresh_spec(
+                    self._launch_spec
+                )
+            except (OSError, ValueError) as exc:
+                raise ApplicationStartError(
+                    "Selected Application launch specification is no longer valid"
+                ) from exc
             if refreshed_spec.app_id != self.registry.current_app:
                 raise ApplicationStartError(
                     "Application launch spec does not match current app"
