@@ -22,6 +22,26 @@ from .daemon.instance import (
 )
 
 
+def _windows_extended_path(path: Path) -> str | Path:
+    if os.name != "nt":
+        return path
+    resolved = str(path.resolve())
+    extended_prefix = chr(92) * 2 + "?" + chr(92)
+    if resolved.startswith(extended_prefix):
+        return resolved
+    if resolved.startswith("\\"):
+        return extended_prefix + "UNC" + chr(92) + resolved[2:]
+    return extended_prefix + resolved
+
+
+def _copy_bundle(source: Path, destination: Path) -> None:
+    shutil.copytree(
+        _windows_extended_path(source),
+        _windows_extended_path(destination),
+        symlinks=True,
+    )
+
+
 @contextmanager
 def operation_lock(root: Path | None = None, *, timeout: float = 30) -> Iterator[None]:
     """Serialize short-lived managers, independently of the Daemon lifetime lock."""
@@ -95,7 +115,7 @@ def prepare_bundle(source: Path, repository: Path | None = None) -> Path:
             return target
         staging = root / (".staging-" + uuid.uuid4().hex)
         try:
-            shutil.copytree(source, staging, symlinks=True)
+            _copy_bundle(source, staging)
             if bundle_digest(staging) != identity:
                 raise ValueError("Staged Runtime integrity check failed")
             # copytree preserves source timestamps; grace must start at publication.

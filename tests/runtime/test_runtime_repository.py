@@ -3,7 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from watcherobot.runtime.repository import bundle_digest, prepare_bundle, operation_lock
+from watcherobot.runtime.repository import (
+    _copy_bundle,
+    _windows_extended_path,
+    bundle_digest,
+    prepare_bundle,
+    operation_lock,
+)
 from watcherobot.runtime.daemon.instance import RuntimeAlreadyRunningError
 
 
@@ -81,6 +87,28 @@ def test_bundle_digest_distinguishes_each_executable_bit(tmp_path: Path) -> None
         executable.chmod(mode)
         digests.append(bundle_digest(source))
     assert len(set(digests)) == len(digests)
+
+
+def test_windows_bundle_copy_uses_extended_paths(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    captured = None
+
+    def capture_copytree(*args, **kwargs):
+        nonlocal captured
+        captured = (args, kwargs)
+
+    monkeypatch.setattr("watcherobot.runtime.repository.os.name", "nt")
+    monkeypatch.setattr("watcherobot.runtime.repository.shutil.copytree", capture_copytree)
+
+    _copy_bundle(source, destination)
+
+    assert captured is not None
+    assert captured[0] == (_windows_extended_path(source), _windows_extended_path(destination))
+    extended_prefix = chr(92) * 2 + "?" + chr(92)
+    assert str(captured[0][0]).startswith(extended_prefix)
+    assert str(captured[0][1]).startswith(extended_prefix)
+    assert captured[1] == {"symlinks": True}
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits")

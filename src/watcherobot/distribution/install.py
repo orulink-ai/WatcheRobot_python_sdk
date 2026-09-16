@@ -902,6 +902,8 @@ def _runtime_tree_sha256(root: Path) -> str:
         if path.is_symlink():
             raise ValueError("Runtime contains a symbolic link")
         if path.is_file():
+            if path.suffix.lower() in {".pyc", ".pyo"}:
+                continue
             files.append(path)
         elif not path.is_dir():
             raise ValueError("Runtime contains an unsupported entry")

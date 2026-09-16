@@ -9,12 +9,40 @@ from pathlib import Path
 
 from watcherobot import __version__
 
+_IGNORED_DIRECTORY_NAMES = {"__pycache__"}
+_IGNORED_SUFFIXES = {".pyc", ".pyo"}
+_TEXT_SUFFIXES = {
+    ".css",
+    ".html",
+    ".ini",
+    ".js",
+    ".json",
+    ".md",
+    ".py",
+    ".toml",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
+}
+_TEXT_FILE_NAMES = {"py.typed"}
+
 
 def source_build_id(root: Path) -> str:
-    digest = hashlib.sha256(b"watcher-sdk-source-v1\0")
-    for path in sorted(root.rglob("*.py")):
+    """Hash packaged source and resources without including generated caches."""
+    digest = hashlib.sha256(b"watcher-sdk-source-v2\0")
+    paths = (
+        path
+        for path in root.rglob("*")
+        if path.is_file()
+        and not _IGNORED_DIRECTORY_NAMES.intersection(path.relative_to(root).parts)
+        and path.suffix.lower() not in _IGNORED_SUFFIXES
+    )
+    for path in sorted(paths, key=lambda item: item.relative_to(root).as_posix()):
         name = path.relative_to(root).as_posix().encode()
-        content = path.read_bytes().replace(b"\r\n", b"\n")
+        content = path.read_bytes()
+        if path.suffix.lower() in _TEXT_SUFFIXES or path.name in _TEXT_FILE_NAMES:
+            content = content.replace(b"\r\n", b"\n")
         digest.update(len(name).to_bytes(8, "big") + name)
         digest.update(len(content).to_bytes(8, "big") + content)
     return digest.hexdigest()

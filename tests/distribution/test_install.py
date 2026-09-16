@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import watcherobot.distribution.install as install_module
+import watcherobot.runtime.repository as runtime_repository
 from watcherobot.distribution.events import ErrorCode
 from watcherobot.distribution.install import (
     ApplicationEnvironmentCommand,
@@ -103,18 +104,17 @@ def test_runtime_publication_retries_one_transient_filesystem_failure(
     _write_source(source)
     runtime = tmp_path / "runtime-source"
     _write_runtime(runtime)
-    real_copytree = install_module.shutil.copytree
+    real_copy_bundle = runtime_repository._copy_bundle
     runtime_copy_attempts = 0
 
-    def flaky_copytree(*args, **kwargs):
+    def flaky_copy_bundle(source_root: Path, destination: Path) -> None:
         nonlocal runtime_copy_attempts
-        if Path(args[0]) == runtime:
-            runtime_copy_attempts += 1
-            if runtime_copy_attempts == 1:
-                raise OSError("temporary Windows file lock")
-        return real_copytree(*args, **kwargs)
+        runtime_copy_attempts += 1
+        if runtime_copy_attempts == 1:
+            raise OSError("temporary Windows file lock")
+        real_copy_bundle(source_root, destination)
 
-    monkeypatch.setattr(install_module.shutil, "copytree", flaky_copytree)
+    monkeypatch.setattr(runtime_repository, "_copy_bundle", flaky_copy_bundle)
     monkeypatch.setattr(install_module.time, "sleep", lambda _: None)
 
     installed = install_application(provider="huggingface",
@@ -559,3 +559,20 @@ def _tree_sha256(root: Path) -> str:
         digest.update(len(payload).to_bytes(8, "little"))
         digest.update(payload)
     return digest.hexdigest()
+
+
+def test_runtime_tree_hash_ignores_regenerable_python_bytecode(tmp_path: Path) -> None:
+    runtime_python = tmp_path / "python"
+    package = runtime_python / "Lib" / "example"
+    cache = package / "__pycache__"
+    cache.mkdir(parents=True)
+    package.joinpath("module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    clean_hash = install_module._runtime_tree_sha256(runtime_python)
+
+    package.joinpath("module.pyc").write_bytes(b"legacy-bytecode")
+    package.joinpath("module.pyo").write_bytes(b"optimized-bytecode")
+    cache.joinpath("module.cpython-312.pyc").write_bytes(b"bytecode")
+
+    assert install_module._runtime_tree_sha256(runtime_python) == clean_hash
+    cache.joinpath("owned.txt").write_text("unexpected", encoding="utf-8")
+    assert install_module._runtime_tree_sha256(runtime_python) != clean_hash

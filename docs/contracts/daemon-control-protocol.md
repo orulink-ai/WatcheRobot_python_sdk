@@ -44,9 +44,11 @@ Desktop 更新 Runtime 时按以下顺序调用：
 1. 读取当前 `/daemon/status`，比较目标与当前 `build_id`。不同构建必须在安装完成后显式执行 `daemon activate`，不能只比较 `sdk_version`。
 2. 覆盖运行资源前调用 `POST /daemon/prepare-update`。若 Application 仍占用 Runtime，接口返回 HTTP 409；Desktop 应保留现状并提示用户停止 Application，不得继续覆盖文件。
 3. `prepare-update` 成功后返回本次更新专属的 `update_token`，且 Daemon 的 `runtime.draining` 为 `true`。此时 Application `start` 和 `restart` 返回 HTTP 409，错误码为 `runtime_draining`；Desktop 应展示更新状态并停止自动重试。并发的其他更新准备请求返回 `update_in_progress`。
-4. 安装取消或失败时调用 `POST /daemon/cancel-update`，请求体传入对应的 `update_token`，恢复 Application 启动入口。token 不匹配时返回 `update_token_mismatch`，不得解除其他客户端建立的排空状态。安装成功后使用显式激活完成构建切换。
+4. 安装取消或失败时调用 `POST /daemon/cancel-update`，请求体传入对应的 `update_token`，恢复 Application 启动入口。token 不匹配时返回 `update_token_mismatch`，不得解除其他客户端建立的排空状态。Daemon 已进入关机流程时 token 立即失效，`cancel-update` 返回 `runtime_draining`，且不能重新开放 Application 启动入口。安装成功后使用显式激活完成构建切换。
 
 这些端点只协调生命周期，不解析或旁路业务消息。
+
+源码运行时的 `build_id` 摘要覆盖 `watcherobot` 包内源码与运行资源，忽略 `__pycache__`、`.pyc` 和 `.pyo` 等生成文件；文本资源统一换行后计算，以避免不同平台检出方式产生虚假的构建差异。
 
 仅用于测试或嵌入调用、且未提供 `runtime_metadata` 的 `DaemonControlAPI` 不发布 `runtime` 身份，因此不会冒充可发现的生产 Daemon。正式 `DaemonRuntime` 始终注入完整元数据，并且全项目只维护这一份当前身份合同。
 

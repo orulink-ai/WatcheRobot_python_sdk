@@ -772,3 +772,21 @@ def test_shutdown_closes_application_admission_immediately() -> None:
     prepare = client.post("/daemon/prepare-update")
     assert prepare.status_code == 409
     assert prepare.json() == {"error": "runtime_draining"}
+
+
+def test_shutdown_cannot_be_cancelled_by_prepared_update_token() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+    prepared = client.post("/daemon/prepare-update")
+    update_token = prepared.json()["update_token"]
+
+    assert client.post("/daemon/stop").status_code == 202
+    cancelled = client.post(
+        "/daemon/cancel-update", json={"update_token": update_token}
+    )
+
+    assert cancelled.status_code == 409
+    assert cancelled.json() == {"error": "runtime_draining"}
+    assert controller.shutdown_requested
+    assert client.post("/daemon/application/start").status_code == 409
+    assert client.post("/daemon/application/restart").status_code == 409

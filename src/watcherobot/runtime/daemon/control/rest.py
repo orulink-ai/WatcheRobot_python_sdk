@@ -259,6 +259,7 @@ class DaemonControlAPI:
 
         self._build_identity = runtime_identity()
         self._draining = False
+        self._shutting_down = False
         self._update_token: str | None = None
         self._starting_requests = 0
 
@@ -410,7 +411,9 @@ class DaemonControlAPI:
 
         @app.post("/daemon/stop", status_code=202)
         async def stop_daemon() -> dict[str, bool]:
+            self._shutting_down = True
             self._draining = True
+            self._update_token = None
             self._controller.request_shutdown()
             return {"stopping": True}
 
@@ -418,6 +421,10 @@ class DaemonControlAPI:
         async def prepare_update() -> Any:
             # No await between admission closure and the state check: application
             # starts cannot interleave on the control event loop.
+            if self._shutting_down:
+                return JSONResponse(
+                    status_code=409, content={"error": "runtime_draining"}
+                )
             if self._update_token is not None:
                 return JSONResponse(
                     status_code=409, content={"error": "update_in_progress"}
@@ -447,6 +454,10 @@ class DaemonControlAPI:
 
         @app.post("/daemon/cancel-update")
         async def cancel_update(request: CancelUpdateRequest) -> Any:
+            if self._shutting_down:
+                return JSONResponse(
+                    status_code=409, content={"error": "runtime_draining"}
+                )
             if request.update_token != self._update_token:
                 return JSONResponse(
                     status_code=409, content={"error": "update_token_mismatch"}

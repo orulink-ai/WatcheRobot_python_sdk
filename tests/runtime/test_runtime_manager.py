@@ -231,6 +231,64 @@ def test_invalid_candidate_does_not_stop_old_runtime(lifecycle, monkeypatch):
     lifecycle.assert_not_called()
 
 
+def test_activation_discovery_failure_uses_verified_shutdown_before_spawn(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv(
+        "WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance")
+    )
+    monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
+    monkeypatch.setattr(
+        cli, "_live_runtime_state", Mock(side_effect=cli.CliError("unknown listener"))
+    )
+    monkeypatch.setattr(
+        manager,
+        "describe_command",
+        Mock(return_value={"sdk_version": "0.2.0", "build_id": "new"}),
+    )
+    stop = Mock(side_effect=RuntimeError("legacy listener cannot be verified"))
+    monkeypatch.setattr(manager, "_stop_and_wait", stop)
+    spawn = Mock()
+    monkeypatch.setattr(manager.subprocess, "Popen", spawn)
+
+    with pytest.raises(RuntimeError, match="cannot be verified"):
+        manager.ensure_command(
+            ["candidate-runtime"], activate=True, state_root=tmp_path
+        )
+
+    stop.assert_called_once_with(tmp_path.resolve())
+    spawn.assert_not_called()
+
+
+def test_activation_discovery_failure_spawns_only_after_verified_shutdown(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv(
+        "WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance")
+    )
+    monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
+    monkeypatch.setattr(
+        cli, "_live_runtime_state", Mock(side_effect=cli.CliError("unknown listener"))
+    )
+    monkeypatch.setattr(
+        manager,
+        "describe_command",
+        Mock(return_value={"sdk_version": "0.2.0", "build_id": "new"}),
+    )
+    stop = Mock()
+    monkeypatch.setattr(manager, "_stop_and_wait", stop)
+    spawn = Mock(side_effect=RuntimeError("candidate spawn attempted"))
+    monkeypatch.setattr(manager.subprocess, "Popen", spawn)
+
+    with pytest.raises(RuntimeError, match="candidate spawn attempted"):
+        manager.ensure_command(
+            ["candidate-runtime"], activate=True, state_root=tmp_path
+        )
+
+    stop.assert_called_once_with(tmp_path.resolve())
+    spawn.assert_called_once()
+
+
 def test_cancelled_activation_does_not_stop_old_runtime(
     lifecycle, monkeypatch, tmp_path
 ):

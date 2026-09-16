@@ -335,11 +335,13 @@ def ensure_command(
     pointer = root / "current-launcher.json"
     with operation_lock(timeout=120):
         _check_activation_cancelled()
+        discovery_failed = False
         try:
             live = _live_runtime_state(resolved_state_root)
         except CliError:
             if not activate:
                 raise
+            discovery_failed = True
             live = None
         if live is not None:
             if not activate:
@@ -388,8 +390,10 @@ def ensure_command(
                     == target_identity["sdk_version"]
                 ):
                     return True
+            if live is not None or discovery_failed:
                 _check_activation_cancelled()
-                # Shutdown closes admission and drains the managed Application.
+                # Discovery failures still require the verified legacy shutdown
+                # path before a candidate may contend for the listening port.
                 _stop_and_wait(resolved_state_root)
                 stopped_existing = True
 
