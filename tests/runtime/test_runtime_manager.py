@@ -231,6 +231,19 @@ def test_invalid_candidate_does_not_stop_old_runtime(lifecycle, monkeypatch):
     lifecycle.assert_not_called()
 
 
+def test_cancelled_activation_does_not_stop_old_runtime(
+    lifecycle, monkeypatch, tmp_path
+):
+    marker = tmp_path / "cancel"
+    marker.touch()
+    monkeypatch.setenv("WATCHER_RUNTIME_CANCEL_FILE", str(marker))
+
+    with pytest.raises(manager.RuntimeActivationCancelled):
+        manager.ensure_command(["missing-python"], activate=True, force=True)
+
+    lifecycle.assert_not_called()
+
+
 def test_shutdown_waits_for_process_release(lifecycle, monkeypatch):
     import psutil
     from watcherobot.runtime import process_shutdown
@@ -467,9 +480,19 @@ def test_slow_candidate_has_no_readiness_deadline(tmp_path, monkeypatch, cancel)
         lambda _: elapsed.__setitem__(0, elapsed[0] + 61),
     )
     ready = SimpleNamespace(control_url="http://unused")
-    monkeypatch.setattr(
-        manager, "_candidate_live_state", Mock(side_effect=[None, None, ready])
-    )
+    marker = tmp_path / "cancel"
+    if cancel:
+        monkeypatch.setenv("WATCHER_RUNTIME_CANCEL_FILE", str(marker))
+
+        def candidate_state(*_):
+            marker.touch()
+            return None
+
+        monkeypatch.setattr(manager, "_candidate_live_state", candidate_state)
+    else:
+        monkeypatch.setattr(
+            manager, "_candidate_live_state", Mock(side_effect=[None, None, ready])
+        )
     candidate = Mock(pid=12345)
     candidate.poll.return_value = None
     spawn = Mock(return_value=candidate)
@@ -492,9 +515,6 @@ def test_slow_candidate_has_no_readiness_deadline(tmp_path, monkeypatch, cancel)
     )
     monkeypatch.setattr(manager, "save_launcher", Mock())
     if cancel:
-        marker = tmp_path / "cancel"
-        marker.touch()
-        monkeypatch.setenv("WATCHER_RUNTIME_CANCEL_FILE", str(marker))
         monkeypatch.setattr(psutil, "wait_procs", lambda *_, **__: ([], []))
         with pytest.raises(manager.RuntimeActivationCancelled):
             manager.ensure_command(["test-candidate"], activate=True)
@@ -505,3 +525,36 @@ def test_slow_candidate_has_no_readiness_deadline(tmp_path, monkeypatch, cancel)
     assert manager.ensure_command(["test-candidate"], activate=True) is False
     assert elapsed[0] >= 122
     assert spawn.call_count == 1
+
+
+def test_candidate_exit_is_not_hidden_by_status_retry(tmp_path, monkeypatch):
+    import psutil
+
+    monkeypatch.setenv(
+        "WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance")
+    )
+    monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
+    monkeypatch.setattr(cli, "_live_runtime_state", lambda *_: None)
+    monkeypatch.setattr(
+        manager,
+        "describe_command",
+        lambda *_: {"sdk_version": "0.1.9", "build_id": "test"},
+    )
+    ready = SimpleNamespace(control_url="http://unused")
+    monkeypatch.setattr(manager, "_candidate_live_state", Mock(return_value=ready))
+    monkeypatch.setattr(
+        cli, "_request_json", Mock(side_effect=cli.CliError("temporarily unavailable"))
+    )
+    candidate = Mock(pid=12345)
+    candidate.poll.return_value = 1
+    monkeypatch.setattr(manager.subprocess, "Popen", Mock(return_value=candidate))
+    parent = Mock(pid=candidate.pid)
+    parent.create_time.return_value = 1.0
+    parent.children.return_value = []
+    monkeypatch.setattr(psutil, "Process", Mock(return_value=parent))
+    monkeypatch.setattr(psutil, "wait_procs", lambda *_, **__: ([], []))
+
+    with pytest.raises(RuntimeError, match="exited before readiness"):
+        manager.ensure_command(["candidate-runtime"])
+
+    parent.terminate.assert_called_once()

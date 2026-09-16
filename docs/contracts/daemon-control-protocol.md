@@ -43,8 +43,8 @@ Desktop 更新 Runtime 时按以下顺序调用：
 
 1. 读取当前 `/daemon/status`，比较目标与当前 `build_id`。不同构建必须在安装完成后显式执行 `daemon activate`，不能只比较 `sdk_version`。
 2. 覆盖运行资源前调用 `POST /daemon/prepare-update`。若 Application 仍占用 Runtime，接口返回 HTTP 409；Desktop 应保留现状并提示用户停止 Application，不得继续覆盖文件。
-3. `prepare-update` 成功后，Daemon 的 `runtime.draining` 为 `true`。此时 Application `start` 和 `restart` 返回 HTTP 409，错误码为 `runtime_draining`；Desktop 应展示更新状态并停止自动重试。
-4. 安装取消或失败时调用 `POST /daemon/cancel-update`，恢复 Application 启动入口。安装成功后使用显式激活完成构建切换。
+3. `prepare-update` 成功后返回本次更新专属的 `update_token`，且 Daemon 的 `runtime.draining` 为 `true`。此时 Application `start` 和 `restart` 返回 HTTP 409，错误码为 `runtime_draining`；Desktop 应展示更新状态并停止自动重试。并发的其他更新准备请求返回 `update_in_progress`。
+4. 安装取消或失败时调用 `POST /daemon/cancel-update`，请求体传入对应的 `update_token`，恢复 Application 启动入口。token 不匹配时返回 `update_token_mismatch`，不得解除其他客户端建立的排空状态。安装成功后使用显式激活完成构建切换。
 
 这些端点只协调生命周期，不解析或旁路业务消息。
 

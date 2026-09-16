@@ -726,18 +726,30 @@ def test_prepared_update_blocks_start_and_can_be_cancelled() -> None:
             },
         ).create_app()
     )
-    assert client.post('/daemon/prepare-update').status_code == 200
-    assert client.get('/daemon/status').json()["runtime"]["draining"] is True
-    start = client.post('/daemon/application/start')
-    restart = client.post('/daemon/application/restart')
+    prepared = client.post("/daemon/prepare-update")
+    assert prepared.status_code == 200
+    update_token = prepared.json()["update_token"]
+    assert client.get("/daemon/status").json()["runtime"]["draining"] is True
+    start = client.post("/daemon/application/start")
+    restart = client.post("/daemon/application/restart")
     assert start.status_code == 409
     assert restart.status_code == 409
     assert start.json() == {"error": "runtime_draining"}
     assert restart.json() == {"error": "runtime_draining"}
     assert controller.lifecycle_calls == []
-    assert client.post('/daemon/cancel-update').status_code == 200
-    assert client.get('/daemon/status').json()["runtime"]["draining"] is False
-    assert client.post('/daemon/application/start').status_code == 200
+    mismatched = client.post(
+        "/daemon/cancel-update", json={"update_token": "another-update"}
+    )
+    assert mismatched.status_code == 409
+    assert client.get("/daemon/status").json()["runtime"]["draining"] is True
+    concurrent = client.post("/daemon/prepare-update")
+    assert concurrent.status_code == 409
+    assert concurrent.json() == {"error": "update_in_progress"}
+    assert client.post(
+        "/daemon/cancel-update", json={"update_token": update_token}
+    ).status_code == 200
+    assert client.get("/daemon/status").json()["runtime"]["draining"] is False
+    assert client.post("/daemon/application/start").status_code == 200
 
 
 def test_update_does_not_interrupt_running_application() -> None:
@@ -757,3 +769,6 @@ def test_shutdown_closes_application_admission_immediately() -> None:
     assert controller.shutdown_requested
     assert client.post("/daemon/application/start").status_code == 409
     assert client.post("/daemon/application/restart").status_code == 409
+    prepare = client.post("/daemon/prepare-update")
+    assert prepare.status_code == 409
+    assert prepare.json() == {"error": "runtime_draining"}

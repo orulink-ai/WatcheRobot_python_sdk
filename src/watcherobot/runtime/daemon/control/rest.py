@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import uuid
 from collections.abc import Callable
 from contextlib import suppress
 from ipaddress import IPv4Address
@@ -60,6 +61,12 @@ class SelectApplicationRequest(BaseModel):
     application_dir: str
     launcher: ApplicationLauncherRequest
     local_registration: str | None = None
+
+
+class CancelUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    update_token: str
 
 
 class MaintenanceInstallRequest(BaseModel):
@@ -252,6 +259,7 @@ class DaemonControlAPI:
 
         self._build_identity = runtime_identity()
         self._draining = False
+        self._update_token: str | None = None
         self._starting_requests = 0
 
     def create_app(self) -> FastAPI:
@@ -410,15 +418,41 @@ class DaemonControlAPI:
         async def prepare_update() -> Any:
             # No await between admission closure and the state check: application
             # starts cannot interleave on the control event loop.
+            if self._update_token is not None:
+                return JSONResponse(
+                    status_code=409, content={"error": "update_in_progress"}
+                )
+            if self._draining:
+                return JSONResponse(
+                    status_code=409, content={"error": "runtime_draining"}
+                )
+            update_token = uuid.uuid4().hex
             self._draining = True
-            if self._starting_requests or self._controller.application_status().get("state") in ("starting", "running", "stopping"):
+            application_state = self._controller.application_status().get("state")
+            if self._starting_requests or application_state in (
+                "starting",
+                "running",
+                "stopping",
+            ):
                 self._draining = False
-                return JSONResponse(status_code=409, content={"error": "application_occupied", "message": "Stop the Application before updating Runtime"})
-            return {"prepared": True}
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "error": "application_occupied",
+                        "message": "Stop the Application before updating Runtime",
+                    },
+                )
+            self._update_token = update_token
+            return {"prepared": True, "update_token": update_token}
 
         @app.post("/daemon/cancel-update")
-        async def cancel_update() -> dict[str, bool]:
+        async def cancel_update(request: CancelUpdateRequest) -> Any:
+            if request.update_token != self._update_token:
+                return JSONResponse(
+                    status_code=409, content={"error": "update_token_mismatch"}
+                )
             self._draining = False
+            self._update_token = None
             return {"prepared": False}
 
         @app.get("/daemon/devices")

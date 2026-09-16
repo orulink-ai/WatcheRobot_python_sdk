@@ -334,6 +334,7 @@ def ensure_command(
     root = default_runtime_instance_root()
     pointer = root / "current-launcher.json"
     with operation_lock(timeout=120):
+        _check_activation_cancelled()
         try:
             live = _live_runtime_state(resolved_state_root)
         except CliError:
@@ -345,6 +346,7 @@ def ensure_command(
                 return True
 
         target_identity = describe_command(command) if activate else None
+        _check_activation_cancelled()
         try:
             previous = read_launcher(pointer) if pointer.is_file() else None
         except (OSError, ValueError):
@@ -386,10 +388,12 @@ def ensure_command(
                     == target_identity["sdk_version"]
                 ):
                     return True
+                _check_activation_cancelled()
                 # Shutdown closes admission and drains the managed Application.
                 _stop_and_wait(resolved_state_root)
                 stopped_existing = True
 
+            _check_activation_cancelled()
             # A detached frozen child must own its extraction directory. Otherwise
             # the short-lived manager can remove DLLs still used by the Daemon.
             environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
@@ -416,6 +420,10 @@ def ensure_command(
                     try:
                         status = _request_json(live.control_url, "/daemon/status")
                     except CliError:
+                        if process.poll() is not None:
+                            raise RuntimeError(
+                                "Runtime launcher exited before readiness; see runtime.log"
+                            )
                         time.sleep(0.05)
                         continue
                     if status.get("runtime", {}).get("launch_id") != launch_id:
