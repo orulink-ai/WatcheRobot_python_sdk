@@ -24,7 +24,12 @@ def test_every_example_is_a_complete_managed_application() -> None:
         source = root.joinpath("app.py").read_text(encoding="utf-8")
 
         assert manifest["id"] == app_id
-        assert manifest["requires_watcherobot"]
+        sdk_requirement = (
+            manifest["requires_sdk"]
+            if manifest["schema_version"] == 3
+            else manifest["requires_watcherobot"]
+        )
+        assert sdk_requirement
         assert "ApplicationContext.from_environment()" in source
         assert "WatcheRobot.connect" not in source
         assert "WATCHEROBOT_PAIRING_CODE" not in source
