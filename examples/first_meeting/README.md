@@ -1,6 +1,6 @@
 # First Meeting · 初次见面
 
-基于 **watcherobot 0.1.8** 的独立受管理 Application。全部机器人行为通过
+基于 **watcherobot 0.1.9** 共享 Runtime 的独立受管理 Application。全部机器人行为通过
 `ApplicationContext.robot` 调用，Application 不直接连接硬件，也不改写 Daemon 路由。
 相机和跟随需要配套的 ESP32 / Himax / STM32 固件；本例不是固件安装器。
 
@@ -13,7 +13,7 @@ Windows PowerShell：
 ./run.ps1 --test
 ```
 
-macOS / Linux Shell：
+macOS / Linux Shell（用于运行测试和开发检查；当前真机清单仅声明 Windows）：
 
 ```sh
 sh ./run.sh
@@ -21,7 +21,7 @@ sh ./run.sh --test
 ```
 
 两个入口均委托 `launch.py`，参数、默认行为与退出码一致。Linux 入口可运行纯 Python
-单元测试；SDK 0.1.8 的 Application 平台声明只接受 Windows / macOS，未声明 Linux 真机支持。
+单元测试；当前 schema 3 Application 清单只声明 Windows 真机支持。
 
 启动入口调用 SDK CLI `app run`，由现有 Daemon 注入 Desktop / Device channel。
 **不要直接运行 `python app.py`。** 关闭网页不会停止 Application；网页“停止”只停止
@@ -30,7 +30,7 @@ sh ./run.sh --test
 首次安装依赖可以使用：
 
 ```text
-python -m pip install watcherobot==0.1.8 httpx numpy pytest
+python -m pip install watcherobot==0.1.9 httpx numpy pydantic pytest
 ```
 
 桌面 Daemon 已运行时，Python 启动器必须位于它配置的 managed-app-root 中。
@@ -95,7 +95,7 @@ standby4.gif a7d6b45c69982ea6722290812a8ac1545c72cccb6e6d782dee04d735b0396a40
 默认各段按 50 Hz / 500–2500μs 舵机估算约 4–8μs 每有效帧，避免过小步进和大幅跳动。
 修改左右角度也会改变这项机械参数，应重新测试。
 
-SDK 0.1.8 没有暴露 LCD 首帧呈现时间戳，因此这里是基于命令接受时刻的应用时序，
+SDK 0.1.9 没有暴露 LCD 首帧呈现时间戳，因此这里是基于命令接受时刻的应用时序，
 不宣称硬件逐帧锁相。日志中的调度偏差是 Python 发起动作相对计划时刻的偏差，
 不等同于屏幕实际显示与舵机的物理延迟。源 GIF 均匀帧时长也不能证明真机没有丢帧。
 2026-09-04 的该版真机测试调度偏差 3–25ms，用户确认方向与效果良好。
@@ -135,7 +135,7 @@ TTS 截断错误、密钥脱敏、跨源拒绝及离线启动拒绝；另覆盖�
 Himax 却运行 PTL 视频桥接固件。2026-09-05 的独立嵌入式维护已对齐 SSCMA 固件，
 保留既有人脸模型槽位 4，并补齐 STM32 对人脸跟随运动来源的支持。
 相机初始化失败清理、SPI DMA 缓冲和拍照交付时序也纳入固件回归。
-应用仍全部通过已安装的 SDK 0.1.8 交互，未增加串口拍照或 Daemon 业务旁路。
+应用仍全部通过受管 Application 环境中的 SDK 0.1.9 交互，未增加串口拍照或 Daemon 业务旁路。
 
 本次真机测试记录及固件版本以 ESP32 仓库的 `docs/camera-sdk-e2e-20260905.zh-CN.md` 为准。
 其中工程拍照与真人姓名/同意流程分开记录，不把自动化测试当作新的真人授权。
@@ -148,7 +148,7 @@ Himax 却运行 PTL 视频桥接固件。2026-09-05 的独立嵌入式维护已�
 
 ## 语音会话与静默行为修复（2026-09-05）
 
-本地验证使用 SDK 0.1.8 源码修复版，尚不是新的 PyPI 发布版本。配套固件在关闭麦克风时等待录音与音频发送线程释放后才 ACK；SDK 将“音频流结束”与“设备麦克风释放”分开处理，避免安静等待超时后下一轮被旧结束标记误关，以及异常后设备继续显示倾听。
+该语音会话修复最初在 SDK 0.1.8 源码版完成，现已迁移到 SDK 0.1.9 共享 Runtime 分支。配套固件在关闭麦克风时等待录音与音频发送线程释放后才 ACK；SDK 将“音频流结束”与“设备麦克风释放”分开处理，避免安静等待超时后下一轮被旧结束标记误关，以及异常后设备继续显示倾听。
 
 控制台显示当前收音帧数、音量/阈值、讲话检测、识别及错误状态。日志保留会话编号、结束原因和异常调用位置，不记录异常源码行、局部变量或云端原始响应。连续安静时仍会等待新一句话；识别返回空文本会明确记录。
 

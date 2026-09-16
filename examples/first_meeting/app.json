@@ -1,11 +1,18 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "local.first_meeting",
   "name": "First Meeting · 初次见面",
-  "version": "0.1.0",
-  "requires_watcherobot": "==0.1.8",
-  "dependencies": ["httpx>=0.28,<1", "numpy>=1.26,<3"],
-  "supported_host_platforms": ["windows", "macos"],
+  "version": "0.2.0",
+  "requires_sdk": ">=0.1.9,<0.2",
+  "requires_daemon": {
+    "application_protocol": ">=1,<2"
+  },
+  "dependencies": [
+    "httpx>=0.28,<1",
+    "numpy>=1.26,<3",
+    "pydantic>=2,<3"
+  ],
+  "supported_host_platforms": ["windows"],
   "description": "Wake up, look around, meet your human and chat through the WatcheRobot Python SDK.",
   "author": "WatcheRobot",
   "icon": "icon.svg"
