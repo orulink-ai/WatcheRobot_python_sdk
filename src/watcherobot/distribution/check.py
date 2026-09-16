@@ -62,7 +62,11 @@ def check_application(
     if manifest.schema_version == 3:
         from .dependency_lock import read_dependency_lock
 
-        read_dependency_lock(application_dir, manifest.requires_watcherobot)
+        read_dependency_lock(
+            application_dir,
+            manifest.requires_watcherobot,
+            manifest.dependencies,
+        )
     return ApplicationCheckResult(
         schema_version=manifest.schema_version,
         app_id=manifest.app_id,

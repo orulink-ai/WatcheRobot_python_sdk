@@ -384,6 +384,34 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
     assert list_installed_applications(store_root) == ()
 
 
+def test_schema_three_installs_only_exact_lock_pins(tmp_path: Path) -> None:
+    source = tmp_path / "published-source"
+    _write_source_v3(source)
+    runtime = tmp_path / "runtime-source"
+    _write_runtime(runtime)
+    runner = FakeEnvironmentRunner()
+
+    install_application(
+        provider="huggingface",
+        repo_id=SPACE_ID,
+        commit=COMMIT,
+        store_root=tmp_path / "application-store",
+        runtime_root=runtime,
+        hub=FakeHub(source),
+        environment_runner=runner,
+    )
+
+    command = next(
+        item for item in runner.commands if item.stage == "installing_dependencies"
+    )
+    assert "--no-deps" in command.arguments
+    assert "watcherobot==0.1.1a3" in command.arguments
+    assert "requests==2.32.0" in command.arguments
+    assert "watcherobot>=0.1.0a4,<0.2" not in command.arguments
+    assert "requests>=2.32,<3" not in command.arguments
+    assert str(runtime / "wheels/watcherobot-0.1.1a3-py3-none-any.whl") not in command.arguments
+
+
 def _write_source(
     root: Path,
     *,
@@ -401,6 +429,38 @@ def _write_source(
                 "dependencies": ["requests>=2.32,<3"],
                 "supported_host_platforms": supported_host_platforms
                 or ["windows", "macos"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    root.joinpath("app.py").write_text("print('demo')\n", encoding="utf-8")
+
+
+def _write_source_v3(root: Path) -> None:
+    root.mkdir(parents=True)
+    root.joinpath("app.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "id": "com.example.demo",
+                "name": "Demo",
+                "version": "1.0.0",
+                "requires_sdk": ">=0.1.0a4,<0.2",
+                "requires_daemon": {"application_protocol": ">=1,<2"},
+                "dependencies": ["requests>=2.32,<3"],
+                "supported_host_platforms": ["windows", "macos"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    root.joinpath("app.lock.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "dependencies": [
+                    "watcherobot==0.1.1a3",
+                    "requests==2.32.0",
+                ],
             }
         ),
         encoding="utf-8",

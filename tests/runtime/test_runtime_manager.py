@@ -1,7 +1,8 @@
 from contextlib import nullcontext
+import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -176,6 +177,51 @@ def test_failed_readiness_reaps_only_the_candidate_tree(tmp_path, monkeypatch):
     child.terminate.assert_called_once()
     assert spawn.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     assert not (tmp_path / "instance/current-launcher.json").exists()
+
+
+def test_rollback_timeout_reaps_previous_runtime(tmp_path, monkeypatch):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance"))
+    monkeypatch.setenv("WATCHER_RUNTIME_STATE_ROOT", str(tmp_path / "state"))
+    pointer = tmp_path / "instance/current-launcher.json"
+    pointer.parent.mkdir(parents=True)
+    old_runtime = tmp_path / "old-runtime.exe"
+    old_runtime.touch()
+    pointer.write_text(
+        json.dumps({"command": [str(old_runtime)], "environment": {}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
+    monkeypatch.setattr(manager, "describe_command", lambda _: {
+        "sdk_version": "0.2.0", "build_id": "new",
+    })
+    monkeypatch.setattr(cli, "_live_runtime_state", lambda: None)
+    monkeypatch.setattr(
+        manager,
+        "_candidate_live_state",
+        Mock(side_effect=[RuntimeError("failed candidate"), None, None]),
+    )
+    candidate = Mock(pid=1)
+    restored = Mock(pid=2)
+    candidate.poll.return_value = None
+    restored.poll.return_value = None
+    monkeypatch.setattr(
+        manager.subprocess, "Popen", Mock(side_effect=[candidate, restored])
+    )
+    terminate = Mock()
+    monkeypatch.setattr(manager, "_terminate_process_tree", terminate)
+    elapsed = [0.0]
+    monkeypatch.setattr(manager.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(
+        manager.time, "sleep", lambda _: elapsed.__setitem__(0, elapsed[0] + 61.0)
+    )
+
+    with pytest.raises(RuntimeError, match="recovery timed out"):
+        manager.ensure_command(["new-runtime"], activate=True)
+
+    assert terminate.call_args_list == [
+        call(candidate),
+        call(restored),
+    ]
 
 
 @pytest.mark.parametrize(

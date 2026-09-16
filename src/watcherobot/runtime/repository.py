@@ -44,8 +44,8 @@ def operation_lock(root: Path | None = None, *, timeout: float = 30) -> Iterator
 
 
 def bundle_digest(root: Path) -> str:
-    """Hash names and bytes, preserving only internal relative symlinks."""
-    digest = hashlib.sha256(b"watcher-runtime-bundle-v1\0")
+    """Hash names, executable semantics and bytes of one Runtime bundle."""
+    digest = hashlib.sha256(b"watcher-runtime-bundle-v2\0")
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
             target = os.readlink(path)
@@ -67,6 +67,8 @@ def bundle_digest(root: Path) -> str:
             name = path.relative_to(root).as_posix().encode("utf-8")
             digest.update(len(name).to_bytes(8, "big"))
             digest.update(name)
+            executable = bool(path.stat().st_mode & 0o111) if os.name != "nt" else False
+            digest.update(bytes((executable,)))
             digest.update(path.stat().st_size.to_bytes(8, "big"))
             with path.open("rb") as stream:
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
