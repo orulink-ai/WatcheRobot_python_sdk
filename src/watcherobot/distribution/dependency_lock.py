@@ -45,12 +45,13 @@ def validate_dependency_lock(
         if (
             requirement.url
             or requirement.marker
+            or requirement.extras
             or len(pins) != 1
             or pins[0].operator != "=="
             or "*" in pins[0].version
         ):
             raise ValueError(
-                "lock dependencies must use exact versions without URLs or markers"
+                "lock dependencies must use exact versions without URLs, markers, or extras"
             )
         name = canonicalize_name(requirement.name)
         if name in names:
@@ -67,7 +68,12 @@ def validate_dependency_lock(
         requirement = Requirement(item)
         name = canonicalize_name(requirement.name)
         version = pinned_versions.get(name)
-        if requirement.url or requirement.marker or version is None:
+        if (
+            requirement.url
+            or requirement.marker
+            or requirement.extras
+            or version is None
+        ):
             raise ValueError(
                 "schema 3 dependencies must be covered by portable lock pins"
             )
@@ -102,6 +108,7 @@ def main() -> None:
     validate_dependency_lock(
         {"schema_version": 1, "dependencies": dependencies},
         manifest.requires_watcherobot,
+        declared_dependencies=manifest.dependencies,
     )
     temporary = target.with_suffix(".tmp")
     temporary.write_text(
@@ -116,7 +123,11 @@ def main() -> None:
         encoding="utf-8",
     )
     temporary.replace(target)
-    read_dependency_lock(args.application, manifest.requires_watcherobot)
+    read_dependency_lock(
+        args.application,
+        manifest.requires_watcherobot,
+        manifest.dependencies,
+    )
 
 
 if __name__ == "__main__":

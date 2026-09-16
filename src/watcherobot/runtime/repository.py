@@ -67,8 +67,8 @@ def bundle_digest(root: Path) -> str:
             name = path.relative_to(root).as_posix().encode("utf-8")
             digest.update(len(name).to_bytes(8, "big"))
             digest.update(name)
-            executable = bool(path.stat().st_mode & 0o111) if os.name != "nt" else False
-            digest.update(bytes((executable,)))
+            executable = path.stat().st_mode & 0o111 if os.name != "nt" else 0
+            digest.update(executable.to_bytes(2, "big"))
             digest.update(path.stat().st_size.to_bytes(8, "big"))
             with path.open("rb") as stream:
                 for block in iter(lambda: stream.read(1024 * 1024), b""):

@@ -41,7 +41,7 @@ def lifecycle(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cli,
         "_live_runtime_state",
-        lambda: SimpleNamespace(
+        lambda *_: SimpleNamespace(
             control_url="http://unused:8767",
             pid=99999999,
         ),
@@ -88,6 +88,15 @@ def test_candidate_probe_waits_for_slow_status_without_accepting_identity(monkey
     probe.side_effect = None
     probe.return_value = ready
     assert manager._candidate_live_state() is ready
+
+
+def test_candidate_probe_uses_explicit_state_root(monkeypatch, tmp_path):
+    probe = Mock(return_value=None)
+    monkeypatch.setattr(cli, "_live_runtime_state", probe)
+
+    assert manager._candidate_live_state(tmp_path) is None
+
+    probe.assert_called_once_with(tmp_path)
 
 
 def test_force_activation_stops_same_version_and_refuses_second_process(lifecycle):
@@ -145,7 +154,7 @@ def test_failed_readiness_reaps_only_the_candidate_tree(tmp_path, monkeypatch):
 
     monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance"))
     monkeypatch.setenv("WATCHER_RUNTIME_STATE_ROOT", str(tmp_path / "state"))
-    monkeypatch.setattr(cli, "_live_runtime_state", lambda: None)
+    monkeypatch.setattr(cli, "_live_runtime_state", lambda *_: None)
     monkeypatch.setattr(
         manager,
         "describe_command",
@@ -164,6 +173,8 @@ def test_failed_readiness_reaps_only_the_candidate_tree(tmp_path, monkeypatch):
     spawn = Mock(return_value=candidate)
     monkeypatch.setattr(manager.subprocess, "Popen", spawn)
     parent, child = Mock(), Mock()
+    parent.pid, child.pid = 12345, 12346
+    parent.create_time.return_value, child.create_time.return_value = 1.0, 2.0
     parent.children.return_value = [child]
     lookup = Mock(return_value=parent)
     monkeypatch.setattr(psutil, "Process", lookup)
@@ -179,7 +190,26 @@ def test_failed_readiness_reaps_only_the_candidate_tree(tmp_path, monkeypatch):
     assert not (tmp_path / "instance/current-launcher.json").exists()
 
 
+def test_process_tree_reaps_observed_child_after_parent_exit(monkeypatch):
+    import psutil
+
+    process = Mock(pid=12345)
+    parent, child = Mock(), Mock()
+    parent.pid, child.pid = 12345, 12346
+    parent.create_time.return_value, child.create_time.return_value = 1.0, 2.0
+    parent.children.side_effect = [[child], psutil.NoSuchProcess(parent.pid)]
+    monkeypatch.setattr(psutil, "Process", Mock(return_value=parent))
+    monkeypatch.setattr(psutil, "wait_procs", lambda *_, **__: ([], []))
+
+    tree = manager._SpawnedProcessTree(process)
+    manager._terminate_process_tree(process, tree)
+
+    child.terminate.assert_called_once()
+
+
 def test_rollback_timeout_reaps_previous_runtime(tmp_path, monkeypatch):
+    import psutil
+
     monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance"))
     monkeypatch.setenv("WATCHER_RUNTIME_STATE_ROOT", str(tmp_path / "state"))
     pointer = tmp_path / "instance/current-launcher.json"
@@ -191,10 +221,12 @@ def test_rollback_timeout_reaps_previous_runtime(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
-    monkeypatch.setattr(manager, "describe_command", lambda _: {
-        "sdk_version": "0.2.0", "build_id": "new",
-    })
-    monkeypatch.setattr(cli, "_live_runtime_state", lambda: None)
+    monkeypatch.setattr(
+        manager,
+        "describe_command",
+        lambda _: {"sdk_version": "0.2.0", "build_id": "new"},
+    )
+    monkeypatch.setattr(cli, "_live_runtime_state", lambda *_: None)
     monkeypatch.setattr(
         manager,
         "_candidate_live_state",
@@ -207,6 +239,13 @@ def test_rollback_timeout_reaps_previous_runtime(tmp_path, monkeypatch):
     monkeypatch.setattr(
         manager.subprocess, "Popen", Mock(side_effect=[candidate, restored])
     )
+    roots = []
+    for pid in (candidate.pid, restored.pid):
+        root = Mock(pid=pid)
+        root.create_time.return_value = float(pid)
+        root.children.return_value = []
+        roots.append(root)
+    monkeypatch.setattr(psutil, "Process", Mock(side_effect=roots))
     terminate = Mock()
     monkeypatch.setattr(manager, "_terminate_process_tree", terminate)
     elapsed = [0.0]
@@ -218,9 +257,9 @@ def test_rollback_timeout_reaps_previous_runtime(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="recovery timed out"):
         manager.ensure_command(["new-runtime"], activate=True)
 
-    assert terminate.call_args_list == [
-        call(candidate),
-        call(restored),
+    assert [item.args[0] for item in terminate.call_args_list] == [
+        candidate,
+        restored,
     ]
 
 
@@ -246,36 +285,53 @@ def test_cli_reports_lifecycle_failure_without_traceback(
 
 @pytest.mark.parametrize("cancel", [False, True])
 def test_slow_candidate_has_no_readiness_deadline(tmp_path, monkeypatch, cancel):
+    import psutil
+
     monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance"))
     monkeypatch.setenv("WATCHER_RUNTIME_STATE_ROOT", str(tmp_path / "state"))
     monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
-    monkeypatch.setattr(cli, "_live_runtime_state", lambda: None)
-    monkeypatch.setattr(manager, "describe_command", lambda _: {
-        "sdk_version": "0.1.9", "build_id": "test",
-    })
+    monkeypatch.setattr(cli, "_live_runtime_state", lambda *_: None)
+    monkeypatch.setattr(
+        manager,
+        "describe_command",
+        lambda _: {"sdk_version": "0.1.9", "build_id": "test"},
+    )
     elapsed = [0]
     monkeypatch.setattr(manager.time, "monotonic", lambda: elapsed[0])
-    monkeypatch.setattr(manager.time, "sleep", lambda _: elapsed.__setitem__(0, elapsed[0] + 61))
+    monkeypatch.setattr(
+        manager.time,
+        "sleep",
+        lambda _: elapsed.__setitem__(0, elapsed[0] + 61),
+    )
     ready = SimpleNamespace(control_url="http://unused")
-    monkeypatch.setattr(manager, "_candidate_live_state", Mock(side_effect=[None, None, ready]))
+    monkeypatch.setattr(
+        manager, "_candidate_live_state", Mock(side_effect=[None, None, ready])
+    )
     candidate = Mock(pid=12345)
     candidate.poll.return_value = None
     spawn = Mock(return_value=candidate)
     monkeypatch.setattr(manager.subprocess, "Popen", spawn)
-    monkeypatch.setattr(cli, "_request_json", lambda *args: {"runtime": {
-        "build_id": "test",
-        "launch_id": spawn.call_args.kwargs["env"]["WATCHER_RUNTIME_LAUNCH_ID"],
-    }})
+    parent = Mock(pid=candidate.pid)
+    parent.create_time.return_value = 1.0
+    parent.children.return_value = []
+    monkeypatch.setattr(psutil, "Process", Mock(return_value=parent))
+    monkeypatch.setattr(
+        cli,
+        "_request_json",
+        lambda *args: {
+            "runtime": {
+                "build_id": "test",
+                "launch_id": spawn.call_args.kwargs["env"][
+                    "WATCHER_RUNTIME_LAUNCH_ID"
+                ],
+            }
+        },
+    )
     monkeypatch.setattr(manager, "save_launcher", Mock())
     if cancel:
-        import psutil
-
         marker = tmp_path / "cancel"
         marker.touch()
         monkeypatch.setenv("WATCHER_RUNTIME_CANCEL_FILE", str(marker))
-        parent = Mock()
-        parent.children.return_value = []
-        monkeypatch.setattr(psutil, "Process", Mock(return_value=parent))
         monkeypatch.setattr(psutil, "wait_procs", lambda *_, **__: ([], []))
         with pytest.raises(manager.RuntimeActivationCancelled):
             manager.ensure_command(["test-candidate"], activate=True)

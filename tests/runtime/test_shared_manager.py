@@ -142,3 +142,26 @@ def test_real_version_takeover_and_downgrade(tmp_path, monkeypatch):
         )
     finally:
         stop_shared_runtime()
+
+
+def test_ensure_runtime_with_custom_state_root_and_ephemeral_ports(
+    tmp_path, monkeypatch
+):
+    state_root = tmp_path / "custom-state"
+    instance_root = tmp_path / "instance"
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(instance_root))
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2] / "src"))
+    try:
+        state, reused = cli.ensure_runtime(
+            state_root=state_root,
+            managed_app_root=tmp_path / "applications",
+            ephemeral_ports=True,
+        )
+        assert reused is False
+        assert state.control_url != "http://127.0.0.1:8767"
+        assert (instance_root / "runtime-state.json").is_file()
+        assert (state_root / "runtime.log").is_file()
+    finally:
+        from watcherobot.runtime.manager import stop_shared_runtime
+
+        stop_shared_runtime()

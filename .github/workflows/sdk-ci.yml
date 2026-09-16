@@ -94,6 +94,53 @@ jobs:
           .venv-wheel-check/bin/python -c "import watcherobot; print(watcherobot.__version__)"
           .venv-wheel-check/bin/watcherobot --help
 
+  python-compatibility:
+    name: Python ${{ matrix.python-version }} compatibility
+    if: >-
+      github.event_name == 'pull_request' &&
+      !contains(github.event.pull_request.labels.*.name, 'release:version')
+    runs-on: [self-hosted, Linux, X64, sdk-ci]
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - name: Clean workspace before snapshot download
+        run: |
+          workspace=$(realpath -m "${GITHUB_WORKSPACE}")
+          runner_work=$(realpath -m "${RUNNER_TEMP}/..")
+          [[ "${workspace}" == "${runner_work}"/*/* ]] || {
+            echo "Refusing to clean unexpected CI workspace: ${workspace}" >&2
+            exit 1
+          }
+          shopt -s dotglob nullglob
+          rm -rf -- "${workspace}"/*
+
+      - name: Download immutable source snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl --fail --show-error --location --retry 5 --retry-connrefused \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${GITHUB_SHA}" \
+            --output "${RUNNER_TEMP}/source.tar.gz"
+          tar --extract --gzip --strip-components=1 --file "${RUNNER_TEMP}/source.tar.gz"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Validate supported Python runtime
+        run: |
+          python -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e ".[test]"
+          .venv/bin/python -m pip check
+          .venv/bin/python -m pytest
+
   release-compatibility:
     name: Python ${{ matrix.python-version }} / ${{ matrix.dependency-profile }}
     if: >-

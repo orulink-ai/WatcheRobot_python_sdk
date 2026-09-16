@@ -624,6 +624,9 @@ def test_control_status_exposes_verified_runtime_discovery_metadata() -> None:
 
     assert "control_protocol" not in runtime
     assert runtime["sdk_version"] == __version__
+    assert isinstance(runtime["build_id"], str) and runtime["build_id"]
+    assert runtime["draining"] is False
+    assert "launch_id" in runtime
     assert runtime["instance_group"] == "default"
     assert runtime["instance_id"] == "sha256:test"
     assert runtime["external_url"] == "ws://127.0.0.1:18765"
@@ -711,12 +714,29 @@ def test_control_rest_does_not_own_application_catalog_mutation() -> None:
 
 def test_prepared_update_blocks_start_and_can_be_cancelled() -> None:
     controller = _ControllerStub()
-    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+    client = TestClient(
+        DaemonControlAPI(
+            controller=controller,
+            runtime_metadata=lambda: {
+                "instance_group": "default",
+                "instance_id": "sha256:test",
+                "external_url": "ws://127.0.0.1:18765",
+                "pid": 123,
+                "started_at": 42.0,
+            },
+        ).create_app()
+    )
     assert client.post('/daemon/prepare-update').status_code == 200
-    assert client.post('/daemon/application/start').status_code == 409
-    assert client.post('/daemon/application/restart').status_code == 409
+    assert client.get('/daemon/status').json()["runtime"]["draining"] is True
+    start = client.post('/daemon/application/start')
+    restart = client.post('/daemon/application/restart')
+    assert start.status_code == 409
+    assert restart.status_code == 409
+    assert start.json() == {"error": "runtime_draining"}
+    assert restart.json() == {"error": "runtime_draining"}
     assert controller.lifecycle_calls == []
     assert client.post('/daemon/cancel-update').status_code == 200
+    assert client.get('/daemon/status').json()["runtime"]["draining"] is False
     assert client.post('/daemon/application/start').status_code == 200
 
 

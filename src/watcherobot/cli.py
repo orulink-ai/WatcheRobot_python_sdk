@@ -1423,7 +1423,7 @@ def ensure_runtime(
             )
         )
     try:
-        reused = ensure_command(command)
+        reused = ensure_command(command, state_root=resolved_state_root)
     except (OSError, RuntimeError, ValueError) as error:
         raise CliError(str(error)) from error
     state = _live_runtime_state(resolved_state_root)

@@ -76,7 +76,7 @@ def stop_shared_runtime() -> None:
         _stop_and_wait()
 
 
-def _stop_and_wait() -> None:
+def _stop_and_wait(state_root: Path | None = None) -> None:
     """Wait for both the Daemon and frozen bootloader to release their files.
 
     Capture process objects before shutdown so PID reuse cannot select a new
@@ -88,7 +88,7 @@ def _stop_and_wait() -> None:
     from .process_shutdown import capture_runtime, force_stop
 
     try:
-        live = _live_runtime_state()
+        live = _live_runtime_state(state_root)
     except CliError:
         from .process_shutdown import stop_legacy_listener
 
@@ -192,7 +192,7 @@ def _save_launcher(command: list[str], environment: dict[str, str] | None) -> No
     temporary.replace(pointer)
 
 
-def _candidate_live_state() -> RuntimeProcessState | None:
+def _candidate_live_state(state_root: Path | None = None) -> RuntimeProcessState | None:
     """Poll an already spawned candidate without mistaking bind for readiness.
 
     Pre-launch discovery remains strict. This probe never authorizes a process:
@@ -202,36 +202,76 @@ def _candidate_live_state() -> RuntimeProcessState | None:
     from watcherobot.cli import CliError, _live_runtime_state
 
     try:
-        return _live_runtime_state()
+        return _live_runtime_state(state_root)
     except CliError:
         return None
 
 
-def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
-    """Best-effort termination for a launcher and children created by this call."""
-    import psutil
+class _SpawnedProcessTree:
+    """Retain verified process identities even after a short-lived parent exits."""
 
-    if process.poll() is not None:
-        return
-    try:
-        parent = psutil.Process(process.pid)
-        children = parent.children(recursive=True)
-        for child in reversed(children):
-            child.terminate()
-        parent.terminate()
-        _, alive = psutil.wait_procs([parent, *children], timeout=10)
-        for remaining in alive:
-            remaining.kill()
+    def __init__(self, process: subprocess.Popen[Any]) -> None:
+        import psutil
+
+        self._root = psutil.Process(process.pid)
+        self._processes: dict[tuple[int, float], psutil.Process] = {}
+        self.refresh()
+
+    def refresh(self) -> None:
+        import psutil
+
+        candidates = [self._root]
+        try:
+            candidates.extend(self._root.children(recursive=True))
+        except psutil.Error:
+            pass
+        for candidate in candidates:
+            try:
+                self._processes[(candidate.pid, candidate.create_time())] = candidate
+            except psutil.Error:
+                pass
+
+    def terminate(self) -> None:
+        """Stop only identities observed as descendants of this launch."""
+        import psutil
+
+        self.refresh()
+        processes = list(reversed(tuple(self._processes.values())))
+        for candidate in processes:
+            try:
+                candidate.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        _, alive = psutil.wait_procs(processes, timeout=10)
+        for candidate in alive:
+            try:
+                candidate.kill()
+            except psutil.NoSuchProcess:
+                pass
         _, alive = psutil.wait_procs(alive, timeout=5)
         if alive:
             raise RuntimeError("Runtime launcher process tree could not be stopped")
+
+
+def _terminate_process_tree(
+    process: subprocess.Popen[Any], tree: _SpawnedProcessTree | None = None
+) -> None:
+    """Best-effort termination for a launcher and children created by this call."""
+    import psutil
+
+    try:
+        (tree or _SpawnedProcessTree(process)).terminate()
     except psutil.NoSuchProcess:
         pass
 
 
 @cleanup_after
 def ensure_command(
-    command: list[str], *, activate: bool = False, force: bool = False
+    command: list[str],
+    *,
+    activate: bool = False,
+    force: bool = False,
+    state_root: Path | None = None,
 ) -> bool:
     """Reuse the live instance; remember the last successful launcher across clients.
 
@@ -246,6 +286,11 @@ def ensure_command(
     if Path(command[0]).is_file():
         register_environment(Path(command[0]))
 
+    resolved_state_root = (
+        Path(state_root).resolve()
+        if state_root is not None
+        else default_runtime_state_root()
+    )
     root = default_runtime_instance_root()
     pointer = root / "current-launcher.json"
     with operation_lock(timeout=120):
@@ -257,12 +302,12 @@ def ensure_command(
                 raise
             previous = None
         try:
-            live = _live_runtime_state()
+            live = _live_runtime_state(resolved_state_root)
         except CliError:
             if not activate:
                 raise
-            _stop_and_wait()
-            live = _live_runtime_state()
+            _stop_and_wait(resolved_state_root)
+            live = _live_runtime_state(resolved_state_root)
         if live is not None:
             if not activate:
                 return True
@@ -275,14 +320,14 @@ def ensure_command(
             ):
                 return True
             # Shutdown closes admission and drains the managed Application.
-            _stop_and_wait()
+            _stop_and_wait(resolved_state_root)
         selected = command
         launch_environment = {
             key: os.environ[key] for key in _LAUNCH_ENVIRONMENT if key in os.environ
         }
         if not activate and pointer.is_file():
             selected, launch_environment = read_launcher(pointer)
-        log_root = default_runtime_state_root()
+        log_root = resolved_state_root
         log_root.mkdir(parents=True, exist_ok=True)
         options: dict[str, Any] = {}
         environment = dict(os.environ)
@@ -296,6 +341,7 @@ def ensure_command(
         environment["WATCHER_RUNTIME_LAUNCH_ID"] = launch_id
         options.update(background_process_options())
         process = None
+        process_tree = None
         try:
             with (log_root / "runtime.log").open("ab") as log:
                 process = subprocess.Popen(
@@ -307,11 +353,13 @@ def ensure_command(
                     env=environment,
                     **options,
                 )
+                process_tree = _SpawnedProcessTree(process)
             # Cold extraction and file scanning have no predictable duration.
             # Fail on process exit or identity errors, not elapsed startup time.
             while True:
                 _check_activation_cancelled()
-                live = _candidate_live_state()
+                process_tree.refresh()
+                live = _candidate_live_state(resolved_state_root)
                 if live is not None:
                     try:
                         status = _request_json(live.control_url, "/daemon/status")
@@ -340,12 +388,12 @@ def ensure_command(
         except Exception as error:
             # Reap only our own candidate, including frozen/venv child processes.
             if process is not None:
-                _terminate_process_tree(process)
+                _terminate_process_tree(process, process_tree)
             if (
                 not isinstance(error, RuntimeActivationCancelled)
                 and activate
                 and previous is not None
-                and _live_runtime_state() is None
+                and _live_runtime_state(resolved_state_root) is None
             ):
                 # The pointer still describes the previous healthy deployment.
                 # A subsequent ensure uses it, rather than the failed candidate.
@@ -365,11 +413,13 @@ def ensure_command(
                         env=environment,
                         **options,
                     )
+                restored_tree = _SpawnedProcessTree(restored)
                 deadline = time.monotonic() + _ROLLBACK_READINESS_TIMEOUT_SECONDS
                 try:
                     while True:
                         _check_activation_cancelled()
-                        recovered = _candidate_live_state()
+                        restored_tree.refresh()
+                        recovered = _candidate_live_state(resolved_state_root)
                         if recovered is not None:
                             try:
                                 recovered_status = _request_json(
@@ -396,6 +446,6 @@ def ensure_command(
                             )
                         time.sleep(0.05)
                 except Exception:
-                    _terminate_process_tree(restored)
+                    _terminate_process_tree(restored, restored_tree)
                     raise
             raise

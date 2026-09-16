@@ -70,6 +70,19 @@ def test_bundle_digest_covers_executable_permission(tmp_path: Path) -> None:
     assert bundle_digest(source) != before
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows has no POSIX executable bits")
+def test_bundle_digest_distinguishes_each_executable_bit(tmp_path: Path) -> None:
+    source = tmp_path / "bundle"
+    source.mkdir()
+    executable = source / "runtime"
+    executable.write_text("same bytes", encoding="utf-8")
+    digests = []
+    for mode in (0o655, 0o755, 0o751, 0o750):
+        executable.chmod(mode)
+        digests.append(bundle_digest(source))
+    assert len(set(digests)) == len(digests)
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits")
 def test_published_bundle_rejects_executable_permission_damage(tmp_path: Path) -> None:
     source = tmp_path / "source"

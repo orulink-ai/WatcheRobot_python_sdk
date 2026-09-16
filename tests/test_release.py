@@ -155,7 +155,7 @@ def test_production_publish_requires_a_release_and_version_check() -> None:
 def test_development_ci_uses_one_representative_python_environment() -> None:
     workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
     development = workflow.split("  development:", maxsplit=1)[1].split(
-        "  release-compatibility:", maxsplit=1
+        "  python-compatibility:", maxsplit=1
     )[0]
 
     assert "pull_request:" in workflow
@@ -196,6 +196,24 @@ def test_development_ci_uses_one_representative_python_environment() -> None:
     assert '[tool.hatch.version]\npath = "src/watcherobot/__init__.py"' in pyproject
     assert "setuptools-scm" not in pyproject.lower()
     assert "versioneer" not in pyproject.lower()
+
+
+def test_pull_request_ci_covers_all_supported_python_versions() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(
+        encoding="utf-8"
+    )
+    compatibility = workflow.split("  python-compatibility:", maxsplit=1)[1].split(
+        "  release-compatibility:", maxsplit=1
+    )[0]
+
+    assert (
+        "!contains(github.event.pull_request.labels.*.name, 'release:version')"
+        in compatibility
+    )
+    assert 'python-version: ["3.10", "3.12"]' in compatibility
+    assert "python-version: ${{ matrix.python-version }}" in compatibility
+    assert ".venv/bin/python -m pytest" in compatibility
+    assert ".venv/bin/python -m pip check" in compatibility
 
 
 def test_release_version_pr_runs_the_full_supported_compatibility_matrix() -> None:

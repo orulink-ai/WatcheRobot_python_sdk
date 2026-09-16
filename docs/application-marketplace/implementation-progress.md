@@ -55,7 +55,7 @@ Python 3.13.5 仅是当前 SDK 开发基线，不代表桌面发行包最终锁�
 - 回查既有 C-27 决策后，JSONL 成功事件固定为平铺的 `type=result, ok=true, data`，失败事件固定为平铺的 `type=error, ok=false, code, message`；不使用嵌套 `error` 对象。
 - 新增不启动 Daemon 的 `watcherobot app check <directory>`；人类输出与 `--jsonl` 机器输出共用 `check_application()`，后者直接复用唯一 `ApplicationManifest.load()`。
 - 有效目录会返回完整结构化 Manifest 信息；TDD 首次因 `distribution.check` 不存在而收集失败，实现后相关定向 6 项通过，全量 294 项通过，mypy 61 个源码文件通过。
-- 唯一 Manifest 校验器现在携带稳定错误码，并用 `packaging.Requirement` 校验每条第三方依赖；标准版本范围、extras 和直接 URL 继续允许，不增加依赖源白名单。
+- Manifest 校验器继续用 `packaging.Requirement` 校验声明；portable `app.lock.json` 只接受无 extras、无 URL、无 marker 的精确 pin，并在覆盖旧锁前检查 Manifest 依赖范围。
 - `app check --jsonl` 已分别覆盖 Manifest 缺失、固定 `app.py` 缺失、未知字段、非法 Python requirement 和 SDK 不兼容；失败只输出 JSONL，无 traceback。定向 20 项和全量 301 项通过。
 - 新增供 `check` 与后续 `publish` 共用的源码文件选择器：排除 `.venv`/`venv`、缓存、VCS、编辑器配置、`.env` 凭据、构建产物、`.wapp` 和 `pyvenv.cfg`/`.pth` 本机路径文件；`.env.example` 仍允许作为公开模板。
 - 本地 `.venv` 的存在不阻止开发者执行 `app check`，但其内容不会进入上传集合；未排除的符号链接会以 `app_content_forbidden` 拒绝，避免固定快照逃逸。定向 11 项和全量 304 项通过，mypy 62 个源码文件通过。
