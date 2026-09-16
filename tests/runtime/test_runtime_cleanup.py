@@ -212,6 +212,64 @@ def test_invalid_registered_reference_prevents_cleanup(tmp_path, monkeypatch):
     assert old.exists()
 
 
+def test_unreadable_reference_directory_prevents_cleanup(tmp_path, monkeypatch):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    old = version(tmp_path / "bundles", "a")
+    records = tmp_path / "runtime-references"
+    records.mkdir()
+    original_scandir = cleanup.os.scandir
+
+    def scandir(path):
+        if Path(path) == records:
+            raise PermissionError("reference records are unreadable")
+        return original_scandir(path)
+
+    monkeypatch.setattr(cleanup.os, "scandir", scandir)
+    monkeypatch.setattr(
+        cleanup.shutil,
+        "rmtree",
+        lambda path: pytest.fail("cleanup must not delete with incomplete references"),
+    )
+
+    report = cleanup.collect_runtime_garbage()
+
+    assert report["deleted"] == []
+    assert report["error"] == "reference records are unreadable"
+    assert old.exists()
+    saved = json.loads((tmp_path / "cleanup-report.json").read_text(encoding="utf-8"))
+    assert saved["error"] == "reference records are unreadable"
+
+
+def test_automatic_cleanup_skips_busy_repository_lock_and_releases_outer_locks(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    runtime = version(tmp_path / "bundles", "a")
+    released: list[Path | None] = []
+
+    @contextmanager
+    def operation(root=None, *, timeout=30):
+        assert timeout == 0
+        if root == (tmp_path / "bundles").resolve():
+            raise RuntimeError("busy repository lock")
+        try:
+            yield
+        finally:
+            released.append(root)
+
+    monkeypatch.setattr(cleanup, "operation_lock", operation)
+
+    report = cleanup.collect_runtime_garbage()
+
+    assert report["deleted"] == []
+    assert report["error"] == "busy repository lock"
+    assert runtime.exists()
+    assert None in released
+    assert tmp_path / "cleanup-coordination" in released
+
+
 def test_invalid_virtual_environment_record_prevents_cleanup(tmp_path, monkeypatch):
     instance = tmp_path / "instance"
     project = tmp_path / "project"

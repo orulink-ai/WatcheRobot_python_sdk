@@ -217,10 +217,9 @@ def test_environment_runner_keeps_bytecode_cache_out_of_locked_runtime(
     assert captured_environment is not None
     assert captured_environment["PYTHONDONTWRITEBYTECODE"] == "1"
     pycache_root = Path(captured_environment["PYTHONPYCACHEPREFIX"])
-    assert pycache_root.parent.name == "watcher-application-pycache"
-    assert len(pycache_root.name) == 16
+    assert pycache_root.name.startswith("watcher-application-pycache-")
     assert environment_root not in pycache_root.parents
-    assert pycache_root.is_dir()
+    assert not pycache_root.exists()
 
 
 def test_legacy_runtime_is_preserved_when_publishing_new_runtime(tmp_path: Path) -> None:

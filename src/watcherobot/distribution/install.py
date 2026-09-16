@@ -96,70 +96,67 @@ class SystemApplicationEnvironmentRunner:
             "VIRTUAL_ENV",
         ):
             environment.pop(name, None)
-        pycache_root = (
-            Path(tempfile.gettempdir())
-            / "watcher-application-pycache"
-            / hashlib.sha256(str(command.environment_root).encode("utf-8")).hexdigest()[:16]
-        )
-        pycache_root.mkdir(parents=True, exist_ok=True)
-        environment.update(
-            {
-                "PYTHONIOENCODING": "utf-8",
-                "PYTHONDONTWRITEBYTECODE": "1",
-                "PYTHONPYCACHEPREFIX": str(pycache_root),
-                "PYTHONNOUSERSITE": "1",
-                "PYTHONUTF8": "1",
-                "UV_NO_SYSTEM_CONFIG": "1",
-                "UV_PYTHON_DOWNLOADS": "never",
-                "UV_PYTHON_PREFERENCE": "only-system",
-            }
-        )
-        environment.update(dict(command.environment))
-        for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
-            try:
-                completed = subprocess.run(
-                    [str(command.executable), *command.arguments],
-                    cwd=command.current_dir,
-                    env=environment,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=False,
-                    timeout=300,
-                )
-            except subprocess.TimeoutExpired as exc:
-                raise ApplicationInstallError(
-                    ErrorCode.INTERNAL_ERROR,
-                    "Application environment command failed",
-                ) from exc
-            except OSError as exc:
+        with tempfile.TemporaryDirectory(
+            prefix="watcher-application-pycache-"
+        ) as pycache_directory:
+            environment.update(
+                {
+                    "PYTHONIOENCODING": "utf-8",
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONPYCACHEPREFIX": pycache_directory,
+                    "PYTHONNOUSERSITE": "1",
+                    "PYTHONUTF8": "1",
+                    "UV_NO_SYSTEM_CONFIG": "1",
+                    "UV_PYTHON_DOWNLOADS": "never",
+                    "UV_PYTHON_PREFERENCE": "only-system",
+                }
+            )
+            environment.update(dict(command.environment))
+            for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
+                try:
+                    completed = subprocess.run(
+                        [str(command.executable), *command.arguments],
+                        cwd=command.current_dir,
+                        env=environment,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        check=False,
+                        timeout=300,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    raise ApplicationInstallError(
+                        ErrorCode.INTERNAL_ERROR,
+                        "Application environment command failed",
+                    ) from exc
+                except OSError as exc:
+                    if attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
+                        time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
+                        continue
+                    raise ApplicationInstallError(
+                        ErrorCode.INTERNAL_ERROR,
+                        "Application environment command failed",
+                    ) from exc
+                if (
+                    len(completed.stdout) > _MAX_OUTPUT_BYTES
+                    or len(completed.stderr) > _MAX_OUTPUT_BYTES
+                ):
+                    raise ApplicationInstallError(
+                        ErrorCode.INTERNAL_ERROR,
+                        "Application environment command failed",
+                    )
+                if completed.returncode == 0:
+                    return ApplicationEnvironmentOutput(
+                        stdout=completed.stdout,
+                        stderr=completed.stderr,
+                    )
                 if attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
                     time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
                     continue
                 raise ApplicationInstallError(
                     ErrorCode.INTERNAL_ERROR,
                     "Application environment command failed",
-                ) from exc
-            if (
-                len(completed.stdout) > _MAX_OUTPUT_BYTES
-                or len(completed.stderr) > _MAX_OUTPUT_BYTES
-            ):
-                raise ApplicationInstallError(
-                    ErrorCode.INTERNAL_ERROR,
-                    "Application environment command failed",
                 )
-            if completed.returncode == 0:
-                return ApplicationEnvironmentOutput(
-                    stdout=completed.stdout,
-                    stderr=completed.stderr,
-                )
-            if attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
-                time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
-                continue
-            raise ApplicationInstallError(
-                ErrorCode.INTERNAL_ERROR,
-                "Application environment command failed",
-            )
         raise AssertionError("unreachable")
 
 

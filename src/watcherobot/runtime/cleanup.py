@@ -200,6 +200,23 @@ def _venv_paths(path: Path) -> list[Path]:
     return result
 
 
+def _reference_records(root: Path) -> list[Path]:
+    """Enumerate reference records without treating access failures as emptiness."""
+    if not root.exists():
+        return []
+    if not root.is_dir():
+        raise NotADirectoryError(
+            "Runtime reference root is not a directory: " + str(root)
+        )
+    with os.scandir(root) as entries:
+        return sorted(
+            Path(entry.path)
+            for entry in entries
+            if entry.name.endswith(".json")
+            and entry.is_file(follow_symlinks=False)
+        )
+
+
 def _inventory() -> tuple[list[Path], list[Path]]:
     instance = default_runtime_instance_root()
     repositories = [instance / "bundles"]
@@ -209,7 +226,7 @@ def _inventory() -> tuple[list[Path], list[Path]]:
         if pointer.exists():
             references.extend(_launcher_paths(pointer))
     roots: list[Path] = []
-    for record in (instance / "runtime-references").glob("*.json"):
+    for record in _reference_records(instance / "runtime-references"):
         item = json.loads(record.read_text(encoding="utf-8"))
         path = Path(item["path"])
         if not path.is_absolute() or not isinstance(item["store"], bool):
@@ -277,7 +294,7 @@ def collect_runtime_garbage() -> dict[str, Any]:
                 if not repository.exists() or _is_link(repository):
                     continue
                 root = repository.resolve(strict=True)
-                with operation_lock(root):
+                with operation_lock(root, timeout=0):
                     for candidate in root.iterdir():
                         if not re.fullmatch(r"[0-9a-f]{64}", candidate.name):
                             continue
