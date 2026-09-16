@@ -146,7 +146,7 @@ class ApplicationRuntimeManager:
             executable=launcher_executable,
         )
         selected_dir = launch_spec.application_dir
-        manifest = ApplicationManifest.load(selected_dir)
+        manifest = ApplicationManifest.load(selected_dir, daemon=True)
         self.registry.set_current_app(manifest.app_id)
         self._application_dir = selected_dir
         self._launch_spec = launch_spec
@@ -166,16 +166,19 @@ class ApplicationRuntimeManager:
                     "No controlled Application launch specification is selected"
                 )
 
-            manifest = ApplicationManifest.load(self._application_dir)
+            manifest = ApplicationManifest.load(self._application_dir, daemon=True)
             if manifest.app_id != self.registry.current_app:
                 raise ApplicationStartError(
                     "Application manifest id does not match current app"
                 )
-            refreshed_spec = self._application_launcher.build_spec(
-                application_dir=self._launch_spec.application_dir,
-                kind=self._launch_spec.kind,
-                executable=self._launch_spec.executable,
-            )
+            try:
+                refreshed_spec = self._application_launcher.refresh_spec(
+                    self._launch_spec
+                )
+            except (OSError, ValueError) as exc:
+                raise ApplicationStartError(
+                    "Selected Application launch specification is no longer valid"
+                ) from exc
             if refreshed_spec.app_id != self.registry.current_app:
                 raise ApplicationStartError(
                     "Application launch spec does not match current app"
@@ -286,6 +289,8 @@ class ApplicationRuntimeManager:
 
     def _build_environment(self, run: ApplicationRun) -> dict[str, str]:
         environment = dict(os.environ)
+        if self._launch_spec is not None:
+            environment.update(self._launch_spec.environment)
         for name in (
             "PYTHONPATH",
             "PYTHONHOME",

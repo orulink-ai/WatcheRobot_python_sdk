@@ -38,6 +38,7 @@ class ApplicationLaunchSpec:
     kind: ApplicationLauncherKind
     executable: Path
     command_executable: Path
+    environment: tuple[tuple[str, str], ...] = ()
 
     @property
     def entrypoint(self) -> Path:
@@ -84,7 +85,6 @@ class ApplicationLauncher:
         )
         self._default_app_id = default_app_id
         self._is_windows = os.name == "nt" if is_windows is None else is_windows
-
     def build_spec(
         self,
         *,
@@ -95,7 +95,9 @@ class ApplicationLauncher:
         """Build a spec without accepting arguments or an entrypoint."""
 
         selected_dir = _require_absolute_directory(application_dir)
-        manifest = ApplicationManifest.load(selected_dir)
+        from watcherobot.runtime.cleanup import register_reference, register_environment
+
+        manifest = ApplicationManifest.load(selected_dir, daemon=True)
         launcher_kind = _parse_kind(kind)
         _require_kind_matches_application(
             launcher_kind,
@@ -108,6 +110,24 @@ class ApplicationLauncher:
             and self._source_default_application_root is not None
         )
         requested_executable = Path(os.path.abspath(executable))
+        from watcherobot.runtime.registration import authorized_launch
+
+        grant = authorized_launch.get()
+        if grant is not None and {k: v for k, v in grant.items() if k != "environment"} == {
+            "application_dir": str(application_dir),
+            "launcher": {"kind": launcher_kind.value, "executable": str(executable)},
+        }:
+            # A local SDK/Desktop process authorized these exact paths. Retain
+            # fixed entrypoints and platform launcher validation; never accept args.
+            resolved = _require_executable_file(requested_executable, is_windows=self._is_windows)
+            _require_platform_executable_name(resolved, kind=launcher_kind, is_windows=self._is_windows)
+            command_executable = (
+                _python_executable_for_trusted_source_default(requested_executable, is_windows=self._is_windows)
+                if launcher_kind is ApplicationLauncherKind.PYTHON else resolved
+            )
+            register_reference(selected_dir)
+            register_environment(requested_executable)
+            return ApplicationLaunchSpec(manifest.app_id, selected_dir, launcher_kind, requested_executable, command_executable, tuple(grant.get("environment", {}).items()))
         if trusted_source_default:
             if selected_dir != self._source_default_application_root:
                 raise ApplicationLaunchError(
@@ -160,12 +180,57 @@ class ApplicationLauncher:
             raise ApplicationLaunchError(
                 "Application directory must stay inside its controlled root"
             )
+        register_reference(selected_dir)
+        register_environment(requested_executable)
         return ApplicationLaunchSpec(
             app_id=manifest.app_id,
             application_dir=selected_dir,
             kind=launcher_kind,
             executable=spec_executable,
             command_executable=command_executable,
+        )
+
+    def refresh_spec(
+        self,
+        spec: ApplicationLaunchSpec,
+    ) -> ApplicationLaunchSpec:
+        """Revalidate one already selected spec without authorizing a new selection."""
+
+        selected_dir = _require_absolute_directory(spec.application_dir)
+        manifest = ApplicationManifest.load(selected_dir, daemon=True)
+        if manifest.app_id != spec.app_id:
+            raise ApplicationLaunchError(
+                "Application manifest id does not match selected launch spec"
+            )
+        requested_executable = Path(os.path.abspath(spec.executable))
+        resolved = _require_executable_file(
+            requested_executable,
+            is_windows=self._is_windows,
+        )
+        _require_platform_executable_name(
+            resolved,
+            kind=spec.kind,
+            is_windows=self._is_windows,
+        )
+        command_executable = (
+            _python_executable_for_trusted_source_default(
+                requested_executable,
+                is_windows=self._is_windows,
+            )
+            if spec.kind is ApplicationLauncherKind.PYTHON
+            else resolved
+        )
+        if command_executable != spec.command_executable:
+            raise ApplicationLaunchError(
+                "Application launcher command changed after selection"
+            )
+        return ApplicationLaunchSpec(
+            app_id=manifest.app_id,
+            application_dir=selected_dir,
+            kind=spec.kind,
+            executable=requested_executable,
+            command_executable=command_executable,
+            environment=spec.environment,
         )
 
 

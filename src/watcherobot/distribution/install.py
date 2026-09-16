@@ -31,6 +31,8 @@ from .download import (
 )
 from .events import ErrorCode, EventSink, ProgressEvent
 from .ports import MarketplaceHubClient
+from watcherobot.runtime.cleanup import store_operation
+
 _RUNTIME_MANIFEST = "runtime.json"
 _RUNTIME_TREE_PREFIX = b"watcher-application-runtime-tree-sha256-v1\0"
 _MAX_OUTPUT_BYTES = 1024 * 1024
@@ -253,6 +255,7 @@ class _StorePaths:
         return self.apps / application_id
 
 
+@store_operation
 def install_application(
     *,
     provider: str,
@@ -297,11 +300,21 @@ def install_application(
                 )
         environment = candidate / ".venv"
         runner = environment_runner or SystemApplicationEnvironmentRunner()
+        dependencies = snapshot.application.dependencies
+        if snapshot.application.schema_version == 3:
+            from .dependency_lock import read_dependency_lock
+
+            dependencies = read_dependency_lock(
+                source,
+                snapshot.application.requires_watcherobot,
+                snapshot.application.dependencies,
+            )
         resolved_dependencies = _create_environment(
             candidate=candidate,
             environment=environment,
             runtime=runtime,
-            dependencies=snapshot.application.dependencies,
+            dependencies=dependencies,
+            sdk_requirement=(snapshot.application.requires_watcherobot if snapshot.application.schema_version == 3 else None),
             runner=runner,
             events=events,
         )
@@ -364,6 +377,7 @@ def list_installed_applications(store_root: Path) -> tuple[InstalledApplication,
     return tuple(applications)
 
 
+@store_operation
 def uninstall_application(
     *,
     store_root: Path,
@@ -410,56 +424,19 @@ def _open_store(store_root: Path) -> _StorePaths:
 
 
 def _prepare_runtime(paths: _StorePaths, source_root: Path) -> _RuntimeResources:
+    from watcherobot.runtime.repository import prepare_bundle
+
     source = _load_runtime(source_root)
-    if paths.runtime.is_symlink() or paths.runtime.exists():
-        try:
-            current = _load_runtime(paths.runtime)
-        except ApplicationInstallError:
-            _archive_cached_runtime(paths)
-        else:
-            if current.runtime_id == source.runtime_id:
-                return current
-            _archive_cached_runtime(paths)
     for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
-        staging = paths.staging / f"{uuid.uuid4().hex}-runtime"
         try:
-            shutil.copytree(source.root, staging, copy_function=shutil.copy2)
-            copied = _load_runtime(staging)
-            if copied.runtime_id != source.runtime_id:
-                raise ApplicationInstallError(
-                    ErrorCode.INTERNAL_ERROR,
-                    "Copied Application Runtime does not match the requested Runtime",
-                )
-            os.replace(staging, paths.runtime)
-            return _load_runtime(paths.runtime)
-        except ApplicationInstallError:
-            _remove_tree(staging)
-            raise
-        except OSError as exc:
-            _remove_tree(staging)
-            if attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
+            published = prepare_bundle(source.root, paths.runtime.parent / "runtimes")
+            return _load_runtime(published)
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, OSError) and attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
                 time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
                 continue
             raise ApplicationInstallError(
-                ErrorCode.INTERNAL_ERROR,
-                "Unable to prepare Application Runtime",
-            ) from exc
-    raise AssertionError("unreachable")
-
-
-def _archive_cached_runtime(paths: _StorePaths) -> None:
-    trash_root = paths.trash / f"{uuid.uuid4().hex}-runtime"
-    for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
-        try:
-            os.replace(paths.runtime, trash_root)
-            return
-        except OSError as exc:
-            if attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
-                time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
-                continue
-            raise ApplicationInstallError(
-                ErrorCode.INTERNAL_ERROR,
-                "Unable to replace cached Application Runtime",
+                ErrorCode.INTERNAL_ERROR, "Unable to prepare immutable Application Runtime",
             ) from exc
     raise AssertionError("unreachable")
 
@@ -632,12 +609,13 @@ def _create_environment(
     environment: Path,
     runtime: _RuntimeResources,
     dependencies: tuple[str, ...],
+    sdk_requirement: str | None = None,
     runner: ApplicationEnvironmentRunner,
     events: EventSink | None,
 ) -> tuple[dict[str, str], ...]:
     python = _environment_python(environment)
     command_environment = (
-        ("WATCHER_EXPECTED_SDK_VERSION", runtime.watcherobot_version),
+        ("WATCHER_EXPECTED_SDK_VERSION", sdk_requirement or ('==' + runtime.watcherobot_version)),
     )
     commands = (
         ApplicationEnvironmentCommand(
@@ -665,7 +643,8 @@ def _create_environment(
                 "install",
                 "--python",
                 str(python),
-                str(runtime.watcherobot_wheel),
+                *(("--no-deps",) if sdk_requirement else ()),
+                *((str(runtime.watcherobot_wheel),) if not sdk_requirement else ()),
                 *dependencies,
             ),
             current_dir=candidate,
@@ -700,7 +679,7 @@ def _create_environment(
             executable=python,
             arguments=(
                 "-c",
-                "import os,sys,watcherobot;sys.exit(0 if watcherobot.__version__ == os.environ['WATCHER_EXPECTED_SDK_VERSION'] else 1)",
+                "import os,sys,watcherobot;from packaging.specifiers import SpecifierSet;sys.exit(0 if SpecifierSet(os.environ['WATCHER_EXPECTED_SDK_VERSION']).contains(watcherobot.__version__) else 1)",
             ),
             current_dir=candidate,
             environment_root=environment,
@@ -759,7 +738,7 @@ def _create_environment(
         outputs[command.stage] = output
     return _resolved_dependencies(
         outputs["listing_dependencies"].stdout,
-        runtime.watcherobot_version,
+        sdk_requirement or ('==' + runtime.watcherobot_version),
     )
 
 
@@ -787,8 +766,11 @@ def _write_install_record(
         },
         "runtime": {
             "runtime_id": runtime.runtime_id,
-            "watcherobot_version": runtime.watcherobot_version,
-            "sdk_commit": runtime.watcherobot_sdk_commit,
+            "root": str(runtime.root),
+            "watcherobot_version": next(item["version"] for item in resolved_dependencies if item["name"] == "watcherobot"),
+            "sdk_commit": runtime.watcherobot_sdk_commit if application.schema_version != 3 else None,
+            "runtime_bundle_sdk_commit": runtime.watcherobot_sdk_commit,
+            "sdk_source": "application-lock" if application.schema_version == 3 else "bundled-wheel",
         },
         "launcher": {
             "kind": "python",
@@ -868,6 +850,7 @@ def _read_installed_application(root: Path) -> InstalledApplication:
 
 
 def _resolved_dependencies(payload: bytes, expected_watcherobot_version: str) -> tuple[dict[str, str], ...]:
+    from packaging.specifiers import SpecifierSet
     try:
         listed = json.loads(payload)
         if not isinstance(listed, list):
@@ -881,7 +864,8 @@ def _resolved_dependencies(payload: bytes, expected_watcherobot_version: str) ->
             if isinstance(item, dict)
         )
         versions = {item["name"]: item["version"] for item in resolved}
-        if len(resolved) != len(listed) or versions.get("watcherobot") != expected_watcherobot_version:
+        requirement = expected_watcherobot_version if expected_watcherobot_version.startswith(('=', '<', '>', '~', '!')) else '==' + expected_watcherobot_version
+        if len(resolved) != len(listed) or not versions.get("watcherobot") or not SpecifierSet(requirement).contains(versions["watcherobot"]):
             raise ValueError("watcherobot version is invalid")
         return tuple(sorted(resolved, key=lambda item: item["name"]))
     except (UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
