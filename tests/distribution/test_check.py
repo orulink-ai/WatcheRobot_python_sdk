@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from watcherobot.cli import main
-from watcherobot.distribution.check import check_application
+from watcherobot.distribution.check import ApplicationCheckResult, check_application
 
 
 def write_application(root: Path) -> None:
@@ -51,6 +51,27 @@ def test_check_application_reuses_manifest_and_returns_structured_data(
         "author": "Orulink",
         "icon": "",
     }
+
+
+def test_schema_three_check_result_uses_manifest_dependency_fields() -> None:
+    result = ApplicationCheckResult(
+        schema_version=3,
+        app_id="com.orulink.demo",
+        name="Demo",
+        version="1.2.3",
+        requires_watcherobot=">=0.1,<0.2",
+        dependencies=("httpx==0.28.1",),
+        description="",
+        author="",
+        icon="",
+        application_protocol="1",
+    )
+
+    payload = result.to_dict()
+
+    assert payload["requires_sdk"] == ">=0.1,<0.2"
+    assert payload["requires_daemon"] == {"application_protocol": "1"}
+    assert "requires_watcherobot" not in payload
 
 
 def test_cli_app_check_jsonl_does_not_start_daemon(

@@ -1458,20 +1458,40 @@ def _canonical_launcher_path(executable: Path) -> Path:
     return requested.parent.resolve(strict=True) / requested.name
 
 
-def stop_runtime() -> bool:
-    state = _live_runtime_state()
+def stop_runtime(state_root: Path | None = None) -> bool:
+    state = (
+        _live_runtime_state(state_root)
+        if state_root is not None
+        else _live_runtime_state()
+    )
     if state is None:
         return True
     _request_json(state.control_url, "/daemon/stop", method="POST")
     control_port = urlsplit(state.control_url).port
-    state_store = RuntimeStateStore(default_runtime_instance_root())
+    instance_root = default_runtime_instance_root()
+    if instance_root == system_runtime_instance_root():
+        state_roots = tuple(
+            dict.fromkeys(
+                (
+                    instance_root,
+                    (
+                        Path(state_root).resolve()
+                        if state_root is not None
+                        else default_runtime_state_root()
+                    ),
+                    system_runtime_state_root(),
+                )
+            )
+        )
+    else:
+        state_roots = (instance_root,)
+    state_stores = tuple(RuntimeStateStore(root) for root in state_roots)
     wait_seconds = float(os.environ.get("WATCHER_RUNTIME_STOP_WAIT_SECONDS", "30"))
     deadline = time.monotonic() + max(wait_seconds, 0.0)
     while time.monotonic() < deadline:
         if not psutil.pid_exists(state.pid):
             return True
-        published_state = state_store.read()
-        state_is_gone = published_state is None or published_state != state
+        state_is_gone = all(store.read() != state for store in state_stores)
         control_is_closed = control_port is None or not _local_tcp_port_is_open(control_port)
         if state_is_gone and control_is_closed:
             return True

@@ -40,7 +40,7 @@ class ApplicationCheckResult:
             "icon": self.icon,
         }
         if self.schema_version == 3:
-            result["requires_sdk"] = self.requires_watcherobot
+            result["requires_sdk"] = result.pop("requires_watcherobot")
             result["requires_daemon"] = {"application_protocol": self.application_protocol}
         return result
 

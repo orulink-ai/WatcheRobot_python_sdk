@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -24,6 +26,54 @@ def _write_application(root: Path) -> Path:
     )
     root.joinpath("app.py").write_text("pass\n", encoding="utf-8")
     return root.resolve()
+
+
+def test_activate_shared_forces_requested_build_and_state_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from watcherobot.runtime import manager
+
+    ensure = Mock()
+    monkeypatch.setattr(manager, "ensure_command", ensure)
+    state_root = (tmp_path / "state").resolve()
+
+    assert daemon_entrypoint.main(
+        ["--activate-shared", "--state-root", str(state_root)]
+    ) == 0
+
+    assert ensure.call_args.kwargs == {
+        "activate": True,
+        "force": True,
+        "state_root": state_root,
+    }
+
+
+def test_check_runtime_reports_identity_after_service_import(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from watcherobot.runtime import identity
+
+    expected = {"sdk_version": "0.1.9", "build_id": "test"}
+    monkeypatch.setattr(identity, "runtime_identity", lambda: expected)
+
+    assert daemon_entrypoint.main(["--check-runtime"]) == 0
+    assert json.loads(capsys.readouterr().out) == expected
+
+
+def test_stop_shared_uses_requested_state_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from watcherobot.runtime import manager
+
+    stop = Mock()
+    monkeypatch.setattr(manager, "stop_shared_runtime", stop)
+    state_root = (tmp_path / "state").resolve()
+
+    assert daemon_entrypoint.main(
+        ["--stop-shared", "--state-root", str(state_root)]
+    ) == 0
+
+    stop.assert_called_once_with(state_root)
 
 
 def test_runtime_publishes_shared_and_legacy_coordination_state(

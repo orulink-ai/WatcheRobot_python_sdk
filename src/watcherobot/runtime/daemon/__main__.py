@@ -47,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--activate-shared", action="store_true")
     parser.add_argument("--stop-shared", action="store_true")
     parser.add_argument("--describe-runtime", action="store_true")
+    parser.add_argument("--check-runtime", action="store_true")
     parser.add_argument("--begin-installation", nargs=2, metavar=("PID", "HANDSHAKE"))
     parser.add_argument(
         "--guard-installation",
@@ -262,9 +263,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.stop_shared or args.ensure_shared or args.activate_shared:
         os.environ["WATCHER_RUNTIME_CONTROL_PORT"] = str(args.control_port)
-    if args.describe_runtime:
+    if args.describe_runtime or args.check_runtime:
         from watcherobot.runtime.identity import runtime_identity
 
+        if args.check_runtime:
+            from watcherobot.runtime.daemon.runtime import DaemonRuntime as _DaemonRuntime
+
+            del _DaemonRuntime
         print(json.dumps(runtime_identity()))
         return 0
     if args.stop_shared:
@@ -272,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
 
         os.environ["WATCHER_RUNTIME_INSTANCE_ROOT"] = str(args.instance_root.resolve())
         os.environ["WATCHER_RUNTIME_STATE_ROOT"] = str(args.state_root.resolve())
-        stop_shared_runtime()
+        stop_shared_runtime(args.state_root.resolve())
         return 0
     if args.prepare_bundle is not None:
         from watcherobot.runtime.repository import prepare_bundle
@@ -292,7 +297,12 @@ def main(argv: list[str] | None = None) -> int:
         command = [sys.executable]
         if not getattr(sys, "frozen", False):
             command.extend(["-m", "watcherobot.runtime.daemon"])
-        ensure_command(command + forwarded, activate=args.activate_shared)
+        ensure_command(
+            command + forwarded,
+            activate=args.activate_shared,
+            force=args.activate_shared,
+            state_root=args.state_root,
+        )
         return 0
     try:
         # Convert the invariant failure into an actionable argparse message.

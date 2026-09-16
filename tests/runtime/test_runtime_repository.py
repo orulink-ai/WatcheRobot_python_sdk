@@ -77,7 +77,7 @@ def test_bundle_digest_distinguishes_each_executable_bit(tmp_path: Path) -> None
     executable = source / "runtime"
     executable.write_text("same bytes", encoding="utf-8")
     digests = []
-    for mode in (0o655, 0o755, 0o751, 0o750):
+    for mode in (0o654, 0o655, 0o754, 0o755):
         executable.chmod(mode)
         digests.append(bundle_digest(source))
     assert len(set(digests)) == len(digests)

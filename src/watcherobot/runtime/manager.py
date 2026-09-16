@@ -33,23 +33,25 @@ def _check_activation_cancelled() -> None:
 
 
 def describe_command(command: list[str]) -> dict[str, str]:
-    """Exercise the candidate interpreter/imports before interrupting anything."""
+    """Exercise the candidate service imports before interrupting anything."""
     if (
         getattr(sys, "frozen", False)
         and command
         and Path(command[0]).resolve() == Path(sys.executable).resolve()
     ):
-        # This frozen candidate has already booted and imported the Daemon.
-        # Hash it here; a nested copy only repeats onefile extraction.
+        # Avoid a nested onefile extraction, but still exercise the lazily loaded
+        # service dependency tree before an existing Runtime is interrupted.
+        from .daemon.runtime import DaemonRuntime as _DaemonRuntime
         from .identity import runtime_identity
 
+        del _DaemonRuntime
         return runtime_identity()
     options: dict[str, Any] = {}
     if os.name == "nt":
         options["creationflags"] = CREATE_NO_WINDOW
     try:
         result = subprocess.run(
-            [*command, "--describe-runtime"],
+            [*command, "--check-runtime"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -70,10 +72,10 @@ def describe_command(command: list[str]) -> dict[str, str]:
     return identity
 
 
-def stop_shared_runtime() -> None:
+def stop_shared_runtime(state_root: Path | None = None) -> None:
     """Stop the currently verified instance, regardless of its original client."""
     with operation_lock(timeout=120):
-        _stop_and_wait()
+        _stop_and_wait(state_root)
 
 
 def _stop_and_wait(state_root: Path | None = None) -> None:
@@ -105,7 +107,7 @@ def _stop_and_wait(state_root: Path | None = None) -> None:
         except psutil.NoSuchProcess:
             pass
     try:
-        stopped = stop_runtime()
+        stopped = stop_runtime(state_root)
     except CliError:
         if not processes:
             raise
@@ -220,16 +222,30 @@ class _SpawnedProcessTree:
     def refresh(self) -> None:
         import psutil
 
-        candidates = [self._root]
-        try:
-            candidates.extend(self._root.children(recursive=True))
-        except psutil.Error:
-            pass
+        candidates = [self._root, *self._processes.values()]
+        visited: set[tuple[int, float]] = set()
         for candidate in candidates:
             try:
-                self._processes[(candidate.pid, candidate.create_time())] = candidate
+                identity = (candidate.pid, candidate.create_time())
             except psutil.Error:
-                pass
+                continue
+            if identity in visited:
+                continue
+            visited.add(identity)
+            self._processes[identity] = candidate
+            try:
+                descendants = candidate.children(recursive=True)
+            except psutil.Error:
+                continue
+            for descendant in descendants:
+                try:
+                    descendant_identity = (
+                        descendant.pid,
+                        descendant.create_time(),
+                    )
+                except psutil.Error:
+                    continue
+                self._processes[descendant_identity] = descendant
 
     def terminate(self) -> None:
         """Stop only identities observed as descendants of this launch."""
@@ -263,6 +279,27 @@ def _terminate_process_tree(
         (tree or _SpawnedProcessTree(process)).terminate()
     except psutil.NoSuchProcess:
         pass
+
+
+def _with_runtime_state_root(command: list[str], state_root: Path) -> list[str]:
+    """Return a launcher command pinned to the manager's discovery root."""
+
+    normalized: list[str] = []
+    index = 0
+    while index < len(command):
+        value = command[index]
+        if value == "--state-root":
+            if index + 1 >= len(command):
+                raise ValueError("Runtime launcher --state-root requires a value")
+            index += 2
+            continue
+        if value.startswith("--state-root="):
+            index += 1
+            continue
+        normalized.append(value)
+        index += 1
+    normalized.extend(("--state-root", str(state_root)))
+    return normalized
 
 
 @cleanup_after
@@ -321,12 +358,13 @@ def ensure_command(
                 return True
             # Shutdown closes admission and drains the managed Application.
             _stop_and_wait(resolved_state_root)
-        selected = command
+        selected = _with_runtime_state_root(command, resolved_state_root)
         launch_environment = {
             key: os.environ[key] for key in _LAUNCH_ENVIRONMENT if key in os.environ
         }
         if not activate and pointer.is_file():
-            selected, launch_environment = read_launcher(pointer)
+            saved_command, launch_environment = read_launcher(pointer)
+            selected = _with_runtime_state_root(saved_command, resolved_state_root)
         log_root = resolved_state_root
         log_root.mkdir(parents=True, exist_ok=True)
         options: dict[str, Any] = {}
@@ -334,6 +372,7 @@ def ensure_command(
         for key in _LAUNCH_ENVIRONMENT:
             environment.pop(key, None)
         environment.update(launch_environment)
+        environment["WATCHER_RUNTIME_STATE_ROOT"] = str(resolved_state_root)
         # A detached frozen child must own its extraction directory. Otherwise
         # the short-lived manager can remove DLLs still used by the Daemon.
         environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
@@ -398,9 +437,15 @@ def ensure_command(
                 # The pointer still describes the previous healthy deployment.
                 # A subsequent ensure uses it, rather than the failed candidate.
                 old_command, old_environment = previous
+                old_command = _with_runtime_state_root(
+                    old_command, resolved_state_root
+                )
                 for key in _LAUNCH_ENVIRONMENT:
                     environment.pop(key, None)
                 environment.update(old_environment)
+                environment["WATCHER_RUNTIME_STATE_ROOT"] = str(
+                    resolved_state_root
+                )
                 recovery_id = uuid.uuid4().hex
                 environment["WATCHER_RUNTIME_LAUNCH_ID"] = recovery_id
                 with (log_root / "runtime.log").open("ab") as log:

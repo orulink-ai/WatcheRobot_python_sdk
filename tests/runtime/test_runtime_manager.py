@@ -26,6 +26,20 @@ def test_frozen_self_validation_does_not_spawn_another_extractor(monkeypatch, tm
     spawned.assert_not_called()
 
 
+def test_candidate_validation_loads_service_dependencies(monkeypatch):
+    completed = SimpleNamespace(
+        stdout=json.dumps({"sdk_version": "0.1.9", "build_id": "test"})
+    )
+    run = Mock(return_value=completed)
+    monkeypatch.setattr(manager.subprocess, "run", run)
+
+    assert manager.describe_command(["candidate-runtime"]) == {
+        "sdk_version": "0.1.9",
+        "build_id": "test",
+    }
+    assert run.call_args.args[0] == ["candidate-runtime", "--check-runtime"]
+
+
 @pytest.fixture
 def lifecycle(tmp_path, monkeypatch):
     monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
@@ -176,6 +190,7 @@ def test_failed_readiness_reaps_only_the_candidate_tree(tmp_path, monkeypatch):
     parent.pid, child.pid = 12345, 12346
     parent.create_time.return_value, child.create_time.return_value = 1.0, 2.0
     parent.children.return_value = [child]
+    child.children.return_value = []
     lookup = Mock(return_value=parent)
     monkeypatch.setattr(psutil, "Process", lookup)
     monkeypatch.setattr(psutil, "wait_procs", lambda *_, **__: ([], []))
@@ -198,6 +213,7 @@ def test_process_tree_reaps_observed_child_after_parent_exit(monkeypatch):
     parent.pid, child.pid = 12345, 12346
     parent.create_time.return_value, child.create_time.return_value = 1.0, 2.0
     parent.children.side_effect = [[child], psutil.NoSuchProcess(parent.pid)]
+    child.children.return_value = []
     monkeypatch.setattr(psutil, "Process", Mock(return_value=parent))
     monkeypatch.setattr(psutil, "wait_procs", lambda *_, **__: ([], []))
 
@@ -205,6 +221,56 @@ def test_process_tree_reaps_observed_child_after_parent_exit(monkeypatch):
     manager._terminate_process_tree(process, tree)
 
     child.terminate.assert_called_once()
+
+
+def test_process_tree_discovers_grandchild_after_parent_exit(monkeypatch):
+    import psutil
+
+    process = Mock(pid=12345)
+    parent, child, grandchild = Mock(), Mock(), Mock()
+    parent.pid, child.pid, grandchild.pid = 12345, 12346, 12347
+    parent.create_time.return_value = 1.0
+    child.create_time.return_value = 2.0
+    grandchild.create_time.return_value = 3.0
+    parent.children.side_effect = [
+        [child],
+        psutil.NoSuchProcess(parent.pid),
+        psutil.NoSuchProcess(parent.pid),
+    ]
+    child.children.side_effect = [[], [grandchild], [grandchild], [grandchild]]
+    grandchild.children.return_value = []
+    monkeypatch.setattr(psutil, "Process", Mock(return_value=parent))
+    monkeypatch.setattr(psutil, "wait_procs", lambda *_, **__: ([], []))
+
+    tree = manager._SpawnedProcessTree(process)
+    tree.refresh()
+    manager._terminate_process_tree(process, tree)
+
+    child.terminate.assert_called_once()
+    grandchild.terminate.assert_called_once()
+
+
+def test_launcher_command_replaces_existing_state_root(tmp_path):
+    state_root = (tmp_path / "state").resolve()
+
+    assert manager._with_runtime_state_root(
+        ["runtime", "--state-root", "old", "--control-port", "0"],
+        state_root,
+    ) == [
+        "runtime",
+        "--control-port",
+        "0",
+        "--state-root",
+        str(state_root),
+    ]
+
+
+def test_launcher_command_rejects_state_root_without_value(tmp_path):
+    with pytest.raises(ValueError, match="--state-root requires a value"):
+        manager._with_runtime_state_root(
+            ["runtime", "--state-root"],
+            tmp_path.resolve(),
+        )
 
 
 def test_rollback_timeout_reaps_previous_runtime(tmp_path, monkeypatch):
