@@ -1392,9 +1392,6 @@ def ensure_runtime(
     from watcherobot.runtime.manager import ensure_command
 
     resolved_state_root = (state_root or default_runtime_state_root()).resolve()
-    existing = _live_runtime_state(resolved_state_root)
-    if existing is not None:
-        return existing, True
     daemon_python = _canonical_launcher_path(Path(sys.executable))
     command = [
         os.fspath(daemon_python),

@@ -168,8 +168,7 @@ def test_same_version_reuses_running_application_despite_different_build(lifecyc
 
 def test_sdk_application_start_delegates_to_shared_manager(tmp_path, monkeypatch):
     ready = SimpleNamespace(pid=123, control_url="http://unused")
-    states = iter([None, ready])
-    monkeypatch.setattr(cli, "_live_runtime_state", lambda *args: next(states))
+    monkeypatch.setattr(cli, "_live_runtime_state", lambda *args: ready)
     ensure = Mock(return_value=False)
     monkeypatch.setattr(manager, "ensure_command", ensure)
     state, reused = cli.ensure_runtime(state_root=tmp_path, ephemeral_ports=True)
@@ -180,6 +179,49 @@ def test_sdk_application_start_delegates_to_shared_manager(tmp_path, monkeypatch
     assert command[command.index("--state-root") + 1] == str(tmp_path.resolve())
     assert command[command.index("--control-port") + 1] == "0"
     assert Path(command[0]).name.lower() != "pythonw.exe"
+
+
+def test_sdk_application_start_delegates_discovery_failure_to_manager(
+    tmp_path, monkeypatch
+):
+    ready = SimpleNamespace(pid=123, control_url="http://unused")
+    ensure = Mock(return_value=True)
+    monkeypatch.setattr(manager, "ensure_command", ensure)
+    monkeypatch.setattr(cli, "_live_runtime_state", Mock(return_value=ready))
+
+    state, reused = cli.ensure_runtime(state_root=tmp_path)
+
+    assert state is ready
+    assert reused is True
+    ensure.assert_called_once()
+    cli._live_runtime_state.assert_called_once_with(tmp_path.resolve())
+
+
+def test_normal_ensure_discovery_failure_uses_verified_shutdown_before_spawn(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv(
+        "WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance")
+    )
+    monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
+    monkeypatch.setattr(
+        cli, "_live_runtime_state", Mock(side_effect=cli.CliError("unknown listener"))
+    )
+    monkeypatch.setattr(
+        manager,
+        "describe_command",
+        Mock(return_value={"sdk_version": "0.2.0", "build_id": "new"}),
+    )
+    stop = Mock(side_effect=RuntimeError("legacy listener cannot be verified"))
+    monkeypatch.setattr(manager, "_stop_and_wait", stop)
+    spawn = Mock()
+    monkeypatch.setattr(manager.subprocess, "Popen", spawn)
+
+    with pytest.raises(RuntimeError, match="cannot be verified"):
+        manager.ensure_command(["candidate-runtime"], state_root=tmp_path)
+
+    stop.assert_called_once_with(tmp_path.resolve())
+    spawn.assert_not_called()
 
 
 def test_candidate_probe_waits_for_slow_status_without_accepting_identity(monkeypatch):

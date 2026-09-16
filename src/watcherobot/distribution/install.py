@@ -33,6 +33,7 @@ from .download import (
 from .events import ErrorCode, EventSink, ProgressEvent
 from .ports import MarketplaceHubClient
 from watcherobot.runtime.cleanup import store_operation
+from watcherobot.runtime.daemon.application.manifest import ApplicationManifestError
 
 _RUNTIME_MANIFEST = "runtime.json"
 _RUNTIME_TREE_PREFIX = b"watcher-application-runtime-tree-sha256-v1\0"
@@ -349,6 +350,13 @@ def install_application(
     except DownloadError as exc:
         _move_transaction_to_trash(paths, transaction_id, transaction)
         raise ApplicationInstallError(exc.code, str(exc)) from exc
+    except ApplicationManifestError as exc:
+        _move_transaction_to_trash(paths, transaction_id, transaction)
+        try:
+            code = ErrorCode(exc.code)
+        except ValueError:
+            code = ErrorCode.APP_MANIFEST_INVALID
+        raise ApplicationInstallError(code, str(exc)) from exc
     except ApplicationInstallError:
         _move_transaction_to_trash(paths, transaction_id, transaction)
         raise

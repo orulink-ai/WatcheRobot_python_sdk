@@ -390,6 +390,13 @@ def test_legacy_daemon_blocks_status_start_and_stop_without_side_effects(
             "an incompatible Daemon must block a second process"
         ),
     )
+    monkeypatch.setattr(
+        "watcherobot.runtime.manager.describe_command",
+        lambda *_args, **_kwargs: {
+            "sdk_version": "0.1.8",
+            "build_id": "candidate",
+        },
+    )
 
     for operation in (
         watcherobot_cli.runtime_status,
@@ -633,6 +640,13 @@ def test_occupied_unrecognized_control_port_blocks_a_second_daemon(
         watcherobot_cli.subprocess,
         "Popen",
         lambda *_args, **_kwargs: pytest.fail("an occupied port must block startup"),
+    )
+    monkeypatch.setattr(
+        "watcherobot.runtime.manager.describe_command",
+        lambda *_args, **_kwargs: {
+            "sdk_version": "0.1.8",
+            "build_id": "candidate",
+        },
     )
 
     with pytest.raises(watcherobot_cli.CliError, match="Refusing to start"):

@@ -399,8 +399,10 @@ Do not parse the human-readable `message`.
 
 Common stable error codes include `app_manifest_missing`,
 `app_entrypoint_missing`, `app_manifest_invalid`, `app_sdk_incompatible`,
-`app_dependency_invalid`, `auth_required`, `space_ownership_conflict`,
-`catalog_pr_conflict`, and `remote_error`.
+`app_dependency_invalid`, `app_lock_missing`, `app_lock_invalid`,
+`app_lock_incompatible`, `auth_required`, `space_ownership_conflict`,
+`catalog_pr_conflict`, and `remote_error`. For schema v3 Applications, regenerate
+`app.lock.json` with `watcherobot-app-lock` when a lock error is reported.
 
 ## 9. Recommended acceptance order
 

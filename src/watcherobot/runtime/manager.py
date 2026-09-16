@@ -338,9 +338,8 @@ def ensure_command(
         discovery_failed = False
         try:
             live = _live_runtime_state(resolved_state_root)
-        except CliError:
-            if not activate:
-                raise
+        except CliError as error:
+            candidate_error = error
             discovery_failed = True
             live = None
         if live is not None:
@@ -370,7 +369,12 @@ def ensure_command(
         environment.update(launch_environment)
         environment["WATCHER_RUNTIME_STATE_ROOT"] = str(resolved_state_root)
         if not activate:
-            target_identity = describe_command(selected, environment)
+            try:
+                target_identity = describe_command(selected, environment)
+            except Exception:
+                if discovery_failed:
+                    raise candidate_error
+                raise
 
         log_root = resolved_state_root
         log_root.mkdir(parents=True, exist_ok=True)
