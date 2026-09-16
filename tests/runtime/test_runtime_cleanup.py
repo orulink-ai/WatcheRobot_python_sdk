@@ -2,6 +2,8 @@ import json
 import os
 import time
 
+import pytest
+
 from watcherobot.runtime import cleanup
 
 
@@ -75,6 +77,80 @@ def test_corrupt_reference_prevents_cleanup(tmp_path, monkeypatch):
     old = version(tmp_path / "bundles", "a")
     (tmp_path / "current-launcher.json").write_text("broken")
     assert cleanup.collect_runtime_garbage()["deleted"] == []
+    assert old.exists()
+
+
+@pytest.mark.parametrize("pointer", ["current-launcher.json", "previous-launcher.json"])
+@pytest.mark.parametrize("content", [{}, {"command": [], "environment": {}}])
+def test_semantically_invalid_launcher_prevents_cleanup(
+    tmp_path, monkeypatch, pointer, content
+):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    old = version(tmp_path / "bundles", "a")
+    (tmp_path / pointer).write_text(json.dumps(content), encoding="utf-8")
+
+    report = cleanup.collect_runtime_garbage()
+
+    assert report["deleted"] == []
+    assert report["error"]
+    assert old.exists()
+
+
+def test_install_record_without_runtime_reference_prevents_cleanup(
+    tmp_path, monkeypatch
+):
+    instance = tmp_path / "instance"
+    store = tmp_path / "store"
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(instance))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    old = version(store / "runtimes", "a")
+    record = store / "apps" / "demo" / "install.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"runtime": {}}), encoding="utf-8")
+    cleanup.register_reference(store, store=True)
+
+    report = cleanup.collect_runtime_garbage()
+
+    assert report["deleted"] == []
+    assert report["error"]
+    assert old.exists()
+
+
+def test_invalid_registered_reference_prevents_cleanup(tmp_path, monkeypatch):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    old = version(tmp_path / "bundles", "a")
+    records = tmp_path / "runtime-references"
+    records.mkdir()
+    (records / "invalid.json").write_text(
+        json.dumps({"path": "relative-project", "store": False}),
+        encoding="utf-8",
+    )
+
+    report = cleanup.collect_runtime_garbage()
+
+    assert report["deleted"] == []
+    assert report["error"]
+    assert old.exists()
+
+
+def test_invalid_virtual_environment_record_prevents_cleanup(tmp_path, monkeypatch):
+    instance = tmp_path / "instance"
+    project = tmp_path / "project"
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(instance))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    old = version(instance / "bundles", "a")
+    project.mkdir()
+    (project / "pyvenv.cfg").write_text(
+        "home = relative-python\n", encoding="utf-8"
+    )
+    cleanup.register_reference(project)
+
+    report = cleanup.collect_runtime_garbage()
+
+    assert report["deleted"] == []
+    assert report["error"]
     assert old.exists()
 
 

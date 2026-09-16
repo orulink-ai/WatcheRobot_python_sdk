@@ -13,7 +13,11 @@ from pathlib import Path
 
 from watcherobot.runtime.daemon.application.bridge import ChannelNotConnectedError
 from watcherobot.runtime.daemon.application.logging import ApplicationLogService
-from watcherobot.runtime.daemon.application.launcher import ApplicationLauncher
+from watcherobot.runtime.daemon.application.launcher import (
+    ApplicationLauncher,
+    ApplicationLaunchSpec,
+)
+from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 from watcherobot.runtime.daemon.application.runtime import (
     ApplicationRuntimeError,
     ApplicationRuntimeManager,
@@ -310,6 +314,33 @@ class DaemonRuntime:
             f"launcher={launcher_kind})"
         )
         return self.application_status()
+
+    def prepare_application_selection(
+        self,
+        application_dir: str,
+        launcher_kind: str,
+        launcher_executable: str,
+    ) -> tuple[ApplicationLaunchSpec, ApplicationManifest]:
+        return self.application.prepare_application_selection(
+            Path(application_dir),
+            launcher_kind=launcher_kind,
+            launcher_executable=Path(launcher_executable),
+        )
+
+    def commit_application_selection(
+        self,
+        prepared: tuple[ApplicationLaunchSpec, ApplicationManifest],
+    ) -> None:
+        launch_spec, manifest = prepared
+        self.application.commit_application_selection(launch_spec, manifest)
+        selected = self.application.launch_spec
+        assert selected is not None
+        self.logs.record(
+            "Application selected "
+            f"(app_id={self.application.registry.current_app}, "
+            f"path={selected.application_dir.resolve()}, "
+            f"launcher={selected.kind.value})"
+        )
 
     def request_shutdown(self) -> None:
         self.logs.record("Daemon shutdown requested")

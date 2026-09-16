@@ -158,6 +158,17 @@ class ApplicationController(Protocol):
     ) -> dict[str, Any]:
         """Select a validated Application without restarting the Runtime."""
 
+    def prepare_application_selection(
+        self,
+        application_dir: str,
+        launcher_kind: str,
+        launcher_executable: str,
+    ) -> tuple[Any, Any]:
+        """Validate and register a selection without mutating controller state."""
+
+    def commit_application_selection(self, prepared: tuple[Any, Any]) -> None:
+        """Commit a prepared selection on the control event loop."""
+
     def request_shutdown(self) -> None:
         """Ask the owning Runtime process to stop cleanly."""
 
@@ -376,11 +387,13 @@ class DaemonControlAPI:
                     return JSONResponse(status_code=403, content={"error": "invalid_local_registration"})
             token = authorized_launch.set(grant)
             try:
-                self._controller.select_application(
+                prepared = await asyncio.to_thread(
+                    self._controller.prepare_application_selection,
                     request.application_dir,
                     request.launcher.kind,
                     request.launcher.executable,
                 )
+                self._controller.commit_application_selection(prepared)
             except SessionOccupiedError as exc:
                 return JSONResponse(
                     status_code=409,

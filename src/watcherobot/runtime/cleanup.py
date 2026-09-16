@@ -137,30 +137,41 @@ def process_references() -> list[Path] | None:
     return paths
 
 
-def _strings(value: Any) -> Iterator[str]:
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for item in value.values():
-            yield from _strings(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _strings(item)
+def _launcher_paths(path: Path) -> list[Path]:
+    from .manager import read_launcher
+
+    command, _ = read_launcher(path)
+    result = [Path(value) for value in command if Path(value).is_absolute()]
+    if not result:
+        raise ValueError("Shared Runtime launcher has no absolute path: " + str(path))
+    return result
 
 
-def _json_paths(path: Path) -> list[Path]:
+def _install_paths(path: Path) -> list[Path]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
-        raise ValueError("Invalid reference document: " + str(path))
-    return [Path(s) for s in _strings(value) if Path(s).is_absolute()]
+        raise ValueError("Invalid Application install record: " + str(path))
+    runtime = value.get("runtime")
+    if not isinstance(runtime, dict):
+        raise ValueError("Application install record has no Runtime: " + str(path))
+    root = runtime.get("root")
+    if not isinstance(root, str) or not Path(root).is_absolute():
+        raise ValueError("Application install Runtime root is invalid: " + str(path))
+    return [Path(root)]
 
 
 def _venv_paths(path: Path) -> list[Path]:
-    result = []
+    result: list[Path] = []
+    home: Path | None = None
     for line in path.read_text(encoding="utf-8").splitlines():
-        _, separator, value = line.partition("=")
-        if separator and Path(value.strip()).is_absolute():
-            result.append(Path(value.strip()))
+        key, separator, value = line.partition("=")
+        candidate = Path(value.strip())
+        if separator and candidate.is_absolute():
+            result.append(candidate)
+            if key.strip().lower() == "home":
+                home = candidate
+    if home is None:
+        raise ValueError("Virtual environment record has no absolute home: " + str(path))
     return result
 
 
@@ -171,7 +182,7 @@ def _inventory() -> tuple[list[Path], list[Path]]:
     for name in ("current-launcher.json", "previous-launcher.json"):
         pointer = instance / name
         if pointer.exists():
-            references.extend(_json_paths(pointer))
+            references.extend(_launcher_paths(pointer))
     roots: list[Path] = []
     for record in (instance / "runtime-references").glob("*.json"):
         item = json.loads(record.read_text(encoding="utf-8"))
@@ -202,7 +213,7 @@ def _inventory() -> tuple[list[Path], list[Path]]:
                 if name not in (".git", "node_modules", "__pycache__")
             ]
             if "install.json" in files:
-                references.extend(_json_paths(base / "install.json"))
+                references.extend(_install_paths(base / "install.json"))
             if "pyvenv.cfg" in files:
                 references.extend(_venv_paths(base / "pyvenv.cfg"))
             for name in [*files, *directories]:

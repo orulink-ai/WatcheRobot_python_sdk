@@ -136,6 +136,22 @@ class ApplicationRuntimeManager:
     ) -> ApplicationManifest:
         """Select a validated Application while preserving the Runtime."""
 
+        launch_spec, manifest = self.prepare_application_selection(
+            application_dir,
+            launcher_kind=launcher_kind,
+            launcher_executable=launcher_executable,
+        )
+        return self.commit_application_selection(launch_spec, manifest)
+
+    def prepare_application_selection(
+        self,
+        application_dir: Path,
+        *,
+        launcher_kind: str | ApplicationLauncherKind,
+        launcher_executable: Path,
+    ) -> tuple[ApplicationLaunchSpec, ApplicationManifest]:
+        """Validate and register one selection without mutating Runtime state."""
+
         if self._process is not None or self.registry.active_run is not None:
             raise SessionOccupiedError(
                 "Application cannot change while a process exists"
@@ -147,6 +163,20 @@ class ApplicationRuntimeManager:
         )
         selected_dir = launch_spec.application_dir
         manifest = ApplicationManifest.load(selected_dir, daemon=True)
+        return launch_spec, manifest
+
+    def commit_application_selection(
+        self,
+        launch_spec: ApplicationLaunchSpec,
+        manifest: ApplicationManifest,
+    ) -> ApplicationManifest:
+        """Commit a prepared selection on the Daemon event-loop thread."""
+
+        if self._process is not None or self.registry.active_run is not None:
+            raise SessionOccupiedError(
+                "Application cannot change while a process exists"
+            )
+        selected_dir = launch_spec.application_dir
         self.registry.set_current_app(manifest.app_id)
         self._application_dir = selected_dir
         self._launch_spec = launch_spec

@@ -149,6 +149,23 @@ class _ControllerStub:
         self.state = ApplicationState.NOT_RUNNING
         return self.application_status()
 
+    def prepare_application_selection(
+        self,
+        application_dir: str,
+        launcher_kind: str,
+        launcher_executable: str,
+    ) -> tuple[object, object]:
+        if self.select_error is not None:
+            raise self.select_error
+        return application_dir, (launcher_kind, launcher_executable)
+
+    def commit_application_selection(self, prepared: tuple[object, object]) -> None:
+        application_dir, launcher = prepared
+        self.selected_application_dir = str(application_dir)
+        self.selected_launcher = launcher  # type: ignore[assignment]
+        self.current_app = "selected_app"
+        self.state = ApplicationState.NOT_RUNNING
+
     def request_shutdown(self) -> None:
         self.shutdown_requested = True
 
@@ -561,6 +578,60 @@ def test_slow_maintenance_io_does_not_block_daemon_status() -> None:
             assert status.status_code == 200
             assert status_elapsed < 0.25
             assert works.status_code == 200
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_slow_application_selection_does_not_block_management_requests() -> None:
+    async def scenario() -> None:
+        controller = _ControllerStub()
+
+        def slow_prepare(
+            application_dir: str,
+            launcher_kind: str,
+            launcher_executable: str,
+        ) -> tuple[object, object]:
+            time.sleep(0.4)
+            return application_dir, (launcher_kind, launcher_executable)
+
+        controller.prepare_application_selection = slow_prepare  # type: ignore[method-assign]
+        server = DaemonControlServer(
+            controller=controller,
+            host="127.0.0.1",
+            port=0,
+        )
+        await server.start()
+        try:
+            async with httpx.AsyncClient(trust_env=False) as client:
+                selection = asyncio.create_task(
+                    client.post(
+                        f"{server.base_url}/daemon/application/select",
+                        json={
+                            "application_dir": "C:/apps/demo/source",
+                            "launcher": {
+                                "kind": "python",
+                                "executable": (
+                                    "C:/apps/demo/.venv/Scripts/python.exe"
+                                ),
+                            },
+                        },
+                    )
+                )
+                await asyncio.sleep(0.05)
+                started = time.monotonic()
+                status, prepared = await asyncio.gather(
+                    client.get(f"{server.base_url}/daemon/status"),
+                    client.post(f"{server.base_url}/daemon/prepare-update"),
+                )
+                management_elapsed = time.monotonic() - started
+                selected = await selection
+            assert status.status_code == 200
+            assert prepared.status_code == 200
+            assert management_elapsed < 0.25
+            assert selected.status_code == 200
+            assert controller.selected_application_dir == "C:/apps/demo/source"
         finally:
             await server.stop()
 
