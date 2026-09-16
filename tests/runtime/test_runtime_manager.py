@@ -40,6 +40,94 @@ def test_candidate_validation_loads_service_dependencies(monkeypatch):
     assert run.call_args.args[0] == ["candidate-runtime", "--check-runtime"]
 
 
+def test_candidate_validation_uses_selected_environment(monkeypatch):
+    completed = SimpleNamespace(
+        stdout=json.dumps({"sdk_version": "0.1.9", "build_id": "test"})
+    )
+    run = Mock(return_value=completed)
+    monkeypatch.setattr(manager.subprocess, "run", run)
+
+    manager.describe_command(["candidate-runtime"], {"SDK_CHANNEL": "saved"})
+
+    assert run.call_args.kwargs["env"] == {"SDK_CHANNEL": "saved"}
+
+
+def test_live_runtime_reuse_ignores_corrupt_launcher(tmp_path, monkeypatch):
+    monkeypatch.setenv(
+        "WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance")
+    )
+    pointer = tmp_path / "instance/current-launcher.json"
+    pointer.parent.mkdir(parents=True)
+    pointer.write_text("broken", encoding="utf-8")
+    monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
+    monkeypatch.setattr(
+        cli,
+        "_live_runtime_state",
+        lambda *_: SimpleNamespace(control_url="http://unused"),
+    )
+    validate = Mock(side_effect=AssertionError("must reuse before validation"))
+    monkeypatch.setattr(manager, "describe_command", validate)
+
+    assert manager.ensure_command(["unused"]) is True
+    validate.assert_not_called()
+
+
+def test_cold_start_validates_saved_launcher_and_environment(tmp_path, monkeypatch):
+    import psutil
+
+    monkeypatch.setenv(
+        "WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance")
+    )
+    pointer = tmp_path / "instance/current-launcher.json"
+    pointer.parent.mkdir(parents=True)
+    saved_runtime = tmp_path / "saved-runtime.exe"
+    saved_runtime.touch()
+    pointer.write_text(
+        json.dumps(
+            {
+                "command": [str(saved_runtime)],
+                "environment": {"PYTHONUTF8": "1"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(manager, "operation_lock", lambda **_: nullcontext())
+    monkeypatch.setattr(cli, "_live_runtime_state", lambda *_: None)
+    validate = Mock(
+        return_value={"sdk_version": "0.1.9", "build_id": "saved-build"}
+    )
+    monkeypatch.setattr(manager, "describe_command", validate)
+    ready = SimpleNamespace(control_url="http://unused")
+    monkeypatch.setattr(manager, "_candidate_live_state", Mock(return_value=ready))
+    candidate = Mock(pid=12345)
+    candidate.poll.return_value = None
+    spawn = Mock(return_value=candidate)
+    monkeypatch.setattr(manager.subprocess, "Popen", spawn)
+    parent = Mock(pid=candidate.pid)
+    parent.create_time.return_value = 1.0
+    parent.children.return_value = []
+    monkeypatch.setattr(psutil, "Process", Mock(return_value=parent))
+    monkeypatch.setattr(
+        cli,
+        "_request_json",
+        lambda *_: {
+            "runtime": {
+                "build_id": "saved-build",
+                "launch_id": spawn.call_args.kwargs["env"][
+                    "WATCHER_RUNTIME_LAUNCH_ID"
+                ],
+            }
+        },
+    )
+    monkeypatch.setattr(manager, "save_launcher", Mock())
+
+    assert manager.ensure_command(["unused-runtime"]) is False
+    validated_command, validated_environment = validate.call_args.args
+    assert validated_command[0] == str(saved_runtime)
+    assert validated_environment["PYTHONUTF8"] == "1"
+    assert spawn.call_args.args[0][0] == str(saved_runtime)
+
+
 @pytest.fixture
 def lifecycle(tmp_path, monkeypatch):
     monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
@@ -292,7 +380,16 @@ def test_rollback_timeout_reaps_previous_runtime(tmp_path, monkeypatch):
         "describe_command",
         lambda _: {"sdk_version": "0.2.0", "build_id": "new"},
     )
-    monkeypatch.setattr(cli, "_live_runtime_state", lambda *_: None)
+    running = SimpleNamespace(control_url="http://unused")
+    monkeypatch.setattr(
+        cli, "_live_runtime_state", Mock(side_effect=[running, None])
+    )
+    monkeypatch.setattr(
+        cli,
+        "_request_json",
+        lambda *_: {"runtime": {"sdk_version": "0.1.9"}},
+    )
+    monkeypatch.setattr(manager, "_stop_and_wait", Mock())
     monkeypatch.setattr(
         manager,
         "_candidate_live_state",

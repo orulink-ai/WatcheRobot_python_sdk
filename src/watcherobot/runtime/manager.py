@@ -32,7 +32,9 @@ def _check_activation_cancelled() -> None:
         raise RuntimeActivationCancelled("Runtime activation cancelled by launcher")
 
 
-def describe_command(command: list[str]) -> dict[str, str]:
+def describe_command(
+    command: list[str], environment: dict[str, str] | None = None
+) -> dict[str, str]:
     """Exercise the candidate service imports before interrupting anything."""
     if (
         getattr(sys, "frozen", False)
@@ -57,6 +59,7 @@ def describe_command(command: list[str]) -> dict[str, str]:
             encoding="utf-8",
             timeout=60,
             check=True,
+            env=environment,
             **options,
         )
         identity = json.loads(result.stdout)
@@ -331,6 +334,16 @@ def ensure_command(
     root = default_runtime_instance_root()
     pointer = root / "current-launcher.json"
     with operation_lock(timeout=120):
+        try:
+            live = _live_runtime_state(resolved_state_root)
+        except CliError:
+            if not activate:
+                raise
+            live = None
+        if live is not None:
+            if not activate:
+                return True
+
         target_identity = describe_command(command) if activate else None
         try:
             previous = read_launcher(pointer) if pointer.is_file() else None
@@ -338,26 +351,7 @@ def ensure_command(
             if not activate:
                 raise
             previous = None
-        try:
-            live = _live_runtime_state(resolved_state_root)
-        except CliError:
-            if not activate:
-                raise
-            _stop_and_wait(resolved_state_root)
-            live = _live_runtime_state(resolved_state_root)
-        if live is not None:
-            if not activate:
-                return True
-            status = _request_json(live.control_url, "/daemon/status")
-            if (
-                not force
-                and target_identity is not None
-                and status.get("runtime", {}).get("sdk_version")
-                == target_identity["sdk_version"]
-            ):
-                return True
-            # Shutdown closes admission and drains the managed Application.
-            _stop_and_wait(resolved_state_root)
+
         selected = _with_runtime_state_root(command, resolved_state_root)
         launch_environment = {
             key: os.environ[key] for key in _LAUNCH_ENVIRONMENT if key in os.environ
@@ -365,23 +359,42 @@ def ensure_command(
         if not activate and pointer.is_file():
             saved_command, launch_environment = read_launcher(pointer)
             selected = _with_runtime_state_root(saved_command, resolved_state_root)
-        log_root = resolved_state_root
-        log_root.mkdir(parents=True, exist_ok=True)
-        options: dict[str, Any] = {}
+
         environment = dict(os.environ)
         for key in _LAUNCH_ENVIRONMENT:
             environment.pop(key, None)
         environment.update(launch_environment)
         environment["WATCHER_RUNTIME_STATE_ROOT"] = str(resolved_state_root)
-        # A detached frozen child must own its extraction directory. Otherwise
-        # the short-lived manager can remove DLLs still used by the Daemon.
-        environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-        launch_id = uuid.uuid4().hex
-        environment["WATCHER_RUNTIME_LAUNCH_ID"] = launch_id
+        if not activate:
+            target_identity = describe_command(selected, environment)
+
+        log_root = resolved_state_root
+        log_root.mkdir(parents=True, exist_ok=True)
+        options: dict[str, Any] = {}
         options.update(background_process_options())
+
         process = None
         process_tree = None
+        stopped_existing = False
         try:
+            if live is not None:
+                status = _request_json(live.control_url, "/daemon/status")
+                if (
+                    not force
+                    and target_identity is not None
+                    and status.get("runtime", {}).get("sdk_version")
+                    == target_identity["sdk_version"]
+                ):
+                    return True
+                # Shutdown closes admission and drains the managed Application.
+                _stop_and_wait(resolved_state_root)
+                stopped_existing = True
+
+            # A detached frozen child must own its extraction directory. Otherwise
+            # the short-lived manager can remove DLLs still used by the Daemon.
+            environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            launch_id = uuid.uuid4().hex
+            environment["WATCHER_RUNTIME_LAUNCH_ID"] = launch_id
             with (log_root / "runtime.log").open("ab") as log:
                 process = subprocess.Popen(
                     selected,
@@ -431,6 +444,7 @@ def ensure_command(
             if (
                 not isinstance(error, RuntimeActivationCancelled)
                 and activate
+                and stopped_existing
                 and previous is not None
                 and _live_runtime_state(resolved_state_root) is None
             ):

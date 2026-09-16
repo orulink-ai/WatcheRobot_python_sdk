@@ -71,6 +71,48 @@ def test_dead_installer_releases_without_waiting(tmp_path, monkeypatch):
     assert (tmp_path / "done").is_file()
 
 
+def test_cancelled_guard_never_stops_runtime(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+
+    monkeypatch.setattr(installation, "operation_lock", lambda *_, **__: nullcontext())
+    stop = Mock()
+    monkeypatch.setattr(installation, "_stop_and_wait", stop)
+    owner = Mock()
+    owner.is_running.return_value = True
+    (tmp_path / "release").touch()
+
+    installation.hold_installation(owner, tmp_path)
+
+    stop.assert_not_called()
+    assert (tmp_path / "done").is_file()
+    assert not (tmp_path / "ready").exists()
+
+
+def test_begin_timeout_waits_for_guard_cancellation(tmp_path, monkeypatch):
+    handshake = tmp_path / "handshake"
+    process = Mock()
+    process.poll.return_value = None
+    monkeypatch.setattr(installation.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(installation, "_GUARD_START_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(installation, "_GUARD_CANCEL_WAIT_SECONDS", 5.0)
+    elapsed = [0.0]
+
+    def sleep(_):
+        elapsed[0] += 1.0
+        if (handshake / "release").exists():
+            (handshake / "done").touch()
+
+    monkeypatch.setattr(installation.time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(installation.time, "sleep", sleep)
+
+    with pytest.raises(RuntimeError, match="maintenance locks"):
+        installation.begin_installation(123, handshake)
+
+    assert (handshake / "release").is_file()
+    assert (handshake / "done").is_file()
+    assert elapsed[0] >= 2.0
+
+
 def test_real_guard_excludes_managers_and_daemons(tmp_path, monkeypatch):
     import os
     import time
