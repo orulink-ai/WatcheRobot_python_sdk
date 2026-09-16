@@ -99,6 +99,10 @@ class CliError(RuntimeError):
     pass
 
 
+class _RuntimeControlNotReady(CliError):
+    """The control port is open but HTTP identity cannot yet be read."""
+
+
 class RobotSetupError(CliError):
     """An expected input or interaction failure in guided robot setup."""
 
@@ -1439,7 +1443,12 @@ def ensure_runtime(
 
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
-        state = _live_runtime_state(resolved_state_root)
+        try:
+            state = _live_runtime_state(resolved_state_root)
+        except _RuntimeControlNotReady:
+            # Only wait after launching our process. The preflight above must
+            # still reject an occupied, unidentified endpoint before spawning.
+            state = None
         if state is not None:
             return state, False
         time.sleep(0.05)
@@ -1758,7 +1767,7 @@ def _live_runtime_state(
         status = _request_json(control_url, "/daemon/status", timeout=0.5)
     except CliError as exc:
         if _local_tcp_port_is_open(control_port):
-            raise CliError(
+            raise _RuntimeControlNotReady(
                 f"Port {control_port} is occupied by a service that cannot be "
                 "verified as the current WatcheRobot Daemon. Refusing to start "
                 "a second process."
