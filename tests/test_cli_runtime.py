@@ -606,6 +606,50 @@ def test_live_runtime_state_skips_fixed_endpoint_for_ephemeral_control_port(
     assert watcherobot_cli._live_runtime_state(tmp_path / "desktop-private") is None
 
 
+@pytest.mark.parametrize("becomes_ready", [True, False])
+def test_start_waits_for_control_http_after_its_port_opens(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    becomes_ready: bool,
+) -> None:
+    requests = 0
+    launches = []
+    clock = [0.0]
+    instance_root = watcherobot_cli.default_runtime_instance_root()
+
+    def request(*args, **kwargs):
+        nonlocal requests
+        requests += 1
+        if requests < 3 or not becomes_ready:
+            raise watcherobot_cli.CliError("status endpoint is not ready")
+        return {
+            "application": {"state": "not_selected"},
+            "runtime": {
+                "sdk_version": "0.1.8", "instance_group": "isolated",
+                "instance_id": runtime_instance_id(instance_root),
+                "external_url": "ws://127.0.0.1:18765",
+                "pid": 42, "started_at": 1.0,
+            },
+        }
+
+    state_root = tmp_path / "state"
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "18767")
+    monkeypatch.setattr(watcherobot_cli, "_request_json", request)
+    monkeypatch.setattr(watcherobot_cli, "_local_tcp_port_is_open", lambda _: bool(launches))
+    monkeypatch.setattr(watcherobot_cli.subprocess, "Popen", lambda *a, **kw: launches.append(a))
+    monkeypatch.setattr(watcherobot_cli.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(watcherobot_cli.time, "sleep", lambda _: clock.__setitem__(0, clock[0] + 1))
+    if becomes_ready:
+        state, reused = watcherobot_cli.ensure_runtime(state_root=state_root)
+        assert state.pid == 42 and not reused
+    else:
+        with pytest.raises(watcherobot_cli.CliError, match="Runtime failed to start"):
+            watcherobot_cli.ensure_runtime(state_root=state_root)
+        assert clock[0] == 10
+    assert len(launches) == 1
+    watcherobot_cli._RUNTIME_OVERRIDE_STATE_ROOT = None
+
+
 def test_occupied_unrecognized_control_port_blocks_a_second_daemon(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
