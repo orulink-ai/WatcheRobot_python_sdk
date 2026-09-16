@@ -98,6 +98,9 @@ class SystemApplicationEnvironmentRunner:
             {
                 "PYTHONIOENCODING": "utf-8",
                 "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONPYCACHEPREFIX": str(
+                    command.environment_root / ".watcher" / "pycache"
+                ),
                 "PYTHONNOUSERSITE": "1",
                 "PYTHONUTF8": "1",
                 "UV_NO_SYSTEM_CONFIG": "1",

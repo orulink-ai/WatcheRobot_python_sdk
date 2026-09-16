@@ -191,6 +191,36 @@ def test_environment_runner_retries_one_transient_nonzero_exit(
     assert attempts == 2
 
 
+def test_environment_runner_keeps_bytecode_cache_out_of_locked_runtime(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured_environment = None
+
+    def capture_run(*args, **kwargs):
+        nonlocal captured_environment
+        captured_environment = kwargs["env"]
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(install_module.subprocess, "run", capture_run)
+    environment_root = tmp_path / "application" / ".venv"
+    command = ApplicationEnvironmentCommand(
+        stage="creating_environment",
+        executable=tmp_path / "runtime" / "uv.exe",
+        arguments=("venv",),
+        current_dir=tmp_path,
+        environment_root=environment_root,
+    )
+
+    SystemApplicationEnvironmentRunner().run(command)
+
+    assert captured_environment is not None
+    assert captured_environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert Path(captured_environment["PYTHONPYCACHEPREFIX"]) == (
+        environment_root / ".watcher" / "pycache"
+    )
+
+
 def test_legacy_runtime_is_preserved_when_publishing_new_runtime(tmp_path: Path) -> None:
     source = tmp_path / "published-source"
     _write_source(source)
