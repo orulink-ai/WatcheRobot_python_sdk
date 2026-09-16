@@ -23,6 +23,9 @@ class RuntimeActivationCancelled(RuntimeError):
     """The requesting launcher explicitly cancelled its pending activation."""
 
 
+_ROLLBACK_READINESS_TIMEOUT_SECONDS = 60.0
+
+
 def _check_activation_cancelled() -> None:
     marker = os.environ.get("WATCHER_RUNTIME_CANCEL_FILE")
     if marker and Path(marker).exists():
@@ -204,6 +207,28 @@ def _candidate_live_state() -> RuntimeProcessState | None:
         return None
 
 
+def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
+    """Best-effort termination for a launcher and children created by this call."""
+    import psutil
+
+    if process.poll() is not None:
+        return
+    try:
+        parent = psutil.Process(process.pid)
+        children = parent.children(recursive=True)
+        for child in reversed(children):
+            child.terminate()
+        parent.terminate()
+        _, alive = psutil.wait_procs([parent, *children], timeout=10)
+        for remaining in alive:
+            remaining.kill()
+        _, alive = psutil.wait_procs(alive, timeout=5)
+        if alive:
+            raise RuntimeError("Runtime launcher process tree could not be stopped")
+    except psutil.NoSuchProcess:
+        pass
+
+
 @cleanup_after
 def ensure_command(
     command: list[str], *, activate: bool = False, force: bool = False
@@ -314,25 +339,8 @@ def ensure_command(
                 time.sleep(0.05)
         except Exception as error:
             # Reap only our own candidate, including frozen/venv child processes.
-            import psutil
-
-            if process is not None and process.poll() is None:
-                try:
-                    parent = psutil.Process(process.pid)
-                    children = parent.children(recursive=True)
-                    for child in reversed(children):
-                        child.terminate()
-                    parent.terminate()
-                    _, alive = psutil.wait_procs([parent, *children], timeout=10)
-                    for remaining in alive:
-                        remaining.kill()
-                    _, alive = psutil.wait_procs(alive, timeout=5)
-                    if alive:
-                        raise RuntimeError(
-                            "Failed candidate still running; rollback cancelled"
-                        )
-                except psutil.NoSuchProcess:
-                    pass
+            if process is not None:
+                _terminate_process_tree(process)
             if (
                 not isinstance(error, RuntimeActivationCancelled)
                 and activate
@@ -357,23 +365,37 @@ def ensure_command(
                         env=environment,
                         **options,
                     )
-                while True:
-                    recovered = _candidate_live_state()
-                    if recovered is not None:
-                        recovered_status = _request_json(
-                            recovered.control_url, "/daemon/status"
-                        )
-                        if (
-                            recovered_status.get("runtime", {}).get("launch_id")
-                            != recovery_id
-                        ):
+                deadline = time.monotonic() + _ROLLBACK_READINESS_TIMEOUT_SECONDS
+                try:
+                    while True:
+                        _check_activation_cancelled()
+                        recovered = _candidate_live_state()
+                        if recovered is not None:
+                            try:
+                                recovered_status = _request_json(
+                                    recovered.control_url, "/daemon/status"
+                                )
+                            except CliError:
+                                recovered_status = None
+                            if recovered_status is not None:
+                                if (
+                                    recovered_status.get("runtime", {}).get("launch_id")
+                                    != recovery_id
+                                ):
+                                    raise RuntimeError(
+                                        "Rollback identity mismatch; inspect runtime.log"
+                                    )
+                                break
+                        if restored.poll() is not None:
                             raise RuntimeError(
-                                "Rollback identity mismatch; inspect runtime.log"
+                                "Activation failed and previous Runtime could not recover; see runtime.log"
                             )
-                        break
-                    if restored.poll() is not None:
-                        raise RuntimeError(
-                            "Activation failed and previous Runtime could not recover; see runtime.log"
-                        )
-                    time.sleep(0.05)
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(
+                                "Activation failed and previous Runtime recovery timed out; see runtime.log"
+                            )
+                        time.sleep(0.05)
+                except Exception:
+                    _terminate_process_tree(restored)
+                    raise
             raise

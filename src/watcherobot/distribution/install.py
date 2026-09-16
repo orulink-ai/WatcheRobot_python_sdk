@@ -304,7 +304,11 @@ def install_application(
         if snapshot.application.schema_version == 3:
             from .dependency_lock import read_dependency_lock
 
-            dependencies = (*dependencies, *read_dependency_lock(source, snapshot.application.requires_watcherobot))
+            dependencies = read_dependency_lock(
+                source,
+                snapshot.application.requires_watcherobot,
+                snapshot.application.dependencies,
+            )
         resolved_dependencies = _create_environment(
             candidate=candidate,
             environment=environment,
@@ -640,7 +644,7 @@ def _create_environment(
                 "--python",
                 str(python),
                 *(("--no-deps",) if sdk_requirement else ()),
-                ('watcherobot' + sdk_requirement) if sdk_requirement else str(runtime.watcherobot_wheel),
+                *((str(runtime.watcherobot_wheel),) if not sdk_requirement else ()),
                 *dependencies,
             ),
             current_dir=candidate,

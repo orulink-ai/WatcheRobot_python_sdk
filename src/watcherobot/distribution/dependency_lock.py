@@ -9,14 +9,25 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
 
-def read_dependency_lock(source: Path, sdk_requirement: str) -> tuple[str, ...]:
+def read_dependency_lock(
+    source: Path,
+    sdk_requirement: str,
+    declared_dependencies: tuple[str, ...] = (),
+) -> tuple[str, ...]:
     """Require exact pins for v3. Resolution happens when publishing, not updating Desktop."""
     path = source / "app.lock.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return validate_dependency_lock(payload, sdk_requirement)
+    return validate_dependency_lock(
+        payload, sdk_requirement, declared_dependencies=declared_dependencies
+    )
 
 
-def validate_dependency_lock(payload: object, sdk_requirement: str) -> tuple[str, ...]:
+def validate_dependency_lock(
+    payload: object,
+    sdk_requirement: str,
+    *,
+    declared_dependencies: tuple[str, ...] = (),
+) -> tuple[str, ...]:
     """Validate before publishing a lock, preserving the previous file on error."""
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ValueError("app.lock.json schema_version must be 1")
@@ -24,6 +35,7 @@ def validate_dependency_lock(payload: object, sdk_requirement: str) -> tuple[str
     if not isinstance(dependencies, list) or not dependencies:
         raise ValueError("app.lock.json must contain pinned dependencies")
     names: set[str] = set()
+    pinned_versions: dict[str, str] = {}
     sdk_found = False
     for item in dependencies:
         if not isinstance(item, str):
@@ -44,12 +56,25 @@ def validate_dependency_lock(payload: object, sdk_requirement: str) -> tuple[str
         if name in names:
             raise ValueError("duplicate lock dependency")
         names.add(name)
+        pinned_versions[name] = pins[0].version
         if name == "watcherobot":
             sdk_found = SpecifierSet(sdk_requirement).contains(pins[0].version)
     if not sdk_found:
         raise ValueError(
             "app.lock.json must pin a watcherobot version satisfying requires_sdk"
         )
+    for item in declared_dependencies:
+        requirement = Requirement(item)
+        name = canonicalize_name(requirement.name)
+        version = pinned_versions.get(name)
+        if requirement.url or requirement.marker or version is None:
+            raise ValueError(
+                "schema 3 dependencies must be covered by portable lock pins"
+            )
+        if requirement.specifier and not requirement.specifier.contains(version):
+            raise ValueError(
+                "app.lock.json pin does not satisfy the declared dependency"
+            )
     return tuple(dependencies)
 
 

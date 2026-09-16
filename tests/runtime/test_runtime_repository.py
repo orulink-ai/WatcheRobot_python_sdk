@@ -1,8 +1,9 @@
+import os
 from pathlib import Path
 
 import pytest
 
-from watcherobot.runtime.repository import prepare_bundle, operation_lock
+from watcherobot.runtime.repository import bundle_digest, prepare_bundle, operation_lock
 from watcherobot.runtime.daemon.instance import RuntimeAlreadyRunningError
 
 
@@ -54,4 +55,29 @@ def test_internal_symlink_is_preserved_and_external_link_rejected(tmp_path: Path
     (tmp_path / "outside").write_bytes(b"outside")
     link.symlink_to(Path("..") / "outside")
     with pytest.raises(ValueError, match="inside"):
+        prepare_bundle(source, tmp_path / "shared")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits")
+def test_bundle_digest_covers_executable_permission(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    executable = source / "runtime"
+    executable.write_bytes(b"runtime")
+    executable.chmod(0o644)
+    before = bundle_digest(source)
+    executable.chmod(0o755)
+    assert bundle_digest(source) != before
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits")
+def test_published_bundle_rejects_executable_permission_damage(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    executable = source / "runtime"
+    executable.write_bytes(b"runtime")
+    executable.chmod(0o755)
+    published = prepare_bundle(source, tmp_path / "shared")
+    (published / "runtime").chmod(0o644)
+    with pytest.raises(ValueError, match="integrity"):
         prepare_bundle(source, tmp_path / "shared")
