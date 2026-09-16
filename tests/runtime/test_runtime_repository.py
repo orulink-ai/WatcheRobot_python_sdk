@@ -100,7 +100,9 @@ def test_windows_bundle_copy_uses_extended_paths(tmp_path: Path, monkeypatch) ->
         nonlocal captured
         captured = (args, kwargs)
 
-    monkeypatch.setattr("watcherobot.runtime.repository.os.name", "nt")
+    monkeypatch.setattr(
+        "watcherobot.runtime.repository._running_on_windows", lambda: True
+    )
     monkeypatch.setattr("watcherobot.runtime.repository.shutil.copytree", capture_copytree)
 
     _copy_bundle(source, destination)
@@ -121,7 +123,9 @@ def test_windows_bundle_cleanup_uses_extended_path(tmp_path: Path, monkeypatch) 
         nonlocal captured
         captured = path
 
-    monkeypatch.setattr("watcherobot.runtime.repository.os.name", "nt")
+    monkeypatch.setattr(
+        "watcherobot.runtime.repository._running_on_windows", lambda: True
+    )
     monkeypatch.setattr("watcherobot.runtime.repository.shutil.rmtree", capture_rmtree)
 
     _remove_bundle(staging)
@@ -133,7 +137,9 @@ def test_windows_published_path_keeps_long_paths_addressable(
     tmp_path: Path, monkeypatch
 ) -> None:
     target = tmp_path / "repository" / "digest"
-    monkeypatch.setattr("watcherobot.runtime.repository.os.name", "nt")
+    monkeypatch.setattr(
+        "watcherobot.runtime.repository._running_on_windows", lambda: True
+    )
 
     assert _published_path(target) == Path(_windows_extended_path(target))
 

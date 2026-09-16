@@ -22,8 +22,12 @@ from .daemon.instance import (
 )
 
 
+def _running_on_windows() -> bool:
+    return os.name == "nt"
+
+
 def _windows_extended_path(path: Path) -> str | Path:
-    if os.name != "nt":
+    if not _running_on_windows():
         return path
     resolved = str(path.resolve())
     extended_prefix = chr(92) * 2 + "?" + chr(92)
@@ -98,7 +102,7 @@ def bundle_digest(root: Path) -> str:
             name = path.relative_to(root).as_posix().encode("utf-8")
             digest.update(len(name).to_bytes(8, "big"))
             digest.update(name)
-            executable = path.stat().st_mode & 0o111 if os.name != "nt" else 0
+            executable = path.stat().st_mode & 0o111 if not _running_on_windows() else 0
             digest.update(executable.to_bytes(2, "big"))
             digest.update(path.stat().st_size.to_bytes(8, "big"))
             with path.open("rb") as stream:

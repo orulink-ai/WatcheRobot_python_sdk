@@ -1,6 +1,9 @@
 import json
 import os
+import threading
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -47,6 +50,80 @@ def test_cleanup_retains_current_rollback_and_application_references(
     report = cleanup.collect_runtime_garbage()
     assert str(old) in report["deleted"]
     assert all(p.exists() for p in [current, rollback, referenced])
+
+
+def test_application_and_external_environment_are_registered_atomically(
+    tmp_path, monkeypatch
+):
+    instance = tmp_path / "instance"
+    application = tmp_path / "application"
+    environment = tmp_path / "external-venv"
+    executable = environment / "bin" / "python"
+    runtime = version(instance / "bundles", "a")
+    application.mkdir()
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"python")
+    environment.joinpath("pyvenv.cfg").write_text(
+        "home = " + str(runtime), encoding="utf-8"
+    )
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(instance))
+    monkeypatch.setattr(cleanup, "process_references", lambda: [])
+    first_reference_written = threading.Event()
+    continue_registration = threading.Event()
+    original_register = cleanup._register_reference
+
+    def register(path, *, store=False):
+        original_register(path, store=store)
+        if Path(path).resolve() == application.resolve():
+            first_reference_written.set()
+            assert continue_registration.wait(timeout=5)
+
+    monkeypatch.setattr(cleanup, "_register_reference", register)
+    registration = threading.Thread(
+        target=cleanup.register_application_reference,
+        args=(application, executable),
+    )
+    registration.start()
+    assert first_reference_written.wait(timeout=5)
+
+    report = cleanup.collect_runtime_garbage()
+    continue_registration.set()
+    registration.join(timeout=5)
+
+    assert not registration.is_alive()
+    assert report["deleted"] == []
+    assert report["error"]
+    assert runtime.exists()
+    assert len(list(instance.joinpath("runtime-references").glob("*.json"))) == 2
+
+
+def test_automatic_cleanup_skips_busy_reference_lock_without_holding_lifecycle_lock(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    lifecycle_released = threading.Event()
+    attempted_reference = threading.Event()
+
+    @contextmanager
+    def operation(root=None, *, timeout=30):
+        if root == tmp_path / "cleanup-coordination":
+            attempted_reference.set()
+            assert timeout == 0
+            raise RuntimeError("busy reference lock")
+        assert timeout == 0
+        try:
+            yield
+        finally:
+            lifecycle_released.set()
+
+    monkeypatch.setattr(cleanup, "operation_lock", operation)
+
+    report = cleanup.collect_runtime_garbage()
+
+    assert attempted_reference.is_set()
+    assert lifecycle_released.is_set()
+    assert report["deleted"] == []
+    assert report["error"] == "busy reference lock"
 
 
 def test_uncertain_process_inventory_prevents_deletion(tmp_path, monkeypatch):

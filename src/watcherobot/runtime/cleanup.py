@@ -49,9 +49,9 @@ def cleanup_after(function: F) -> F:
 
 
 @contextmanager
-def reference_lock() -> Iterator[None]:
+def reference_lock(*, timeout: float = 120) -> Iterator[None]:
     with operation_lock(
-        default_runtime_instance_root() / "cleanup-coordination", timeout=120
+        default_runtime_instance_root() / "cleanup-coordination", timeout=timeout
     ):
         yield
 
@@ -64,10 +64,35 @@ def register_reference(path: Path, *, store: bool = False) -> None:
 
 def register_environment(executable: Path) -> None:
     """Track a venv without recursively scanning a global Python installation."""
-    for root in (executable.absolute().parent, executable.absolute().parent.parent):
+    root = _environment_root(executable)
+    if root is not None:
+        register_reference(root)
+
+
+def register_application_reference(application_dir: Path, executable: Path) -> None:
+    """Atomically protect an Application and its external virtual environment."""
+    application_dir = application_dir.resolve(strict=True)
+    executable = executable.absolute()
+    executable.resolve(strict=True)
+    environment_root = _environment_root(executable)
+    with reference_lock():
+        _register_reference(application_dir)
+        if environment_root is not None:
+            _register_reference(environment_root)
+        # Recheck resources while GC is excluded. Once the records are visible,
+        # later collection sees both roots as one committed launch reference.
+        if not application_dir.is_dir() or not executable.is_file():
+            raise FileNotFoundError("Application launch resources changed during registration")
+        if environment_root is not None and not (environment_root / "pyvenv.cfg").is_file():
+            raise FileNotFoundError("Application virtual environment changed during registration")
+
+
+def _environment_root(executable: Path) -> Path | None:
+    absolute = executable.absolute()
+    for root in (absolute.parent, absolute.parent.parent):
         if (root / "pyvenv.cfg").is_file():
-            register_reference(root)
-            return
+            return root.resolve()
+    return None
 
 
 def _is_link(path: Path) -> bool:
@@ -230,7 +255,7 @@ def collect_runtime_garbage() -> dict[str, Any]:
     report: dict[str, Any] = {"deleted": [], "skipped": [], "error": None}
     instance = default_runtime_instance_root()
     try:
-        with operation_lock(timeout=0), reference_lock():
+        with operation_lock(timeout=0), reference_lock(timeout=0):
             repositories, references = _inventory()
             if not any(
                 repository.is_dir()

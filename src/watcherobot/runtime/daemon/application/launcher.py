@@ -95,7 +95,7 @@ class ApplicationLauncher:
         """Build a spec without accepting arguments or an entrypoint."""
 
         selected_dir = _require_absolute_directory(application_dir)
-        from watcherobot.runtime.cleanup import register_reference, register_environment
+        from watcherobot.runtime.cleanup import register_application_reference
 
         manifest = ApplicationManifest.load(selected_dir, daemon=True)
         launcher_kind = _parse_kind(kind)
@@ -125,8 +125,7 @@ class ApplicationLauncher:
                 _python_executable_for_trusted_source_default(requested_executable, is_windows=self._is_windows)
                 if launcher_kind is ApplicationLauncherKind.PYTHON else resolved
             )
-            register_reference(selected_dir)
-            register_environment(requested_executable)
+            register_application_reference(selected_dir, requested_executable)
             return ApplicationLaunchSpec(manifest.app_id, selected_dir, launcher_kind, requested_executable, command_executable, tuple(grant.get("environment", {}).items()))
         if trusted_source_default:
             if selected_dir != self._source_default_application_root:
@@ -180,8 +179,7 @@ class ApplicationLauncher:
             raise ApplicationLaunchError(
                 "Application directory must stay inside its controlled root"
             )
-        register_reference(selected_dir)
-        register_environment(requested_executable)
+        register_application_reference(selected_dir, requested_executable)
         return ApplicationLaunchSpec(
             app_id=manifest.app_id,
             application_dir=selected_dir,
