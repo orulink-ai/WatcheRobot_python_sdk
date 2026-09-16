@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import signal
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from watcherobot.runtime.daemon.control.rest import RuntimeInstanceGroup
+if TYPE_CHECKING:
+    from watcherobot.runtime.daemon.control.rest import RuntimeInstanceGroup
+    from watcherobot.runtime.daemon.runtime import DaemonRuntime
 from watcherobot.runtime.daemon.instance import (
     RuntimeAlreadyRunningError,
     RuntimeInstanceLock,
@@ -22,11 +26,35 @@ from watcherobot.runtime.daemon.instance import (
     system_runtime_state_root,
 )
 from watcherobot.runtime.daemon.pairing.bindings_store import DeviceBindingsStore
-from watcherobot.runtime.daemon.runtime import DaemonRuntime
+
+
+def __getattr__(name: str) -> Any:
+    if name == "DaemonRuntime":
+        from watcherobot.runtime.daemon.runtime import DaemonRuntime
+
+        return DaemonRuntime
+    raise AttributeError(name)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="watcherobot-runtime")
+    parser.add_argument(
+        "--prepare-bundle",
+        type=Path,
+        help="Publish an immutable shared bundle and print its path; do not start a Daemon",
+    )
+    parser.add_argument("--ensure-shared", action="store_true")
+    parser.add_argument("--activate-shared", action="store_true")
+    parser.add_argument("--stop-shared", action="store_true")
+    parser.add_argument("--describe-runtime", action="store_true")
+    parser.add_argument("--check-runtime", action="store_true")
+    parser.add_argument("--begin-installation", nargs=2, metavar=("PID", "HANDSHAKE"))
+    parser.add_argument(
+        "--guard-installation",
+        nargs=2,
+        metavar=("PID", "HANDSHAKE"),
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument(
         "--state-root",
         type=Path,
@@ -79,6 +107,8 @@ def _validate_source_default_options(args: argparse.Namespace) -> None:
 
 
 async def run_runtime(args: argparse.Namespace) -> int:
+    # Bundle publication and identity probes do not need the server dependency tree.
+    runtime_type = getattr(sys.modules[__name__], "DaemonRuntime")
     # Keep programmatic callers subject to the same invariant as the CLI.
     _validate_source_default_options(args)
     state_root = Path(args.state_root).resolve()
@@ -104,9 +134,7 @@ async def run_runtime(args: argparse.Namespace) -> int:
         if instance_group == "default"
         else (instance_root,)
     )
-    instance_locks = [
-        RuntimeInstanceLock(root / "runtime.lock") for root in lock_roots
-    ]
+    instance_locks = [RuntimeInstanceLock(root / "runtime.lock") for root in lock_roots]
     state_stores = [RuntimeStateStore(root) for root in state_roots]
     acquired_locks: list[RuntimeInstanceLock] = []
 
@@ -136,7 +164,7 @@ async def run_runtime(args: argparse.Namespace) -> int:
     published_state: RuntimeProcessState | None = None
     published_stores: list[RuntimeStateStore] = []
     try:
-        runtime = DaemonRuntime(
+        runtime = runtime_type(
             application_dir=state_root / "unselected",
             current_app=None,
             external_port=args.external_port,
@@ -226,6 +254,56 @@ async def run_runtime(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.begin_installation or args.guard_installation:
+        from watcherobot.runtime.installation import begin_installation, guard_installer
+
+        owner, handshake = args.begin_installation or args.guard_installation
+        operation = begin_installation if args.begin_installation else guard_installer
+        operation(int(owner), Path(handshake))
+        return 0
+    if args.stop_shared or args.ensure_shared or args.activate_shared:
+        os.environ["WATCHER_RUNTIME_CONTROL_PORT"] = str(args.control_port)
+    if args.describe_runtime or args.check_runtime:
+        from watcherobot.runtime.identity import runtime_identity
+
+        if args.check_runtime:
+            from watcherobot.runtime.daemon.runtime import DaemonRuntime as _DaemonRuntime
+
+            del _DaemonRuntime
+        print(json.dumps(runtime_identity()))
+        return 0
+    if args.stop_shared:
+        from watcherobot.runtime.manager import stop_shared_runtime
+
+        os.environ["WATCHER_RUNTIME_INSTANCE_ROOT"] = str(args.instance_root.resolve())
+        os.environ["WATCHER_RUNTIME_STATE_ROOT"] = str(args.state_root.resolve())
+        stop_shared_runtime(args.state_root.resolve())
+        return 0
+    if args.prepare_bundle is not None:
+        from watcherobot.runtime.repository import prepare_bundle
+
+        print(prepare_bundle(args.prepare_bundle))
+        return 0
+    if args.ensure_shared or args.activate_shared:
+        from watcherobot.runtime.manager import ensure_command
+
+        os.environ["WATCHER_RUNTIME_INSTANCE_ROOT"] = str(args.instance_root.resolve())
+        os.environ["WATCHER_RUNTIME_STATE_ROOT"] = str(args.state_root.resolve())
+        forwarded = [
+            value
+            for value in (argv if argv is not None else sys.argv[1:])
+            if value not in ("--ensure-shared", "--activate-shared")
+        ]
+        command = [sys.executable]
+        if not getattr(sys, "frozen", False):
+            command.extend(["-m", "watcherobot.runtime.daemon"])
+        ensure_command(
+            command + forwarded,
+            activate=args.activate_shared,
+            force=args.activate_shared,
+            state_root=args.state_root,
+        )
+        return 0
     try:
         # Convert the invariant failure into an actionable argparse message.
         _validate_source_default_options(args)

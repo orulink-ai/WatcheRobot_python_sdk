@@ -10,6 +10,9 @@
 {
   "runtime": {
     "sdk_version": "<watcherobot.__version__>",
+    "build_id": "<Runtime 内容身份>",
+    "launch_id": "<本次启动身份>",
+    "draining": false,
     "instance_group": "default",
     "instance_id": "sha256:<协调目录身份摘要>",
     "external_url": "ws://127.0.0.1:8765",
@@ -21,6 +24,8 @@
 ```
 
 - `sdk_version` 来自 `watcherobot.__version__`，仅用于诊断随包 SDK 身份。
+- `build_id` 标识实际运行的 Runtime 内容。Desktop 安装或更新后的目标 `build_id` 不同时，即使 `sdk_version` 相同，也必须显式执行 `daemon activate`。
+- `launch_id` 用于确认状态响应属于本次启动；`draining` 表示 Daemon 已进入更新排空阶段。
 - `instance_group` 用于区分默认协调组和显式隔离组；默认启动器不得复用 `isolated` 实例。
 - `instance_id` 是协调目录规范化路径的 SHA-256 摘要，不暴露本机绝对路径；启动器必须精确验证，禁止不同隔离目录交叉复用。
 - `external_url` 是 Daemon 实际监听的业务通道地址，发现方不得根据本地配置自行猜测端口。
@@ -31,6 +36,19 @@
 `instance_id` 的唯一算法是：对协调根目录先执行用户目录展开和绝对路径解析，再使用当前平台的 `normcase` 规范化大小写与分隔符，对结果的 UTF-8 字节计算 SHA-256，最后加上 `sha256:` 前缀。Desktop 不重复实现该路径算法，而是验证 Daemon 发布的结构和默认实例组，避免跨语言规范化分叉。
 
 管理接口不再维护 `v2`、`v3` 一类数字控制协议。当前结构本身就是唯一合同：上述身份与发现元数据均为必填字段；新增可选诊断字段时，旧调用方应安全忽略。缺少任何必填字段、字段类型错误或格式无效时均不得复用。它不改变 Application 分发命令，不改变业务帧路由，也不新增 Application 日志读取接口。
+
+## Desktop 更新调用顺序
+
+Desktop 更新 Runtime 时按以下顺序调用：
+
+1. 读取当前 `/daemon/status`，比较目标与当前 `build_id`。不同构建必须在安装完成后显式执行 `daemon activate`，不能只比较 `sdk_version`。
+2. 覆盖运行资源前调用 `POST /daemon/prepare-update`。若 Application 仍占用 Runtime，接口返回 HTTP 409；Desktop 应保留现状并提示用户停止 Application，不得继续覆盖文件。
+3. `prepare-update` 成功后返回本次更新专属的 `update_token`，且 Daemon 的 `runtime.draining` 为 `true`。此时 Application `start` 和 `restart` 返回 HTTP 409，错误码为 `runtime_draining`；Desktop 应展示更新状态并停止自动重试。并发的其他更新准备请求返回 `update_in_progress`。
+4. 安装取消或失败时调用 `POST /daemon/cancel-update`，请求体传入对应的 `update_token`，恢复 Application 启动入口。token 不匹配时返回 `update_token_mismatch`，不得解除其他客户端建立的排空状态。Daemon 已进入关机流程时 token 立即失效，`cancel-update` 返回 `runtime_draining`，且不能重新开放 Application 启动入口。安装成功后使用显式激活完成构建切换。
+
+这些端点只协调生命周期，不解析或旁路业务消息。
+
+源码运行时的 `build_id` 摘要覆盖 `watcherobot` 包内源码与运行资源，忽略 `__pycache__`、`.pyc` 和 `.pyo` 等生成文件；文本资源统一换行后计算，以避免不同平台检出方式产生虚假的构建差异。
 
 仅用于测试或嵌入调用、且未提供 `runtime_metadata` 的 `DaemonControlAPI` 不发布 `runtime` 身份，因此不会冒充可发现的生产 Daemon。正式 `DaemonRuntime` 始终注入完整元数据，并且全项目只维护这一份当前身份合同。
 

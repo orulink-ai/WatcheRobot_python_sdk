@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
+import uuid
 from collections.abc import Callable
 from contextlib import suppress
 from ipaddress import IPv4Address
@@ -57,6 +60,13 @@ class SelectApplicationRequest(BaseModel):
 
     application_dir: str
     launcher: ApplicationLauncherRequest
+    local_registration: str | None = None
+
+
+class CancelUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    update_token: str
 
 
 class MaintenanceInstallRequest(BaseModel):
@@ -147,6 +157,17 @@ class ApplicationController(Protocol):
         launcher_executable: str,
     ) -> dict[str, Any]:
         """Select a validated Application without restarting the Runtime."""
+
+    def prepare_application_selection(
+        self,
+        application_dir: str,
+        launcher_kind: str,
+        launcher_executable: str,
+    ) -> tuple[Any, Any]:
+        """Validate and register a selection without mutating controller state."""
+
+    def commit_application_selection(self, prepared: tuple[Any, Any]) -> None:
+        """Commit a prepared selection on the control event loop."""
 
     def request_shutdown(self) -> None:
         """Ask the owning Runtime process to stop cleanly."""
@@ -245,6 +266,13 @@ class DaemonControlAPI:
     ) -> None:
         self._controller = controller
         self._runtime_metadata = runtime_metadata
+        from watcherobot.runtime.identity import runtime_identity
+
+        self._build_identity = runtime_identity()
+        self._draining = False
+        self._shutting_down = False
+        self._update_token: str | None = None
+        self._starting_requests = 0
 
     def create_app(self) -> FastAPI:
         app = FastAPI(title="Watcher Daemon Control API")
@@ -269,6 +297,9 @@ class DaemonControlAPI:
 
         @app.post("/daemon/application/start")
         async def start_application() -> Any:
+            if self._draining:
+                return JSONResponse(status_code=409, content={"error": "runtime_draining"})
+            self._starting_requests += 1
             try:
                 await self._controller.start_application()
             except ApplicationNotSelectedError as exc:
@@ -295,6 +326,8 @@ class DaemonControlAPI:
                         "message": str(exc),
                     },
                 )
+            finally:
+                self._starting_requests -= 1
             return self._status_response()
 
         @app.post("/daemon/application/stop")
@@ -304,6 +337,9 @@ class DaemonControlAPI:
 
         @app.post("/daemon/application/restart")
         async def restart_application() -> Any:
+            if self._draining:
+                return JSONResponse(status_code=409, content={"error": "runtime_draining"})
+            self._starting_requests += 1
             try:
                 await self._controller.restart_application()
             except ApplicationNotSelectedError as exc:
@@ -330,18 +366,34 @@ class DaemonControlAPI:
                         "message": str(exc),
                     },
                 )
+            finally:
+                self._starting_requests -= 1
             return self._status_response()
 
         @app.post("/daemon/application/select")
         async def select_application(
             request: SelectApplicationRequest,
         ) -> Any:
+            from watcherobot.runtime.registration import authorized_launch, consume_launch
+
+            grant = None
+            if request.local_registration is not None:
+                try:
+                    grant = consume_launch(request.local_registration, {
+                        "application_dir": request.application_dir,
+                        "launcher": request.launcher.model_dump(),
+                    })
+                except (OSError, ValueError):
+                    return JSONResponse(status_code=403, content={"error": "invalid_local_registration"})
+            token = authorized_launch.set(grant)
             try:
-                self._controller.select_application(
+                prepared = await asyncio.to_thread(
+                    self._controller.prepare_application_selection,
                     request.application_dir,
                     request.launcher.kind,
                     request.launcher.executable,
                 )
+                self._controller.commit_application_selection(prepared)
             except SessionOccupiedError as exc:
                 return JSONResponse(
                     status_code=409,
@@ -366,12 +418,66 @@ class DaemonControlAPI:
                         "message": str(exc),
                     },
                 )
+            finally:
+                authorized_launch.reset(token)
             return self._status_response()
 
         @app.post("/daemon/stop", status_code=202)
         async def stop_daemon() -> dict[str, bool]:
+            self._shutting_down = True
+            self._draining = True
+            self._update_token = None
             self._controller.request_shutdown()
             return {"stopping": True}
+
+        @app.post("/daemon/prepare-update")
+        async def prepare_update() -> Any:
+            # No await between admission closure and the state check: application
+            # starts cannot interleave on the control event loop.
+            if self._shutting_down:
+                return JSONResponse(
+                    status_code=409, content={"error": "runtime_draining"}
+                )
+            if self._update_token is not None:
+                return JSONResponse(
+                    status_code=409, content={"error": "update_in_progress"}
+                )
+            if self._draining:
+                return JSONResponse(
+                    status_code=409, content={"error": "runtime_draining"}
+                )
+            update_token = uuid.uuid4().hex
+            self._draining = True
+            application_state = self._controller.application_status().get("state")
+            if self._starting_requests or application_state in (
+                "starting",
+                "running",
+                "stopping",
+            ):
+                self._draining = False
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "error": "application_occupied",
+                        "message": "Stop the Application before updating Runtime",
+                    },
+                )
+            self._update_token = update_token
+            return {"prepared": True, "update_token": update_token}
+
+        @app.post("/daemon/cancel-update")
+        async def cancel_update(request: CancelUpdateRequest) -> Any:
+            if self._shutting_down:
+                return JSONResponse(
+                    status_code=409, content={"error": "runtime_draining"}
+                )
+            if request.update_token != self._update_token:
+                return JSONResponse(
+                    status_code=409, content={"error": "update_token_mismatch"}
+                )
+            self._draining = False
+            self._update_token = None
+            return {"prepared": False}
 
         @app.get("/daemon/devices")
         async def get_devices() -> dict[str, Any]:
@@ -594,7 +700,14 @@ class DaemonControlAPI:
         if self._runtime_metadata is not None:
             metadata = self._runtime_metadata()
             response["runtime"] = {
+                **self._build_identity,
                 "sdk_version": __version__,
+                "draining": self._draining,
+                "launch_id": os.environ.get("WATCHER_RUNTIME_LAUNCH_ID", ""),
+                "application_protocol": 1,
+                "management_protocol": 1,
+                "executable": sys.executable,
+                "source": "bundle" if getattr(sys, "frozen", False) else "python",
                 "instance_group": metadata["instance_group"],
                 "instance_id": metadata["instance_id"],
                 "external_url": metadata["external_url"],

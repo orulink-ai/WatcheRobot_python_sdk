@@ -16,6 +16,9 @@ class ErrorCode(str, Enum):
     APP_MANIFEST_INVALID = "app_manifest_invalid"
     APP_SDK_INCOMPATIBLE = "app_sdk_incompatible"
     APP_DEPENDENCY_INVALID = "app_dependency_invalid"
+    APP_LOCK_MISSING = "app_lock_missing"
+    APP_LOCK_INVALID = "app_lock_invalid"
+    APP_LOCK_INCOMPATIBLE = "app_lock_incompatible"
     APP_CONTENT_FORBIDDEN = "app_content_forbidden"
     AUTH_REQUIRED = "auth_required"
     AUTH_DENIED = "auth_denied"
@@ -135,6 +138,9 @@ _VALIDATION_ERROR_CODES = frozenset(
         ErrorCode.APP_MANIFEST_INVALID,
         ErrorCode.APP_SDK_INCOMPATIBLE,
         ErrorCode.APP_DEPENDENCY_INVALID,
+        ErrorCode.APP_LOCK_MISSING,
+        ErrorCode.APP_LOCK_INVALID,
+        ErrorCode.APP_LOCK_INCOMPATIBLE,
         ErrorCode.APP_CONTENT_FORBIDDEN,
     }
 )

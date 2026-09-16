@@ -15,6 +15,7 @@ from watcherobot.runtime.daemon.application.runtime import (
 )
 from watcherobot.runtime.daemon.application import runtime as application_runtime
 from watcherobot.runtime.daemon.application.launcher import (
+    ApplicationLaunchError,
     ApplicationLauncher,
     ApplicationLauncherKind,
 )
@@ -287,6 +288,10 @@ def _build_selected_manager(
         launcher_executable=python_executable,
     )
     return manager
+
+
+def _raise_invalid_launcher() -> None:
+    raise ApplicationLaunchError("launcher disappeared")
 
 
 def test_runtime_injects_only_the_configured_read_only_device_status_url(
@@ -805,6 +810,29 @@ def test_runtime_cleans_inherited_python_environment_for_selected_app(
             "PYTHONNOUSERSITE": "1",
             "PYTHONUNBUFFERED": "1",
         }
+
+    asyncio.run(scenario())
+
+
+def test_runtime_maps_invalid_refreshed_launch_spec_to_start_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        _write_application(app_dir, CONNECTED_APP)
+        manager = _build_selected_manager(app_dir, app_id="test_app")
+        monkeypatch.setattr(
+            manager._application_launcher,
+            "refresh_spec",
+            lambda _spec: _raise_invalid_launcher(),
+        )
+
+        with pytest.raises(
+            application_runtime.ApplicationStartError,
+            match="no longer valid",
+        ):
+            await manager.start()
 
     asyncio.run(scenario())
 

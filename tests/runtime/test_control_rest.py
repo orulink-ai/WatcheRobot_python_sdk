@@ -149,6 +149,23 @@ class _ControllerStub:
         self.state = ApplicationState.NOT_RUNNING
         return self.application_status()
 
+    def prepare_application_selection(
+        self,
+        application_dir: str,
+        launcher_kind: str,
+        launcher_executable: str,
+    ) -> tuple[object, object]:
+        if self.select_error is not None:
+            raise self.select_error
+        return application_dir, (launcher_kind, launcher_executable)
+
+    def commit_application_selection(self, prepared: tuple[object, object]) -> None:
+        application_dir, launcher = prepared
+        self.selected_application_dir = str(application_dir)
+        self.selected_launcher = launcher  # type: ignore[assignment]
+        self.current_app = "selected_app"
+        self.state = ApplicationState.NOT_RUNNING
+
     def request_shutdown(self) -> None:
         self.shutdown_requested = True
 
@@ -567,6 +584,60 @@ def test_slow_maintenance_io_does_not_block_daemon_status() -> None:
     asyncio.run(scenario())
 
 
+def test_slow_application_selection_does_not_block_management_requests() -> None:
+    async def scenario() -> None:
+        controller = _ControllerStub()
+
+        def slow_prepare(
+            application_dir: str,
+            launcher_kind: str,
+            launcher_executable: str,
+        ) -> tuple[object, object]:
+            time.sleep(0.4)
+            return application_dir, (launcher_kind, launcher_executable)
+
+        controller.prepare_application_selection = slow_prepare  # type: ignore[method-assign]
+        server = DaemonControlServer(
+            controller=controller,
+            host="127.0.0.1",
+            port=0,
+        )
+        await server.start()
+        try:
+            async with httpx.AsyncClient(trust_env=False) as client:
+                selection = asyncio.create_task(
+                    client.post(
+                        f"{server.base_url}/daemon/application/select",
+                        json={
+                            "application_dir": "C:/apps/demo/source",
+                            "launcher": {
+                                "kind": "python",
+                                "executable": (
+                                    "C:/apps/demo/.venv/Scripts/python.exe"
+                                ),
+                            },
+                        },
+                    )
+                )
+                await asyncio.sleep(0.05)
+                started = time.monotonic()
+                status, prepared = await asyncio.gather(
+                    client.get(f"{server.base_url}/daemon/status"),
+                    client.post(f"{server.base_url}/daemon/prepare-update"),
+                )
+                management_elapsed = time.monotonic() - started
+                selected = await selection
+            assert status.status_code == 200
+            assert prepared.status_code == 200
+            assert management_elapsed < 0.25
+            assert selected.status_code == 200
+            assert controller.selected_application_dir == "C:/apps/demo/source"
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
 def test_control_rest_selects_application_and_requests_runtime_shutdown() -> None:
     controller = _ControllerStub()
     client = TestClient(DaemonControlAPI(controller=controller).create_app())
@@ -624,6 +695,9 @@ def test_control_status_exposes_verified_runtime_discovery_metadata() -> None:
 
     assert "control_protocol" not in runtime
     assert runtime["sdk_version"] == __version__
+    assert isinstance(runtime["build_id"], str) and runtime["build_id"]
+    assert runtime["draining"] is False
+    assert "launch_id" in runtime
     assert runtime["instance_group"] == "default"
     assert runtime["instance_id"] == "sha256:test"
     assert runtime["external_url"] == "ws://127.0.0.1:18765"
@@ -707,3 +781,83 @@ def test_control_rest_does_not_own_application_catalog_mutation() -> None:
         ).status_code
         == 404
     )
+
+
+def test_prepared_update_blocks_start_and_can_be_cancelled() -> None:
+    controller = _ControllerStub()
+    client = TestClient(
+        DaemonControlAPI(
+            controller=controller,
+            runtime_metadata=lambda: {
+                "instance_group": "default",
+                "instance_id": "sha256:test",
+                "external_url": "ws://127.0.0.1:18765",
+                "pid": 123,
+                "started_at": 42.0,
+            },
+        ).create_app()
+    )
+    prepared = client.post("/daemon/prepare-update")
+    assert prepared.status_code == 200
+    update_token = prepared.json()["update_token"]
+    assert client.get("/daemon/status").json()["runtime"]["draining"] is True
+    start = client.post("/daemon/application/start")
+    restart = client.post("/daemon/application/restart")
+    assert start.status_code == 409
+    assert restart.status_code == 409
+    assert start.json() == {"error": "runtime_draining"}
+    assert restart.json() == {"error": "runtime_draining"}
+    assert controller.lifecycle_calls == []
+    mismatched = client.post(
+        "/daemon/cancel-update", json={"update_token": "another-update"}
+    )
+    assert mismatched.status_code == 409
+    assert client.get("/daemon/status").json()["runtime"]["draining"] is True
+    concurrent = client.post("/daemon/prepare-update")
+    assert concurrent.status_code == 409
+    assert concurrent.json() == {"error": "update_in_progress"}
+    assert client.post(
+        "/daemon/cancel-update", json={"update_token": update_token}
+    ).status_code == 200
+    assert client.get("/daemon/status").json()["runtime"]["draining"] is False
+    assert client.post("/daemon/application/start").status_code == 200
+
+
+def test_update_does_not_interrupt_running_application() -> None:
+    controller = _ControllerStub()
+    controller.state = ApplicationState.RUNNING
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+    assert client.post('/daemon/prepare-update').status_code == 409
+    assert not controller.shutdown_requested
+    assert controller.lifecycle_calls == []
+
+
+def test_shutdown_closes_application_admission_immediately() -> None:
+    controller = _ControllerStub()
+    controller.state = ApplicationState.RUNNING
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+    assert client.post("/daemon/stop").status_code == 202
+    assert controller.shutdown_requested
+    assert client.post("/daemon/application/start").status_code == 409
+    assert client.post("/daemon/application/restart").status_code == 409
+    prepare = client.post("/daemon/prepare-update")
+    assert prepare.status_code == 409
+    assert prepare.json() == {"error": "runtime_draining"}
+
+
+def test_shutdown_cannot_be_cancelled_by_prepared_update_token() -> None:
+    controller = _ControllerStub()
+    client = TestClient(DaemonControlAPI(controller=controller).create_app())
+    prepared = client.post("/daemon/prepare-update")
+    update_token = prepared.json()["update_token"]
+
+    assert client.post("/daemon/stop").status_code == 202
+    cancelled = client.post(
+        "/daemon/cancel-update", json={"update_token": update_token}
+    )
+
+    assert cancelled.status_code == 409
+    assert cancelled.json() == {"error": "runtime_draining"}
+    assert controller.shutdown_requested
+    assert client.post("/daemon/application/start").status_code == 409
+    assert client.post("/daemon/application/restart").status_code == 409

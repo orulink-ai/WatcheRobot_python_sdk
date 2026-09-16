@@ -413,6 +413,9 @@ Remove-Item -LiteralPath $resolvedStaging -Recurse -Force
 - `app_manifest_invalid`：字段、ID、版本或图标不合法。
 - `app_sdk_incompatible`：`requires_watcherobot` 不覆盖当前 SDK。
 - `app_dependency_invalid`：Python requirement 不合法或试图替换随包 `watcherobot`。
+- `app_lock_missing`：schema v3 Application 缺少 `app.lock.json`。
+- `app_lock_invalid`：依赖锁无法读取、格式非法或没有使用精确版本。
+- `app_lock_incompatible`：依赖锁中的版本不满足 Manifest 声明；请在兼容环境中重新运行 `watcherobot-app-lock`。
 - `auth_required`：发布前尚未完成 SDK Device Flow 登录。
 - `space_ownership_conflict`：同名 Space 不是本 OAuth App 创建，工具拒绝覆盖。
 - `catalog_pr_conflict`：同一 App 已有不同 commit 的开放名单 PR。

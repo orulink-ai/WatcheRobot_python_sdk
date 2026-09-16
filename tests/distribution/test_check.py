@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from watcherobot.cli import main
-from watcherobot.distribution.check import check_application
+from watcherobot.distribution.check import ApplicationCheckResult, check_application
 
 
 def write_application(root: Path) -> None:
@@ -51,6 +51,27 @@ def test_check_application_reuses_manifest_and_returns_structured_data(
         "author": "Orulink",
         "icon": "",
     }
+
+
+def test_schema_three_check_result_uses_manifest_dependency_fields() -> None:
+    result = ApplicationCheckResult(
+        schema_version=3,
+        app_id="com.orulink.demo",
+        name="Demo",
+        version="1.2.3",
+        requires_watcherobot=">=0.1,<0.2",
+        dependencies=("httpx==0.28.1",),
+        description="",
+        author="",
+        icon="",
+        application_protocol="1",
+    )
+
+    payload = result.to_dict()
+
+    assert payload["requires_sdk"] == ">=0.1,<0.2"
+    assert payload["requires_daemon"] == {"application_protocol": "1"}
+    assert "requires_watcherobot" not in payload
 
 
 def test_cli_app_check_jsonl_does_not_start_daemon(
@@ -194,3 +215,40 @@ def _update_manifest(root: Path, **updates: object) -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload.update(updates)
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("lock_content", "expected_code"),
+    [
+        (None, "app_lock_missing"),
+        ("not-json", "app_lock_invalid"),
+        (
+            json.dumps(
+                {"schema_version": 1, "dependencies": ["watcherobot==9.0.0"]}
+            ),
+            "app_lock_incompatible",
+        ),
+    ],
+)
+def test_schema_three_lock_errors_have_stable_jsonl_codes(
+    tmp_path: Path, capsys, lock_content: str | None, expected_code: str
+) -> None:
+    write_application(tmp_path)
+    _update_manifest(
+        tmp_path,
+        schema_version=3,
+        requires_sdk=">=0.1.0a1,<0.2",
+        requires_daemon={"application_protocol": ">=1,<2"},
+        supported_host_platforms=["windows"],
+    )
+    manifest = json.loads(tmp_path.joinpath("app.json").read_text(encoding="utf-8"))
+    manifest.pop("requires_watcherobot")
+    tmp_path.joinpath("app.json").write_text(json.dumps(manifest), encoding="utf-8")
+    if lock_content is not None:
+        tmp_path.joinpath("app.lock.json").write_text(lock_content, encoding="utf-8")
+
+    assert main(["app", "check", str(tmp_path), "--jsonl"]) == 2
+
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events[-1]["code"] == expected_code
+    assert "Traceback" not in str(events)

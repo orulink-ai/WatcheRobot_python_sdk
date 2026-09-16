@@ -86,7 +86,7 @@ stdout 每行必须是一个完整 JSON 对象，事件类型只允许 `progress
 
 | 类别 | 错误码 |
 | --- | --- |
-| Application 校验 | `app_manifest_missing`、`app_entrypoint_missing`、`app_manifest_invalid`、`app_sdk_incompatible`、`app_dependency_invalid`、`app_content_forbidden` |
+| Application 校验 | `app_manifest_missing`、`app_entrypoint_missing`、`app_manifest_invalid`、`app_sdk_incompatible`、`app_dependency_invalid`、`app_lock_missing`、`app_lock_invalid`、`app_lock_incompatible`、`app_content_forbidden` |
 | OAuth 与凭据 | `auth_required`、`auth_denied`、`auth_expired`、`auth_invalid_response`、`auth_network_error`、`credential_store_error` |
 | Space 与官方名单 | `space_ownership_conflict`、`catalog_invalid`、`catalog_pr_conflict`、`remote_error` |
 | Application Runtime | `runtime_manifest_invalid`、`runtime_resources_missing`、`runtime_python_integrity_failed`、`runtime_uv_integrity_failed`、`runtime_sdk_wheel_integrity_failed` |
@@ -97,6 +97,11 @@ Application Runtime 完整性错误与未单独分类的 `internal_error` 返回
 清单、缺失资源和三个受锁定内容保护的组件，不在 JSONL 中包含本机路径、原始命令输出或
 traceback。Desktop 应以稳定错误码选择 UI 状态，以退出码判断进程类别，不能匹配
 `message` 文案。
+
+schema v3 Application 必须提供 `app.lock.json`。文件缺失时返回 `app_lock_missing`；
+文件不可读、JSON 或结构非法、依赖不是精确 pin 时返回 `app_lock_invalid`；锁定的 SDK
+或其他依赖不满足 Manifest 声明时返回 `app_lock_incompatible`。三者均属于本地校验失败并
+返回退出码 2，消息会提示开发者使用 `watcherobot-app-lock` 重新生成依赖锁。
 
 ## 发布、名单与固定快照
 

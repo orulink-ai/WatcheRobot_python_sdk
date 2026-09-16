@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import watcherobot.distribution.install as install_module
+import watcherobot.runtime.repository as runtime_repository
 from watcherobot.distribution.events import ErrorCode
 from watcherobot.distribution.install import (
     ApplicationEnvironmentCommand,
@@ -103,18 +104,17 @@ def test_runtime_publication_retries_one_transient_filesystem_failure(
     _write_source(source)
     runtime = tmp_path / "runtime-source"
     _write_runtime(runtime)
-    real_copytree = install_module.shutil.copytree
+    real_copy_bundle = runtime_repository._copy_bundle
     runtime_copy_attempts = 0
 
-    def flaky_copytree(*args, **kwargs):
+    def flaky_copy_bundle(source_root: Path, destination: Path) -> None:
         nonlocal runtime_copy_attempts
-        if Path(args[0]) == runtime:
-            runtime_copy_attempts += 1
-            if runtime_copy_attempts == 1:
-                raise OSError("temporary Windows file lock")
-        return real_copytree(*args, **kwargs)
+        runtime_copy_attempts += 1
+        if runtime_copy_attempts == 1:
+            raise OSError("temporary Windows file lock")
+        real_copy_bundle(source_root, destination)
 
-    monkeypatch.setattr(install_module.shutil, "copytree", flaky_copytree)
+    monkeypatch.setattr(runtime_repository, "_copy_bundle", flaky_copy_bundle)
     monkeypatch.setattr(install_module.time, "sleep", lambda _: None)
 
     installed = install_application(provider="huggingface",
@@ -191,7 +191,38 @@ def test_environment_runner_retries_one_transient_nonzero_exit(
     assert attempts == 2
 
 
-def test_invalid_cached_runtime_is_archived_and_rebuilt(tmp_path: Path) -> None:
+def test_environment_runner_keeps_bytecode_cache_out_of_locked_runtime(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    captured_environment = None
+
+    def capture_run(*args, **kwargs):
+        nonlocal captured_environment
+        captured_environment = kwargs["env"]
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(install_module.subprocess, "run", capture_run)
+    environment_root = tmp_path / "application" / ".venv"
+    command = ApplicationEnvironmentCommand(
+        stage="creating_environment",
+        executable=tmp_path / "runtime" / "uv.exe",
+        arguments=("venv",),
+        current_dir=tmp_path,
+        environment_root=environment_root,
+    )
+
+    SystemApplicationEnvironmentRunner().run(command)
+
+    assert captured_environment is not None
+    assert captured_environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    pycache_root = Path(captured_environment["PYTHONPYCACHEPREFIX"])
+    assert pycache_root.name.startswith("watcher-application-pycache-")
+    assert environment_root not in pycache_root.parents
+    assert not pycache_root.exists()
+
+
+def test_legacy_runtime_is_preserved_when_publishing_new_runtime(tmp_path: Path) -> None:
     source = tmp_path / "published-source"
     _write_source(source)
     runtime = tmp_path / "runtime-source"
@@ -212,9 +243,9 @@ def test_invalid_cached_runtime_is_archived_and_rebuilt(tmp_path: Path) -> None:
 
     archived_runtimes = list(store_root.joinpath("trash").glob("*-runtime"))
     assert installed.application_id == "com.example.demo"
-    assert store_root.joinpath("runtime/runtime.json").is_file()
-    assert len(archived_runtimes) == 1
-    assert archived_runtimes[0].joinpath("invalid.txt").read_text(encoding="utf-8") == "stale"
+    assert list(store_root.glob("runtimes/*/runtime.json"))
+    assert len(archived_runtimes) == 0
+    assert stale_runtime.joinpath("invalid.txt").read_text(encoding="utf-8") == "stale"
 
 
 @pytest.mark.parametrize(
@@ -355,6 +386,12 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
         "listing_dependencies",
         "freezing_dependencies",
     ]
+    compile_command = next(
+        command for command in runner.commands if command.stage == "compiling_entrypoint"
+    )
+    assert compile_command.arguments[-1] == str(
+        compile_command.environment_root / ".watcher" / "app.pyc"
+    )
 
     applications = list_installed_applications(store_root)
 
@@ -384,6 +421,34 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
     assert list_installed_applications(store_root) == ()
 
 
+def test_schema_three_installs_only_exact_lock_pins(tmp_path: Path) -> None:
+    source = tmp_path / "published-source"
+    _write_source_v3(source)
+    runtime = tmp_path / "runtime-source"
+    _write_runtime(runtime)
+    runner = FakeEnvironmentRunner()
+
+    install_application(
+        provider="huggingface",
+        repo_id=SPACE_ID,
+        commit=COMMIT,
+        store_root=tmp_path / "application-store",
+        runtime_root=runtime,
+        hub=FakeHub(source),
+        environment_runner=runner,
+    )
+
+    command = next(
+        item for item in runner.commands if item.stage == "installing_dependencies"
+    )
+    assert "--no-deps" in command.arguments
+    assert "watcherobot==0.1.1a3" in command.arguments
+    assert "requests==2.32.0" in command.arguments
+    assert "watcherobot>=0.1.0a4,<0.2" not in command.arguments
+    assert "requests>=2.32,<3" not in command.arguments
+    assert str(runtime / "wheels/watcherobot-0.1.1a3-py3-none-any.whl") not in command.arguments
+
+
 def _write_source(
     root: Path,
     *,
@@ -401,6 +466,38 @@ def _write_source(
                 "dependencies": ["requests>=2.32,<3"],
                 "supported_host_platforms": supported_host_platforms
                 or ["windows", "macos"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    root.joinpath("app.py").write_text("print('demo')\n", encoding="utf-8")
+
+
+def _write_source_v3(root: Path) -> None:
+    root.mkdir(parents=True)
+    root.joinpath("app.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "id": "com.example.demo",
+                "name": "Demo",
+                "version": "1.0.0",
+                "requires_sdk": ">=0.1.0a4,<0.2",
+                "requires_daemon": {"application_protocol": ">=1,<2"},
+                "dependencies": ["requests>=2.32,<3"],
+                "supported_host_platforms": ["windows", "macos"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    root.joinpath("app.lock.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "dependencies": [
+                    "watcherobot==0.1.1a3",
+                    "requests==2.32.0",
+                ],
             }
         ),
         encoding="utf-8",
@@ -469,3 +566,20 @@ def _tree_sha256(root: Path) -> str:
         digest.update(len(payload).to_bytes(8, "little"))
         digest.update(payload)
     return digest.hexdigest()
+
+
+def test_runtime_tree_hash_ignores_regenerable_python_bytecode(tmp_path: Path) -> None:
+    runtime_python = tmp_path / "python"
+    package = runtime_python / "Lib" / "example"
+    cache = package / "__pycache__"
+    cache.mkdir(parents=True)
+    package.joinpath("module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    clean_hash = install_module._runtime_tree_sha256(runtime_python)
+
+    package.joinpath("module.pyc").write_bytes(b"legacy-bytecode")
+    package.joinpath("module.pyo").write_bytes(b"optimized-bytecode")
+    cache.joinpath("module.cpython-312.pyc").write_bytes(b"bytecode")
+
+    assert install_module._runtime_tree_sha256(runtime_python) == clean_hash
+    cache.joinpath("owned.txt").write_text("unexpected", encoding="utf-8")
+    assert install_module._runtime_tree_sha256(runtime_python) != clean_hash

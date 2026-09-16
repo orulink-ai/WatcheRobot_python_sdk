@@ -132,6 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     daemon_commands.add_parser("start")
+    daemon_commands.add_parser("activate", help="Force reload this SDK Runtime, stopping the current Application")
     daemon_commands.add_parser("status")
     daemon_commands.add_parser("stop")
 
@@ -339,28 +340,31 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(arguments)
     try:
         if args.command == "daemon":
-            if args.daemon_command == "start":
-                state, reused = ensure_runtime()
-                _print_json(
-                    {
-                        "running": True,
-                        "reused": reused,
-                        "pid": state.pid,
-                        "control_url": state.control_url,
-                    }
-                )
+            if args.daemon_command in ("start", "activate"):
+                from watcherobot.runtime.manager import ensure_command
+
+                try:
+                    reused = ensure_command(
+                        [sys.executable, "-m", "watcherobot.runtime.daemon"],
+                        activate=True,
+                        force=args.daemon_command == "activate",
+                    )
+                except (OSError, ValueError, RuntimeError) as error:
+                    raise CliError(str(error)) from error
+                _print_json({**runtime_status(), "reused": reused})
                 return 0
             if args.daemon_command == "status":
                 status = runtime_status()
                 _print_json(status)
                 return 0 if status["running"] else 1
             if args.daemon_command == "stop":
-                stopped = stop_runtime()
-                _print_json(
-                    {"running": not stopped, "stopping": not stopped}
-                    if not stopped
-                    else {"running": False}
-                )
+                from watcherobot.runtime.manager import stop_shared_runtime
+
+                try:
+                    stop_shared_runtime()
+                except (OSError, ValueError, RuntimeError) as error:
+                    raise CliError(str(error)) from error
+                _print_json({"running": False})
                 return 0
         if args.command == "app" and args.app_command == "run":
             return run_application(args.application)
@@ -1385,16 +1389,12 @@ def ensure_runtime(
     managed_app_root: Path | None = None,
     ephemeral_ports: bool = False,
 ) -> tuple[RuntimeProcessState, bool]:
-    resolved_state_root = (state_root or default_runtime_state_root()).resolve()
-    existing = _live_runtime_state(resolved_state_root)
-    if existing is not None:
-        return existing, True
+    from watcherobot.runtime.manager import ensure_command
 
-    resolved_state_root.mkdir(parents=True, exist_ok=True)
-    log_path = resolved_state_root / "runtime.log"
+    resolved_state_root = (state_root or default_runtime_state_root()).resolve()
     daemon_python = _canonical_launcher_path(Path(sys.executable))
     command = [
-        os.fspath(_background_python_executable(daemon_python)),
+        os.fspath(daemon_python),
         "-m",
         "watcherobot.runtime.daemon",
         "--state-root",
@@ -1419,45 +1419,14 @@ def ensure_runtime(
                 "0",
             )
         )
-    creation_flags = 0
-    process_options: dict[str, Any] = {}
-    if os.name == "nt":
-        creation_flags = (
-            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP")
-            | getattr(subprocess, "DETACHED_PROCESS")
-            | getattr(subprocess, "CREATE_NO_WINDOW")
-        )
-    else:
-        process_options["start_new_session"] = True
-
-    with log_path.open("ab") as log_file:
-        subprocess.Popen(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=log_file,
-            stderr=log_file,
-            close_fds=True,
-            creationflags=creation_flags,
-            **process_options,
-        )
-
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        try:
-            state = _live_runtime_state(resolved_state_root)
-        except _RuntimeControlNotReady:
-            # Only wait after launching our process. The preflight above must
-            # still reject an occupied, unidentified endpoint before spawning.
-            state = None
-        if state is not None:
-            return state, False
-        time.sleep(0.05)
-    details = ""
     try:
-        details = log_path.read_text(encoding="utf-8", errors="replace")[-1000:]
-    except OSError:
-        pass
-    raise CliError(f"Runtime failed to start. {details}".strip())
+        reused = ensure_command(command, state_root=resolved_state_root)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise CliError(str(error)) from error
+    state = _live_runtime_state(resolved_state_root)
+    if state is None:
+        raise CliError("Runtime activation completed without a ready Daemon")
+    return state, reused
 
 
 def _background_python_executable(
@@ -1486,20 +1455,40 @@ def _canonical_launcher_path(executable: Path) -> Path:
     return requested.parent.resolve(strict=True) / requested.name
 
 
-def stop_runtime() -> bool:
-    state = _live_runtime_state()
+def stop_runtime(state_root: Path | None = None) -> bool:
+    state = (
+        _live_runtime_state(state_root)
+        if state_root is not None
+        else _live_runtime_state()
+    )
     if state is None:
         return True
     _request_json(state.control_url, "/daemon/stop", method="POST")
     control_port = urlsplit(state.control_url).port
-    state_store = RuntimeStateStore(default_runtime_instance_root())
+    instance_root = default_runtime_instance_root()
+    if instance_root == system_runtime_instance_root():
+        state_roots = tuple(
+            dict.fromkeys(
+                (
+                    instance_root,
+                    (
+                        Path(state_root).resolve()
+                        if state_root is not None
+                        else default_runtime_state_root()
+                    ),
+                    system_runtime_state_root(),
+                )
+            )
+        )
+    else:
+        state_roots = (instance_root,)
+    state_stores = tuple(RuntimeStateStore(root) for root in state_roots)
     wait_seconds = float(os.environ.get("WATCHER_RUNTIME_STOP_WAIT_SECONDS", "30"))
     deadline = time.monotonic() + max(wait_seconds, 0.0)
     while time.monotonic() < deadline:
         if not psutil.pid_exists(state.pid):
             return True
-        published_state = state_store.read()
-        state_is_gone = published_state is None or published_state != state
+        state_is_gone = all(store.read() != state for store in state_stores)
         control_is_closed = control_port is None or not _local_tcp_port_is_open(control_port)
         if state_is_gone and control_is_closed:
             return True
@@ -1882,6 +1871,10 @@ def _request_json(
 ) -> dict[str, Any]:
     data = None
     headers: dict[str, str] = {}
+    if path == "/daemon/application/select" and payload is not None:
+        from watcherobot.runtime.registration import register_launch
+
+        payload = register_launch(payload)
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json"
