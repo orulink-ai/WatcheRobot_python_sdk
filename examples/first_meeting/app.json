@@ -8,9 +8,11 @@
     "application_protocol": ">=1,<2"
   },
   "dependencies": [
+    "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
     "numpy>=1.26,<3",
-    "pydantic>=2,<3"
+    "pydantic>=2,<3",
+    "uvicorn>=0.30,<1"
   ],
   "supported_host_platforms": ["windows"],
   "description": "Wake up, look around, meet your human and chat through the WatcheRobot Python SDK.",

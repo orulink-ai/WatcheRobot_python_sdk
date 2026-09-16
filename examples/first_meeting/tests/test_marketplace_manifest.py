@@ -18,7 +18,7 @@ def test_first_meeting_targets_current_shared_runtime_contract():
     assert {
         canonicalize_name(Requirement(item).name)
         for item in application.dependencies
-    } == {"httpx", "numpy", "pydantic"}
+    } == {"fastapi", "httpx", "numpy", "pydantic", "uvicorn"}
 
     locked = read_dependency_lock(
         root,
@@ -26,4 +26,11 @@ def test_first_meeting_targets_current_shared_runtime_contract():
         application.dependencies,
     )
     locked_names = {canonicalize_name(Requirement(item).name) for item in locked}
-    assert {"watcherobot", "httpx", "numpy", "pydantic"} <= locked_names
+    assert {
+        "watcherobot",
+        "fastapi",
+        "httpx",
+        "numpy",
+        "pydantic",
+        "uvicorn",
+    } <= locked_names
