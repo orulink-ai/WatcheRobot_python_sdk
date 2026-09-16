@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -94,13 +95,17 @@ class SystemApplicationEnvironmentRunner:
             "VIRTUAL_ENV",
         ):
             environment.pop(name, None)
+        pycache_root = (
+            Path(tempfile.gettempdir())
+            / "watcher-application-pycache"
+            / hashlib.sha256(str(command.environment_root).encode("utf-8")).hexdigest()[:16]
+        )
+        pycache_root.mkdir(parents=True, exist_ok=True)
         environment.update(
             {
                 "PYTHONIOENCODING": "utf-8",
                 "PYTHONDONTWRITEBYTECODE": "1",
-                "PYTHONPYCACHEPREFIX": str(
-                    command.environment_root / ".watcher" / "pycache"
-                ),
+                "PYTHONPYCACHEPREFIX": str(pycache_root),
                 "PYTHONNOUSERSITE": "1",
                 "PYTHONUTF8": "1",
                 "UV_NO_SYSTEM_CONFIG": "1",
@@ -672,7 +677,12 @@ def _create_environment(
         ApplicationEnvironmentCommand(
             stage="compiling_entrypoint",
             executable=python,
-            arguments=("-m", "py_compile", str(candidate / "source/app.py")),
+            arguments=(
+                "-c",
+                "import py_compile,sys;py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)",
+                str(candidate / "source/app.py"),
+                str(environment / ".watcher" / "app.pyc"),
+            ),
             current_dir=candidate,
             environment_root=environment,
             environment=command_environment,

@@ -42,6 +42,14 @@ def _copy_bundle(source: Path, destination: Path) -> None:
     )
 
 
+def _remove_bundle(path: Path) -> None:
+    shutil.rmtree(_windows_extended_path(path))
+
+
+def _published_path(path: Path) -> Path:
+    return Path(_windows_extended_path(path))
+
+
 @contextmanager
 def operation_lock(root: Path | None = None, *, timeout: float = 30) -> Iterator[None]:
     """Serialize short-lived managers, independently of the Daemon lifetime lock."""
@@ -65,6 +73,7 @@ def operation_lock(root: Path | None = None, *, timeout: float = 30) -> Iterator
 
 def bundle_digest(root: Path) -> str:
     """Hash names, executable semantics and bytes of one Runtime bundle."""
+    root = Path(_windows_extended_path(root))
     digest = hashlib.sha256(b"watcher-runtime-bundle-v2\0")
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
@@ -84,6 +93,8 @@ def bundle_digest(root: Path) -> str:
             )
             continue
         if path.is_file():
+            if path.suffix.lower() in {".pyc", ".pyo"}:
+                continue
             name = path.relative_to(root).as_posix().encode("utf-8")
             digest.update(len(name).to_bytes(8, "big"))
             digest.update(name)
@@ -108,20 +119,22 @@ def prepare_bundle(source: Path, repository: Path | None = None) -> Path:
     with operation_lock(root):
         identity = bundle_digest(source)
         target = root / identity
-        if target.exists():
-            if bundle_digest(target) != identity:
+        published_target = _published_path(target)
+        if published_target.exists():
+            if bundle_digest(published_target) != identity:
                 raise ValueError("Published Runtime integrity check failed")
-            os.utime(target, None)
-            return target
+            os.utime(published_target, None)
+            return published_target
         staging = root / (".staging-" + uuid.uuid4().hex)
+        published_staging = _published_path(staging)
         try:
             _copy_bundle(source, staging)
-            if bundle_digest(staging) != identity:
+            if bundle_digest(published_staging) != identity:
                 raise ValueError("Staged Runtime integrity check failed")
             # copytree preserves source timestamps; grace must start at publication.
-            os.utime(staging, None)
-            os.replace(staging, target)
+            os.utime(published_staging, None)
+            os.replace(published_staging, published_target)
         finally:
-            if staging.exists():
-                shutil.rmtree(staging)
-        return target
+            if published_staging.exists():
+                _remove_bundle(staging)
+        return published_target

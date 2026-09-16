@@ -5,6 +5,8 @@ import pytest
 
 from watcherobot.runtime.repository import (
     _copy_bundle,
+    _published_path,
+    _remove_bundle,
     _windows_extended_path,
     bundle_digest,
     prepare_bundle,
@@ -109,6 +111,47 @@ def test_windows_bundle_copy_uses_extended_paths(tmp_path: Path, monkeypatch) ->
     assert str(captured[0][0]).startswith(extended_prefix)
     assert str(captured[0][1]).startswith(extended_prefix)
     assert captured[1] == {"symlinks": True}
+
+
+def test_windows_bundle_cleanup_uses_extended_path(tmp_path: Path, monkeypatch) -> None:
+    staging = tmp_path / "staging"
+    captured = None
+
+    def capture_rmtree(path):
+        nonlocal captured
+        captured = path
+
+    monkeypatch.setattr("watcherobot.runtime.repository.os.name", "nt")
+    monkeypatch.setattr("watcherobot.runtime.repository.shutil.rmtree", capture_rmtree)
+
+    _remove_bundle(staging)
+
+    assert captured == _windows_extended_path(staging)
+
+
+def test_windows_published_path_keeps_long_paths_addressable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    target = tmp_path / "repository" / "digest"
+    monkeypatch.setattr("watcherobot.runtime.repository.os.name", "nt")
+
+    assert _published_path(target) == Path(_windows_extended_path(target))
+
+
+def test_bundle_digest_ignores_regenerable_python_bytecode(tmp_path: Path) -> None:
+    package = tmp_path / "python" / "Lib" / "example"
+    cache = package / "__pycache__"
+    cache.mkdir(parents=True)
+    package.joinpath("module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    clean_digest = bundle_digest(tmp_path)
+
+    package.joinpath("module.pyc").write_bytes(b"legacy-bytecode")
+    package.joinpath("module.pyo").write_bytes(b"optimized-bytecode")
+    cache.joinpath("module.cpython-312.pyc").write_bytes(b"bytecode")
+
+    assert bundle_digest(tmp_path) == clean_digest
+    cache.joinpath("owned.txt").write_text("unexpected", encoding="utf-8")
+    assert bundle_digest(tmp_path) != clean_digest
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits")

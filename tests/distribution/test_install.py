@@ -216,9 +216,11 @@ def test_environment_runner_keeps_bytecode_cache_out_of_locked_runtime(
 
     assert captured_environment is not None
     assert captured_environment["PYTHONDONTWRITEBYTECODE"] == "1"
-    assert Path(captured_environment["PYTHONPYCACHEPREFIX"]) == (
-        environment_root / ".watcher" / "pycache"
-    )
+    pycache_root = Path(captured_environment["PYTHONPYCACHEPREFIX"])
+    assert pycache_root.parent.name == "watcher-application-pycache"
+    assert len(pycache_root.name) == 16
+    assert environment_root not in pycache_root.parents
+    assert pycache_root.is_dir()
 
 
 def test_legacy_runtime_is_preserved_when_publishing_new_runtime(tmp_path: Path) -> None:
@@ -385,6 +387,12 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
         "listing_dependencies",
         "freezing_dependencies",
     ]
+    compile_command = next(
+        command for command in runner.commands if command.stage == "compiling_entrypoint"
+    )
+    assert compile_command.arguments[-1] == str(
+        compile_command.environment_root / ".watcher" / "app.pyc"
+    )
 
     applications = list_installed_applications(store_root)
 
