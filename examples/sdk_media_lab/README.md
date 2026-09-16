@@ -12,14 +12,16 @@ contained inside this directory; generated photos and recordings stay under
 the ignored `artifacts/` directory and are never included in a published
 source snapshot.
 
-优雅退出要求使用提供 `ApplicationContext.shutdown_requested` 的当前 SDK
-（本轮以 0.1.9 wheel 验证）。Daemon 请求停止后，应用主动关闭 HTTP 服务并释放
-上下文；旧 Runtime 内的 0.1.1a4 wheel 不满足此要求，需要更新 Runtime，
-不提供旧接口兼容分支。此源码修复需重新发布后才能更新远端应用版本。
+优雅退出要求使用提供 `ApplicationContext.shutdown_requested` 的 SDK 0.1.9。
+Daemon 请求停止后，应用主动关闭 HTTP 服务并释放上下文；更早的 SDK 不满足此要求。
 
-The distribution manifest uses schema 2 and currently declares Windows only,
-matching the recorded hardware validation. macOS is not advertised until its
-runtime and hardware acceptance have been completed.
+The distribution manifest uses schema 3. It pins the tested SDK and Python
+dependency graph in `app.lock.json`, while the Daemon compatibility requirement
+is expressed separately through Application protocol 1. The lock targets the
+Desktop Application Runtime contract (Windows / Python 3.12). The manifest
+currently declares Windows only, matching the recorded hardware validation.
+macOS is not advertised until its runtime and hardware acceptance have been
+completed and a platform-specific lock has been validated.
 
 The tested 2026-09-09 SDK/ESP32 pairing, concurrent video/audio results, and
 remaining limits are fixed in the [Himax media stage record](../../docs/himax-media-stage-20260909.md).
