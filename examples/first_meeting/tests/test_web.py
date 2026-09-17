@@ -1,4 +1,5 @@
 import re
+import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -38,6 +39,23 @@ def test_cross_platform_entrypoints_share_arguments_and_exit_codes():
     root = Path(__file__).resolve().parents[1]
     assert 'launch.py' in (root / 'run.ps1').read_text()
     assert 'launch.py' in (root / 'run.sh').read_text()
+
+
+def test_browser_translates_fetch_failure_into_actionable_local_message():
+    root = Path(__file__).resolve().parents[1]
+    helper = (root / 'web' / 'request-error.mjs').as_uri()
+    script = (
+        f"import {{ requestErrorMessage }} from {helper!r}; "
+        "process.stdout.write(requestErrorMessage(new TypeError('Failed to fetch')));"
+    )
+    result = subprocess.run(
+        ['node', '--input-type=module', '--eval', script],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+    )
+    assert result.stdout == '控制台已停止或重启，请打开最新控制台页面'
 
 
 def test_device_polling_does_not_block_motion_loop_and_reuses_client(tmp_path, monkeypatch):

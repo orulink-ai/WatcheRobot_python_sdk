@@ -1,3 +1,5 @@
+import { requestErrorMessage } from './request-error.mjs';
+
 const $ = id => document.getElementById(id);
 const token = document.querySelector('meta[name="meeting-token"]').content;
 let state = {}, config = {}, photoName = '', photoUrl = '', lastConversation = '';
@@ -10,7 +12,7 @@ async function api(path, body){
 }
 let toastTimer;
 function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6500)}
-async function action(fn){try{await fn()}catch(e){toast(e.message)}}
+async function action(fn){try{await fn()}catch(e){toast(requestErrorMessage(e))}}
 function fillConfig(data){config=data;for(const field of $('settings').elements){if(!field.name)continue;if(field.type==='checkbox')field.checked=!!data[field.name];else{field.value=data[field.name]??'';if(field.type==='password')field.placeholder=data[field.name+'_configured']?'已配置 · 留空保留':'尚未配置'}}}
 function render(s){
   state=s;$('version').textContent=s.sdk_version;$('phase').textContent=phaseNames[s.phase]||s.phase;

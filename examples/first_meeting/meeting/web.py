@@ -86,6 +86,10 @@ def create_web_app(service: MeetingService, store: ConfigStore, web_root: Path,
     async def javascript():
         return FileResponse(web_root / 'app.js')
 
+    @app.get('/request-error.mjs')
+    async def request_error_helper():
+        return FileResponse(web_root / 'request-error.mjs', media_type='text/javascript')
+
     @app.get('/api/status')
     async def status():
         from watcherobot import __version__
