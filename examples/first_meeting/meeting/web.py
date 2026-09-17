@@ -23,6 +23,7 @@ def create_web_app(service: MeetingService, store: ConfigStore, web_root: Path,
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
     app.state.device = {'online': False, 'state': 'unknown'}
     app.state.check_task = None
+    app.state.operation_lock = asyncio.Lock()
     device_client_task = None
 
     async def device_client():
@@ -115,36 +116,43 @@ def create_web_app(service: MeetingService, store: ConfigStore, web_root: Path,
 
     @app.post('/api/config')
     async def save_config(request: Request):
-        if busy():
-            return JSONResponse({'error': '请先停止流程并等待云服务检测结束，再保存配置'}, status_code=409)
-        try:
-            settings = store.update(await read_body(request))
-        except Exception:
-            # Pydantic validation errors include input values, possibly secrets.
-            return JSONResponse({'error': '配置不合法，请检查字段、角度和时间范围'}, status_code=422)
-        service.settings = settings
-        service.cloud.settings = settings
-        service.checks.clear()
-        service.log('stage', '配置已保存；密钥字段留空会保留原值')
-        return store.public()
+        body = await read_body(request)
+        async with app.state.operation_lock:
+            if busy():
+                return JSONResponse({'error': '请先停止流程并等待云服务检测结束，再保存配置'}, status_code=409)
+            try:
+                settings = store.update(body)
+            except Exception:
+                # Pydantic validation errors include input values, possibly secrets.
+                return JSONResponse({'error': '配置不合法，请检查字段、角度和时间范围'}, status_code=422)
+            service.settings = settings
+            service.cloud.settings = settings
+            service.checks.clear()
+            service.log('stage', '配置已保存；密钥字段留空会保留原值')
+            return store.public()
 
     @app.post('/api/start')
     async def start(request: Request):
-        if busy():
-            return JSONResponse({'error': '已有流程或检测正在运行'}, status_code=409)
-        device = await device_status()
-        if not device.get('online'):
-            return JSONResponse({'error': '机器人未连接，请打开机器人上的 Python SDK 应用并完成配对'}, status_code=409)
-        try:
-            body = await read_body(request)
-            service.start(boot=body.get('boot', True) is not False, gaze_only=body.get('gaze_only') is True)
-        except ValueError:
-            return JSONResponse({'error': '启动请求无效或已有流程在运行'}, status_code=409)
-        return {'ok': True}
+        body = await read_body(request)
+        async with app.state.operation_lock:
+            if busy():
+                return JSONResponse({'error': '已有流程或检测正在运行'}, status_code=409)
+            device = await device_status()
+            if not device.get('online'):
+                return JSONResponse({'error': '机器人未连接，请打开机器人上的 Python SDK 应用并完成配对'}, status_code=409)
+            if busy():
+                return JSONResponse({'error': '已有流程或检测正在运行'}, status_code=409)
+            try:
+                service.start(boot=body.get('boot', True) is not False, gaze_only=body.get('gaze_only') is True)
+            except ValueError:
+                return JSONResponse({'error': '启动请求无效、已有流程运行或设备清理尚未完成'}, status_code=409)
+            return {'ok': True}
 
     @app.post('/api/stop')
     async def stop():
-        service.request_stop()
+        await service.stop()
+        if service.cleanup_required:
+            return JSONResponse({'error': '设备停止尚未确认，请再次停止以重试清理'}, status_code=503)
         return {'ok': True}
 
     @app.post('/api/text')
@@ -161,8 +169,6 @@ def create_web_app(service: MeetingService, store: ConfigStore, web_root: Path,
 
     @app.post('/api/check')
     async def check():
-        if busy():
-            return JSONResponse({'error': '请先停止正在运行的流程'}, status_code=409)
         async def run_checks():
             # A short synthesized phrase is reused to check real recognition.
             service.checks = {name: {'state': 'waiting'} for name in ('TTS', 'STT', 'LLM')}
@@ -194,8 +200,11 @@ def create_web_app(service: MeetingService, store: ConfigStore, web_root: Path,
                     detail = str(error) if isinstance(error, CloudError) else type(error).__name__
                     service.checks[name] = {'state': 'error', 'detail': store.redact(detail)}
             service.log('stage', '云服务检测完成，结果见连接状态')
-        app.state.check_task = asyncio.create_task(run_checks())
-        return {'ok': True}
+        async with app.state.operation_lock:
+            if busy():
+                return JSONResponse({'error': '请先停止正在运行的流程'}, status_code=409)
+            app.state.check_task = asyncio.create_task(run_checks())
+            return {'ok': True}
 
     @app.post('/api/pair')
     async def pair(request: Request):

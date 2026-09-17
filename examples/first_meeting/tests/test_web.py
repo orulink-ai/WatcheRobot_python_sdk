@@ -56,6 +56,16 @@ def test_browser_translates_fetch_failure_into_actionable_local_message():
         encoding='utf-8',
     )
     assert result.stdout == '控制台已停止或重启，请打开最新控制台页面'
+    app_js = (root / 'web' / 'app.js').read_text(encoding='utf-8')
+    poll_body = app_js.split('async function poll()', 1)[1]
+    assert 'requestErrorMessage(e)' in poll_body
+    assert "$('connection').textContent=requestErrorMessage(e)" in poll_body
+
+
+def test_browser_clears_previous_photo_when_new_session_has_none():
+    app_js = (Path(__file__).resolve().parents[1] / 'web' / 'app.js').read_text(encoding='utf-8')
+    assert "if(!s.photo&&photoName)" in app_js
+    assert "$('photo-wrap').hidden=true" in app_js
 
 
 def test_device_polling_does_not_block_motion_loop_and_reuses_client(tmp_path, monkeypatch):

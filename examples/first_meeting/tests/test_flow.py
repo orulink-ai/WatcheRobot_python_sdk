@@ -178,3 +178,45 @@ def test_duplicate_start_does_not_overlap_or_reset_consent(tmp_path):
         s.request_stop()
         await s.task
     asyncio.run(run())
+
+
+def test_cleanup_failure_blocks_restart_until_stop_retry_succeeds(tmp_path):
+    async def run():
+        s = service(tmp_path)
+        attempts = 0
+
+        async def flaky_stop():
+            nonlocal attempts
+            attempts += 1
+            if attempts < 2:
+                raise RuntimeError('close failed')
+
+        s.robot.stop = flaky_stop
+        s.start(boot=False)
+        await asyncio.sleep(0.01)
+        await s.stop()
+        assert s.cleanup_required
+        assert s.phase == 'cleanup_error'
+        with pytest.raises(ValueError, match='再次停止'):
+            s.start(boot=False)
+        await s.stop()
+        assert not s.cleanup_required
+        assert s.phase == 'stopped'
+        s.start(boot=False)
+        await asyncio.sleep(0)
+        s.request_stop()
+        await s.task
+
+    asyncio.run(run())
+
+
+def test_new_session_clears_previous_photo_reference(tmp_path):
+    async def run():
+        s = service(tmp_path)
+        s.last_photo = 'previous-user.jpg'
+        s.start(boot=False)
+        assert s.last_photo == ''
+        s.request_stop()
+        await s.task
+
+    asyncio.run(run())

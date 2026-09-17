@@ -31,6 +31,8 @@ class MeetingService:
         self.task: asyncio.Task | None = None
         self.checks: dict = {}
         self.last_photo = ''
+        self.cleanup_required = False
+        self.cleanup_lock = asyncio.Lock()
 
     @property
     def running(self) -> bool:
@@ -169,10 +171,13 @@ class MeetingService:
     def start(self, boot: bool = True, gaze_only: bool = False) -> None:
         if self.running:
             raise ValueError('应用正在运行，请先停止')
+        if self.cleanup_required:
+            raise ValueError('设备停止尚未确认，请先再次停止以重试清理')
         self.stopped.clear()
         self.interrupt.clear()
         self.dialogue = Dialogue()
         self.history.clear()
+        self.last_photo = ''
         while not self.inputs.empty():
             self.inputs.get_nowait()
         self.task = asyncio.create_task(self._run(boot, gaze_only), name='first-meeting-loop')
@@ -185,11 +190,34 @@ class MeetingService:
         self.inputs.put_nowait(text)
         self.interrupt.set()
 
+    async def stop(self) -> None:
+        self.stopped.set()
+        self.interrupt.set()
+        if self.running:
+            self.phase = 'stopping'
+            await self.task
+            return
+        await self._cleanup_robot()
+
     def request_stop(self) -> None:
         self.stopped.set()
         self.interrupt.set()
         if self.running:
             self.phase = 'stopping'
+
+    async def _cleanup_robot(self) -> bool:
+        async with self.cleanup_lock:
+            try:
+                await self.robot.stop()
+            except Exception as error:
+                self.cleanup_required = True
+                self.phase = 'cleanup_error'
+                self.log('error', '设备停止未确认：' + self.error_detail(error))
+                return False
+            self.cleanup_required = False
+            if self.phase != 'error':
+                self.phase = 'stopped'
+            return True
 
     async def _run(self, boot: bool, gaze_only: bool = False) -> None:
         try:
@@ -240,9 +268,4 @@ class MeetingService:
             self.log('audio', '异常时麦克风状态：' + str(getattr(self.robot, 'microphone_stats', {})))
             self.log_exception(error)
         finally:
-            try:
-                await self.robot.stop()
-            except Exception as error:
-                self.log('error', '设备停止未确认：' + self.error_detail(error))
-            if self.phase != 'error':
-                self.phase = 'stopped'
+            await self._cleanup_robot()

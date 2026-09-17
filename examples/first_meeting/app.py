@@ -60,9 +60,13 @@ async def main() -> None:
                 if not online and was_online:
                     service.request_stop()
                     service.log('error', '机器人已断开，请重连后重新开始')
-                if online and service.settings.auto_boot and not auto_started and not service.running:
-                    auto_started = True
-                    service.start()
+                if online and service.settings.auto_boot and not auto_started:
+                    async with web.state.operation_lock:
+                        check_task = web.state.check_task
+                        checking = check_task is not None and not check_task.done()
+                        if not service.running and not service.cleanup_required and not checking:
+                            auto_started = True
+                            service.start()
                 was_online = online
                 # Consume unsupported Desktop frames so they cannot accumulate.
                 try:

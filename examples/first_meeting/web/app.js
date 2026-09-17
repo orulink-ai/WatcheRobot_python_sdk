@@ -3,7 +3,7 @@ import { requestErrorMessage } from './request-error.mjs';
 const $ = id => document.getElementById(id);
 const token = document.querySelector('meta[name="meeting-token"]').content;
 let state = {}, config = {}, photoName = '', photoUrl = '', lastConversation = '';
-const phaseNames = {ready:'准备就绪',sleeping:'还在梦里…',waking:'慢慢醒来',looking_left:'看看左边',looking_right:'看看右边',synthesizing:'准备说话',speaking:'正在说话',listening:'正在聆听，请说话',recognizing:'正在识别你说的话',thinking:'想一想怎么回答',waiting_text:'等你输入一句话',capturing:'正在拍照',stopping:'正在停止…',stopped:'已停止',error:'需要检查'};
+const phaseNames = {ready:'准备就绪',sleeping:'还在梦里…',waking:'慢慢醒来',looking_left:'看看左边',looking_right:'看看右边',synthesizing:'准备说话',speaking:'正在说话',listening:'正在聆听，请说话',recognizing:'正在识别你说的话',thinking:'想一想怎么回答',waiting_text:'等你输入一句话',capturing:'正在拍照',stopping:'正在停止…',stopped:'已停止',cleanup_error:'停止未确认，请重试',error:'需要检查'};
 async function api(path, body){
   const response = await fetch('/api/'+path, {method:body === undefined?'GET':'POST',headers:{'X-Meeting-Token':token,'Content-Type':'application/json'},body:body === undefined?undefined:JSON.stringify(body)});
   const data = await response.json();
@@ -34,6 +34,7 @@ function render(s){
   if(signature!==lastConversation){lastConversation=signature;$('conversation').replaceChildren();for(const e of lines){const bubble=document.createElement('div');bubble.className='bubble '+e.kind;const label=document.createElement('small');label.textContent=(e.kind==='user'?'YOU':'WATCHER')+' · '+e.time;bubble.append(label,document.createTextNode(e.text));$('conversation').append(bubble)}$('conversation').scrollTop=$('conversation').scrollHeight}
   const logs=s.events.map(e=>`${e.time}  [${e.kind}]  ${e.text}`).join('\n');if($('logs').textContent!==logs){$('logs').textContent=logs||'等待应用事件…';$('logs').scrollTop=$('logs').scrollHeight}
   $('animations').replaceChildren(...s.animations.map(a=>{const o=document.createElement('option');o.value=a;return o}));
+  if(!s.photo&&photoName){photoName='';if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl='';$('photo').removeAttribute('src');$('photo-wrap').hidden=true}
   if(s.photo&&s.photo!==photoName){photoName=s.photo;fetch('/api/photo',{headers:{'X-Meeting-Token':token}}).then(r=>{if(!r.ok)throw Error('照片暂时不可用');return r.blob()}).then(blob=>{if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl=URL.createObjectURL(blob);$('photo').src=photoUrl;$('photo-wrap').hidden=false}).catch(e=>toast(e.message))}
 }
 $('start').onclick=()=>action(()=>api('start',{boot:true}));$('chat').onclick=()=>action(()=>api('start',{boot:false}));$('stop').onclick=()=>action(()=>api('stop',{}));$('check').onclick=()=>action(()=>api('check',{}));
@@ -42,5 +43,5 @@ $('settings').onsubmit=e=>{e.preventDefault();action(async()=>{const body={};for
 $('text-form').onsubmit=e=>{e.preventDefault();const text=$('message').value.trim();if(text)action(async()=>{await api('text',{text});$('message').value=''})};
 $('pair-form').onsubmit=e=>{e.preventDefault();action(async()=>{await api('pair',{code:$('pair-code').value});$('pair-code').value='';toast('已发起配对，等待设备连接')})};
 $('download').onclick=()=>{const blob=new Blob([$('logs').textContent],{type:'text/plain;charset=utf-8'});const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='first-meeting.log';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
-async function poll(){try{render(await api('status'))}catch(e){$('connection').textContent='控制台连接已断开';$('start').disabled=$('chat').disabled=$('send').disabled=true}finally{setTimeout(poll,1000)}}
+async function poll(){try{render(await api('status'))}catch(e){$('connection').textContent=requestErrorMessage(e);toast(requestErrorMessage(e));$('start').disabled=$('chat').disabled=$('gaze').disabled=$('send').disabled=true}finally{setTimeout(poll,1000)}}
 action(async()=>{fillConfig(await api('config'));await poll()});
