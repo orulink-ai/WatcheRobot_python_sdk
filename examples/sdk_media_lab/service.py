@@ -176,6 +176,13 @@ class AnimationPlayRequest(BaseModel):
     animation_id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,62}$")
 
 
+class CombinedTestRequest(BaseModel):
+    duration_seconds: float = Field(default=8.0, ge=2.0, le=30.0, allow_inf_nan=False)
+    photo_interval_seconds: float = Field(default=1.0, ge=0.2, le=5.0, allow_inf_nan=False)
+    include_photo: bool = Field(default=True, strict=True)
+    include_audio: bool = Field(default=True, strict=True)
+
+
 class PairDeviceRequest(BaseModel):
     pairing_code: str = Field(pattern=r"^[0-9]{6}$")
     device_ip: str | None = None
@@ -241,6 +248,9 @@ class MediaLabService:
         self._sample_audio = Path(sample_audio)
         self._device_status_provider = device_status_provider
         self._device_pairer = device_pairer
+        self._operation_gate_lock = threading.Lock()
+        self._combined_test_lock = threading.Lock()
+        self._combined_test_owner_thread_id: int | None = None
         # RTC lifecycle transitions remain atomic while camera, microphone, and
         # speaker ownership are tracked independently. This permits the verified
         # audio-RTC + photo and video-RTC + standalone-audio combinations without
@@ -275,6 +285,7 @@ class MediaLabService:
         with self._state_lock:
             active_action = self._active_action
             active_actions = dict(self._active_actions)
+            combined_test_running = self._combined_test_owner_thread_id is not None
             face_state = self._face_state
         inference_session = self._inference_session
         artifacts: dict[str, dict[str, object]] = {}
@@ -292,8 +303,8 @@ class MediaLabService:
         return {
             "connected": connection.get("online") is True,
             "connection": connection,
-            "busy": bool(active_actions),
-            "active_action": active_action,
+            "busy": bool(active_actions) or combined_test_running,
+            "active_action": active_action or ("combined_test" if combined_test_running else None),
             "active_actions": list(active_actions.values()),
             "resource_owners": active_actions,
             "capabilities": list(self._robot.capabilities),
@@ -528,14 +539,7 @@ class MediaLabService:
 
     def play_audio(self) -> dict[str, object]:
         with self._operation("play_audio", resources=("microphone", "speaker")):
-            if not self._sample_audio.is_file():
-                raise FileNotFoundError(f"sample audio is missing: {self._sample_audio}")
-            playback = self._robot.audio.play_file(self._sample_audio)
-            playback.wait(30.0)
-            return {
-                "source": self._sample_audio.name,
-                "bytes": self._sample_audio.stat().st_size,
-            }
+            return self._play_audio_unlocked()
 
     def stop_audio(self) -> dict[str, object]:
         self._ensure_device_online()
@@ -633,19 +637,274 @@ class MediaLabService:
 
     def capture_photo(self) -> dict[str, object]:
         with self._operation("capture_photo", resources=("camera", "animation")):
-            image = self._robot.camera.capture(
-                width=0,
-                height=0,
-                quality=0,
-                timeout=10.0,
+            return self._capture_photo_unlocked()
+
+    def _capture_photo_unlocked(self) -> dict[str, object]:
+        image = self._robot.camera.capture(
+            width=0,
+            height=0,
+            quality=0,
+            timeout=10.0,
+        )
+        output = self._artifact_output("camera.jpg")
+        output.write_bytes(bytes(image.data))
+        return {
+            "artifact": output.name,
+            "bytes": output.stat().st_size,
+            "content_type": "image/jpeg",
+        }
+
+    def _play_audio_unlocked(self) -> dict[str, object]:
+        if not self._sample_audio.is_file():
+            raise FileNotFoundError(f"sample audio is missing: {self._sample_audio}")
+        playback = self._robot.audio.play_file(self._sample_audio)
+        playback.wait(30.0)
+        return {
+            "source": self._sample_audio.name,
+            "bytes": self._sample_audio.stat().st_size,
+        }
+
+    def run_combined_test(
+        self,
+        *,
+        duration_seconds: float = 8.0,
+        photo_interval_seconds: float = 1.0,
+        include_photo: bool = True,
+        include_audio: bool = True,
+    ) -> dict[str, object]:
+        """Run dynamic UI, repeated camera capture, and audio concurrently."""
+
+        for name, value, minimum, maximum in (
+            ("duration_seconds", duration_seconds, 0.2, 30.0),
+            ("photo_interval_seconds", photo_interval_seconds, 0.05, 5.0),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not minimum <= float(value) <= maximum
+            ):
+                raise ValueError(f"{name} must be between {minimum} and {maximum}")
+        duration_seconds = float(duration_seconds)
+        photo_interval_seconds = float(photo_interval_seconds)
+        self._ensure_device_online()
+        self._ensure_capability("expression.runtime.v3")
+        if include_photo:
+            self._ensure_capability("camera.capture")
+        if include_audio:
+            self._ensure_capability("audio.stream")
+        with self._operation_gate_lock:
+            if not self._combined_test_lock.acquire(blocking=False):
+                raise MediaLabBusyError("media lab is busy with combined_test")
+            with self._state_lock:
+                if self._active_actions:
+                    active_action = self._active_action or "another action"
+                    self._combined_test_lock.release()
+                    raise MediaLabBusyError(f"media lab is busy with {active_action}")
+                self._combined_test_owner_thread_id = threading.get_ident()
+
+        stages_by_name: dict[str, dict[str, object]] = {}
+        stage_lock = threading.Lock()
+        stop_event = threading.Event()
+        expression_started = threading.Event()
+        worker_names = ["dynamic_ui"]
+        if include_photo:
+            worker_names.append("photo")
+        if include_audio:
+            worker_names.append("audio")
+        start_barrier = threading.Barrier(len(worker_names))
+        result: dict[str, object] = {
+            "passed": False,
+            "duration_seconds": duration_seconds,
+            "photo_interval_seconds": photo_interval_seconds,
+            "observations_required": [
+                "确认动态自定义 UI 持续变化且没有异常闪烁",
+                "确认设备在并发测试期间没有重启或失联",
+            ],
+        }
+        if include_photo:
+            result["observations_required"].append("确认连续拍照持续成功")
+        if include_audio:
+            result["observations_required"].append(
+                "确认已从机器人扬声器听到音频"
             )
-            output = self._artifact_output("camera.jpg")
-            output.write_bytes(bytes(image.data))
-            return {
-                "artifact": output.name,
-                "bytes": output.stat().st_size,
-                "content_type": "image/jpeg",
+
+        def run_worker(name: str, callback: Callable[[], dict[str, object]]) -> None:
+            stage: dict[str, object] = {
+                "name": name,
+                "status": "running",
             }
+            with stage_lock:
+                stages_by_name[name] = stage
+            started_at = time.monotonic()
+            try:
+                start_barrier.wait(timeout=2.0)
+                started_at = time.monotonic()
+                stage["started_at"] = started_at
+                payload = callback()
+            except Exception as error:
+                stage.update(status="failed", error=str(error))
+                stop_event.set()
+            else:
+                stage.update(status="passed", **payload)
+            finally:
+                finished_at = time.monotonic()
+                stage.update(
+                    finished_at=finished_at,
+                    duration_ms=round((finished_at - started_at) * 1000),
+                )
+
+        def update_dynamic_ui() -> dict[str, object]:
+            runtime = self._robot.expression_runtime
+            runtime.start(
+                "thinking",
+                style="watcher_pulse",
+                color="#A1F03C",
+                gaze_x=0.0,
+                gaze_y=0.0,
+                auto_blink=True,
+                transition_ms=0,
+            )
+            expression_started.set()
+            updates = 0
+            frames = (
+                (-0.65, -0.25, 0.72, -12, "#A1F03C"),
+                (0.0, 0.25, 1.0, 0, "#42D9FF"),
+                (0.65, -0.10, 0.82, 12, "#FFB43C"),
+                (0.0, 0.0, 0.92, 0, "#C38BFF"),
+            )
+            while not stop_event.is_set():
+                gaze_x, gaze_y, openness, tilt_deg, color = frames[updates % len(frames)]
+                runtime.update(
+                    gaze_x=gaze_x,
+                    gaze_y=gaze_y,
+                    openness=openness,
+                    tilt_deg=tilt_deg,
+                    color=color,
+                    transition_ms=120,
+                )
+                updates += 1
+                stop_event.wait(0.18)
+            return {"expression_update_count": updates}
+
+        def capture_repeatedly() -> dict[str, object]:
+            count = 0
+            latest: dict[str, object] | None = None
+            while not stop_event.is_set():
+                latest = self._capture_photo_unlocked()
+                count += 1
+                if stop_event.wait(photo_interval_seconds):
+                    break
+            return {"photo_count": count, "photo": latest}
+
+        def play_audio_during_window() -> dict[str, object]:
+            payload = self._play_audio_unlocked()
+            return {"playback_count": 1, "audio": payload}
+
+        workers = [threading.Thread(
+            target=run_worker,
+            args=("dynamic_ui", update_dynamic_ui),
+            name="sdk-media-lab-dynamic-ui",
+        )]
+        if include_photo:
+            workers.append(threading.Thread(
+                target=run_worker,
+                args=("photo", capture_repeatedly),
+                name="sdk-media-lab-photo",
+            ))
+        if include_audio:
+            workers.append(threading.Thread(
+                target=run_worker,
+                args=("audio", play_audio_during_window),
+                name="sdk-media-lab-audio",
+            ))
+
+        resources = ["animation"]
+        if include_photo:
+            resources.append("camera")
+        if include_audio:
+            resources.extend(("microphone", "speaker"))
+        cleanup_errors: list[str] = []
+        try:
+            with self._operation("combined_test", resources=tuple(resources)):
+                for worker in workers:
+                    worker.start()
+                stop_event.wait(duration_seconds)
+                stop_event.set()
+                if include_audio:
+                    try:
+                        self._robot.audio.stop()
+                    except Exception as error:
+                        cleanup_errors.append(f"audio stop failed: {error}")
+                for worker in workers:
+                    worker.join(timeout=12.0)
+                hanging_workers = [worker.name for worker in workers if worker.is_alive()]
+                if hanging_workers:
+                    cleanup_errors.append(
+                        "workers did not stop: " + ", ".join(hanging_workers)
+                    )
+                if expression_started.is_set():
+                    try:
+                        self._robot.expression_runtime.stop()
+                    except Exception as error:
+                        cleanup_errors.append(f"expression stop failed: {error}")
+        finally:
+            with self._operation_gate_lock:
+                with self._state_lock:
+                    self._combined_test_owner_thread_id = None
+                self._combined_test_lock.release()
+
+        with self._state_lock:
+            owners = dict(self._active_actions)
+        ordered_stages = [stages_by_name[name] for name in worker_names]
+        worker_intervals = [
+            (float(stage["started_at"]), float(stage["finished_at"]))
+            for stage in ordered_stages
+            if stage.get("status") == "passed"
+        ]
+        overlap_verified = bool(worker_intervals) and (
+            max(start for start, _finish in worker_intervals)
+            <= min(finish for _start, finish in worker_intervals)
+        )
+        recovery_passed = not owners and not cleanup_errors
+        ordered_stages.append({
+            "name": "concurrency_overlap",
+            "status": "passed" if overlap_verified else "failed",
+            "duration_ms": 0,
+        })
+        ordered_stages.append({
+            "name": "resource_recovery",
+            "status": "passed" if recovery_passed else "failed",
+            "duration_ms": 0,
+            "resource_owners": owners,
+            "cleanup_errors": cleanup_errors,
+        })
+        result["stages"] = ordered_stages
+        result["overlap_verified"] = overlap_verified
+        result["resource_owners"] = owners
+        for stage in ordered_stages:
+            if stage.get("photo"):
+                result["photo"] = stage["photo"]
+            if stage.get("audio"):
+                result["audio"] = stage["audio"]
+        failed_stage = next(
+            (stage for stage in ordered_stages if stage["status"] == "failed"),
+            None,
+        )
+        if failed_stage is not None:
+            result["failed_stage"] = failed_stage["name"]
+            result["error"] = str(
+                failed_stage.get("error")
+                or "; ".join(cleanup_errors)
+                or "并发执行或资源恢复未通过"
+            )
+        result["passed"] = failed_stage is None
+        self._append_event(
+            "combined_test",
+            "Concurrent test completed" if result["passed"] else "Concurrent test failed",
+            "ok" if result["passed"] else "error",
+        )
+        return result
 
     def record_microphone(self, *, duration: float) -> dict[str, object]:
         if (
@@ -909,29 +1168,37 @@ class MediaLabService:
     ) -> Iterator[None]:
         selected_resources = tuple(sorted(set(resources or ((resource or "speaker"),))))
         acquired: list[str] = []
-        for selected_resource in selected_resources:
-            if self._resource_locks[selected_resource].acquire(blocking=False):
-                acquired.append(selected_resource)
-                continue
-            for acquired_resource in reversed(acquired):
-                self._resource_locks[acquired_resource].release()
+        with self._operation_gate_lock:
             with self._state_lock:
-                active_action = (
-                    self._active_actions.get(selected_resource)
-                    or self._active_action
-                    or "another action"
-                )
-            raise MediaLabBusyError(f"media lab is busy with {active_action}")
-        try:
-            self._ensure_device_online()
-        except Exception:
-            for acquired_resource in reversed(acquired):
-                self._resource_locks[acquired_resource].release()
-            raise
-        with self._state_lock:
+                combined_test_owner = self._combined_test_owner_thread_id
+            if (
+                combined_test_owner is not None
+                and combined_test_owner != threading.get_ident()
+            ):
+                raise MediaLabBusyError("media lab is busy with combined_test")
             for selected_resource in selected_resources:
-                self._active_actions[selected_resource] = action
-            self._refresh_active_action_locked()
+                if self._resource_locks[selected_resource].acquire(blocking=False):
+                    acquired.append(selected_resource)
+                    continue
+                for acquired_resource in reversed(acquired):
+                    self._resource_locks[acquired_resource].release()
+                with self._state_lock:
+                    active_action = (
+                        self._active_actions.get(selected_resource)
+                        or self._active_action
+                        or "another action"
+                    )
+                raise MediaLabBusyError(f"media lab is busy with {active_action}")
+            try:
+                self._ensure_device_online()
+            except Exception:
+                for acquired_resource in reversed(acquired):
+                    self._resource_locks[acquired_resource].release()
+                raise
+            with self._state_lock:
+                for selected_resource in selected_resources:
+                    self._active_actions[selected_resource] = action
+                self._refresh_active_action_locked()
         self._append_event(action, f"{_action_label(action)} started", "running")
         try:
             yield
@@ -1222,6 +1489,20 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     async def capture_photo() -> dict[str, object]:
         result = await _run_action(service.capture_photo)
         result["artifact_url"] = _artifact_url(str(result["artifact"]))
+        return result
+
+    @app.post("/api/tests/combined")
+    async def run_combined_test(request: CombinedTestRequest) -> dict[str, object]:
+        result = await _run_action(
+            service.run_combined_test,
+            duration_seconds=request.duration_seconds,
+            photo_interval_seconds=request.photo_interval_seconds,
+            include_photo=request.include_photo,
+            include_audio=request.include_audio,
+        )
+        photo = result.get("photo")
+        if isinstance(photo, dict) and photo.get("artifact"):
+            photo["artifact_url"] = _artifact_url(str(photo["artifact"]))
         return result
 
     @app.post("/api/actions/record-microphone")

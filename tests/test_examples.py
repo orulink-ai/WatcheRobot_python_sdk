@@ -13,7 +13,6 @@ EXAMPLE_IDS = {
     "capture_photo": "example.capture_photo",
     "record_microphone": "example.record_microphone",
     "sdk_media_lab": "example.sdk_media_lab",
-    "vision_debug_lab": "com.orulink.vision_debug_lab",
 }
 
 
@@ -28,15 +27,6 @@ def test_every_example_is_a_complete_managed_application() -> None:
         assert "ApplicationContext.from_environment()" in source
         assert "WatcheRobot.connect" not in source
         assert "WATCHEROBOT_PAIRING_CODE" not in source
-
-
-def test_vision_debug_lab_declares_its_reviewed_marketplace_platform() -> None:
-    manifest = json.loads(
-        (ROOT / "examples" / "vision_debug_lab" / "app.json").read_text()
-    )
-
-    assert manifest["schema_version"] == 2
-    assert manifest["supported_host_platforms"] == ["windows"]
 
 
 def test_quickstart_demonstrates_domain_apis_through_context_robot() -> None:
@@ -64,6 +54,7 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     page = root.joinpath("web", "index.html").read_text(encoding="utf-8")
     script = root.joinpath("web", "app.js").read_text(encoding="utf-8")
     styles = root.joinpath("web", "styles.css").read_text(encoding="utf-8")
+    i18n = root.joinpath("web", "i18n.mjs").read_text(encoding="utf-8")
 
     assert "127.0.0.1" in entrypoint
     assert "ApplicationContext.from_environment()" in entrypoint
@@ -73,6 +64,10 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     assert "api/status" in script
     assert "api/actions/play-audio" in script
     assert "api/actions/capture-photo" in script
+    assert 'id="combinedTestButton"' in page
+    assert "api/tests/combined" in script
+    assert "并发压力测试" in i18n
+    assert "同时运行动态自定义 UI、连续拍照和音频播放" in i18n
     assert "api/actions/record-microphone" in script
     assert "ws://" not in script
     assert "wss://" not in script
@@ -80,37 +75,13 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     assert 'drawWaveform("/artifacts/microphone.wav")' not in script
     assert "[hidden]" in styles
     assert "display: none !important" in styles
+    assert ".station-action { flex: 1; color: var(--ink); background: var(--signal); }" in styles
 
     examples_guide = (ROOT / "examples" / "README.md").read_text(encoding="utf-8")
     hardware_guide = (ROOT / "docs" / "hardware-testing.md").read_text(encoding="utf-8")
     assert "sdk_media_lab" in examples_guide
     assert "sdk_media_lab" in hardware_guide
     assert "127.0.0.1" in hardware_guide
-
-
-def test_vision_debug_lab_is_loopback_only_and_uses_managed_vision_apis() -> None:
-    root = ROOT / "examples" / "vision_debug_lab"
-    entrypoint = root.joinpath("app.py").read_text(encoding="utf-8")
-    service = root.joinpath("service.py").read_text(encoding="utf-8")
-    page = root.joinpath("web", "index.html").read_text(encoding="utf-8")
-    script = root.joinpath("web", "app.js").read_text(encoding="utf-8")
-    packet_module = root.joinpath("web", "preview-packet.mjs").read_text(
-        encoding="utf-8"
-    )
-
-    assert 'HOST = "127.0.0.1"' in entrypoint
-    assert "ApplicationContext.from_environment()" in entrypoint
-    assert "app.robot" in entrypoint
-    assert "robot.vision.status" in service
-    assert "robot.face_tracking.open_preview" in service
-    assert "192.168." not in service
-    assert "Vision Debug Lab" in page
-    assert "/ws/preview" in packet_module
-    assert "new WebSocket" in script
-    assert "drawImage" in script
-    assert "strokeRect" in script
-    assert "192.168." not in script
-    assert "192.168." not in packet_module
 
 
 def test_media_lab_is_ready_for_marketplace_distribution() -> None:

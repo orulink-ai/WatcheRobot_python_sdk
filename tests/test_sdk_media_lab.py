@@ -297,6 +297,27 @@ class FakeAnimation:
         self.stop_calls += 1
 
 
+class FakeExpressionRuntime:
+    def __init__(self) -> None:
+        self.starts: list[tuple[str, dict[str, object]]] = []
+        self.updates: list[dict[str, object]] = []
+        self.stop_calls = 0
+        self.update_event = threading.Event()
+        self.fail_update = False
+
+    def start(self, preset: str, **kwargs: object) -> None:
+        self.starts.append((preset, kwargs))
+
+    def update(self, **kwargs: object) -> None:
+        if self.fail_update:
+            raise RuntimeError("display update failed")
+        self.updates.append(kwargs)
+        self.update_event.set()
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+
 class FakeRtc:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
@@ -370,6 +391,7 @@ def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
             "audio.stream",
             "microphone",
             "camera.capture",
+            "expression.runtime.v3",
             "rtc.audio.full_duplex.v1",
             "rtc.video.mjpeg.v1",
         ),
@@ -417,6 +439,7 @@ def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
         motion=FakeMotion(),
         lights=FakeLights(),
         animation=FakeAnimation(),
+        expression_runtime=FakeExpressionRuntime(),
     )
 
 
@@ -503,6 +526,7 @@ def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -
         "audio.stream",
         "microphone",
         "camera.capture",
+        "expression.runtime.v3",
         "rtc.audio.full_duplex.v1",
         "rtc.video.mjpeg.v1",
     ]
@@ -842,6 +866,162 @@ def test_animation_control_uses_public_sdk_domain_and_accepts_catalog_ids(tmp_pa
     assert robot.animation.played == ["standby_little4"]
     assert robot.animation.prefetched == ["happy"]
     assert robot.animation.stop_calls == 1
+
+
+def test_combined_test_runs_dynamic_ui_photo_and_audio_concurrently(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    service = _service(module, tmp_path, robot)
+
+    report = service.run_combined_test(
+        duration_seconds=0.35,
+        photo_interval_seconds=0.08,
+    )
+
+    assert report["passed"] is True
+    assert [stage["name"] for stage in report["stages"]] == [
+        "dynamic_ui",
+        "photo",
+        "audio",
+        "concurrency_overlap",
+        "resource_recovery",
+    ]
+    assert all(stage["status"] == "passed" for stage in report["stages"])
+    assert report["overlap_verified"] is True
+    assert report["stages"][0]["expression_update_count"] >= 1
+    assert report["stages"][1]["photo_count"] >= 2
+    assert report["photo"]["artifact"] == "camera.jpg"
+    assert report["audio"]["source"] == "sample.wav"
+    assert robot.expression_runtime.starts
+    assert robot.expression_runtime.updates
+    assert robot.expression_runtime.stop_calls == 1
+    assert robot.audio.stop_calls == 1
+    assert report["resource_owners"] == {}
+    assert service.status()["busy"] is False
+
+
+def test_combined_test_stops_all_workers_and_releases_resources_after_failure(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+
+    def fail_capture(**_kwargs):
+        raise RuntimeError("camera unavailable")
+
+    robot.camera.capture = fail_capture
+    service = _service(module, tmp_path, robot)
+
+    report = service.run_combined_test(
+        duration_seconds=0.4,
+        photo_interval_seconds=0.05,
+    )
+
+    assert report["passed"] is False
+    assert report["failed_stage"] == "photo"
+    assert report["error"] == "camera unavailable"
+    assert robot.expression_runtime.stop_calls == 1
+    assert report["resource_owners"] == {}
+    assert service.status()["busy"] is False
+
+
+def test_combined_test_blocks_an_external_action_until_the_suite_finishes(
+    tmp_path: Path,
+) -> None:
+    module = _load_service_module()
+    playback_gate = threading.Event()
+    service = _service(module, tmp_path, _robot(playback=FakePlayback(playback_gate)))
+    suite_started = threading.Event()
+    original_update = service._robot.expression_runtime.update
+
+    def update_expression(**kwargs):
+        original_update(**kwargs)
+        suite_started.set()
+
+    service._robot.expression_runtime.update = update_expression
+    worker = threading.Thread(
+        target=service.run_combined_test,
+        kwargs={"duration_seconds": 0.5, "photo_interval_seconds": 0.1},
+    )
+    worker.start()
+    assert suite_started.wait(timeout=2.0)
+
+    try:
+        assert service.status()["active_action"] == "combined_test"
+        with pytest.raises(module.MediaLabBusyError, match="combined_test"):
+            service.play_audio()
+    finally:
+        playback_gate.set()
+        worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert service.status()["busy"] is False
+
+
+def test_combined_test_omits_audio_observation_when_audio_is_skipped(
+    tmp_path: Path,
+) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+
+    report = service.run_combined_test(
+        duration_seconds=0.25,
+        photo_interval_seconds=0.07,
+        include_photo=True,
+        include_audio=False,
+    )
+
+    assert report["passed"] is True
+    assert report["observations_required"] == [
+        "确认动态自定义 UI 持续变化且没有异常闪烁",
+        "确认设备在并发测试期间没有重启或失联",
+        "确认连续拍照持续成功",
+    ]
+    assert all(stage["name"] != "audio" for stage in report["stages"])
+
+
+def test_combined_test_rejects_missing_expression_capability_and_offline_device(
+    tmp_path: Path,
+) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities = tuple(
+        capability for capability in robot.capabilities
+        if capability != "expression.runtime.v3"
+    )
+    service = _service(module, tmp_path, robot)
+
+    with pytest.raises(module.MediaLabCapabilityError, match="expression.runtime.v3"):
+        service.run_combined_test(duration_seconds=0.2)
+
+    offline_service = _service(module, tmp_path, online=False)
+    with pytest.raises(module.MediaLabDeviceOfflineError, match="offline"):
+        offline_service.run_combined_test(duration_seconds=0.2)
+
+
+def test_combined_test_http_endpoint_adds_artifact_url(tmp_path: Path) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    client = _client_for_service(module, tmp_path, service)
+
+    response = client.post(
+        "/api/tests/combined",
+        json={
+            "duration_seconds": 2.0,
+            "photo_interval_seconds": 0.2,
+            "include_photo": True,
+            "include_audio": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["passed"] is True
+    assert payload["photo"]["artifact_url"].startswith("/artifacts/camera.jpg?v=")
+    assert payload["observations_required"] == [
+        "确认动态自定义 UI 持续变化且没有异常闪烁",
+        "确认设备在并发测试期间没有重启或失联",
+        "确认连续拍照持续成功",
+        "确认已从机器人扬声器听到音频",
+    ]
 
 
 @pytest.mark.parametrize("animation_id", ["", "UPPER", "../bad", "bad-id", "x" * 64])
