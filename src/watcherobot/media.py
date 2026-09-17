@@ -101,6 +101,7 @@ class MicrophoneSession:
         self._decode_failures = 0
         self._last_sequence = 0
         self._closed = False
+        self._close_requested = False
         self._lock = Lock()
         self._decoder_lock = Lock()
 
@@ -137,10 +138,17 @@ class MicrophoneSession:
 
     def close(self) -> None:
         with self._lock:
-            if self._closed:
+            # An uplink end marker closes the decoder, not the device's
+            # microphone lease. Context exit must still release that lease.
+            if self._close_requested:
                 return
+            self._close_requested = True
         try:
             self._robot._close_microphone(self._session_id)
+        except Exception:
+            with self._lock:
+                self._close_requested = False
+            raise
         finally:
             self._finish_decoder_stream()
 
