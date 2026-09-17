@@ -29,7 +29,12 @@ async def main() -> None:
 
     try:
         async with ApplicationContext.from_environment() as app:
-            service = ExpressionLabService(robot=app.robot, pair_watcher=pair_robot)
+            service = ExpressionLabService(
+                robot=app.robot,
+                pair_watcher=pair_robot,
+                sample_audio=ROOT.parent / "sdk_media_lab" / "assets" / "sample_speech.wav",
+                artifacts_root=ROOT / "artifacts",
+            )
             server = uvicorn.Server(
                 uvicorn.Config(
                     create_web_app(
