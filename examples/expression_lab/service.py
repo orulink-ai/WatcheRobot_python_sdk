@@ -268,14 +268,10 @@ class ExpressionLabService:
         *,
         robot: Any,
         pair_watcher: Callable[[str], object] | None = None,
-        sample_audio: Path | None = None,
-        artifacts_root: Path | None = None,
     ) -> None:
         self._robot = robot
         self._runtime = robot.expression_runtime
         self._pair_watcher = pair_watcher
-        self._sample_audio = sample_audio
-        self._artifacts_root = artifacts_root
         self._lock = threading.RLock()
         self._active = False
         # Connection probes describe what the browser can currently observe.
@@ -383,36 +379,6 @@ class ExpressionLabService:
             self._runtime.update(**changes)
             self._parameters.update(changes)
             return self._status_locked(probe_device=False)
-
-    def capture_photo(self) -> dict[str, object]:
-        if self._artifacts_root is None:
-            raise RuntimeError("photo artifact output is not configured")
-        with self._lock:
-            image = self._robot.camera.capture(
-                width=0,
-                height=0,
-                quality=0,
-                timeout=10.0,
-            )
-            self._artifacts_root.mkdir(parents=True, exist_ok=True)
-            output = self._artifacts_root / "camera.jpg"
-            output.write_bytes(bytes(image.data))
-            return {
-                "artifact": output.name,
-                "bytes": output.stat().st_size,
-                "content_type": "image/jpeg",
-            }
-
-    def play_audio(self) -> dict[str, object]:
-        if self._sample_audio is None or not self._sample_audio.is_file():
-            raise FileNotFoundError("sample audio is unavailable")
-        with self._lock:
-            playback = self._robot.audio.play_file(self._sample_audio)
-            playback.wait(30.0)
-            return {
-                "source": self._sample_audio.name,
-                "bytes": self._sample_audio.stat().st_size,
-            }
 
     def stop(self) -> dict[str, object]:
         with self._lock:
@@ -580,30 +546,6 @@ def create_web_app(
         try:
             return await asyncio.to_thread(service.stop)
         except (WatcheRobotError, RuntimeError, ValueError) as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except TimeoutError as error:
-            raise HTTPException(status_code=504, detail=str(error)) from error
-
-    @app.post(
-        "/api/actions/capture-photo",
-        dependencies=[Depends(require_state_change_credential)],
-    )
-    async def capture_photo() -> dict[str, object]:
-        try:
-            return await asyncio.to_thread(service.capture_photo)
-        except (OSError, WatcheRobotError, RuntimeError, ValueError) as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except TimeoutError as error:
-            raise HTTPException(status_code=504, detail=str(error)) from error
-
-    @app.post(
-        "/api/actions/play-audio",
-        dependencies=[Depends(require_state_change_credential)],
-    )
-    async def play_audio() -> dict[str, object]:
-        try:
-            return await asyncio.to_thread(service.play_audio)
-        except (OSError, WatcheRobotError, RuntimeError, ValueError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except TimeoutError as error:
             raise HTTPException(status_code=504, detail=str(error)) from error

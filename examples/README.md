@@ -24,6 +24,9 @@ Available examples include:
 - `dshtts_speaker`: expose a loopback TTS bridge that converts DSH assistant
   replies with edge-tts and plays them through the robot speaker; includes
   matching Windows PowerShell and macOS/Linux shell clients.
+- `vision_debug_lab`: launch a loopback-only Himax vision workbench for
+  backend/model health, same-sequence face overlays, metrics, dataset
+  recording, HOLD/RECENTER safety, and diagnostic reports.
 - `scheduled_reminder`: a robot alarm clock app — set alarms (time, repeat
   rules, text) on its local web page (http://127.0.0.1:8766), and the robot
   speaks them from its speaker at the scheduled times, playing a happy

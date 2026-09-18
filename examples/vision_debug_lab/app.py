@@ -1,4 +1,4 @@
-"""Launch the loopback-only Watcher procedural expression workbench."""
+"""Run the loopback-only WatcheRobot Vision Debug Lab."""
 
 from __future__ import annotations
 
@@ -10,9 +10,12 @@ from pathlib import Path
 
 import uvicorn
 
-from service import ExpressionLabService, create_web_app
+from service import (
+    DaemonDeviceStatusProvider,
+    VisionDebugLabService,
+    create_web_app,
+)
 from watcherobot.application import ApplicationContext
-from watcherobot.cli import pair_robot
 
 
 ROOT = Path(__file__).resolve().parent
@@ -29,14 +32,25 @@ async def main() -> None:
 
     try:
         async with ApplicationContext.from_environment() as app:
-            service = ExpressionLabService(robot=app.robot, pair_watcher=pair_robot)
+            device_status_url = os.environ.get(
+                "WATCHER_APP_DEVICE_STATUS_URL",
+                "",
+            ).strip()
+            if not device_status_url:
+                raise RuntimeError(
+                    "Daemon did not inject WATCHER_APP_DEVICE_STATUS_URL"
+                )
+            service = VisionDebugLabService(
+                robot=app.robot,
+                artifacts_dir=ROOT / "artifacts",
+                device_status_provider=DaemonDeviceStatusProvider(
+                    device_status_url
+                ),
+            )
+            web_app = create_web_app(service, web_root=ROOT / "web")
             server = uvicorn.Server(
                 uvicorn.Config(
-                    create_web_app(
-                        service,
-                        web_root=ROOT / "web",
-                        firmware_root=ROOT / "firmware",
-                    ),
+                    web_app,
                     host=HOST,
                     port=port,
                     access_log=False,
@@ -45,14 +59,14 @@ async def main() -> None:
             )
             server_task = asyncio.create_task(
                 server.serve(sockets=[listener]),
-                name="expression-lab-http",
+                name="vision-debug-lab-http",
             )
             while not server.started:
                 if server_task.done():
                     await server_task
                 await asyncio.sleep(0.02)
-            app.logger.info("Watcher Expression Lab: %s", url)
-            if os.environ.get("WATCHER_EXPRESSION_LAB_NO_BROWSER") != "1":
+            app.logger.info("Vision Debug Lab: %s", url)
+            if os.environ.get("WATCHER_VISION_LAB_NO_BROWSER") != "1":
                 await asyncio.to_thread(webbrowser.open, url)
             await server_task
     finally:

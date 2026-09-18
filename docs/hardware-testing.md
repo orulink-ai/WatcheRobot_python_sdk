@@ -29,17 +29,19 @@ watcherobot app run .\examples\capture_photo
 watcherobot app run .\examples\record_microphone
 ```
 
-For Himax, model, inference-preview, and on-device face-tracking acceptance,
-run SDK Test Bench:
+For Himax and on-device face-tracking acceptance, run Vision Debug Lab:
 
 ```powershell
-watcherobot app run .\examples\sdk_media_lab
+watcherobot app run .\examples\vision_debug_lab
 ```
 
 It binds only to `127.0.0.1` and uses the Runtime-injected Application Device
 channel. It does not connect to a robot LAN port. The dashboard checks the
-vision backend, Himax connection, current model and capabilities, and provides
-model inference preview plus managed face-tracking preview.
+vision backend, Himax connection, current model and capabilities before it
+opens preview. It then displays sequence-matched JPEG and face telemetry,
+collects latency/drop metrics, records JPEG + JSONL datasets, and exports a
+diagnostic report. Closing the last dashboard viewer automatically applies
+HOLD.
 
 PTL firmware can validate the JPEG path but cannot provide face inference.
 SSCMA firmware must expose both `vision.status.v1` and
@@ -54,8 +56,13 @@ inference. Keep high-bandwidth preview on the managed Application path and use
 the UART for low-level maintenance or low-volume logs so display animation,
 preview transport, and verbose serial output do not compete unnecessarily.
 
-The same Test Bench also binds a temporary dashboard to `127.0.0.1`, opens the
-default browser, and
+For an operator-facing media bench, run SDK Test Bench:
+
+```powershell
+watcherobot app run .\examples\sdk_media_lab
+```
+
+It binds a temporary dashboard to `127.0.0.1`, opens the default browser, and
 keeps every hardware operation inside the managed Application Device channel.
 The dashboard tests the bundled speaker stream, one-shot JPEG capture, decoded
 microphone recording, capability discovery, artifacts, diagnostic events,

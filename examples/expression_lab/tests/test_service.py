@@ -38,35 +38,6 @@ class FailingStartRuntime(FakeExpressionRuntime):
             raise RuntimeError("device rejected start")
 
 
-class FakeCamera:
-    def capture(self, **parameters):
-        assert parameters == {
-            "width": 0,
-            "height": 0,
-            "quality": 0,
-            "timeout": 10.0,
-        }
-        return SimpleNamespace(data=b"fake-jpeg")
-
-
-class FakePlayback:
-    def __init__(self) -> None:
-        self.wait_timeout = None
-
-    def wait(self, timeout: float) -> None:
-        self.wait_timeout = timeout
-
-
-class FakeAudio:
-    def __init__(self) -> None:
-        self.path = None
-        self.playback = FakePlayback()
-
-    def play_file(self, path: Path) -> FakePlayback:
-        self.path = path
-        return self.playback
-
-
 def test_expression_start_defaults_to_flat_rendering() -> None:
     request = ExpressionStartRequest(preset="standby")
 
@@ -415,81 +386,6 @@ def test_failed_restart_does_not_report_stale_active_state() -> None:
     assert service.status()["active"] is False
     assert runtime.calls[-2][0] == "start"
     assert runtime.calls[-1] == ("stop", {})
-
-
-def test_service_captures_photo_and_plays_audio_without_stopping_expression(
-    tmp_path: Path,
-) -> None:
-    runtime = FakeExpressionRuntime()
-    audio = FakeAudio()
-    sample_audio = tmp_path / "sample.wav"
-    sample_audio.write_bytes(b"wave-data")
-    robot = SimpleNamespace(
-        expression_runtime=runtime,
-        camera=FakeCamera(),
-        audio=audio,
-        capabilities=("expression.runtime.v3",),
-        device_info={"model": "Watcher"},
-        resource_snapshot={},
-    )
-    service = ExpressionLabService(
-        robot=robot,
-        sample_audio=sample_audio,
-        artifacts_root=tmp_path / "artifacts",
-    )
-    service.start(preset="standby")
-
-    photo = service.capture_photo()
-    played = service.play_audio()
-
-    assert (tmp_path / "artifacts" / "camera.jpg").read_bytes() == b"fake-jpeg"
-    assert photo == {
-        "artifact": "camera.jpg",
-        "bytes": len(b"fake-jpeg"),
-        "content_type": "image/jpeg",
-    }
-    assert played == {"source": "sample.wav", "bytes": len(b"wave-data")}
-    assert audio.path == sample_audio
-    assert audio.playback.wait_timeout == 30.0
-    assert service.status()["active"] is True
-    assert ("stop", {}) not in runtime.calls
-
-
-def test_web_media_actions_require_credential_and_preserve_expression(
-    tmp_path: Path,
-) -> None:
-    runtime = FakeExpressionRuntime()
-    audio = FakeAudio()
-    sample_audio = tmp_path / "sample.wav"
-    sample_audio.write_bytes(b"wave-data")
-    service = ExpressionLabService(
-        robot=SimpleNamespace(
-            expression_runtime=runtime,
-            camera=FakeCamera(),
-            audio=audio,
-            capabilities=("expression.runtime.v3",),
-            device_info={"model": "Watcher"},
-            resource_snapshot={},
-        ),
-        sample_audio=sample_audio,
-        artifacts_root=tmp_path / "artifacts",
-    )
-    service.start(preset="standby")
-    web_root = tmp_path / "web"
-    web_root.mkdir()
-    (web_root / "index.html").write_text("<h1>lab</h1>", encoding="utf-8")
-
-    with TestClient(
-        create_web_app(service, web_root=web_root, run_credential=RUN_CREDENTIAL),
-        base_url="http://127.0.0.1",
-    ) as client:
-        assert client.post("/api/actions/capture-photo").status_code == 403
-        assert client.post("/api/actions/play-audio").status_code == 403
-        photo = client.post("/api/actions/capture-photo", headers=AUTH_HEADERS)
-        played = client.post("/api/actions/play-audio", headers=AUTH_HEADERS)
-        assert photo.status_code == 200
-        assert played.status_code == 200
-        assert client.get("/api/status").json()["active"] is True
 
 
 def test_web_api_returns_structured_json_for_sdk_command_rejection(tmp_path: Path) -> None:
