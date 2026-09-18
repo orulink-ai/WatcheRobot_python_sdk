@@ -2013,7 +2013,7 @@ function renderCombinedStages(stages = []) {
     dynamic_ui: "Dynamic Custom UI",
     photo: "Repeated Camera Capture",
     audio: "Audio Playback",
-    concurrency_overlap: "Concurrent Overlap",
+    request_overlap: "Request Overlap",
     resource_recovery: "Resource Recovery",
   };
   const statuses = { passed: "Passed", failed: "Failed", skipped: "Skipped" };

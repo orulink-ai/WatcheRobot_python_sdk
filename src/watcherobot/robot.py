@@ -28,6 +28,11 @@ from .protocol import (
     FRAME_VIDEO,
     BinaryFrame,
 )
+from .resource_scheduler import (
+    FifoResourceScheduler,
+    ResourceQueueClosedError,
+    ResourceTicket,
+)
 from .vision import (
     FaceTrackingDomain,
     FaceTrackingPreview,
@@ -638,8 +643,10 @@ class AudioDomain(_Domain):
             raise ValueError("sound_id is required")
         return self._robot._start_local_audio(sound_id)
 
-    def play_file(self, path: str | Path) -> AudioPlayback:
-        return self._robot._start_audio_playback(load_audio_file(path))
+    def play_file(self, path: str | Path, *, queue_timeout: float = 30.0) -> AudioPlayback:
+        return self._robot._start_audio_playback(
+            load_audio_file(path), queue_timeout=queue_timeout
+        )
 
     def play_pcm(
         self,
@@ -648,6 +655,7 @@ class AudioDomain(_Domain):
         sample_rate_hz: int = 24000,
         channels: int = 1,
         sample_width_bytes: int = 2,
+        queue_timeout: float = 30.0,
     ) -> AudioPlayback:
         return self._robot._start_audio_playback(
             PCMAudio(
@@ -658,7 +666,8 @@ class AudioDomain(_Domain):
                     sample_width_bytes=sample_width_bytes,
                     encoding="pcm_s16le",
                 ),
-            )
+            ),
+            queue_timeout=queue_timeout,
         )
 
     def stop(self) -> None:
@@ -858,11 +867,16 @@ class WatcheRobot:
         self._image_assemblies: dict[int, _ImageAssembly] = {}
         self._image_assembly_lock = threading.Lock()
         self._camera_lock = threading.Lock()
+        self._camera_condition = threading.Condition()
+        self._camera_failures: dict[int, str] = {}
+        self._camera_disconnected = False
+        self._ptl_media_scheduler = FifoResourceScheduler()
         self._face_tracking_lock = threading.Lock()
         self._face_tracking_preview: FaceTrackingPreview | None = None
         self._audio_playback_lock = threading.Lock()
         self._audio_api_lock = threading.Lock()
         self._audio_playback: AudioPlayback | None = None
+        self._audio_queue_tickets: dict[int, tuple[ResourceTicket, AudioPlayback]] = {}
         self._audio_send_future: Any | None = None
         self._audio_cleanup_future: Any | None = None
         self._audio_cleanup_required = False
@@ -1045,6 +1059,16 @@ class WatcheRobot:
         if send_future is not None and not send_future.done():
             send_future.cancel()
 
+    def _cancel_queued_audio_playbacks(self, *, reason: str) -> None:
+        with self._audio_playback_lock:
+            queued_entries = list(self._audio_queue_tickets.values())
+            active_playback = self._audio_playback
+        for ticket, playback in queued_entries:
+            if playback is active_playback or playback.state is not JobState.QUEUED:
+                continue
+            ticket.cancel(reason)
+            playback._update(JobState.CANCELLED, reason=reason)
+
     def _cancel_audio_sender(self) -> None:
         with self._audio_playback_lock:
             send_future = self._audio_send_future
@@ -1060,47 +1084,102 @@ class WatcheRobot:
             except Exception:
                 self._end_audio_transition(command_succeeded=False)
                 raise
+            self._cancel_queued_audio_playbacks(reason="replaced")
             self._replace_audio_playback()
             self._end_audio_transition(command_succeeded=True)
             return job
 
-    def _start_audio_playback(self, audio: PCMAudio) -> AudioPlayback:
+    def _start_audio_playback(
+        self, audio: PCMAudio, *, queue_timeout: float = 30.0
+    ) -> AudioPlayback:
         if "audio.stream" not in self.capabilities:
             raise WatcheRobotError("robot firmware does not advertise audio.stream")
-        with self._audio_api_lock:
-            self._begin_audio_transition()
+        if queue_timeout <= 0:
+            raise ValueError("queue_timeout must be positive")
+        with self._audio_playback_lock:
+            stream_id = self._next_audio_stream_id
+            self._next_audio_stream_id = 1 if stream_id >= 0xFFFF else stream_id + 1
+        ticket = self._ptl_media_scheduler.request()
+
+        def release_resource(_job: Job) -> None:
+            ticket.release()
             with self._audio_playback_lock:
-                stream_id = self._next_audio_stream_id
-                self._next_audio_stream_id = 1 if stream_id >= 0xFFFF else stream_id + 1
+                self._audio_queue_tickets.pop(stream_id, None)
+
+        playback = AudioPlayback(
+            stream_id,
+            self._transport,
+            audio.sha256,
+            len(audio.data) / (
+                audio.audio_format.sample_rate_hz
+                * audio.audio_format.channels
+                * audio.audio_format.sample_width_bytes
+            ),
+            self._cancel_audio_playback,
+            initial_state=JobState.QUEUED,
+            terminal_callback=release_resource,
+        )
+        with self._audio_playback_lock:
+            self._audio_queue_tickets[stream_id] = (ticket, playback)
+        if ticket.granted:
             try:
-                self._command(
-                    "ctrl.audio.stream.begin",
-                    {
-                        "stream_id": stream_id,
-                        "total_bytes": len(audio.data),
-                        "sample_rate_hz": audio.audio_format.sample_rate_hz,
-                        "channels": audio.audio_format.channels,
-                        "sample_width_bytes": audio.audio_format.sample_width_bytes,
-                        "audio_sha256": audio.sha256,
-                    },
-                )
+                self._launch_audio_playback(playback, audio)
+            except Exception as error:
+                playback._update(JobState.FAILED, reason=str(error) or type(error).__name__)
+                raise
+            return playback
+
+        threading.Thread(
+            target=self._await_queued_audio_playback,
+            args=(playback, audio, ticket, queue_timeout),
+            name=f"watcherobot-audio-queue-{stream_id}",
+            daemon=True,
+        ).start()
+        return playback
+
+    def _await_queued_audio_playback(
+        self,
+        playback: AudioPlayback,
+        audio: PCMAudio,
+        ticket: ResourceTicket,
+        queue_timeout: float,
+    ) -> None:
+        try:
+            ticket.wait(queue_timeout)
+        except TimeoutError:
+            playback._update(JobState.FAILED, reason="media_queue_timeout")
+            return
+        except ResourceQueueClosedError as error:
+            if not playback.state.terminal:
+                playback._update(JobState.FAILED, reason=error.reason)
+            return
+        except RuntimeError:
+            if not playback.state.terminal:
+                playback._update(JobState.FAILED, reason="media_queue_cancelled")
+            return
+        if playback.state.terminal:
+            ticket.release()
+            return
+        try:
+            self._launch_audio_playback(playback, audio)
+        except Exception as error:
+            playback._update(JobState.FAILED, reason=str(error) or type(error).__name__)
+
+    def _launch_audio_playback(self, playback: AudioPlayback, audio: PCMAudio) -> None:
+        with self._audio_api_lock:
+            if playback.state.terminal:
+                return
+            self._begin_audio_transition()
+            stream_id = playback.id
+            try:
+                self._start_audio_stream_command(stream_id, audio)
             except Exception:
                 self._end_audio_transition(command_succeeded=False)
                 raise
             self._replace_audio_playback()
-            playback = AudioPlayback(
-                stream_id,
-                self._transport,
-                audio.sha256,
-                len(audio.data) / (
-                    audio.audio_format.sample_rate_hz
-                    * audio.audio_format.channels
-                    * audio.audio_format.sample_width_bytes
-                ),
-                self._cancel_audio_playback,
-            )
             with self._audio_playback_lock:
                 self._audio_playback = playback
+            playback._update(JobState.STARTING)
             try:
                 send_future = self._transport.send_audio_stream(audio.data, stream_id=stream_id)
                 with self._audio_playback_lock:
@@ -1122,7 +1201,29 @@ class WatcheRobot:
                     self._handle_audio_sender_failure(playback)
 
             send_future.add_done_callback(finish_send)
-            return playback
+
+    def _start_audio_stream_command(self, stream_id: int, audio: PCMAudio) -> None:
+        deadline = time.monotonic() + max(
+            1.0, float(getattr(self._transport, "command_timeout", 5.0))
+        )
+        while True:
+            try:
+                self._command(
+                    "ctrl.audio.stream.begin",
+                    {
+                        "stream_id": stream_id,
+                        "total_bytes": len(audio.data),
+                        "sample_rate_hz": audio.audio_format.sample_rate_hz,
+                        "channels": audio.audio_format.channels,
+                        "sample_width_bytes": audio.audio_format.sample_width_bytes,
+                        "audio_sha256": audio.sha256,
+                    },
+                )
+                return
+            except CommandError as error:
+                if error.reason not in {"busy", "no_capacity"} or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.1)
 
     def _begin_audio_transition(self) -> None:
         while True:
@@ -1181,6 +1282,15 @@ class WatcheRobot:
         playback._update(JobState.FAILED, reason="audio_send_failed")
 
     def _cancel_audio_playback(self, playback: AudioPlayback) -> None:
+        with self._audio_playback_lock:
+            queued_entry = self._audio_queue_tickets.get(playback.id)
+            active_playback = self._audio_playback
+        if playback.state is JobState.QUEUED and active_playback is not playback:
+            if queued_entry is not None:
+                ticket, _ = queued_entry
+                ticket.cancel("cancelled")
+            playback._update(JobState.CANCELLED, reason="cancelled")
+            return
         with self._audio_api_lock:
             with self._audio_playback_lock:
                 if self._audio_playback is not playback or playback.state.terminal:
@@ -1206,6 +1316,7 @@ class WatcheRobot:
             except Exception:
                 self._end_audio_transition(command_succeeded=False)
                 raise
+            self._cancel_queued_audio_playbacks(reason="stopped")
             self._replace_audio_playback()
             self._end_audio_transition(command_succeeded=True)
 
@@ -1292,41 +1403,66 @@ class WatcheRobot:
                     self._microphone = None
 
     def _capture_image(self, *, width: int, height: int, quality: int, timeout: float) -> ImageFrame:
-        with self._camera_lock:
-            with self._image_assembly_lock:
-                self._image_assemblies.clear()
-            while True:
-                try:
-                    self._image_queue.get_nowait()
-                except queue.Empty:
-                    break
-            deadline = time.monotonic() + max(timeout, 0)
-            first_attempt = True
-            while True:
+        try:
+            ticket = self._ptl_media_scheduler.request()
+            ticket.wait(timeout)
+        except TimeoutError as error:
+            raise TimeoutError("camera did not start before capture timeout") from error
+        except ResourceQueueClosedError as error:
+            raise WatcheRobotError("robot connection is closed") from error
+        try:
+            with self._camera_lock:
+                deadline = time.monotonic() + timeout
+                return self._capture_image_locked(
+                    width=width, height=height, quality=quality, deadline=deadline
+                )
+        finally:
+            ticket.release()
+
+    def _capture_image_locked(
+        self, *, width: int, height: int, quality: int, deadline: float
+    ) -> ImageFrame:
+        with self._image_assembly_lock:
+            self._image_assemblies.clear()
+        while True:
+            try:
+                self._image_queue.get_nowait()
+            except queue.Empty:
+                break
+        first_attempt = True
+        while True:
+            with self._camera_condition:
+                self._camera_disconnected = False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 and not first_attempt:
+                raise TimeoutError("camera remained busy before capture timeout")
+            try:
+                response = self._command(
+                    "ctrl.camera.capture",
+                    {"width": int(width), "height": int(height), "quality": int(quality)},
+                    timeout=max(remaining, 0),
+                )
+                first_attempt = False
+            except TimeoutError as error:
+                raise TimeoutError(
+                    "camera capture command was not acknowledged before timeout"
+                ) from error
+            except CommandError as error:
+                first_attempt = False
+                if error.reason not in ("busy", "no_capacity"):
+                    raise
                 remaining = deadline - time.monotonic()
-                if remaining <= 0 and not first_attempt:
-                    raise TimeoutError("camera remained busy before capture timeout")
-                try:
-                    response = self._command(
-                        "ctrl.camera.capture",
-                        {"width": int(width), "height": int(height), "quality": int(quality)},
-                        timeout=max(remaining, 0),
-                    )
-                    break
-                except TimeoutError as error:
-                    raise TimeoutError("camera capture command was not acknowledged before timeout") from error
-                except CommandError as error:
-                    first_attempt = False
-                    if error.reason != "busy":
-                        raise
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise TimeoutError("camera remained busy before capture timeout") from error
-                    time.sleep(min(0.1, remaining))
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "camera remained busy before capture timeout"
+                    ) from error
+                time.sleep(min(0.1, remaining))
+                continue
             session_id = response.get("data", {}).get("session_id")
             if not isinstance(session_id, int) or session_id <= 0:
                 raise WatcheRobotError("camera ACK did not include session_id")
             expected_stream_id = session_id & 0xFFFF
+            retry_capture = False
             while True:
                 try:
                     image = self._image_queue.get_nowait()
@@ -1334,10 +1470,28 @@ class WatcheRobot:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise TimeoutError("camera did not return a JPEG before timeout")
-                    try:
-                        image = self._image_queue.get(timeout=remaining)
-                    except queue.Empty as error:
-                        raise TimeoutError("camera did not return a JPEG before timeout") from error
+                    with self._camera_condition:
+                        if self._camera_disconnected:
+                            raise WatcheRobotError(
+                                "robot connection disconnected during camera capture"
+                            )
+                        failure_reason = self._camera_failures.pop(session_id, None)
+                        if failure_reason is not None:
+                            if failure_reason in ("busy", "no_capacity"):
+                                remaining = deadline - time.monotonic()
+                                if remaining <= 0:
+                                    raise TimeoutError(
+                                        "camera remained busy before capture timeout"
+                                    )
+                                retry_capture = True
+                            else:
+                                raise CommandError("ctrl.camera.capture", failure_reason)
+                        if not retry_capture:
+                            self._camera_condition.wait(min(0.05, remaining))
+                    if retry_capture:
+                        time.sleep(min(0.1, remaining))
+                        break
+                    continue
                 if image.session_id in (0, expected_stream_id):
                     return image
 
@@ -1421,6 +1575,22 @@ class WatcheRobot:
             data = message.get("data", {})
             if isinstance(data, dict) and data.get("online") is False:
                 self.recordings.device_connection_lost()
+            return
+        if message.get("type") == "evt.sdk.camera.capture":
+            data = message.get("data", {})
+            session_id = data.get("session_id")
+            reason = data.get("reason")
+            state = data.get("state")
+            if (
+                isinstance(session_id, int)
+                and state == "failed"
+                and isinstance(reason, str)
+            ):
+                with self._camera_condition:
+                    if len(self._camera_failures) >= 8:
+                        self._camera_failures.pop(next(iter(self._camera_failures)))
+                    self._camera_failures[session_id] = reason
+                    self._camera_condition.notify_all()
             return
         if message.get("type") == "evt.face_tracking.preview.frame":
             with self._face_tracking_lock:
@@ -1573,6 +1743,8 @@ class WatcheRobot:
             except queue.Empty:
                 pass
             self._image_queue.put_nowait(image)
+        with self._camera_condition:
+            self._camera_condition.notify_all()
 
     def _on_disconnect(self) -> None:
         self.recordings.device_connection_lost()
@@ -1584,6 +1756,9 @@ class WatcheRobot:
             self._pending_audio_frames.clear()
             microphone = self._microphone
         self._fail_all_jobs(reason="disconnected")
+        with self._camera_condition:
+            self._camera_disconnected = True
+            self._camera_condition.notify_all()
         self.inputs._close("disconnected")
         if microphone is not None:
             microphone._mark_remote_closed()
@@ -1596,6 +1771,9 @@ class WatcheRobot:
             self._transport.close()
 
     def _fail_all_jobs(self, *, reason: str) -> None:
+        with self._audio_playback_lock:
+            queued_entries = list(self._audio_queue_tickets.values())
+        self._ptl_media_scheduler.close(reason)
         with self._jobs_lock:
             jobs = list(self._jobs.values())
             self._jobs.clear()
@@ -1619,3 +1797,6 @@ class WatcheRobot:
             cleanup_future.cancel()
         if playback is not None and not playback.state.terminal:
             playback._update(JobState.FAILED, reason=reason)
+        for _, queued_playback in queued_entries:
+            if not queued_playback.state.terminal:
+                queued_playback._update(JobState.FAILED, reason=reason)

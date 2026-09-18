@@ -883,7 +883,7 @@ def test_combined_test_runs_dynamic_ui_photo_and_audio_concurrently(tmp_path: Pa
         "dynamic_ui",
         "photo",
         "audio",
-        "concurrency_overlap",
+        "request_overlap",
         "resource_recovery",
     ]
     assert all(stage["status"] == "passed" for stage in report["stages"])
@@ -895,9 +895,43 @@ def test_combined_test_runs_dynamic_ui_photo_and_audio_concurrently(tmp_path: Pa
     assert robot.expression_runtime.starts
     assert robot.expression_runtime.updates
     assert robot.expression_runtime.stop_calls == 1
-    assert robot.audio.stop_calls == 1
+    assert robot.audio.stop_calls == 0
     assert report["resource_owners"] == {}
     assert service.status()["busy"] is False
+
+
+def test_combined_test_activates_custom_ui_before_media_workers(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    expression_active = threading.Event()
+    original_start = robot.expression_runtime.start
+    original_capture = robot.camera.capture
+    original_play_file = robot.audio.play_file
+
+    def start_expression(*args, **kwargs):
+        result = original_start(*args, **kwargs)
+        expression_active.set()
+        return result
+
+    def capture_after_expression(**kwargs):
+        assert expression_active.is_set()
+        return original_capture(**kwargs)
+
+    def play_after_expression(path):
+        assert expression_active.is_set()
+        return original_play_file(path)
+
+    robot.expression_runtime.start = start_expression
+    robot.camera.capture = capture_after_expression
+    robot.audio.play_file = play_after_expression
+    service = _service(module, tmp_path, robot)
+
+    report = service.run_combined_test(
+        duration_seconds=0.25,
+        photo_interval_seconds=0.07,
+    )
+
+    assert report["passed"] is True
 
 
 def test_combined_test_stops_all_workers_and_releases_resources_after_failure(tmp_path: Path) -> None:
@@ -1128,7 +1162,8 @@ def test_resource_locks_only_serialize_actions_that_share_the_same_hardware(tmp_
 
     assert service.move_motion(pan_deg=90, tilt_deg=115, duration_ms=600)["completed"] is True
     assert service.play_animation(animation_id="thinking")["started"] is True
-    assert service.capture_photo()["content_type"] == "image/jpeg"
+    with pytest.raises(module.MediaLabBusyError, match="play_audio"):
+        service.capture_photo()
 
     release.set()
     thread.join(timeout=1.0)
@@ -1179,7 +1214,7 @@ def test_record_microphone_rejects_unsafe_durations(
         service.record_microphone(duration=duration)
 
 
-def test_ordinary_audio_directions_are_serialized_while_independent_camera_remains_available(
+def test_ordinary_audio_and_ptl_camera_share_the_peak_media_resource(
     tmp_path: Path,
 ) -> None:
     module = _load_service_module()
@@ -1199,13 +1234,15 @@ def test_ordinary_audio_directions_are_serialized_while_independent_camera_remai
     assert service.status()["active_action"] == "play_audio"
     assert service.status()["resource_owners"] == {
         "microphone": "play_audio",
+        "ptl_media_peak": "play_audio",
         "speaker": "play_audio",
     }
     with pytest.raises(module.MediaLabBusyError, match="play_audio"):
         service.play_audio()
     with pytest.raises(module.MediaLabBusyError, match="play_audio"):
         service.record_microphone(duration=1.0)
-    assert service.capture_photo()["bytes"] > 0
+    with pytest.raises(module.MediaLabBusyError, match="play_audio"):
+        service.capture_photo()
 
     release.set()
     thread.join(timeout=1.0)

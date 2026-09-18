@@ -251,13 +251,13 @@ class MediaLabService:
         self._operation_gate_lock = threading.Lock()
         self._combined_test_lock = threading.Lock()
         self._combined_test_owner_thread_id: int | None = None
-        # RTC lifecycle transitions remain atomic while camera, microphone, and
-        # speaker ownership are tracked independently. This permits the verified
-        # audio-RTC + photo and video-RTC + standalone-audio combinations without
-        # weakening same-hardware exclusion.
+        # RTC lifecycle transitions remain atomic. PTL capture and ordinary PCM
+        # playback share one peak-memory resource group; the SDK queues those
+        # requests FIFO, and this UI mirrors the same ownership boundary.
         self._live_video_lifecycle_lock = threading.Lock()
         self._resource_locks = {
             "camera": threading.Lock(),
+            "ptl_media_peak": threading.Lock(),
             "microphone": threading.Lock(),
             "speaker": threading.Lock(),
             "motion": threading.Lock(),
@@ -538,7 +538,10 @@ class MediaLabService:
         }
 
     def play_audio(self) -> dict[str, object]:
-        with self._operation("play_audio", resources=("microphone", "speaker")):
+        with self._operation(
+            "play_audio",
+            resources=("microphone", "speaker", "ptl_media_peak"),
+        ):
             return self._play_audio_unlocked()
 
     def stop_audio(self) -> dict[str, object]:
@@ -636,7 +639,10 @@ class MediaLabService:
             raise ValueError("animation_id must be a catalog-safe resource id")
 
     def capture_photo(self) -> dict[str, object]:
-        with self._operation("capture_photo", resources=("camera", "animation")):
+        with self._operation(
+            "capture_photo",
+            resources=("camera", "animation", "ptl_media_peak"),
+        ):
             return self._capture_photo_unlocked()
 
     def _capture_photo_unlocked(self) -> dict[str, object]:
@@ -672,7 +678,7 @@ class MediaLabService:
         include_photo: bool = True,
         include_audio: bool = True,
     ) -> dict[str, object]:
-        """Run dynamic UI, repeated camera capture, and audio concurrently."""
+        """Overlap requests while SDK queues PTL capture and PCM playback."""
 
         for name, value, minimum, maximum in (
             ("duration_seconds", duration_seconds, 0.2, 30.0),
@@ -788,6 +794,8 @@ class MediaLabService:
             return {"expression_update_count": updates}
 
         def capture_repeatedly() -> dict[str, object]:
+            if not expression_started.wait(timeout=2.0):
+                raise TimeoutError("dynamic custom UI did not become active before camera capture")
             count = 0
             latest: dict[str, object] | None = None
             while not stop_event.is_set():
@@ -798,6 +806,8 @@ class MediaLabService:
             return {"photo_count": count, "photo": latest}
 
         def play_audio_during_window() -> dict[str, object]:
+            if not expression_started.wait(timeout=2.0):
+                raise TimeoutError("dynamic custom UI did not become active before audio playback")
             payload = self._play_audio_unlocked()
             return {"playback_count": 1, "audio": payload}
 
@@ -831,11 +841,6 @@ class MediaLabService:
                     worker.start()
                 stop_event.wait(duration_seconds)
                 stop_event.set()
-                if include_audio:
-                    try:
-                        self._robot.audio.stop()
-                    except Exception as error:
-                        cleanup_errors.append(f"audio stop failed: {error}")
                 for worker in workers:
                     worker.join(timeout=12.0)
                 hanging_workers = [worker.name for worker in workers if worker.is_alive()]
@@ -868,7 +873,7 @@ class MediaLabService:
         )
         recovery_passed = not owners and not cleanup_errors
         ordered_stages.append({
-            "name": "concurrency_overlap",
+            "name": "request_overlap",
             "status": "passed" if overlap_verified else "failed",
             "duration_ms": 0,
         })
@@ -901,7 +906,7 @@ class MediaLabService:
         result["passed"] = failed_stage is None
         self._append_event(
             "combined_test",
-            "Concurrent test completed" if result["passed"] else "Concurrent test failed",
+            "Queued media test completed" if result["passed"] else "Queued media test failed",
             "ok" if result["passed"] else "error",
         )
         return result

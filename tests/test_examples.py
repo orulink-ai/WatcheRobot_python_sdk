@@ -66,7 +66,7 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     assert "api/actions/capture-photo" in script
     assert 'id="combinedTestButton"' in page
     assert "api/tests/combined" in script
-    assert "并发压力测试" in i18n
+    assert "排队媒体压力测试" in i18n
     assert "同时运行动态自定义 UI、连续拍照和音频播放" in i18n
     assert "api/actions/record-microphone" in script
     assert "ws://" not in script

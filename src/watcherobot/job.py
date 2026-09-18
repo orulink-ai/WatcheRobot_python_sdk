@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from enum import Enum
-from typing import Protocol
+from typing import Callable, Protocol
 
 from .errors import JobCancelledError, JobFailedError
 
@@ -13,6 +13,7 @@ class CommandTransport(Protocol):
 
 
 class JobState(str, Enum):
+    QUEUED = "queued"
     STARTING = "starting"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -31,6 +32,7 @@ class Job:
         transport: CommandTransport,
         *,
         initial_state: JobState = JobState.STARTING,
+        terminal_callback: Callable[[Job], None] | None = None,
     ) -> None:
         if operation_id <= 0:
             raise ValueError("operation_id must be positive")
@@ -41,6 +43,8 @@ class Job:
         self._reason: str | None = None
         self._condition = threading.Condition()
         self._cancel_requested = False
+        self._terminal_callback = terminal_callback
+        self._terminal_callback_called = False
 
     @property
     def id(self) -> int:
@@ -104,6 +108,7 @@ class Job:
         reason: str | None = None,
     ) -> None:
         next_state = state if isinstance(state, JobState) else JobState(state)
+        terminal_callback = None
         with self._condition:
             if self._state.terminal:
                 return
@@ -113,3 +118,8 @@ class Job:
             self._error_code = error_code
             self._reason = reason
             self._condition.notify_all()
+            if next_state.terminal and not self._terminal_callback_called:
+                self._terminal_callback_called = True
+                terminal_callback = self._terminal_callback
+        if terminal_callback is not None:
+            terminal_callback(self)
