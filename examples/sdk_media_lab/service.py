@@ -28,6 +28,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from watcherobot.application import rtc as application_rtc
+from watcherobot.errors import JobCancelledError
 
 
 RTC_AUDIO_CAPABILITY = getattr(
@@ -808,7 +809,21 @@ class MediaLabService:
         def play_audio_during_window() -> dict[str, object]:
             if not expression_started.wait(timeout=2.0):
                 raise TimeoutError("dynamic custom UI did not become active before audio playback")
-            payload = self._play_audio_unlocked()
+            if not self._sample_audio.is_file():
+                raise FileNotFoundError(f"sample audio is missing: {self._sample_audio}")
+            playback = self._robot.audio.play_file(self._sample_audio)
+            stopped_at_window_end = False
+            try:
+                playback.wait(30.0)
+            except JobCancelledError as error:
+                if not stop_event.is_set() or error.reason != "aborted":
+                    raise
+                stopped_at_window_end = True
+            payload = {
+                "source": self._sample_audio.name,
+                "bytes": self._sample_audio.stat().st_size,
+                "stopped_at_window_end": stopped_at_window_end,
+            }
             return {"playback_count": 1, "audio": payload}
 
         workers = [threading.Thread(
@@ -841,6 +856,11 @@ class MediaLabService:
                     worker.start()
                 stop_event.wait(duration_seconds)
                 stop_event.set()
+                if include_audio:
+                    try:
+                        self._robot.audio.stop()
+                    except Exception as error:
+                        cleanup_errors.append(f"audio stop failed: {error}")
                 for worker in workers:
                     worker.join(timeout=12.0)
                 hanging_workers = [worker.name for worker in workers if worker.is_alive()]

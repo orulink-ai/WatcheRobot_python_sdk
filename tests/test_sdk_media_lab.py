@@ -10,6 +10,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from watcherobot.errors import JobCancelledError
 
 
 ROOT = Path(__file__).parents[1]
@@ -204,6 +205,9 @@ class FakeAudio:
 
     def stop(self) -> None:
         self.stop_calls += 1
+        notify_stopped = getattr(self.playback, "notify_stopped", None)
+        if notify_stopped is not None:
+            notify_stopped()
 
 
 class FakeCamera:
@@ -895,7 +899,7 @@ def test_combined_test_runs_dynamic_ui_photo_and_audio_concurrently(tmp_path: Pa
     assert robot.expression_runtime.starts
     assert robot.expression_runtime.updates
     assert robot.expression_runtime.stop_calls == 1
-    assert robot.audio.stop_calls == 0
+    assert robot.audio.stop_calls == 1
     assert report["resource_owners"] == {}
     assert service.status()["busy"] is False
 
@@ -932,6 +936,60 @@ def test_combined_test_activates_custom_ui_before_media_workers(tmp_path: Path) 
     )
 
     assert report["passed"] is True
+
+
+def test_combined_test_accepts_audio_cancelled_by_window_cleanup(tmp_path: Path) -> None:
+    module = _load_service_module()
+
+    class WindowCancelledPlayback(FakePlayback):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stopped = threading.Event()
+
+        def notify_stopped(self) -> None:
+            self.stopped.set()
+
+        def wait(self, timeout: float) -> None:
+            self.wait_calls.append(timeout)
+            assert self.stopped.wait(timeout=1.0)
+            raise JobCancelledError(41, reason="aborted", state="was cancelled")
+
+    playback = WindowCancelledPlayback()
+    service = _service(module, tmp_path, _robot(playback=playback))
+
+    report = service.run_combined_test(
+        duration_seconds=0.25,
+        photo_interval_seconds=0.07,
+        include_photo=False,
+        include_audio=True,
+    )
+
+    assert report["passed"] is True
+    audio_stage = next(stage for stage in report["stages"] if stage["name"] == "audio")
+    assert audio_stage["status"] == "passed"
+    assert audio_stage["audio"]["stopped_at_window_end"] is True
+
+
+def test_combined_test_reports_unexpected_early_audio_cancellation(tmp_path: Path) -> None:
+    module = _load_service_module()
+
+    class EarlyCancelledPlayback(FakePlayback):
+        def wait(self, timeout: float) -> None:
+            self.wait_calls.append(timeout)
+            raise JobCancelledError(42, reason="device_error", state="was cancelled")
+
+    service = _service(module, tmp_path, _robot(playback=EarlyCancelledPlayback()))
+
+    report = service.run_combined_test(
+        duration_seconds=0.25,
+        photo_interval_seconds=0.07,
+        include_photo=False,
+        include_audio=True,
+    )
+
+    assert report["passed"] is False
+    assert report["failed_stage"] == "audio"
+    assert "device_error" in report["error"]
 
 
 def test_combined_test_stops_all_workers_and_releases_resources_after_failure(tmp_path: Path) -> None:
