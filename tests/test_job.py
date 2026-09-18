@@ -59,3 +59,17 @@ def test_job_rejects_a_backward_state_transition():
     job._update(JobState.STARTING)
 
     assert job.state is JobState.RUNNING
+
+
+def test_job_terminal_callback_runs_exactly_once_and_outside_job_lock():
+    callbacks = []
+
+    def on_terminal(job):
+        callbacks.append((job.id, job.state, job.reason))
+
+    job = Job(13, FakeTransport(), terminal_callback=on_terminal)
+
+    job._update(JobState.FAILED, reason="device_busy")
+    job._update(JobState.CANCELLED, reason="late_cancel")
+
+    assert callbacks == [(13, JobState.FAILED, "device_busy")]

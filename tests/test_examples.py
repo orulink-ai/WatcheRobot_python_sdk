@@ -64,6 +64,7 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     page = root.joinpath("web", "index.html").read_text(encoding="utf-8")
     script = root.joinpath("web", "app.js").read_text(encoding="utf-8")
     styles = root.joinpath("web", "styles.css").read_text(encoding="utf-8")
+    i18n = root.joinpath("web", "i18n.mjs").read_text(encoding="utf-8")
 
     assert "127.0.0.1" in entrypoint
     assert "ApplicationContext.from_environment()" in entrypoint
@@ -73,6 +74,10 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     assert "api/status" in script
     assert "api/actions/play-audio" in script
     assert "api/actions/capture-photo" in script
+    assert 'id="combinedTestButton"' in page
+    assert "api/tests/combined" in script
+    assert "排队媒体压力测试" in i18n
+    assert "同时运行动态自定义 UI、连续拍照和音频播放" in i18n
     assert "api/actions/record-microphone" in script
     assert "ws://" not in script
     assert "wss://" not in script
@@ -80,6 +85,7 @@ def test_media_lab_is_a_local_managed_web_application() -> None:
     assert 'drawWaveform("/artifacts/microphone.wav")' not in script
     assert "[hidden]" in styles
     assert "display: none !important" in styles
+    assert ".station-action { flex: 1; color: var(--ink); background: var(--signal); }" in styles
 
     examples_guide = (ROOT / "examples" / "README.md").read_text(encoding="utf-8")
     hardware_guide = (ROOT / "docs" / "hardware-testing.md").read_text(encoding="utf-8")
