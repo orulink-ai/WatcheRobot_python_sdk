@@ -1922,3 +1922,7 @@ def _print_application_runtime_result(
     process_id = application.get("process_id")
     if process_id is not None:
         print(f"PID:    {process_id}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

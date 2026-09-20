@@ -88,3 +88,47 @@ def test_device_connection_state_only_tracks_current_connection() -> None:
             await server.stop()
 
     asyncio.run(scenario())
+
+
+def test_stale_device_disconnect_does_not_drop_reconnected_device() -> None:
+    async def scenario() -> None:
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        disconnected_peers: list[str] = []
+
+        async def delay_old_connection_cleanup(connection) -> None:
+            if connection.role.value != "hardware":
+                return
+            cleanup_started.set()
+            await release_cleanup.wait()
+
+        async def record_device_disconnect(peer_ip: str) -> None:
+            disconnected_peers.append(peer_ip)
+
+        server = ExternalWebSocketServer(
+            host="127.0.0.1",
+            port=0,
+            hardware_hello_authorizer=_allow_hardware,
+            device_disconnect_listener=record_device_disconnect,
+            external_disconnect_listener=delay_old_connection_cleanup,
+        )
+        await server.start()
+        first = await _connect_hardware(server)
+        await first.close()
+        await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+
+        second = await _connect_hardware(server)
+        release_cleanup.set()
+        await asyncio.sleep(0.05)
+
+        try:
+            assert disconnected_peers == []
+            [online] = server.registry.device_states.snapshot()
+            assert online["online"] is True
+        finally:
+            await second.close()
+            await server.stop()
+
+        assert disconnected_peers == ["127.0.0.1"]
+
+    asyncio.run(scenario())

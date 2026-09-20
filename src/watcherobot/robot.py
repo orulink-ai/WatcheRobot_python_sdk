@@ -1149,14 +1149,69 @@ class WatcheRobot:
             self._wait_for_audio_cleanup(cleanup_future)
 
     def _schedule_audio_cleanup_locked(self) -> None:
+        # A failed stream must remain the owner of the device media slot until
+        # the stop command has completed.  Several failure paths can arrive
+        # concurrently (sender exception, device status, disconnect); only
+        # one cleanup command may be in flight.
+        if self._audio_cleanup_future is not None:
+            return
         self._audio_cleanup_required = False
         try:
-            self._audio_cleanup_future = self._transport.send_command_nowait(
+            cleanup_future = self._transport.send_command_nowait(
                 "ctrl.audio.stop",
                 {},
             )
         except Exception:
-            self._audio_cleanup_future = None
+            self._audio_cleanup_required = True
+            return
+        self._audio_cleanup_future = cleanup_future
+
+        def finish_cleanup(future: Future[Any]) -> None:
+            cleanup_failed = False
+            try:
+                future.result()
+            except Exception:
+                cleanup_failed = True
+            with self._audio_playback_lock:
+                if self._audio_cleanup_future is not future:
+                    return
+                self._audio_cleanup_future = None
+                # A terminal failed/cancelled handle is kept until the device
+                # acknowledges stop.  This prevents a new microphone or audio
+                # stream from racing the old device-side worker.
+                playback = self._audio_playback
+                if playback is not None and playback.state.terminal:
+                    if not cleanup_failed:
+                        self._audio_playback = None
+                        self._audio_send_future = None
+                if self._audio_cleanup_required:
+                    # The command failed or the transport dropped before the
+                    # device acknowledged it.  Leave the gate armed so the
+                    # next media transition retries cleanup.
+                    return
+                if cleanup_failed:
+                    self._audio_cleanup_required = True
+
+        # ``Future.add_done_callback`` runs inline for an already-completed
+        # future.  This method is normally called while holding
+        # ``_audio_playback_lock``, so defer the inline case to the regular
+        # waiter to avoid re-entering the lock.
+        if cleanup_future.done():
+            # Fake/in-process transports (and a fast real ACK) can complete
+            # synchronously while the lock is held.  Handle that case inline
+            # without re-entering the lock through Future's callback machinery.
+            try:
+                cleanup_future.result()
+            except Exception:
+                self._audio_cleanup_required = True
+            else:
+                self._audio_cleanup_future = None
+                playback = self._audio_playback
+                if playback is not None and playback.state.terminal:
+                    self._audio_playback = None
+                    self._audio_send_future = None
+        else:
+            cleanup_future.add_done_callback(finish_cleanup)
 
     def _wait_for_audio_cleanup(self, cleanup_future: Any) -> None:
         timeout = getattr(self._transport, "command_timeout", 5.0) + 1.0
@@ -1168,17 +1223,22 @@ class WatcheRobot:
             with self._audio_playback_lock:
                 if self._audio_cleanup_future is cleanup_future:
                     self._audio_cleanup_future = None
+                    playback = self._audio_playback
+                    if playback is not None and playback.state.terminal:
+                        self._audio_playback = None
+                        self._audio_send_future = None
 
     def _handle_audio_sender_failure(self, playback: AudioPlayback) -> None:
+        # Publish the terminal state before scheduling cleanup so a
+        # synchronously completed stop can release the handle immediately.
+        playback._update(JobState.FAILED, reason="audio_send_failed")
         with self._audio_playback_lock:
             if self._audio_playback is not playback:
                 return
-            self._audio_playback = None
             self._audio_send_future = None
             self._audio_cleanup_required = True
             if not self._audio_transition_in_progress:
                 self._schedule_audio_cleanup_locked()
-        playback._update(JobState.FAILED, reason="audio_send_failed")
 
     def _cancel_audio_playback(self, playback: AudioPlayback) -> None:
         with self._audio_api_lock:
@@ -1201,6 +1261,20 @@ class WatcheRobot:
     def _stop_audio_playback(self) -> None:
         with self._audio_api_lock:
             self._begin_audio_transition()
+            # A terminal stream (including device-side start/write failure)
+            # has already issued the single cleanup stop.  Once that command
+            # has completed there is nothing left to stop; sending another
+            # command can race the next microphone session on firmware that
+            # exposes one shared media slot.
+            with self._audio_playback_lock:
+                playback = self._audio_playback
+                terminal = playback is None or playback.state.terminal
+                if terminal and playback is not None:
+                    self._audio_playback = None
+                    self._audio_send_future = None
+            if terminal:
+                self._end_audio_transition(command_succeeded=True)
+                return
             try:
                 self._command("ctrl.audio.stop", {})
             except Exception:
@@ -1494,8 +1568,17 @@ class WatcheRobot:
             with self._audio_playback_lock:
                 if self._audio_playback is playback:
                     send_future = self._audio_send_future
-                    self._audio_playback = None
                     self._audio_send_future = None
+                    if status is AudioStatusKind.FAILED:
+                        self._audio_cleanup_required = True
+                        if not self._audio_transition_in_progress:
+                            self._schedule_audio_cleanup_locked()
+                    elif status is AudioStatusKind.CANCELLED:
+                        self._audio_cleanup_required = True
+                        if not self._audio_transition_in_progress:
+                            self._schedule_audio_cleanup_locked()
+                    else:
+                        self._audio_playback = None
             if send_future is not None and not send_future.done():
                 send_future.cancel()
 
