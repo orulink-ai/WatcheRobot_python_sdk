@@ -370,6 +370,8 @@ class GiteeRepository:
             if not isinstance(item, dict):
                 raise HubInvalidResponse("Invalid Gitee source tree entry")
             path = item.get("path")
+            if not isinstance(path, str):
+                raise HubInvalidResponse("Invalid Gitee source tree path")
             _validate_snapshot_path(
                 repo_id, commit, path, seen, nodes,
                 is_directory=item.get("type") == "tree",
@@ -378,7 +380,7 @@ class GiteeRepository:
                 if item.get("mode") not in ("40000", "040000"):
                     raise HubInvalidResponse("Invalid Gitee directory mode")
                 continue
-            if not isinstance(path, str) or item.get("type") != "blob" or item.get("mode") not in ("100644", "100755"):
+            if item.get("type") != "blob" or item.get("mode") not in ("100644", "100755"):
                 raise HubInvalidResponse("Symlinks and submodules are not supported")
             if not isinstance(item.get("sha"), str):
                 raise HubInvalidResponse("Invalid Gitee blob identifier")
