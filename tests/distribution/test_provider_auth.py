@@ -96,3 +96,38 @@ def test_jsonl_missing_login_never_prompts(monkeypatch):
     monkeypatch.setattr(cli, 'SystemCredentialStore', lambda **kw: SystemCredentialStore(backend=backend, **kw))
     monkeypatch.setattr(cli.getpass, 'getpass', lambda prompt: pytest.fail('must not prompt'))
     assert cli.main(['app', 'login', '--provider', 'gitee', '--jsonl']) == 3
+
+
+def test_jsonl_gitee_login_reads_token_from_stdin_then_saves(monkeypatch, capsys):
+    from io import StringIO
+
+    backend = FakeKeyring()
+    store = SystemCredentialStore(provider='gitee', backend=backend)
+    monkeypatch.setattr(cli, 'SystemCredentialStore', lambda **kw: store)
+    monkeypatch.setattr(cli.sys, 'stdin', StringIO('desktop-secret\n'))
+
+    class Hub:
+        def whoami(self, token):
+            assert token == AccessToken('desktop-secret')
+            return HubIdentity('developer')
+
+    monkeypatch.setattr(cli, 'GiteeHubClient', Hub)
+    assert cli.main([
+        'app', 'login', '--provider', 'gitee', '--token-stdin', '--jsonl',
+    ]) == 0
+    assert store.load() == AccessToken('desktop-secret')
+    assert 'desktop-secret' not in capsys.readouterr().out
+
+
+def test_empty_token_from_stdin_does_not_replace_existing_credential(monkeypatch):
+    from io import StringIO
+
+    backend = FakeKeyring()
+    store = SystemCredentialStore(provider='gitee', backend=backend)
+    store.save(AccessToken('old-token'))
+    monkeypatch.setattr(cli, 'SystemCredentialStore', lambda **kw: store)
+    monkeypatch.setattr(cli.sys, 'stdin', StringIO('\n'))
+    assert cli.main([
+        'app', 'login', '--provider', 'gitee', '--token-stdin', '--jsonl',
+    ]) == 3
+    assert store.load() == AccessToken('old-token')

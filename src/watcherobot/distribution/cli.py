@@ -118,6 +118,11 @@ def add_distribution_commands(
         action="store_true",
         help="Replace an existing valid login",
     )
+    login_mode.add_argument(
+        "--token-stdin",
+        action="store_true",
+        help="Read one Gitee access token line from standard input",
+    )
     _add_jsonl_argument(login_command)
     login_command.add_argument(
         "--provider", choices=("huggingface", "gitee"), required=True
@@ -494,19 +499,24 @@ def _run_gitee_auth(args: argparse.Namespace) -> int:
             if args.status and token is None:
                 data = {"provider": "gitee", "logged_in": False}
             else:
-                if not args.status and (args.force or token is None):
-                    if args.jsonl or not sys.stdin.isatty():
+                if not args.status and (args.force or args.token_stdin or token is None):
+                    if args.token_stdin:
+                        value = sys.stdin.readline().strip()
+                    elif args.jsonl or not sys.stdin.isatty():
                         return _print_auth_error(
                             ErrorCode.AUTH_REQUIRED,
-                            "Run app login --provider gitee in an interactive terminal",
+                            "Provide the Gitee token with --token-stdin",
                             event_writer=writer,
                         )
-                    value = getpass.getpass("Gitee Access Token: ").strip()
+                    else:
+                        value = getpass.getpass("Gitee Access Token: ").strip()
                     if not value:
                         raise HubAuthenticationError("Gitee token must not be empty")
                     token = AccessToken(value)
                     identity = hub.whoami(token)
-                    credentials.save(token)
+                    existing = credentials.load()
+                    if existing is None or existing.value != token.value:
+                        credentials.save(token)
                 else:
                     assert token is not None
                     identity = hub.whoami(token)
