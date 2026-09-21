@@ -1115,11 +1115,71 @@ def test_camera_capture_with_feedback_requires_firmware_capability() -> None:
 
 
 def test_camera_capture_with_feedback_defaults_to_ten_second_timeout() -> None:
-    timeout = inspect.signature(type(WatcheRobot._from_transport(FakeTransport()).camera).capture_with_feedback).parameters[
-        "timeout"
-    ].default
+    camera_type = type(WatcheRobot._from_transport(FakeTransport()).camera)
+    timeout = inspect.signature(camera_type.capture_with_feedback).parameters["timeout"].default
 
     assert timeout == 10.0
+
+
+def test_camera_capture_with_feedback_retries_busy_and_ignores_wrong_session() -> None:
+    class BusyFeedbackCameraTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.capture_attempts = 0
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.camera.capture_with_feedback":
+                self.capture_attempts += 1
+                if self.capture_attempts == 1:
+                    raise CommandError(message_type, "busy")
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture_with_feedback":
+                session_id = response["data"]["session_id"]
+                self.binary_callback(
+                    BinaryFrame(FRAME_IMAGE, FLAG_FIRST | FLAG_LAST, session_id + 1, 1, b"wrong")
+                )
+                threading.Timer(
+                    0.01,
+                    lambda: self.binary_callback(
+                        BinaryFrame(
+                            FRAME_IMAGE,
+                            FLAG_FIRST | FLAG_LAST,
+                            session_id,
+                            2,
+                            b"current",
+                        )
+                    ),
+                ).start()
+            return response
+
+    transport = BusyFeedbackCameraTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    image = robot.camera.capture_with_feedback(timeout=0.5)
+
+    assert image.data == b"current"
+    assert image.session_id == 100
+    assert transport.capture_attempts == 2
+
+
+def test_camera_capture_with_feedback_reports_ack_timeout_with_context() -> None:
+    class TimeoutFeedbackCameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.camera.capture_with_feedback":
+                raise TimeoutError()
+            return super().send_command(message_type, data, timeout)
+
+    robot = WatcheRobot._from_transport(TimeoutFeedbackCameraTransport())
+
+    with pytest.raises(TimeoutError, match="capture with feedback command was not acknowledged"):
+        robot.camera.capture_with_feedback(timeout=0.01)
+
+
+def test_camera_capture_with_feedback_reports_jpeg_timeout_with_context() -> None:
+    robot = WatcheRobot._from_transport(FakeTransport())
+
+    with pytest.raises(TimeoutError, match="capture with feedback did not return a JPEG"):
+        robot.camera.capture_with_feedback(timeout=0.01)
 
 
 def test_robot_close_releases_microphone_after_remote_end():

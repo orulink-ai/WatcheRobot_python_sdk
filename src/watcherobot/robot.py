@@ -827,7 +827,36 @@ class CameraDomain(_Domain):
     ) -> ImageFrame:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
-        return self._robot._capture_image(width=width, height=height, quality=quality, timeout=timeout)
+        return self._robot._capture_image(
+            command_type="ctrl.camera.capture",
+            required_capability="camera.capture",
+            operation_name="camera capture",
+            width=width,
+            height=height,
+            quality=quality,
+            timeout=timeout,
+        )
+
+    def capture_with_feedback(
+        self,
+        *,
+        width: int = 0,
+        height: int = 0,
+        quality: int = 0,
+        timeout: float = 10.0,
+    ) -> ImageFrame:
+        """Capture a JPEG with the firmware-owned photo animation and shutter sound."""
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        return self._robot._capture_image(
+            command_type="ctrl.camera.capture_with_feedback",
+            required_capability="camera.capture.feedback.v1",
+            operation_name="camera capture with feedback",
+            width=width,
+            height=height,
+            quality=quality,
+            timeout=timeout,
+        )
 
 
 def _validate_light(color: str, brightness: float) -> None:
@@ -1291,7 +1320,18 @@ class WatcheRobot:
                 if self._microphone is not None and self._microphone.id == session_id:
                     self._microphone = None
 
-    def _capture_image(self, *, width: int, height: int, quality: int, timeout: float) -> ImageFrame:
+    def _capture_image(
+        self,
+        *,
+        command_type: str,
+        required_capability: str,
+        operation_name: str,
+        width: int,
+        height: int,
+        quality: int,
+        timeout: float,
+    ) -> ImageFrame:
+        self._require_capability(required_capability)
         with self._camera_lock:
             with self._image_assembly_lock:
                 self._image_assemblies.clear()
@@ -1308,13 +1348,15 @@ class WatcheRobot:
                     raise TimeoutError("camera remained busy before capture timeout")
                 try:
                     response = self._command(
-                        "ctrl.camera.capture",
+                        command_type,
                         {"width": int(width), "height": int(height), "quality": int(quality)},
                         timeout=max(remaining, 0),
                     )
                     break
                 except TimeoutError as error:
-                    raise TimeoutError("camera capture command was not acknowledged before timeout") from error
+                    raise TimeoutError(
+                        f"{operation_name} command was not acknowledged before timeout"
+                    ) from error
                 except CommandError as error:
                     first_attempt = False
                     if error.reason != "busy":
@@ -1333,11 +1375,15 @@ class WatcheRobot:
                 except queue.Empty:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        raise TimeoutError("camera did not return a JPEG before timeout")
+                        raise TimeoutError(
+                            f"{operation_name} did not return a JPEG before timeout"
+                        )
                     try:
                         image = self._image_queue.get(timeout=remaining)
                     except queue.Empty as error:
-                        raise TimeoutError("camera did not return a JPEG before timeout") from error
+                        raise TimeoutError(
+                            f"{operation_name} did not return a JPEG before timeout"
+                        ) from error
                 if image.session_id in (0, expected_stream_id):
                     return image
 
