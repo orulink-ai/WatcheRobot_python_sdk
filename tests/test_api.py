@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 import threading
 from concurrent.futures import Future
 
@@ -35,6 +36,7 @@ class FakeTransport:
             "light",
             "microphone",
             "camera.capture",
+            "camera.capture.feedback.v1",
             "resource.expression.official",
             "resource.work.expression.play",
         )
@@ -56,7 +58,11 @@ class FakeTransport:
         if message_type.endswith(".play") or message_type == "ctrl.motion.move_to":
             response["data"]["operation_id"] = self.next_operation_id
             self.next_operation_id += 1
-        if message_type in ("ctrl.microphone.open", "ctrl.camera.capture"):
+        if message_type in (
+            "ctrl.microphone.open",
+            "ctrl.camera.capture",
+            "ctrl.camera.capture_with_feedback",
+        ):
             response["data"]["session_id"] = self.next_session_id
             self.next_session_id += 1
         return response
@@ -1038,11 +1044,82 @@ def test_media_frame_arriving_before_open_ack_is_buffered():
 
 
 @pytest.mark.parametrize("timeout", [0, -1])
-def test_camera_rejects_non_positive_timeout(timeout):
+@pytest.mark.parametrize("method_name", ["capture", "capture_with_feedback"])
+def test_camera_rejects_non_positive_timeout(timeout, method_name):
     robot = WatcheRobot._from_transport(FakeTransport())
 
     with pytest.raises(ValueError, match="timeout must be positive"):
-        robot.camera.capture(timeout=timeout)
+        getattr(robot.camera, method_name)(timeout=timeout)
+
+
+def test_camera_capture_uses_atomic_command() -> None:
+    class AtomicCameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture":
+                session_id = response["data"]["session_id"]
+                self.binary_callback(
+                    BinaryFrame(FRAME_IMAGE, FLAG_FIRST | FLAG_LAST, session_id, 1, b"atomic")
+                )
+            return response
+
+    transport = AtomicCameraTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    assert robot.camera.capture(timeout=0.1).data == b"atomic"
+    assert transport.commands[-1][0] == "ctrl.camera.capture"
+
+
+def test_camera_capture_with_feedback_uses_distinct_command_and_shared_jpeg_path() -> None:
+    class FeedbackCameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture_with_feedback":
+                session_id = response["data"]["session_id"]
+                self.binary_callback(
+                    BinaryFrame(
+                        FRAME_IMAGE,
+                        FLAG_FIRST | FLAG_LAST,
+                        session_id,
+                        1,
+                        b"feedback",
+                    )
+                )
+            return response
+
+    transport = FeedbackCameraTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    image = robot.camera.capture_with_feedback(width=320, height=240, quality=75, timeout=0.1)
+
+    assert image.data == b"feedback"
+    assert transport.commands[-1] == (
+        "ctrl.camera.capture_with_feedback",
+        {"width": 320, "height": 240, "quality": 75},
+    )
+
+
+def test_camera_capture_with_feedback_requires_firmware_capability() -> None:
+    transport = FakeTransport()
+    transport.capabilities = tuple(
+        capability
+        for capability in transport.capabilities
+        if capability != "camera.capture.feedback.v1"
+    )
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(WatcheRobotError, match="camera.capture.feedback.v1"):
+        robot.camera.capture_with_feedback()
+
+    assert transport.commands == []
+
+
+def test_camera_capture_with_feedback_defaults_to_ten_second_timeout() -> None:
+    timeout = inspect.signature(type(WatcheRobot._from_transport(FakeTransport()).camera).capture_with_feedback).parameters[
+        "timeout"
+    ].default
+
+    assert timeout == 10.0
 
 
 def test_robot_close_releases_microphone_after_remote_end():
