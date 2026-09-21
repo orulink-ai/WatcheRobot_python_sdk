@@ -1,14 +1,12 @@
-"""Gitee repository adapter: atomic Git publication and fork-only submissions."""
+"""Gitee OpenAPI repository adapter for reads, publication, and submissions."""
 
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
-import os
 import shutil
-import subprocess
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -19,13 +17,13 @@ from urllib.request import Request, HTTPRedirectHandler, build_opener
 from .gitee_auth import GiteeHubClient
 from .download import MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_FILES
 from .gitee_public import GiteePublicRepository, _validate_reference
-from .gitee_snapshot import GitSnapshot
 from .ports import (
     AccessToken,
     CatalogDocument,
     CatalogPullRequest,
     HubAuthenticationError,
     HubCatalogConflict,
+    HubFileNotFound,
     HubInvalidResponse,
     HubNetworkError,
     HubRepositoryConflict,
@@ -63,8 +61,9 @@ class GiteeApi:
         )
         try:
             with build_opener(_NoRedirect()).open(request, timeout=30) as response:
-                raw = response.read(8 * 1024 * 1024 + 1)
-                if len(raw) > 8 * 1024 * 1024:
+                limit = 2 * MAX_SNAPSHOT_BYTES + 1024 * 1024
+                raw = response.read(limit + 1)
+                if len(raw) > limit:
                     raise HubInvalidResponse("Gitee response exceeds limit")
                 return response.status, json.loads(raw)
         except HTTPError as exc:
@@ -81,61 +80,15 @@ class GiteeApi:
             raise HubNetworkError("Gitee API request failed") from None
 
 
-class GiteeGit:
-    """Cross-platform Git subprocesses, with ephemeral HTTP authorization."""
-
-    def run(self, root: Path, *args: str, token: AccessToken | None = None) -> str:
-        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-        config = [
-            ("credential.helper", ""),
-            ("http.followRedirects", "false"),
-            ("core.hooksPath", os.devnull),
-        ]
-        if token is not None:
-            value = base64.b64encode(("oauth2:" + token.value).encode()).decode()
-            config.append(
-                ("http.https://gitee.com/.extraHeader", "Authorization: Basic " + value)
-            )
-        env.update(
-            GIT_TERMINAL_PROMPT="0",
-            GIT_CONFIG_COUNT=str(len(config)),
-            GIT_CONFIG_NOSYSTEM="1",
-            GIT_CONFIG_GLOBAL=os.devnull,
-        )
-        for i, (key, value) in enumerate(config):
-            env[f"GIT_CONFIG_KEY_{i}"] = key
-            env[f"GIT_CONFIG_VALUE_{i}"] = value
-        try:
-            result = subprocess.run(
-                ["git", *args],
-                cwd=root,
-                env=env,
-                capture_output=True,
-                timeout=180,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            raise HubNetworkError(
-                "Git is unavailable or timed out; install Git and retry"
-            ) from None
-        if result.returncode:
-            raise HubNetworkError(
-                "Gitee Git operation failed; check permission, connectivity and concurrent changes"
-            )
-        return result.stdout.decode("utf-8").strip()
-
-
 class GiteeRepository:
     def __init__(
         self,
         *,
         api: GiteeApi | None = None,
-        git: GiteeGit | None = None,
         public: GiteePublicRepository | None = None,
         identity: GiteeHubClient | None = None,
     ) -> None:
         self.api = api or GiteeApi()
-        self.git = git or GiteeGit()
         self.public = public or GiteePublicRepository()
         self.identity = identity or GiteeHubClient()
 
@@ -204,7 +157,6 @@ class GiteeRepository:
         commit_message: str,
     ) -> None:
         _validate_reference(repo_id, "0" * 40, "app.json")
-        # Materialize before remote mutation; one non-force push publishes all files.
         prepared = [
             (f.path_in_repo, f.content if f.content is not None else _upload_bytes(f))
             for f in files
@@ -215,60 +167,46 @@ class GiteeRepository:
         nodes: dict[str, tuple[str, bool]] = {}
         for path, _ in prepared:
             _validate_snapshot_path(repo_id, "0" * 40, path, seen, nodes)
-        with tempfile.TemporaryDirectory(prefix="watcher-gitee-publish-") as tmp:
-            root = Path(tmp)
-            self.git.run(
-                root,
-                "clone",
-                "--no-checkout",
-                "--",
-                f"https://gitee.com/{repo_id}.git",
-                "repo",
-                token=token,
+        revision = self.get_repository_head(token, repo_id=repo_id)
+        repo = self._request("GET", f"repos/{repo_id}", token)
+        branch = repo.get("default_branch")
+        if not isinstance(branch, str) or not branch:
+            raise HubInvalidResponse("Gitee repository has no default branch")
+        remote = self._tree(repo_id, revision.commit, token)
+        desired = {path: content for path, content in prepared}
+        actions: list[dict[str, Any]] = []
+        for path, content in desired.items():
+            digest = _blob_digest(content)
+            current = remote.get(path)
+            if current is not None and current.get("sha") == digest:
+                continue
+            action = {
+                "action": "update" if current is not None else "create",
+                "path": path,
+                "content": base64.b64encode(content).decode("ascii"),
+                "encoding": "base64",
+            }
+            if current is not None:
+                action["last_commit_id"] = revision.commit
+            actions.append(action)
+        for path in sorted(set(remote) - set(desired)):
+            actions.append({"action": "delete", "path": path, "last_commit_id": revision.commit})
+        if len(actions) > MAX_SNAPSHOT_FILES:
+            raise HubInvalidResponse("Application publication requires too many file operations")
+        if actions:
+            result = self._request(
+                "POST", f"repos/{repo_id}/commits", token,
+                {"branch": branch, "message": commit_message, "actions": actions},
             )
-            root /= "repo"
-            self.git.run(root, "read-tree", "--empty")
-            expected: dict[str, str] = {}
-            for path, content in prepared:
-                destination = root / path
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(content)
-                digest = hashlib.sha1(
-                    f"blob {len(content)}\0".encode() + content, usedforsecurity=False,
-                ).hexdigest()
-                actual = self.git.run(root, "hash-object", "-w", "--no-filters", "--", path)
-                if actual != digest:
-                    raise HubInvalidResponse("Published blob differs from source bytes")
-                self.git.run(root, "update-index", "--add", "--cacheinfo", "100644", digest, path)
-                expected[path] = digest
-            # Build the index from raw blobs, never running attributes or filters.
-            staged = self.git.run(root, "ls-files", "--stage", "-z")
-            actual_files: dict[str, str] = {}
-            for record in staged.split("\0"):
-                if not record:
-                    continue
-                try:
-                    metadata, path = record.split("\t", 1)
-                    mode, digest, stage = metadata.split()
-                except ValueError:
-                    raise HubInvalidResponse("Invalid publication index") from None
-                if mode != "100644" or stage != "0" or path in actual_files:
-                    raise HubInvalidResponse("Invalid publication index")
-                actual_files[path] = digest
-            if actual_files != expected:
-                raise HubInvalidResponse("Publication index differs from source snapshot")
-            self.git.run(
-                root,
-                "-c",
-                "user.name=WatcherRobot",
-                "-c",
-                "user.email=sdk@orulink.ai",
-                "commit",
-                "--allow-empty",
-                "-m",
-                commit_message,
-            )
-            self.git.run(root, "push", "origin", "HEAD", token=token)
+            commit = result.get("sha") if isinstance(result, dict) else None
+            _validate_reference(repo_id, commit, "app.json")
+            assert isinstance(commit, str)
+        else:
+            commit = revision.commit
+        actual = self._tree(repo_id, commit, token)
+        expected = {path: _blob_digest(content) for path, content in desired.items()}
+        if {path: item.get("sha") for path, item in actual.items()} != expected:
+            raise HubInvalidResponse("Published Gitee snapshot differs from source files")
 
     def get_repository_head(
         self, token: AccessToken, *, repo_id: str
@@ -289,11 +227,11 @@ class GiteeRepository:
         self, token: AccessToken | None = None, *, repo_id: str, commit: str, path: str
     ) -> bytes:
         _validate_reference(repo_id, commit, path)
-        return GitSnapshot().read_catalog(repo_id, path, commit).content
+        return self.public.read_file(repo_id=repo_id, commit=commit, path=path)
 
     def read_public_catalog(self, *, repo_id: str, path: str) -> CatalogDocument:
         _validate_reference(repo_id, '0' * 40, path)
-        return GitSnapshot().read_catalog(repo_id, path)
+        return self.public.read_public_catalog(repo_id=repo_id, path=path)
 
     def read_catalog(
         self, token: AccessToken, *, repo_id: str, path: str
@@ -359,45 +297,26 @@ class GiteeRepository:
                 "Existing repository is not a fork of the selected catalog"
             )
         branch = "watcher-submit-" + uuid.uuid4().hex
-        with tempfile.TemporaryDirectory(prefix="watcher-gitee-submit-") as tmp:
-            root = Path(tmp)
-            self.git.run(
-                root,
-                "clone",
-                "--no-checkout",
-                "--",
-                f"https://gitee.com/{fork_id}.git",
-                "repo",
-                token=token,
+        try:
+            self._request(
+                "POST", f"repos/{fork_id}/commits", token,
+                {
+                    "branch": branch,
+                    "start_branch": parent_commit,
+                    "message": title,
+                    "actions": [{
+                        "action": "update",
+                        "path": path,
+                        "content": base64.b64encode(content).decode("ascii"),
+                        "encoding": "base64",
+                        "last_commit_id": parent_commit,
+                    }],
+                },
             )
-            root /= "repo"
-            self.git.run(
-                root,
-                "fetch",
-                "--",
-                f"https://gitee.com/{repo_id}.git",
-                parent_commit,
-                token=token,
-            )
-            self.git.run(root, "checkout", "-b", branch, parent_commit)
-            destination = root / path
-            if destination.is_symlink() or any(
-                p.is_symlink() for p in destination.parents
-            ):
-                raise HubInvalidResponse("Catalog path must not be a symbolic link")
-            destination.write_bytes(content)
-            self.git.run(root, "add", "--", path)
-            self.git.run(
-                root,
-                "-c",
-                "user.name=WatcherRobot",
-                "-c",
-                "user.email=sdk@orulink.ai",
-                "commit",
-                "-m",
-                title,
-            )
-            self.git.run(root, "push", "origin", branch, token=token)
+        except HubNetworkError as exc:
+            raise HubCatalogConflict(
+                "Developer fork cannot start from the selected catalog commit; sync the fork and submit again"
+            ) from exc
         if self.get_repository_head(token, repo_id=repo_id).commit != parent_commit:
             raise HubCatalogConflict(
                 "Catalog changed; fork branch retained, submit again"
@@ -422,8 +341,66 @@ class GiteeRepository:
         _validate_reference(repo_id, commit, "app.json")
         if not target.is_dir() or any(target.iterdir()):
             raise HubInvalidResponse("Snapshot target must be empty")
-        with GitSnapshot().open(repo_id, commit) as (tree, read_file):
-            return self._export_snapshot(repo_id, commit, target, tree, read_file)
+        tree = self._request(
+            "GET", f"repos/{repo_id}/git/trees/{commit}?recursive=1", None
+        )
+        blobs = self._tree(repo_id, commit, None, payload=tree)
+        return self._export_snapshot(
+            repo_id, commit, target, tree,
+            lambda **kwargs: self._read_blob(repo_id, kwargs["path"], blobs),
+        )
+
+    def _tree(
+        self, repo_id: str, commit: str, token: AccessToken | None,
+        *, payload: Any | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        if payload is None:
+            payload = self._request(
+                "GET", f"repos/{repo_id}/git/trees/{commit}?recursive=1", token
+            )
+        if not isinstance(payload, dict) or payload.get("truncated") is True:
+            raise HubInvalidResponse("Incomplete Gitee source tree")
+        items = payload.get("tree")
+        if not isinstance(items, list):
+            raise HubInvalidResponse("Invalid Gitee source tree")
+        result: dict[str, dict[str, Any]] = {}
+        seen: set[str] = set()
+        nodes: dict[str, tuple[str, bool]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                raise HubInvalidResponse("Invalid Gitee source tree entry")
+            path = item.get("path")
+            _validate_snapshot_path(
+                repo_id, commit, path, seen, nodes,
+                is_directory=item.get("type") == "tree",
+            )
+            if item.get("type") == "tree":
+                if item.get("mode") not in ("40000", "040000"):
+                    raise HubInvalidResponse("Invalid Gitee directory mode")
+                continue
+            if not isinstance(path, str) or item.get("type") != "blob" or item.get("mode") not in ("100644", "100755"):
+                raise HubInvalidResponse("Symlinks and submodules are not supported")
+            if not isinstance(item.get("sha"), str):
+                raise HubInvalidResponse("Invalid Gitee blob identifier")
+            result[path] = item
+        return result
+
+    def _read_blob(
+        self, repo_id: str, path: str, blobs: dict[str, dict[str, Any]],
+    ) -> bytes:
+        item = blobs.get(path)
+        if item is None:
+            raise HubFileNotFound("Gitee source file was not found")
+        payload = self._request(
+            "GET", f"repos/{repo_id}/git/blobs/{item['sha']}", None
+        )
+        encoded = payload.get("content") if isinstance(payload, dict) else None
+        if not isinstance(encoded, str) or payload.get("encoding") != "base64":
+            raise HubInvalidResponse("Gitee returned invalid blob content")
+        try:
+            return base64.b64decode("".join(encoded.split()), validate=True)
+        except (ValueError, binascii.Error):
+            raise HubInvalidResponse("Gitee returned invalid blob encoding") from None
 
     def _export_snapshot(
         self, repo_id: str, commit: str, target: Path, tree: Any, read_file: Any,
@@ -519,3 +496,10 @@ def _validate_snapshot_path(
 def _upload_bytes(file: UploadFile) -> bytes:
     assert file.source_path is not None
     return file.source_path.read_bytes()
+
+
+def _blob_digest(content: bytes) -> str:
+    return hashlib.sha1(
+        f"blob {len(content)}\0".encode() + content,
+        usedforsecurity=False,
+    ).hexdigest()
