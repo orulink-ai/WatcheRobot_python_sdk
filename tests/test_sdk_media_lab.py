@@ -1406,6 +1406,19 @@ def test_media_lab_ui_starts_a_video_only_rtc_session() -> None:
     assert "startRtcAudioButton" not in javascript
 
 
+def test_media_lab_ui_removes_rtc_full_duplex_audio_panel() -> None:
+    document = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
+
+    assert 'id="rtcAudioPanel"' not in document
+    assert "Full-duplex Audio Call" not in document
+    assert "Start Full-duplex Call" not in document
+    assert "Start Audio + Video" not in document
+    assert "full-duplex audio continues over WebRTC" not in document
+    assert 'id="recordMicrophoneButton"' in document
+    assert 'id="playAudioButton"' in document
+    assert 'id="liveVideoPanel"' in document
+
+
 def test_media_lab_stop_closes_browser_media_before_waiting_for_device_release() -> None:
     javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
     stop_body = javascript.split("async function stopRtcSession()", 1)[1].split(
