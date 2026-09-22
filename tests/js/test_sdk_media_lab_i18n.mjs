@@ -12,7 +12,6 @@ import {
 test("SDK Test Bench keeps English source copy and translates legacy diagnostics", () => {
   assert.equal(translateText("SDK Test Bench"), "SDK Test Bench");
   assert.equal(translateText("SDK 测试台"), "SDK Test Bench");
-  assert.equal(translateText("开启全双工通话"), "Start Full-duplex Call");
   assert.equal(
     translateText("正在录制 5 秒…"),
     "Recording 5 s…",
@@ -34,10 +33,10 @@ test("Chinese locale translates the English-first product copy", () => {
 });
 
 test("technical protocol names are preserved in both locales", () => {
-  const source = "RTC 运行中 · AEC · OPUS · WebRTC · MJPEG";
+  const source = "RTC 运行中 · LAN · MJPEG";
   const translated = translateText(source);
 
-  for (const term of ["RTC", "AEC", "OPUS", "WebRTC", "MJPEG"]) {
+  for (const term of ["RTC", "LAN", "MJPEG"]) {
     assert.match(translated, new RegExp(term));
   }
 });

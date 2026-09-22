@@ -370,7 +370,6 @@ def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
             "audio.stream",
             "microphone",
             "camera.capture",
-            "rtc.audio.full_duplex.v1",
             "rtc.video.mjpeg.v1",
         ),
         device_info={"firmware_version": "V3.1", "device_id": "watcher-test"},
@@ -477,7 +476,6 @@ def _client_for_service(module: ModuleType, tmp_path: Path, service: object) -> 
         "index.html",
         "app.js",
         "styles.css",
-        "rtc-audio-health.mjs",
         "resource-health.mjs",
     ):
         web_root.joinpath(filename).write_text(filename, encoding="utf-8")
@@ -503,7 +501,6 @@ def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -
         "audio.stream",
         "microphone",
         "camera.capture",
-        "rtc.audio.full_duplex.v1",
         "rtc.video.mjpeg.v1",
     ]
     assert status["device"]["firmware_version"] == "V3.1"
@@ -883,28 +880,15 @@ def test_rtc_media_lease_allows_motion_lights_and_animation(tmp_path: Path) -> N
     robot = _robot()
     service = _service(module, tmp_path, robot)
 
-    service.start_live_video(mode="av")
+    service.start_live_video(mode="video")
 
     assert service.move_motion(pan_deg=90, tilt_deg=115, duration_ms=600)["completed"] is True
     assert service.set_light_color(color="#D9FF57", brightness=0.7, zone="all") == {"applied": True}
     assert service.play_animation(animation_id="thinking")["started"] is True
     assert service.status()["resource_owners"] == {
-        "camera": "rtc_av",
-        "microphone": "rtc_av",
-        "speaker": "rtc_av",
+        "camera": "live_video",
     }
 
-
-def test_audio_rtc_allows_photo_but_rejects_standalone_audio_actions(tmp_path: Path) -> None:
-    module = _load_service_module()
-    service = _service(module, tmp_path)
-    service.start_live_video(mode="audio")
-
-    assert service.capture_photo()["content_type"] == "image/jpeg"
-    with pytest.raises(module.MediaLabBusyError, match="rtc_audio"):
-        service.play_audio()
-    with pytest.raises(module.MediaLabBusyError, match="rtc_audio"):
-        service.record_microphone(duration=1.0)
 
 
 def test_video_rtc_allows_one_standalone_audio_direction_at_a_time(tmp_path: Path) -> None:
@@ -917,18 +901,6 @@ def test_video_rtc_allows_one_standalone_audio_direction_at_a_time(tmp_path: Pat
     with pytest.raises(module.MediaLabBusyError, match="live_video"):
         service.capture_photo()
 
-
-@pytest.mark.parametrize("action", ["play_audio", "capture_photo", "record_microphone"])
-def test_combined_rtc_rejects_every_standalone_media_action(tmp_path: Path, action: str) -> None:
-    module = _load_service_module()
-    service = _service(module, tmp_path)
-    service.start_live_video(mode="av")
-
-    with pytest.raises(module.MediaLabBusyError, match="rtc_av"):
-        if action == "record_microphone":
-            service.record_microphone(duration=1.0)
-        else:
-            getattr(service, action)()
 
 
 def test_resource_locks_only_serialize_actions_that_share_the_same_hardware(tmp_path: Path) -> None:
@@ -1065,10 +1037,6 @@ def test_http_app_serves_browser_health_modules(tmp_path: Path) -> None:
     web_root.joinpath("index.html").write_text("lab", encoding="utf-8")
     web_root.joinpath("app.js").write_text("", encoding="utf-8")
     web_root.joinpath("styles.css").write_text("", encoding="utf-8")
-    web_root.joinpath("rtc-audio-health.mjs").write_text(
-        "export const ready = true;",
-        encoding="utf-8",
-    )
     web_root.joinpath("resource-health.mjs").write_text(
         "export const resourceReady = true;",
         encoding="utf-8",
@@ -1083,10 +1051,6 @@ def test_http_app_serves_browser_health_modules(tmp_path: Path) -> None:
     )
     client = TestClient(module.create_web_app(service, web_root=web_root))
 
-    response = client.get("/assets/rtc-audio-health.mjs")
-
-    assert response.status_code == 200
-    assert "export const ready" in response.text
     resource_response = client.get("/assets/resource-health.mjs")
     assert resource_response.status_code == 200
     assert "export const resourceReady" in resource_response.text
@@ -1122,12 +1086,6 @@ def test_animation_confirmation_accepts_realtime_diagnostics_when_resource_sampl
     assert "if (!state.animation.requestAccepted) return;" in javascript
     assert "state.animation.requestAccepted = true;" in javascript
 
-
-def test_audio_latency_diagnostics_expose_the_browser_minimum_buffer() -> None:
-    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
-
-    assert "browserLatency.minimumMs" in javascript
-    assert "minimum ${browserLatency.minimumMs} ms" in javascript
 
 
 def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
@@ -1180,81 +1138,11 @@ def test_live_video_http_contract_forwards_browser_signaling_and_heartbeat(
     ]
 
 
-def test_full_duplex_audio_http_contract_starts_audio_rtc_session(tmp_path: Path) -> None:
-    module = _load_service_module()
-    rtc = FakeRtc()
-    service = _service(module, tmp_path, rtc=rtc)
-    web_root = tmp_path / "web"
-    web_root.mkdir()
-    for filename in ("index.html", "app.js", "styles.css"):
-        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
-    client = TestClient(module.create_web_app(service, web_root=web_root))
-
-    started = client.post("/api/rtc/session/start", json={"mode": "audio"})
-    stopped = client.post("/api/rtc/session/stop")
-
-    assert started.status_code == 200
-    assert started.json()["session"]["mode"] == "audio"
-    assert stopped.json() == {"stopped": True}
-    assert rtc.calls == [("start", "audio"), ("stop", None)]
 
 
-def test_combined_rtc_http_contract_uses_one_audio_video_session(tmp_path: Path) -> None:
-    module = _load_service_module()
-    rtc = FakeRtc()
-    service = _service(module, tmp_path, rtc=rtc)
-    web_root = tmp_path / "web"
-    web_root.mkdir()
-    for filename in ("index.html", "app.js", "styles.css"):
-        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
-    client = TestClient(module.create_web_app(service, web_root=web_root))
-
-    started = client.post("/api/rtc/session/start", json={"mode": "av"})
-    status = client.get("/api/status")
-    stopped = client.post("/api/rtc/session/stop")
-
-    assert started.status_code == 200
-    assert started.json()["session"]["mode"] == "av"
-    assert status.json()["resource_owners"] == {
-        "camera": "rtc_av",
-        "microphone": "rtc_av",
-        "speaker": "rtc_av",
-    }
-    assert stopped.json() == {"stopped": True}
-    assert rtc.calls == [("start", "av"), ("stop", None)]
 
 
-def test_media_lab_keeps_audio_capability_compatible_with_older_sdk_runtime() -> None:
-    module = _load_service_module()
 
-    assert module.RTC_AUDIO_CAPABILITY == "rtc.audio.full_duplex.v1"
-
-
-def test_full_duplex_audio_requires_explicit_firmware_capability(tmp_path: Path) -> None:
-    module = _load_service_module()
-    robot = _robot()
-    robot.capabilities = ("rtc.video.mjpeg.v1",)
-    service = _service(module, tmp_path, robot)
-    web_root = tmp_path / "web"
-    web_root.mkdir()
-    for filename in ("index.html", "app.js", "styles.css"):
-        web_root.joinpath(filename).write_text(filename, encoding="utf-8")
-    client = TestClient(module.create_web_app(service, web_root=web_root))
-
-    response = client.post("/api/rtc/session/start", json={"mode": "audio"})
-
-    assert response.status_code == 409
-    assert response.json()["error"] == "rtc_unavailable"
-
-
-def test_combined_rtc_mode_requires_both_audio_and_video_capabilities(tmp_path: Path) -> None:
-    module = _load_service_module()
-    robot = _robot()
-    robot.capabilities = ("rtc.video.mjpeg.v1",)
-    service = _service(module, tmp_path, robot)
-
-    with pytest.raises(module.MediaLabRtcError, match="rtc.audio.full_duplex.v1"):
-        service.start_live_video(mode="av")
 
 
 def test_rtc_start_rejection_exposes_busy_owner_and_releases_media_lease(tmp_path: Path) -> None:
@@ -1504,18 +1392,18 @@ def test_media_lab_ui_uses_resource_owners_instead_of_global_busy_for_controls()
     assert "state.status?.rtc?.active === true" in javascript
 
 
-def test_media_lab_ui_can_start_one_combined_audio_video_rtc_session() -> None:
+def test_media_lab_ui_starts_a_video_only_rtc_session() -> None:
     javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
-    document = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
 
-    assert 'id="startRtcAvButton"' in document
-    assert 'startRtcSession("av")' in javascript
-    assert "rtcModeHasAudio" in javascript
+    assert 'startRtcSession("video")' in javascript
     assert "rtcModeHasVideo" in javascript
     assert "teardownInProgress" in javascript
     assert 'JSON.stringify({ mode })' in javascript
     assert "isCurrentRtcGeneration(state.rtc.generation, generation)" in javascript
     assert "pollRtcEvents(generation)" in javascript
+    assert "rtcModeHasAudio" not in javascript
+    assert "startRtcAvButton" not in javascript
+    assert "startRtcAudioButton" not in javascript
 
 
 def test_media_lab_stop_closes_browser_media_before_waiting_for_device_release() -> None:
@@ -1527,7 +1415,7 @@ def test_media_lab_stop_closes_browser_media_before_waiting_for_device_release()
     assert stop_body.index("cleanupRtcSession();") < stop_body.index(
         'await api(rtcEndpoint("stop", mode), { method: "POST" });'
     )
-    assert "Local audio/video stopped, but device release confirmation timed out" in stop_body
+    assert "Local video stopped, but device release confirmation timed out" in stop_body
     assert "elements.stopLiveVideoButton.disabled = !hadVideo || !state.rtc.peer" not in stop_body
     assert "elements.stopRtcAudioButton.disabled = !hadAudio || !state.rtc.peer" not in stop_body
 
@@ -1542,11 +1430,7 @@ def test_media_lab_keeps_rtc_start_controls_disabled_until_teardown_finishes() -
     )[0]
 
     assert "!availability.startRtcVideo || !liveAvailable || state.rtc.teardownInProgress" in render_body
-    assert "!availability.startRtcAudio || !rtcAudioAvailable || state.rtc.teardownInProgress" in render_body
-    assert "!availability.startRtcAv || !liveAvailable || !rtcAudioAvailable\n    || state.rtc.teardownInProgress" in render_body
     assert "elements.startLiveVideoButton.disabled = state.rtc.teardownInProgress" in cleanup_body
-    assert "elements.startRtcAudioButton.disabled = state.rtc.teardownInProgress" in cleanup_body
-    assert "elements.startRtcAvButton.disabled = state.rtc.teardownInProgress" in cleanup_body
 
 
 def test_media_lab_ui_explains_rtc_audio_playback_conflicts() -> None:
@@ -1573,19 +1457,6 @@ def test_browser_declares_shared_formatters_only_once() -> None:
 
     assert javascript.count("function formatBytes(") == 1
 
-
-def test_rtc_audio_ui_uses_raw_microphone_and_aec_diagnostics() -> None:
-    javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
-    document = LAB_ROOT.joinpath("web", "index.html").read_text(encoding="utf-8")
-
-    assert "audio_microphone_peak" in javascript
-    assert "audio_aec_active" in javascript
-    assert "audio_aec_reference_bytes" in javascript
-    assert "audio_aec_reference_processed_bytes" in javascript
-    assert "reference processed" in javascript
-    assert "rtcAudioAec" in javascript
-    assert "id=\"rtcAudioAec\"" in document
-    assert "Physical Mic Peak" in document
 
 
 def test_browser_mdns_host_candidates_are_rewritten_without_touching_other_candidates() -> None:
@@ -1654,8 +1525,6 @@ def test_local_ui_uses_english_source_copy_without_chinese_hardcoding() -> None:
         "Camera Capture",
         "Live Camera Preview",
         "Start Live Video",
-        "Full-duplex Audio Call",
-        "Start Full-duplex Call",
         "Microphone Recording",
         "Device Capability Matrix",
         "Run Log",
@@ -1669,24 +1538,11 @@ def test_local_ui_uses_english_source_copy_without_chinese_hardcoding() -> None:
         "Discovering device",
         "System Idle",
         "Streaming PCM sample",
-        "rtc-control",
         "mjpeg_websocket_url",
         "createMjpegTransport",
         "parseWjpgPacket",
         'api("/api/video/session/start"',
-        "navigator.mediaDevices.getUserMedia",
-        "createRtcMicrophoneConstraints",
-        "rtc_audio_processing",
-        'window.location.hostname === "127.0.0.1"',
-        'params.get("rtc_hil") === "1"',
-        "createMediaStreamDestination",
-        "createOscillator",
-        "state.rtc.diagnosticAudio",
-        "for (const track of localStream.getTracks()) track.stop();",
         "state.rtc.generation !== generation",
-        'api("/api/rtc/session/start"',
-        'addEventListener("track"',
-        "Local audio/video stopped, but device release confirmation timed out",
         "Basic check passed",
     ):
         assert copy in javascript

@@ -13,9 +13,8 @@ from watcherobot.application.transport import DaemonApplicationTransport
 
 
 RTC_PROTOCOL = "watcher-rtc/1"
-RTC_AUDIO_CAPABILITY = "rtc.audio.full_duplex.v1"
 RTC_VIDEO_CAPABILITY = "rtc.video.mjpeg.v1"
-_MODES = {"video", "audio", "av"}
+_MODES = {"video"}
 
 
 class RtcSessionRejectedError(RuntimeError):
@@ -67,7 +66,7 @@ class ApplicationRtc:
 
     def start(self, *, mode: str = "video") -> dict[str, Any]:
         if mode not in _MODES:
-            raise ValueError("mode must be one of: video, audio, av")
+            raise ValueError("mode must be one of: video")
         with self._lock:
             self._ensure_open()
             if self._active:
@@ -147,10 +146,6 @@ class ApplicationRtc:
             "display_fps_x100",
             "frame_age_p95_us",
             "rtt_us",
-            "audio_queue_ms",
-            "audio_packet_loss_x100",
-            "audio_jitter_us",
-            "audio_concealed_frames",
             "congestion_level",
         }
         if set(metrics) != required:
@@ -395,7 +390,6 @@ class ApplicationRtc:
 
 __all__ = [
     "ApplicationRtc",
-    "RTC_AUDIO_CAPABILITY",
     "RTC_PROTOCOL",
     "RTC_VIDEO_CAPABILITY",
     "RtcSessionRejectedError",

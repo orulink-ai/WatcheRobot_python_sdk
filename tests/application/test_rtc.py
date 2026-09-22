@@ -8,15 +8,15 @@ import pytest
 
 from watcherobot.application.rtc import (
     ApplicationRtc,
-    RTC_AUDIO_CAPABILITY,
     RTC_VIDEO_CAPABILITY,
     RtcSessionRejectedError,
 )
 
 
 def test_rtc_capability_names_are_public_and_feature_specific() -> None:
-    assert RTC_AUDIO_CAPABILITY == "rtc.audio.full_duplex.v1"
     assert RTC_VIDEO_CAPABILITY == "rtc.video.mjpeg.v1"
+    assert "audio" not in RTC_VIDEO_CAPABILITY
+    assert not hasattr(__import__("watcherobot.application", fromlist=["*"]), "RTC_AUDIO_CAPABILITY")
 
 
 class FakeTransport:
@@ -242,6 +242,10 @@ def test_rtc_rejects_invalid_data_before_sending_to_device() -> None:
 
     with pytest.raises(ValueError, match="mode"):
         rtc.start(mode="screen")
+    with pytest.raises(ValueError, match="mode"):
+        rtc.start(mode="audio")
+    with pytest.raises(ValueError, match="mode"):
+        rtc.start(mode="av")
     rtc.start()
     with pytest.raises(ValueError, match="sdp"):
         rtc.send_offer("")
