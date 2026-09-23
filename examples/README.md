@@ -31,8 +31,9 @@ Available examples include:
   rules, text) on its local web page (http://127.0.0.1:8766), and the robot
   speaks them from its speaker at the scheduled times, playing a happy
   behavior to draw attention.
-- `sdk_media_lab`: launch a standalone loopback browser dashboard for speaker
-  streaming, JPEG capture, microphone recording, artifacts, and diagnostics.
+- `sdk_media_lab`: launch the SDK Test Bench for speaker streaming, JPEG
+  capture, microphone recording, vision/model inspection, inference preview,
+  face tracking, artifacts, and diagnostics.
 - `capture_photo`: capture one JPEG from the camera.
 - `record_microphone`: record a short WAV file.
 - `face_tracking_preview`: consume typed, sequence-matched live preview frames

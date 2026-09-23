@@ -173,6 +173,12 @@ const elements = {
   capabilitySummary: document.querySelector("#capabilitySummary"),
   eventLog: document.querySelector("#eventLog"),
   runAllButton: document.querySelector("#runAllButton"),
+  combinedTestPanel: document.querySelector("#combinedTestPanel"),
+  combinedTestButton: document.querySelector("#combinedTestButton"),
+  combinedTestResult: document.querySelector("#combinedTestResult"),
+  combinedStageList: document.querySelector("#combinedStageList"),
+  combinedAnimationObserved: document.querySelector("#combinedAnimationObserved"),
+  combinedAudioObserved: document.querySelector("#combinedAudioObserved"),
   panControl: document.querySelector("#panControl"),
   panValue: document.querySelector("#panValue"),
   tiltControl: document.querySelector("#tiltControl"),
@@ -695,6 +701,9 @@ function renderStatus(status) {
   elements.stopRandomAnimationButton.disabled = !state.animation.random.active;
   elements.runAllButton.disabled = status.busy || state.localResources.size > 0 || !status.connected || ![
     "motion", "light", "audio.stream", "camera.capture", "microphone",
+  ].every(hasCapability);
+  elements.combinedTestButton.disabled = status.busy || state.localResources.size > 0 || !status.connected || ![
+    "expression.runtime.v3", "audio.stream", "camera.capture",
   ].every(hasCapability);
 
   elements.capabilityGrid.replaceChildren(...status.capabilities.map((capability) => {
@@ -1999,6 +2008,72 @@ async function runAll() {
   }
 }
 
+function renderCombinedStages(stages = []) {
+  const labels = {
+    dynamic_ui: "Dynamic Custom UI",
+    photo: "Repeated Camera Capture",
+    audio: "Audio Playback",
+    request_overlap: "Request Overlap",
+    resource_recovery: "Resource Recovery",
+  };
+  const statuses = { passed: "Passed", failed: "Failed", skipped: "Skipped" };
+  elements.combinedStageList.replaceChildren(...stages.map((stage, index) => {
+    const item = document.createElement("li");
+    item.dataset.state = stage.status;
+    const sequence = document.createElement("span");
+    sequence.textContent = String(index + 1).padStart(2, "0");
+    const name = document.createElement("strong");
+    name.textContent = labels[stage.name] || stage.name;
+    const status = document.createElement("small");
+    status.textContent = `${statuses[stage.status] || stage.status} · ${stage.duration_ms || 0} ms`;
+    item.append(sequence, name, status);
+    return item;
+  }));
+}
+
+async function runCombinedTest() {
+  elements.combinedAnimationObserved.checked = false;
+  elements.combinedAudioObserved.checked = false;
+  const resources = ["animation", "camera", "microphone", "speaker"];
+  if (resources.some((name) => state.localResources.has(name))) return;
+  if (!state.status?.connected) {
+    notify("Device disconnected. Reconnect before testing", "error");
+    return;
+  }
+  resources.forEach((name) => state.localResources.add(name));
+  elements.combinedTestPanel.dataset.running = "true";
+  setResult(
+    elements.combinedTestResult,
+    "Running concurrently: dynamic custom UI + repeated photos + audio playback…",
+    "running",
+  );
+  try {
+    const payload = await api("/api/tests/combined", {
+      method: "POST",
+      body: JSON.stringify({
+        duration_seconds: 8,
+        photo_interval_seconds: 1,
+        include_photo: true,
+        include_audio: true,
+      }),
+    });
+    renderCombinedStages(payload.stages);
+    if (payload.photo?.artifact_url) showPhoto(payload.photo.artifact_url);
+    const message = payload.passed
+      ? "All SDK stages passed. Confirm the screen and speaker output manually."
+      : `Combined test failed at ${payload.failed_stage || "unknown"}: ${payload.error || "unknown error"}`;
+    setResult(elements.combinedTestResult, message, payload.passed ? "ok" : "error");
+    notify(message, payload.passed ? "ok" : "error");
+  } catch (error) {
+    setResult(elements.combinedTestResult, error.message, "error");
+    notify(error.message, "error");
+  } finally {
+    resources.forEach((name) => state.localResources.delete(name));
+    delete elements.combinedTestPanel.dataset.running;
+    await refreshStatus();
+  }
+}
+
 elements.playAudioButton.addEventListener("click", () => { playAudio().catch(() => {}); });
 elements.panControl.addEventListener("input", updateMotionPreview);
 elements.tiltControl.addEventListener("input", updateMotionPreview);
@@ -2149,6 +2224,7 @@ elements.startRtcAvButton.addEventListener("click", () => { startRtcSession("av"
 elements.stopRtcAudioButton.addEventListener("click", () => { stopRtcSession(); });
 elements.recordMicrophoneButton.addEventListener("click", () => { recordMicrophone().catch(() => {}); });
 elements.runAllButton.addEventListener("click", runAll);
+elements.combinedTestButton.addEventListener("click", () => { runCombinedTest().catch(() => {}); });
 elements.recordDuration.addEventListener("input", () => { elements.durationValue.textContent = elements.recordDuration.value; });
 document.querySelector("#clearVisualLog").addEventListener("click", () => {
   (state.status?.events || []).forEach((event) => state.hiddenEventIds.add(event.id));

@@ -56,7 +56,7 @@ inference. Keep high-bandwidth preview on the managed Application path and use
 the UART for low-level maintenance or low-volume logs so display animation,
 preview transport, and verbose serial output do not compete unnecessarily.
 
-For an operator-facing media bench, run the standalone SDK Media Lab:
+For an operator-facing media bench, run SDK Test Bench:
 
 ```powershell
 watcherobot app run .\examples\sdk_media_lab

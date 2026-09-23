@@ -1,5 +1,6 @@
 import hashlib
 import threading
+import time
 from concurrent.futures import Future
 
 import pytest
@@ -855,7 +856,7 @@ def test_rejected_installed_sound_keeps_existing_host_sender_alive():
     assert playback.state.value == "starting"
 
 
-def test_new_audio_stream_cancels_previous_host_sender_before_replacement():
+def test_new_audio_stream_queues_until_previous_playback_is_terminal():
     class PendingAudioTransport(FakeTransport):
         def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
             self.audio_streams.append((bytes(pcm), stream_id, chunk_bytes))
@@ -870,8 +871,26 @@ def test_new_audio_stream_cancels_previous_host_sender_before_replacement():
     first_future = transport.audio_streams[0][3]
     second = robot.audio.play_pcm(b"\x02\x00")
 
-    assert first_future.cancelled()
-    assert first.state.value == "cancelled"
+    assert not first_future.cancelled()
+    assert first.state.value == "starting"
+    assert second.state.value == "queued"
+    assert [command[0] for command in transport.commands] == ["ctrl.audio.stream.begin"]
+
+    transport.message_callback(
+        {
+            "type": "evt.audio.buffer_status",
+            "code": 0,
+            "data": {
+                "reason": "complete",
+                "stream_id": first.id,
+                "audio_sha256": first.expected_sha256,
+            },
+        }
+    )
+
+    deadline = time.monotonic() + 1.0
+    while second.state.value == "queued" and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert second.state.value == "starting"
     assert [command[0] for command in transport.commands] == [
         "ctrl.audio.stream.begin",
@@ -919,7 +938,7 @@ def test_rejected_audio_playback_cancel_keeps_sender_and_playback_active():
     assert robot._audio_playback is playback
 
 
-def test_old_sender_failure_during_successful_replacement_does_not_stop_new_stream():
+def test_old_sender_failure_releases_queued_replacement_without_stopping_it():
     class BlockingReplacementTransport(FakeTransport):
         def __init__(self):
             super().__init__()
@@ -955,20 +974,348 @@ def test_old_sender_failure_during_successful_replacement_does_not_stop_new_stre
 
     replacement_thread = threading.Thread(target=replace_audio)
     replacement_thread.start()
-    assert transport.replacement_started.wait(1)
-    transport.futures[0].set_exception(OSError("old sender failed"))
-    transport.release_replacement.set()
     replacement_thread.join(1)
+    assert len(replacements) == 1
+    assert replacements[0].state.value == "queued"
+    transport.futures[0].set_exception(OSError("old sender failed"))
+    assert transport.replacement_started.wait(1)
+    transport.release_replacement.set()
+    deadline = time.monotonic() + 1.0
+    while replacements[0].state.value == "queued" and time.monotonic() < deadline:
+        time.sleep(0.01)
 
     assert not replacement_thread.is_alive()
     assert errors == []
     assert first.state.value == "failed"
-    assert len(replacements) == 1
     assert replacements[0].state.value == "starting"
     assert [command[0] for command in transport.commands] == [
         "ctrl.audio.stream.begin",
+        "ctrl.audio.stop",
         "ctrl.audio.stream.begin",
     ]
+
+
+def test_camera_waits_for_active_audio_playback_before_sending_capture_command():
+    class PendingAudioCameraTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            self.future = Future()
+            return self.future
+
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture":
+                session_id = response["data"]["session_id"]
+                self.binary_callback(
+                    BinaryFrame(
+                        FRAME_IMAGE, FLAG_FIRST | FLAG_LAST, session_id, 1, b"jpeg"
+                    )
+                )
+            return response
+
+    transport = PendingAudioCameraTransport()
+    robot = WatcheRobot._from_transport(transport)
+    playback = robot.audio.play_pcm(b"\x01\x00")
+    images = []
+    capture = threading.Thread(
+        target=lambda: images.append(robot.camera.capture(timeout=1.0))
+    )
+    capture.start()
+    time.sleep(0.05)
+
+    assert [command[0] for command in transport.commands] == ["ctrl.audio.stream.begin"]
+
+    transport.message_callback(
+        {
+            "type": "evt.audio.buffer_status",
+            "code": 0,
+            "data": {
+                "reason": "complete",
+                "stream_id": playback.id,
+                "audio_sha256": playback.expected_sha256,
+            },
+        }
+    )
+    capture.join(1)
+
+    assert not capture.is_alive()
+    assert images[0].data == b"jpeg"
+    assert [command[0] for command in transport.commands] == [
+        "ctrl.audio.stream.begin",
+        "ctrl.camera.capture",
+    ]
+
+
+def test_audio_waits_for_camera_jpeg_before_sending_begin_command():
+    class BlockingCameraTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.capture_started = threading.Event()
+            self.release_jpeg = threading.Event()
+
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture":
+                session_id = response["data"]["session_id"]
+                self.capture_started.set()
+                assert self.release_jpeg.wait(1)
+                self.binary_callback(
+                    BinaryFrame(
+                        FRAME_IMAGE, FLAG_FIRST | FLAG_LAST, session_id, 1, b"jpeg"
+                    )
+                )
+            return response
+
+    transport = BlockingCameraTransport()
+    robot = WatcheRobot._from_transport(transport)
+    camera_thread = threading.Thread(target=lambda: robot.camera.capture(timeout=1.0))
+    camera_thread.start()
+    assert transport.capture_started.wait(1)
+
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    assert playback.state.value == "queued"
+    assert [command[0] for command in transport.commands] == ["ctrl.camera.capture"]
+    transport.release_jpeg.set()
+    camera_thread.join(1)
+    deadline = time.monotonic() + 1.0
+    while playback.state.value == "queued" and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert playback.state.value == "starting"
+    assert [command[0] for command in transport.commands] == [
+        "ctrl.camera.capture",
+        "ctrl.audio.stream.begin",
+    ]
+
+
+def test_queued_audio_can_be_cancelled_without_sending_device_command():
+    class PendingAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            return Future()
+
+    transport = PendingAudioTransport()
+    robot = WatcheRobot._from_transport(transport)
+    active = robot.audio.play_pcm(b"\x01\x00")
+    queued = robot.audio.play_pcm(b"\x02\x00")
+
+    queued.cancel()
+
+    assert active.state.value == "starting"
+    assert queued.state.value == "cancelled"
+    assert [command[0] for command in transport.commands] == ["ctrl.audio.stream.begin"]
+
+
+def test_audio_stop_cancels_active_and_queued_playback_without_starting_waiter():
+    class PendingAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            return Future()
+
+    transport = PendingAudioTransport()
+    robot = WatcheRobot._from_transport(transport)
+    active = robot.audio.play_pcm(b"\x01\x00")
+    queued = robot.audio.play_pcm(b"\x02\x00")
+
+    robot.audio.stop()
+
+    assert active.state.value == "cancelled"
+    assert queued.state.value == "cancelled"
+    assert queued.reason == "stopped"
+    assert [command[0] for command in transport.commands] == [
+        "ctrl.audio.stream.begin",
+        "ctrl.audio.stop",
+    ]
+
+
+def test_installed_sound_cancels_queued_pcm_without_starting_it():
+    class PendingAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            return Future()
+
+    transport = PendingAudioTransport()
+    robot = WatcheRobot._from_transport(transport)
+    active = robot.audio.play_pcm(b"\x01\x00")
+    queued = robot.audio.play_pcm(b"\x02\x00")
+
+    sound = robot.audio.play("notification")
+
+    assert sound.state.value == "starting"
+    assert active.state.value == "cancelled"
+    assert queued.state.value == "cancelled"
+    assert queued.reason == "replaced"
+    assert [command[0] for command in transport.commands] == [
+        "ctrl.audio.stream.begin",
+        "ctrl.audio.play",
+    ]
+
+
+@pytest.mark.parametrize("transient_reason", ["busy", "no_capacity"])
+def test_audio_stream_begin_retries_transient_resource_rejection(
+    transient_reason, monkeypatch
+):
+    class RetryTransport(FakeTransport):
+        command_timeout = 0
+
+        def __init__(self):
+            super().__init__()
+            self.begin_attempts = 0
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.audio.stream.begin":
+                self.begin_attempts += 1
+                if self.begin_attempts == 1:
+                    raise CommandError(message_type, transient_reason)
+            return super().send_command(message_type, data, timeout)
+
+    monkeypatch.setattr("watcherobot.robot.time.sleep", lambda _seconds: None)
+    transport = RetryTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    assert transport.begin_attempts == 2
+    assert playback.state.value == "starting"
+
+
+def test_audio_stream_begin_does_not_retry_non_transient_rejection(monkeypatch):
+    class RejectingTransport(FakeTransport):
+        command_timeout = 0
+
+        def __init__(self):
+            super().__init__()
+            self.begin_attempts = 0
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.audio.stream.begin":
+                self.begin_attempts += 1
+                raise CommandError(message_type, "not_found")
+            return super().send_command(message_type, data, timeout)
+
+    monkeypatch.setattr("watcherobot.robot.time.sleep", lambda _seconds: None)
+    transport = RejectingTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(CommandError, match="not_found"):
+        robot.audio.play_pcm(b"\x01\x00")
+
+    assert transport.begin_attempts == 1
+
+
+def test_audio_stream_begin_stops_retrying_after_deadline(monkeypatch):
+    class AlwaysBusyTransport(FakeTransport):
+        command_timeout = 0
+
+        def __init__(self):
+            super().__init__()
+            self.begin_attempts = 0
+
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.audio.stream.begin":
+                self.begin_attempts += 1
+                raise CommandError(message_type, "busy")
+            return super().send_command(message_type, data, timeout)
+
+    clock = iter([0.0, 0.1, 1.1])
+    monkeypatch.setattr("watcherobot.robot.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("watcherobot.robot.time.sleep", lambda _seconds: None)
+    transport = AlwaysBusyTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    with pytest.raises(CommandError, match="busy"):
+        robot.audio.play_pcm(b"\x01\x00")
+
+    assert transport.begin_attempts == 2
+
+
+def test_camera_queue_timeout_does_not_send_capture_and_next_request_recovers():
+    class PendingAudioCameraTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            return Future()
+
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture":
+                session_id = response["data"]["session_id"]
+                self.binary_callback(
+                    BinaryFrame(FRAME_IMAGE, FLAG_FIRST | FLAG_LAST, session_id, 1, b"jpeg")
+                )
+            return response
+
+    transport = PendingAudioCameraTransport()
+    robot = WatcheRobot._from_transport(transport)
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    with pytest.raises(TimeoutError, match="did not start"):
+        robot.camera.capture(timeout=0.01)
+    assert [command[0] for command in transport.commands] == ["ctrl.audio.stream.begin"]
+
+    transport.message_callback(
+        {
+            "type": "evt.audio.buffer_status",
+            "code": 0,
+            "data": {
+                "reason": "complete",
+                "stream_id": playback.id,
+                "audio_sha256": playback.expected_sha256,
+            },
+        }
+    )
+    image = robot.camera.capture(timeout=1.0)
+
+    assert image.data == b"jpeg"
+    assert [command[0] for command in transport.commands] == [
+        "ctrl.audio.stream.begin",
+        "ctrl.camera.capture",
+    ]
+
+
+def test_camera_capture_timeout_starts_after_fifo_admission():
+    class DelayedAdmissionTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == "ctrl.camera.capture":
+                assert timeout is not None and timeout > 0.04
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture":
+                session_id = response["data"]["session_id"]
+                self.binary_callback(
+                    BinaryFrame(FRAME_IMAGE, FLAG_FIRST | FLAG_LAST, session_id, 1, b"jpeg")
+                )
+            return response
+
+    class DelayedTicket:
+        def wait(self, timeout):
+            assert timeout == 0.05
+            time.sleep(0.02)
+
+        def release(self):
+            return None
+
+    class DelayedScheduler:
+        def request(self):
+            return DelayedTicket()
+
+    robot = WatcheRobot._from_transport(DelayedAdmissionTransport())
+    robot._ptl_media_scheduler = DelayedScheduler()
+
+    assert robot.camera.capture(timeout=0.05).data == b"jpeg"
+
+
+def test_disconnect_fails_active_and_queued_audio_without_starting_waiter():
+    class PendingAudioTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            return Future()
+
+    transport = PendingAudioTransport()
+    robot = WatcheRobot._from_transport(transport)
+    active = robot.audio.play_pcm(b"\x01\x00")
+    queued = robot.audio.play_pcm(b"\x02\x00")
+
+    transport.disconnect_callback()
+
+    assert active.state.value == "failed"
+    assert active.reason == "disconnected"
+    assert queued.state.value == "failed"
+    assert queued.reason == "disconnected"
+    assert robot._audio_queue_tickets == {}
+    assert [command[0] for command in transport.commands] == ["ctrl.audio.stream.begin"]
 
 
 def test_operation_event_arriving_immediately_after_ack_is_not_lost():
@@ -1248,6 +1595,121 @@ def test_camera_retries_transient_busy_until_capture_timeout():
 
     assert robot.camera.capture(timeout=0.5).data == b"jpeg"
     assert transport.capture_attempts == 2
+
+
+@pytest.mark.parametrize("transient_reason", ["busy", "no_capacity"])
+def test_camera_retries_matched_async_transient_failure(transient_reason):
+    class AsyncBusyCameraTransport(FakeTransport):
+        def __init__(self):
+            super().__init__()
+            self.capture_attempts = 0
+
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            if message_type != "ctrl.camera.capture":
+                return response
+            self.capture_attempts += 1
+            session_id = response["data"]["session_id"]
+            if self.capture_attempts == 1:
+                self.message_callback(
+                    {
+                        "type": "evt.sdk.camera.capture",
+                        "code": 0,
+                        "data": {
+                            "session_id": session_id,
+                            "state": "failed",
+                            "reason": transient_reason,
+                        },
+                    }
+                )
+            else:
+                self.binary_callback(
+                    BinaryFrame(
+                        FRAME_IMAGE, FLAG_FIRST | FLAG_LAST, session_id, 1, b"jpeg"
+                    )
+                )
+            return response
+
+    transport = AsyncBusyCameraTransport()
+    robot = WatcheRobot._from_transport(transport)
+
+    assert robot.camera.capture(timeout=0.5).data == b"jpeg"
+    assert transport.capture_attempts == 2
+
+
+def test_camera_matched_upload_failure_returns_without_waiting_for_timeout():
+    class UploadFailureCameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture":
+                self.message_callback(
+                    {
+                        "type": "evt.sdk.camera.capture",
+                        "code": 0,
+                        "data": {
+                            "session_id": response["data"]["session_id"],
+                            "state": "failed",
+                            "reason": "image_upload_failed",
+                        },
+                    }
+                )
+            return response
+
+    transport = UploadFailureCameraTransport()
+    robot = WatcheRobot._from_transport(transport)
+    started = time.monotonic()
+
+    with pytest.raises(CommandError, match="image_upload_failed"):
+        robot.camera.capture(timeout=1.0)
+
+    assert time.monotonic() - started < 0.5
+    assert [command[0] for command in transport.commands] == ["ctrl.camera.capture"]
+
+
+def test_camera_ignores_failure_for_a_different_session():
+    class MismatchedFailureCameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture":
+                session_id = response["data"]["session_id"]
+                self.message_callback(
+                    {
+                        "type": "evt.sdk.camera.capture",
+                        "code": 0,
+                        "data": {
+                            "session_id": session_id + 1,
+                            "state": "failed",
+                            "reason": "busy",
+                        },
+                    }
+                )
+                self.binary_callback(
+                    BinaryFrame(
+                        FRAME_IMAGE, FLAG_FIRST | FLAG_LAST, session_id, 1, b"jpeg"
+                    )
+                )
+            return response
+
+    robot = WatcheRobot._from_transport(MismatchedFailureCameraTransport())
+
+    assert robot.camera.capture(timeout=0.5).data == b"jpeg"
+
+
+def test_disconnect_interrupts_camera_wait_immediately():
+    class DisconnectingCameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            if message_type == "ctrl.camera.capture":
+                self.disconnect_callback()
+            return response
+
+    robot = WatcheRobot._from_transport(DisconnectingCameraTransport())
+    started = time.monotonic()
+
+    with pytest.raises(WatcheRobotError, match="disconnected"):
+        robot.camera.capture(timeout=1.0)
+
+    assert time.monotonic() - started < 0.5
 
 
 def test_camera_reports_command_ack_timeout_with_context():
