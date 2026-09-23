@@ -26,6 +26,7 @@ from .ports import (
     HubFileNotFound,
     HubInvalidResponse,
     HubNetworkError,
+    HubRateLimitError,
     HubRepositoryConflict,
     RepositoryRevision,
     SourceRepository,
@@ -105,7 +106,7 @@ class GiteeRepository:
             status == 403 and isinstance(payload, dict)
             and payload.get("rate_limited") is True
         ):
-            raise HubNetworkError("Gitee 请求频率超限，请稍后重试；不会自动重试或切换凭据")
+            raise HubRateLimitError("Gitee 请求频率超限，请稍后重试；不会自动重试或切换凭据")
         if status == 403 and token is None:
             raise HubNetworkError("Gitee 匿名读取被拒绝（HTTP 403），可能涉及限流或仓库访问限制")
         if status in (401, 403):
@@ -187,10 +188,17 @@ class GiteeRepository:
                 "encoding": "base64",
             }
             if current is not None:
-                action["last_commit_id"] = revision.commit
+                action["last_commit_id"] = self._last_file_commit(
+                    token, repo_id=repo_id, commit=revision.commit, path=path,
+                )
             actions.append(action)
         for path in sorted(set(remote) - set(desired)):
-            actions.append({"action": "delete", "path": path, "last_commit_id": revision.commit})
+            actions.append({
+                "action": "delete", "path": path,
+                "last_commit_id": self._last_file_commit(
+                    token, repo_id=repo_id, commit=revision.commit, path=path,
+                ),
+            })
         if len(actions) > MAX_SNAPSHOT_FILES:
             raise HubInvalidResponse("Application publication requires too many file operations")
         if actions:
@@ -227,7 +235,22 @@ class GiteeRepository:
         self, token: AccessToken | None = None, *, repo_id: str, commit: str, path: str
     ) -> bytes:
         _validate_reference(repo_id, commit, path)
-        return self.public.read_file(repo_id=repo_id, commit=commit, path=path)
+        blobs = self._tree(repo_id, commit, None)
+        return self._read_blob(repo_id, path, blobs)
+
+    def _last_file_commit(
+        self, token: AccessToken, *, repo_id: str, commit: str, path: str,
+    ) -> str:
+        """Resolve the file guard within the already selected immutable revision."""
+        _validate_reference(repo_id, commit, path)
+        query = urlencode({"sha": commit, "path": path, "per_page": 1})
+        history = self._request("GET", f"repos/{repo_id}/commits?{query}", token)
+        if not isinstance(history, list) or len(history) != 1 or not isinstance(history[0], dict):
+            raise HubInvalidResponse("Gitee returned invalid file commit history")
+        file_commit = history[0].get("sha")
+        _validate_reference(repo_id, file_commit, path)
+        assert isinstance(file_commit, str)
+        return file_commit
 
     def read_public_catalog(self, *, repo_id: str, path: str) -> CatalogDocument:
         _validate_reference(repo_id, '0' * 40, path)
@@ -296,27 +319,31 @@ class GiteeRepository:
             raise HubRepositoryConflict(
                 "Existing repository is not a fork of the selected catalog"
             )
+        file_commit = self._last_file_commit(
+            token, repo_id=repo_id, commit=parent_commit, path=path,
+        )
         branch = "watcher-submit-" + uuid.uuid4().hex
-        try:
-            self._request(
-                "POST", f"repos/{fork_id}/commits", token,
-                {
-                    "branch": branch,
-                    "start_branch": parent_commit,
-                    "message": title,
-                    "actions": [{
-                        "action": "update",
-                        "path": path,
-                        "content": base64.b64encode(content).decode("ascii"),
-                        "encoding": "base64",
-                        "last_commit_id": parent_commit,
-                    }],
-                },
-            )
-        except HubNetworkError as exc:
-            raise HubCatalogConflict(
-                "Developer fork cannot start from the selected catalog commit; sync the fork and submit again"
-            ) from exc
+        created_branch = self._request(
+            "POST", f"repos/{fork_id}/branches", token,
+            {"refs": parent_commit, "branch_name": branch},
+        )
+        start = created_branch.get("commit") if isinstance(created_branch, dict) else None
+        if not isinstance(start, dict) or start.get("sha") != parent_commit:
+            raise HubInvalidResponse("Gitee submission branch did not start at the selected commit")
+        self._request(
+            "POST", f"repos/{fork_id}/commits", token,
+            {
+                "branch": branch,
+                "message": title,
+                "actions": [{
+                    "action": "update",
+                    "path": path,
+                    "content": base64.b64encode(content).decode("ascii"),
+                    "encoding": "base64",
+                    "last_commit_id": file_commit,
+                }],
+            },
+        )
         if self.get_repository_head(token, repo_id=repo_id).commit != parent_commit:
             raise HubCatalogConflict(
                 "Catalog changed; fork branch retained, submit again"
@@ -382,8 +409,7 @@ class GiteeRepository:
                 continue
             if item.get("type") != "blob" or item.get("mode") not in ("100644", "100755"):
                 raise HubInvalidResponse("Symlinks and submodules are not supported")
-            if not isinstance(item.get("sha"), str):
-                raise HubInvalidResponse("Invalid Gitee blob identifier")
+            _validate_reference(repo_id, item.get("sha"), path)
             result[path] = item
         return result
 
@@ -393,6 +419,9 @@ class GiteeRepository:
         item = blobs.get(path)
         if item is None:
             raise HubFileNotFound("Gitee source file was not found")
+        size = item.get("size")
+        if type(size) is not int or not 0 <= size <= MAX_SNAPSHOT_BYTES:
+            raise HubInvalidResponse("Invalid Gitee blob size")
         payload = self._request(
             "GET", f"repos/{repo_id}/git/blobs/{item['sha']}", None
         )
@@ -400,9 +429,11 @@ class GiteeRepository:
         if not isinstance(encoded, str) or payload.get("encoding") != "base64":
             raise HubInvalidResponse("Gitee returned invalid blob content")
         try:
-            return base64.b64decode("".join(encoded.split()), validate=True)
+            data = base64.b64decode("".join(encoded.split()), validate=True)
         except (ValueError, binascii.Error):
             raise HubInvalidResponse("Gitee returned invalid blob encoding") from None
+        _verify_blob(item, data)
+        return data
 
     def _export_snapshot(
         self, repo_id: str, commit: str, target: Path, tree: Any, read_file: Any,
@@ -442,15 +473,7 @@ class GiteeRepository:
                 data = read_file(
                     repo_id=repo_id, commit=commit, path=item["path"]
                 )
-                if len(data) != item["size"]:
-                    raise HubInvalidResponse("Snapshot size mismatch")
-                digest = hashlib.sha1(
-                    f"blob {len(data)}\0".encode() + data, usedforsecurity=False
-                ).hexdigest()
-                if digest != item.get("sha"):
-                    raise HubInvalidResponse(
-                        "Snapshot blob does not match the immutable tree"
-                    )
+                _verify_blob(item, data)
                 destination = target / item["path"]
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(data)
@@ -505,3 +528,10 @@ def _blob_digest(content: bytes) -> str:
         f"blob {len(content)}\0".encode() + content,
         usedforsecurity=False,
     ).hexdigest()
+
+
+def _verify_blob(item: dict[str, Any], content: bytes) -> None:
+    if len(content) != item["size"]:
+        raise HubInvalidResponse("Snapshot size mismatch")
+    if _blob_digest(content) != item.get("sha"):
+        raise HubInvalidResponse("Snapshot blob does not match the immutable tree")

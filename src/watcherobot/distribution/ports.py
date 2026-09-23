@@ -270,6 +270,10 @@ class HubNetworkError(HubError):
     """The Hub could not be reached or returned a server failure."""
 
 
+class HubRateLimitError(HubNetworkError):
+    """The Hub rejected a request because its rate limit was exceeded."""
+
+
 class HubInvalidResponse(HubError):
     """The Hub response does not satisfy the expected identity contract."""
 

@@ -46,6 +46,8 @@ class PublishApi:
             return 200, {"private": False, "default_branch": "master"}
         if path == "repos/alice/app/branches/master":
             return 200, {"commit": {"sha": SHA}}
+        if method == "GET" and path.startswith("repos/alice/app/commits?"):
+            return 200, [{"sha": SHA}]
         if path == f"repos/alice/app/git/trees/{SHA}?recursive=1":
             return 200, tree(self.initial)
         if method == "POST" and path == "repos/alice/app/commits":
@@ -146,6 +148,10 @@ def test_submission_writes_only_fork_branch_then_creates_pr(monkeypatch):
             self.calls.append((method, path, token, data))
             if path == "repos/alice/catalog":
                 return 200, {"parent": {"full_name": "team/catalog"}}
+            if method == "GET" and path.startswith("repos/team/catalog/commits?"):
+                return 200, [{"sha": SHA}]
+            if method == "POST" and path == "repos/alice/catalog/branches":
+                return 201, {"name": data["branch_name"], "commit": {"sha": SHA}}
             if method == "POST" and path == "repos/alice/catalog/commits":
                 return 201, {"sha": NEW_SHA}
             if path == "repos/team/catalog":
@@ -167,7 +173,10 @@ def test_submission_writes_only_fork_branch_then_creates_pr(monkeypatch):
 
     assert result.number == 3
     commit_call = next(call for call in api.calls if call[1] == "repos/alice/catalog/commits")
-    assert commit_call[3]["start_branch"] == SHA
+    branch_call = next(call for call in api.calls if call[1] == "repos/alice/catalog/branches")
+    assert branch_call[3] == {"refs": SHA, "branch_name": "watcher-submit-branch"}
+    assert "start_branch" not in commit_call[3]
+    assert commit_call[3]["branch"] == "watcher-submit-branch"
     assert commit_call[3]["actions"][0]["content"] == base64.b64encode(b"[]").decode()
     pr_call = next(call for call in api.calls if call[1] == "repos/team/catalog/pulls")
     assert pr_call[3]["head"] == "alice/catalog:watcher-submit-branch"

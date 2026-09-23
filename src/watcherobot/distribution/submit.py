@@ -29,6 +29,8 @@ from .ports import (
     HubCatalogConflict,
     HubClient,
     HubError,
+    HubNetworkError,
+    HubRateLimitError,
     PublishHubClient,
     RepositoryRevision,
 )
@@ -288,6 +290,14 @@ def submit_application(
             "The official marketplace changed; submit again to create a new PR",
             details=source_details,
         ) from exc
+    except HubNetworkError as exc:
+        raise _remote_error(
+            "Unable to confirm the official marketplace pull request; a remote write "
+            "may have succeeded. Check your fork branches and pending pull requests "
+            "before retrying",
+            exc,
+            details=source_details,
+        ) from exc
     except HubError as exc:
         raise _remote_error(
             "Unable to create the official marketplace pull request",
@@ -395,6 +405,8 @@ def _remote_error(
     *,
     details: dict[str, object] | None = None,
 ) -> SubmitError:
+    if isinstance(error, HubRateLimitError):
+        message = "Remote request rate limit exceeded; wait before retrying"
     code = (
         ErrorCode.AUTH_REQUIRED
         if isinstance(error, HubAuthenticationError)
