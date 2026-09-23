@@ -148,6 +148,8 @@ def test_submission_writes_only_fork_branch_then_creates_pr(monkeypatch):
             self.calls.append((method, path, token, data))
             if path == "repos/alice/catalog":
                 return 200, {"parent": {"full_name": "team/catalog"}}
+            if path == f"repos/alice/catalog/commits/{SHA}":
+                return 200, {"sha": SHA}
             if method == "GET" and path.startswith("repos/team/catalog/commits?"):
                 return 200, [{"sha": SHA}]
             if method == "POST" and path == "repos/alice/catalog/branches":

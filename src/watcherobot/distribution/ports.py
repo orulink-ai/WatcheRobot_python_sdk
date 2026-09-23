@@ -286,6 +286,16 @@ class HubCatalogConflict(HubError):
     """The catalog changed before its pull request could be created."""
 
 
+class HubForkOutOfDate(HubError):
+    """The developer fork lacks the selected upstream catalog commit."""
+
+    def __init__(self, fork_id: str, upstream_repo_id: str, required_commit: str) -> None:
+        self.fork_id = fork_id
+        self.upstream_repo_id = upstream_repo_id
+        self.required_commit = required_commit
+        super().__init__("Developer fork must be synchronized before submission")
+
+
 class HubRepositoryNotFound(HubError):
     """A required public Hugging Face repository does not exist."""
 

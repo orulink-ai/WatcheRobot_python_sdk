@@ -16,7 +16,8 @@ from watcherobot.distribution.gitee_public import GiteePublicRepository
 from watcherobot.distribution.gitee_repository import GiteeRepository
 from watcherobot.distribution.hub_http import JsonResponse
 from watcherobot.distribution.ports import (
-    AccessToken, HubInvalidResponse, HubNetworkError, HubRateLimitError, UploadFile,
+    AccessToken, HubAuthenticationError, HubForkOutOfDate, HubInvalidResponse,
+    HubNetworkError, HubRateLimitError, UploadFile,
 )
 from watcherobot.distribution.submit import SubmitError, submit_application
 from tests.distribution._publishing_fakes import (
@@ -120,6 +121,8 @@ class SubmissionApi:
             return 200, [{"sha": self.file_commit}]
         if path == "repos/developer/catalog":
             return 200, {"parent": {"full_name": "team/catalog"}}
+        if path == f"repos/developer/catalog/commits/{SPACE_COMMIT}":
+            return 200, {"sha": SPACE_COMMIT}
         if method == "POST" and path == "repos/developer/catalog/branches":
             self.writes.append((path, data))
             assert data["refs"] == SPACE_COMMIT
@@ -148,6 +151,115 @@ def submission_hub(api):
     hub = GiteeRepository(api=api, identity=FakeIdentityHub())
     hub.get_repository_head = lambda *a, **kw: SimpleNamespace(commit=SPACE_COMMIT)
     return hub
+
+
+@pytest.mark.parametrize("status,payload,error", [
+    (404, {}, HubForkOutOfDate),
+    (401, {}, HubAuthenticationError),
+    (403, {}, HubAuthenticationError),
+    (403, {"rate_limited": True}, HubRateLimitError),
+    (429, {}, HubRateLimitError),
+    (503, {}, HubNetworkError),
+    (200, {}, HubInvalidResponse),
+    (200, {"sha": "c" * 40}, HubInvalidResponse),
+])
+def test_fork_preflight_stops_before_any_submission_write(status, payload, error):
+    class Api(SubmissionApi):
+        def request(self, method, path, token, data=None):
+            assert method == "GET", "preflight failure must not mutate the fork"
+            if path == f"repos/developer/catalog/commits/{SPACE_COMMIT}":
+                return status, payload
+            return super().request(method, path, token, data)
+
+    api = Api()
+    with pytest.raises(error):
+        submission_hub(api).create_catalog_pull_request(
+            AccessToken("test"), repo_id="team/catalog", path="app-list.json",
+            content=b"[]", parent_commit=SPACE_COMMIT, title="test", description="test",
+        )
+    assert api.writes == []
+
+
+def test_submit_reports_actionable_fork_sync_hint(tmp_path):
+    write_application(tmp_path)
+    hub = FakePublishHub()
+
+    def fail(*args, **kwargs):
+        raise HubForkOutOfDate("developer/catalog", "team/catalog", SPACE_COMMIT)
+
+    hub.create_catalog_pull_request = fail
+    with pytest.raises(SubmitError) as caught:
+        submit_application(
+            tmp_path, provider="gitee", commit=SPACE_COMMIT,
+            credentials=FakeCredentialStore(AccessToken("test")),
+            identity_hub=FakeIdentityHub(), publish_hub=hub,
+            events=RecordingEvents(), watcherobot_version="0.1.1a3",
+        )
+    assert caught.value.code == ErrorCode.REMOTE_ERROR
+    assert "https://gitee.com/developer/catalog" in str(caught.value)
+    assert "同步" in str(caught.value)
+    assert "may have succeeded" not in str(caught.value)
+    assert caught.value.details["reason"] == "fork_sync_required"
+    assert caught.value.details["required_commit"] == SPACE_COMMIT
+    assert caught.value.details["upstream_repo_id"] == "team/catalog"
+
+
+def test_fork_preflight_timeout_does_not_write_or_retry():
+    class Api(SubmissionApi):
+        checks = 0
+
+        def request(self, method, path, token, data=None):
+            assert method == "GET"
+            if path == f"repos/developer/catalog/commits/{SPACE_COMMIT}":
+                self.checks += 1
+                raise HubNetworkError("timeout")
+            return super().request(method, path, token, data)
+
+    api = Api()
+    with pytest.raises(HubNetworkError):
+        submission_hub(api).create_catalog_pull_request(
+            AccessToken("test"), repo_id="team/catalog", path="app-list.json",
+            content=b"[]", parent_commit=SPACE_COMMIT, title="test", description="test",
+        )
+    assert api.checks == 1
+    assert api.writes == []
+
+
+@pytest.mark.parametrize("has_commit", [True, False])
+def test_new_fork_is_also_checked_before_submission(has_commit):
+    class Api(SubmissionApi):
+        checked = False
+        forks = 0
+
+        def request(self, method, path, token, data=None):
+            if path == "repos/developer/catalog":
+                return 404, {}
+            if method == "POST" and path == "repos/team/catalog/forks":
+                self.forks += 1
+                return 201, {"parent": {"full_name": "team/catalog"}}
+            if path == f"repos/developer/catalog/commits/{SPACE_COMMIT}":
+                self.checked = True
+                return (200, {"sha": SPACE_COMMIT}) if has_commit else (404, {})
+            if method == "POST":
+                assert self.checked and has_commit
+            return super().request(method, path, token, data)
+
+    api = Api()
+
+    def submit():
+        return submission_hub(api).create_catalog_pull_request(
+            AccessToken("test"), repo_id="team/catalog", path="app-list.json",
+            content=b"[]", parent_commit=SPACE_COMMIT, title="test", description="test",
+        )
+
+    if has_commit:
+        assert submit().number == 1
+        assert len(api.writes) == 3
+    else:
+        with pytest.raises(HubForkOutOfDate):
+            submit()
+        assert api.writes == []
+    assert api.forks == 1
 
 
 @pytest.mark.parametrize("failure", ["timeout", 429, 503])

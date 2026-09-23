@@ -29,6 +29,7 @@ from .ports import (
     HubCatalogConflict,
     HubClient,
     HubError,
+    HubForkOutOfDate,
     HubNetworkError,
     HubRateLimitError,
     PublishHubClient,
@@ -284,6 +285,21 @@ def submit_application(
                 source_url=revision.url,
             ),
         )
+    except HubForkOutOfDate as exc:
+        fork_url = get_provider(provider).repository_url(exc.fork_id)
+        raise SubmitError(
+            ErrorCode.REMOTE_ERROR,
+            f"你的 Fork 缺少本次投稿所需的官方目录提交。请打开 {fork_url}，"
+            "先同步上游目录，再重新执行投稿。尚未创建投稿分支、文件提交或 PR。",
+            details={
+                **source_details,
+                "reason": "fork_sync_required",
+                "fork_repo_id": exc.fork_id,
+                "fork_url": fork_url,
+                "upstream_repo_id": exc.upstream_repo_id,
+                "required_commit": exc.required_commit,
+            },
+        ) from exc
     except HubCatalogConflict as exc:
         raise SubmitError(
             ErrorCode.CATALOG_PR_CONFLICT,

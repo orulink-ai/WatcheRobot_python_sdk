@@ -23,7 +23,9 @@ from .ports import (
     CatalogPullRequest,
     HubAuthenticationError,
     HubCatalogConflict,
+    HubError,
     HubFileNotFound,
+    HubForkOutOfDate,
     HubInvalidResponse,
     HubNetworkError,
     HubRateLimitError,
@@ -100,8 +102,12 @@ class GiteeRepository:
         token: AccessToken | None = None,
         data: dict[str, Any] | None = None,
         allowed: tuple[int, ...] = (200, 201),
+        *,
+        not_found: HubError | None = None,
     ) -> Any:
         status, payload = self.api.request(method, path, token, data)
+        if status == 404 and not_found is not None:
+            raise not_found
         if status == 429 or (
             status == 403 and isinstance(payload, dict)
             and payload.get("rate_limited") is True
@@ -322,6 +328,12 @@ class GiteeRepository:
         file_commit = self._last_file_commit(
             token, repo_id=repo_id, commit=parent_commit, path=path,
         )
+        fork_commit = self._request(
+            "GET", f"repos/{fork_id}/commits/{parent_commit}", token,
+            not_found=HubForkOutOfDate(fork_id, repo_id, parent_commit),
+        )
+        if not isinstance(fork_commit, dict) or fork_commit.get("sha") != parent_commit:
+            raise HubInvalidResponse("Gitee fork returned an invalid catalog commit")
         branch = "watcher-submit-" + uuid.uuid4().hex
         created_branch = self._request(
             "POST", f"repos/{fork_id}/branches", token,
