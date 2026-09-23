@@ -45,11 +45,14 @@ class FakePairingUdpChannel:
         self.broadcasts: list[bytes] = []
         self.unicasts: list[tuple[bytes, tuple[str, int]]] = []
         self.closed = False
+        self.unicast_error: OSError | None = None
 
     def send_broadcast(self, data: bytes) -> None:
         self.broadcasts.append(data)
 
     def send_unicast(self, data: bytes, address: tuple[str, int]) -> None:
+        if self.unicast_error is not None:
+            raise self.unicast_error
         self.unicasts.append((data, address))
 
     def close(self) -> None:
@@ -311,11 +314,12 @@ def test_udp_service_expires_discovery_and_notifies_state() -> None:
             now=10.0,
         )
         states: list[dict[str, object]] = []
+        factory = FakeChannelFactory()
         service = PairingUdpService(
             session=session,
             clock=lambda: 20.0,
-            interface_provider=lambda: (),
-            channel_factory=FakeChannelFactory(),
+            interface_provider=lambda: (WIFI,),
+            channel_factory=factory,
             state_listener=lambda snapshot: states.append(dict(snapshot)),
         )
         await service.start()
@@ -323,6 +327,102 @@ def test_udp_service_expires_discovery_and_notifies_state() -> None:
         assert await service.expire_once() is True
         assert session.state is DevicePairingState.IDLE
         assert states[-1]["last_error"] == "pairing_not_found"
+        assert factory.channels[WIFI].unicasts == []
+        await service.stop()
+
+    asyncio.run(scenario())
+
+
+def test_udp_service_cancels_device_session_when_connecting_expires() -> None:
+    async def scenario() -> None:
+        now = 10.0
+        session = make_session()
+        session.start_pairing(
+            pairing_code="123456",
+            target_mode="python_sdk",
+            websocket_port=8765,
+            now=now,
+        )
+        states: list[dict[str, object]] = []
+        factory = FakeChannelFactory()
+        service = PairingUdpService(
+            session=session,
+            clock=lambda: now,
+            interface_provider=lambda: (WIFI,),
+            channel_factory=factory,
+            state_listener=lambda snapshot: states.append(dict(snapshot)),
+        )
+        await service.start()
+
+        accept = PairAccept(
+            request_id=REQUEST_ID,
+            daemon_instance_id=DAEMON_ID,
+            target_mode="python_sdk",
+            session_token=SESSION_TOKEN,
+        )
+        assert await service.handle_datagram(
+            encode_udp_message(accept),
+            ("192.168.1.25", 37021),
+            interface=WIFI,
+        )
+
+        now = 21.0
+        assert await service.expire_once() is True
+        assert session.state is DevicePairingState.IDLE
+        assert states[-1]["last_error"] == "device_connect_timeout"
+        cancel_payload, cancel_address = factory.channels[WIFI].unicasts[-1]
+        assert cancel_address == ("192.168.1.25", 37021)
+        assert json.loads(cancel_payload) == {
+            "type": "pair.cancel",
+            "protocol": "watcher-lan-pairing",
+            "version": "1.0",
+            "request_id": REQUEST_ID,
+            "daemon_instance_id": DAEMON_ID,
+            "session_token": SESSION_TOKEN,
+        }
+        await service.stop()
+
+    asyncio.run(scenario())
+
+
+def test_udp_service_connect_timeout_still_cleans_up_when_cancel_send_fails() -> None:
+    async def scenario() -> None:
+        now = 10.0
+        session = make_session()
+        session.start_pairing(
+            pairing_code="123456",
+            target_mode="python_sdk",
+            websocket_port=8765,
+            now=now,
+        )
+        events: list[str] = []
+        factory = FakeChannelFactory()
+        service = PairingUdpService(
+            session=session,
+            clock=lambda: now,
+            interface_provider=lambda: (WIFI,),
+            channel_factory=factory,
+            event_logger=events.append,
+        )
+        await service.start()
+        accept = PairAccept(
+            request_id=REQUEST_ID,
+            daemon_instance_id=DAEMON_ID,
+            target_mode="python_sdk",
+            session_token=SESSION_TOKEN,
+        )
+        assert await service.handle_datagram(
+            encode_udp_message(accept),
+            ("192.168.1.25", 37021),
+            interface=WIFI,
+        )
+        factory.channels[WIFI].unicast_error = OSError("network down")
+
+        now = 21.0
+        assert await service.expire_once() is True
+        assert session.state is DevicePairingState.IDLE
+        assert session.snapshot()["last_error"] == "device_connect_timeout"
+        assert any("timeout cancel failed" in message for message in events)
         await service.stop()
 
     asyncio.run(scenario())

@@ -203,6 +203,7 @@ const elements = {
   playAudioButton: document.querySelector("#playAudioButton"),
   stopAudioButton: document.querySelector("#stopAudioButton"),
   capturePhotoButton: document.querySelector("#capturePhotoButton"),
+  capturePhotoWithFeedbackButton: document.querySelector("#capturePhotoWithFeedbackButton"),
   queryVisionButton: document.querySelector("#queryVisionButton"),
   startFaceTrackingButton: document.querySelector("#startFaceTrackingButton"),
   startFacePreviewButton: document.querySelector("#startFacePreviewButton"),
@@ -636,6 +637,8 @@ function renderStatus(status) {
   elements.playAudioButton.disabled = !availability.speaker || !hasCapability("audio.stream");
   elements.stopAudioButton.disabled = !status.connected || !hasCapability("audio.stream");
   elements.capturePhotoButton.disabled = !availability.camera || !hasCapability("camera.capture");
+  elements.capturePhotoWithFeedbackButton.disabled = !availability.camera
+    || !hasCapability("camera.capture.feedback.v1");
   const inferenceState = status.inference?.state || "idle";
   const inferenceSupported = status.connected && hasCapability("vision.inference.v1");
   elements.queryModelsButton.disabled = inferenceRequestPending || !status.connected || !hasCapability("vision.models.v1");
@@ -1967,6 +1970,19 @@ async function capturePhoto() {
   return payload;
 }
 
+async function capturePhotoWithFeedback() {
+  const payload = await runAction({
+    path: "/api/actions/capture-photo-with-feedback",
+    result: elements.cameraResult,
+    pending: "Requesting JPEG frame with device feedback…",
+    complete: (value) => `Photo with feedback received · ${formatBytes(value.bytes)}`,
+    station: document.querySelector(".station-camera"),
+    resources: ["camera", "animation"],
+  });
+  if (payload) showPhoto(payload.artifact_url);
+  return payload;
+}
+
 async function recordMicrophone() {
   const duration = Number(elements.recordDuration.value);
   const payload = await runAction({
@@ -2044,6 +2060,9 @@ elements.stopAudioButton.addEventListener("click", () => {
   }).catch(() => {});
 });
 elements.capturePhotoButton.addEventListener("click", () => { capturePhoto().catch(() => {}); });
+elements.capturePhotoWithFeedbackButton.addEventListener("click", () => {
+  capturePhotoWithFeedback().catch(() => {});
+});
 
 async function inferenceAction(action, preview = false) {
   if (inferenceRequestPending) return;
