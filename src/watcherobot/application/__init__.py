@@ -9,7 +9,6 @@ from .channels import (
 from .context import ApplicationContext, ApplicationEnvironmentError
 from .rtc import (
     ApplicationRtc,
-    RTC_AUDIO_CAPABILITY,
     RTC_PROTOCOL,
     RTC_VIDEO_CAPABILITY,
     RtcSessionRejectedError,
@@ -23,7 +22,6 @@ __all__ = [
     "ApplicationRtc",
     "Frame",
     "FrameCallback",
-    "RTC_AUDIO_CAPABILITY",
     "RTC_PROTOCOL",
     "RTC_VIDEO_CAPABILITY",
     "RtcSessionRejectedError",
