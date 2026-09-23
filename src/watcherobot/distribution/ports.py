@@ -270,6 +270,10 @@ class HubNetworkError(HubError):
     """The Hub could not be reached or returned a server failure."""
 
 
+class HubRateLimitError(HubNetworkError):
+    """The Hub rejected a request because its rate limit was exceeded."""
+
+
 class HubInvalidResponse(HubError):
     """The Hub response does not satisfy the expected identity contract."""
 
@@ -280,6 +284,16 @@ class HubRepositoryConflict(HubError):
 
 class HubCatalogConflict(HubError):
     """The catalog changed before its pull request could be created."""
+
+
+class HubForkOutOfDate(HubError):
+    """The developer fork lacks the selected upstream catalog commit."""
+
+    def __init__(self, fork_id: str, upstream_repo_id: str, required_commit: str) -> None:
+        self.fork_id = fork_id
+        self.upstream_repo_id = upstream_repo_id
+        self.required_commit = required_commit
+        super().__init__("Developer fork must be synchronized before submission")
 
 
 class HubRepositoryNotFound(HubError):
