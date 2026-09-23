@@ -32,6 +32,7 @@ from .ports import (
     HubForkOutOfDate,
     HubNetworkError,
     HubRateLimitError,
+    HubRevisionNotFound,
     PublishHubClient,
     RepositoryRevision,
 )
@@ -423,6 +424,8 @@ def _remote_error(
 ) -> SubmitError:
     if isinstance(error, HubRateLimitError):
         message = "Remote request rate limit exceeded; wait before retrying"
+    elif isinstance(error, HubRevisionNotFound):
+        message = "找不到指定的源码提交，请使用 publish 返回的完整提交 SHA，不能使用目录树 SHA。"
     code = (
         ErrorCode.AUTH_REQUIRED
         if isinstance(error, HubAuthenticationError)

@@ -50,6 +50,8 @@ def test_submit_accepts_valid_icon_above_one_mib(tmp_path, side):
 
         def request(self, method, path, token, data=None):
             assert method == "GET" and token is None
+            if "/commits/" in path:
+                return 200, {"sha": SPACE_COMMIT}
             if "/git/trees/" in path:
                 assert SPACE_COMMIT in path
                 return 200, source_tree
@@ -93,6 +95,8 @@ def test_single_file_read_retains_blob_safety_checks(invalid):
                 "encoding": "base64", "content": "YWJj"})
 
         def request(self, method, path, token, data=None):
+            if "/commits/" in path:
+                return 200, {"sha": SPACE_COMMIT}
             if "/git/trees/" in path:
                 return 200, payload
             assert invalid in {"size", "digest"}, "invalid metadata must fail before blob read"

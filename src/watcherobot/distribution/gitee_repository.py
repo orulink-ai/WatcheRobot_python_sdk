@@ -30,6 +30,7 @@ from .ports import (
     HubNetworkError,
     HubRateLimitError,
     HubRepositoryConflict,
+    HubRevisionNotFound,
     RepositoryRevision,
     SourceRepository,
     UploadFile,
@@ -94,6 +95,7 @@ class GiteeRepository:
         self.api = api or GiteeApi()
         self.public = public or GiteePublicRepository()
         self.identity = identity or GiteeHubClient()
+        self._verified_revision: tuple[str, str] | None = None
 
     def _request(
         self,
@@ -241,8 +243,21 @@ class GiteeRepository:
         self, token: AccessToken | None = None, *, repo_id: str, commit: str, path: str
     ) -> bytes:
         _validate_reference(repo_id, commit, path)
+        self._verify_public_commit(repo_id, commit)
         blobs = self._tree(repo_id, commit, None)
         return self._read_blob(repo_id, path, blobs)
+
+    def _verify_public_commit(self, repo_id: str, commit: str) -> None:
+        """Reject tree SHAs; cache only one verified repository/commit pair."""
+        if self._verified_revision == (repo_id, commit):
+            return
+        revision = self._request(
+            "GET", f"repos/{repo_id}/commits/{commit}", None,
+            not_found=HubRevisionNotFound("Gitee source commit was not found"),
+        )
+        if not isinstance(revision, dict) or revision.get("sha") != commit:
+            raise HubInvalidResponse("Gitee did not resolve the exact requested commit")
+        self._verified_revision = (repo_id, commit)
 
     def _last_file_commit(
         self, token: AccessToken, *, repo_id: str, commit: str, path: str,
@@ -380,6 +395,7 @@ class GiteeRepository:
         _validate_reference(repo_id, commit, "app.json")
         if not target.is_dir() or any(target.iterdir()):
             raise HubInvalidResponse("Snapshot target must be empty")
+        self._verify_public_commit(repo_id, commit)
         tree = self._request(
             "GET", f"repos/{repo_id}/git/trees/{commit}?recursive=1", None
         )

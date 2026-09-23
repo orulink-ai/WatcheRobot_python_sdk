@@ -17,6 +17,8 @@ class Api:
 
     def request(self, method, path, token, data=None):
         self.calls.append((method, path, token, data))
+        if "/commits/" in path:
+            return 200, {"sha": SHA}
         if "/git/trees/" in path:
             return 200, self.tree
         if "/git/blobs/" in path:
@@ -63,7 +65,8 @@ def test_snapshot_rejects_symlinks_before_blob_reads(tmp_path):
         GiteeRepository(api=api).download_repository_snapshot(
             repo_id="owner/app", commit=SHA, target=tmp_path,
         )
-    assert len(api.calls) == 1
+    assert len(api.calls) == 2
+    assert not any("/git/blobs/" in call[1] for call in api.calls)
     assert not list(tmp_path.iterdir())
 
 
