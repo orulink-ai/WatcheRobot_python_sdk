@@ -17,6 +17,7 @@ from watcherobot.runtime.daemon.pairing.protocol import (
     LinkReuniteAccept,
     PairAccept,
     PairBusy,
+    PairCancel,
     PairingProtocolError,
     encode_udp_message,
     parse_udp_message,
@@ -549,32 +550,53 @@ class PairingUdpService:
         cancelled = self._session.cancel()
         if not cancelled:
             return False
-        if cancel_message is not None and peer_ip is not None:
-            channel = self._channel_for_peer(peer_ip)
-            if channel is not None:
-                try:
-                    channel.send_unicast(
-                        encode_udp_message(cancel_message),
-                        (peer_ip, PAIRING_UDP_PORT),
-                    )
-                except (OSError, RuntimeError) as exc:
-                    self._emit_event(
-                        "Pairing UDP cancel failed "
-                        f"(peer={peer_ip}, error={exc})",
-                        warning=True,
-                    )
+        self._send_cancel_message(
+            cancel_message,
+            peer_ip,
+            event_prefix="Pairing UDP cancel failed",
+        )
         self._selected_interface = None
         self._target_peer_ip = None
         await self._notify_state()
         return True
 
     async def expire_once(self) -> bool:
+        cancel_message = self._session.pending_cancel_message()
+        peer_ip = self._session.expected_peer_ip
         expired = self._session.expire(now=self._clock())
         if expired:
+            self._send_cancel_message(
+                cancel_message,
+                peer_ip,
+                event_prefix="Pairing UDP timeout cancel failed",
+            )
             self._selected_interface = None
             self._target_peer_ip = None
             await self._notify_state()
         return expired
+
+    def _send_cancel_message(
+        self,
+        cancel_message: PairCancel | None,
+        peer_ip: str | None,
+        *,
+        event_prefix: str,
+    ) -> None:
+        if cancel_message is None or peer_ip is None:
+            return
+        channel = self._channel_for_peer(peer_ip)
+        if channel is None:
+            return
+        try:
+            channel.send_unicast(
+                encode_udp_message(cancel_message),
+                (peer_ip, PAIRING_UDP_PORT),
+            )
+        except (OSError, RuntimeError) as exc:
+            self._emit_event(
+                f"{event_prefix} (peer={peer_ip}, error={exc})",
+                warning=True,
+            )
 
     def _handler_for(
         self,
