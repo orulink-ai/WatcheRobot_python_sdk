@@ -154,7 +154,15 @@ class ApplicationRtc:
             raise ValueError("feedback metrics must be non-negative integers")
         if metrics["congestion_level"] > 3:
             raise ValueError("congestion_level must be between 0 and 3")
-        self._send("ctrl.rtc.feedback", dict(metrics))
+        # watcher-rtc/1 firmware requires these fields even in video-only mode.
+        # Keep wire compatibility without exposing audio feedback to callers.
+        self._send("ctrl.rtc.feedback", {
+            **metrics,
+            "audio_queue_ms": 0,
+            "audio_packet_loss_x100": 0,
+            "audio_jitter_us": 0,
+            "audio_concealed_frames": 0,
+        })
 
     def stop(self) -> bool:
         with self._lock:

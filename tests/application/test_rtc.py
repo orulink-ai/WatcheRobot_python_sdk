@@ -54,6 +54,24 @@ class FakeTransport:
             listener(message)
 
 
+def test_video_feedback_keeps_legacy_wire_audio_fields_zero() -> None:
+    transport = FakeTransport()
+    rtc = ApplicationRtc(transport)
+    rtc.start(mode="video")
+    metrics = dict(display_fps_x100=2400, frame_age_p95_us=1000, rtt_us=2000, congestion_level=0)
+    rtc.feedback(**metrics)
+    assert json.loads(transport.sent[-1])["data"] == {
+        **metrics,
+        "audio_queue_ms": 0,
+        "audio_packet_loss_x100": 0,
+        "audio_jitter_us": 0,
+        "audio_concealed_frames": 0,
+    }
+    with pytest.raises(ValueError):
+        rtc.feedback(**metrics, audio_queue_ms=10)
+    rtc.close()
+
+
 def test_rtc_builds_exact_watcher_rtc_session_and_signal_envelopes() -> None:
     transport = FakeTransport()
     rtc = ApplicationRtc(
