@@ -218,6 +218,7 @@ class MediaLabService:
 
     _ARTIFACT_TYPES = {
         "camera.jpg": "image/jpeg",
+        "camera-feedback.jpg": "image/jpeg",
         "microphone.wav": "audio/wav",
     }
 
@@ -632,14 +633,35 @@ class MediaLabService:
             raise ValueError("animation_id must be a catalog-safe resource id")
 
     def capture_photo(self) -> dict[str, object]:
-        with self._operation("capture_photo", resources=("camera", "animation")):
-            image = self._robot.camera.capture(
+        return self._capture_photo(
+            operation="capture_photo",
+            method=self._robot.camera.capture,
+            artifact_name="camera.jpg",
+        )
+
+    def capture_photo_with_feedback(self) -> dict[str, object]:
+        self._ensure_capability("camera.capture.feedback.v1")
+        return self._capture_photo(
+            operation="capture_photo_with_feedback",
+            method=self._robot.camera.capture_with_feedback,
+            artifact_name="camera-feedback.jpg",
+        )
+
+    def _capture_photo(
+        self,
+        *,
+        operation: str,
+        method: Callable[..., object],
+        artifact_name: str,
+    ) -> dict[str, object]:
+        with self._operation(operation, resources=("camera", "animation")):
+            image = method(
                 width=0,
                 height=0,
                 quality=0,
                 timeout=10.0,
             )
-            output = self._artifact_output("camera.jpg")
+            output = self._artifact_output(artifact_name)
             output.write_bytes(bytes(image.data))
             return {
                 "artifact": output.name,
@@ -1221,6 +1243,12 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     @app.post("/api/actions/capture-photo")
     async def capture_photo() -> dict[str, object]:
         result = await _run_action(service.capture_photo)
+        result["artifact_url"] = _artifact_url(str(result["artifact"]))
+        return result
+
+    @app.post("/api/actions/capture-photo-with-feedback")
+    async def capture_photo_with_feedback() -> dict[str, object]:
+        result = await _run_action(service.capture_photo_with_feedback)
         result["artifact_url"] = _artifact_url(str(result["artifact"]))
         return result
 

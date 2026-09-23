@@ -209,10 +209,15 @@ class FakeAudio:
 class FakeCamera:
     def __init__(self) -> None:
         self.calls: list[dict[str, int | float]] = []
+        self.feedback_calls: list[dict[str, int | float]] = []
 
     def capture(self, **kwargs: int | float) -> SimpleNamespace:
         self.calls.append(kwargs)
         return SimpleNamespace(data=b"\xff\xd8media-lab\xff\xd9")
+
+    def capture_with_feedback(self, **kwargs: int | float) -> SimpleNamespace:
+        self.feedback_calls.append(kwargs)
+        return SimpleNamespace(data=b"\xff\xd8media-lab-feedback\xff\xd9")
 
 
 class FakeMicrophone:
@@ -370,6 +375,7 @@ def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
             "audio.stream",
             "microphone",
             "camera.capture",
+            "camera.capture.feedback.v1",
             "rtc.audio.full_duplex.v1",
             "rtc.video.mjpeg.v1",
         ),
@@ -503,6 +509,7 @@ def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -
         "audio.stream",
         "microphone",
         "camera.capture",
+        "camera.capture.feedback.v1",
         "rtc.audio.full_duplex.v1",
         "rtc.video.mjpeg.v1",
     ]
@@ -701,6 +708,37 @@ def test_capture_photo_persists_only_the_managed_jpeg_artifact(tmp_path: Path) -
     assert robot.camera.calls == [
         {"width": 0, "height": 0, "quality": 0, "timeout": 10.0}
     ]
+
+
+def test_capture_photo_with_feedback_uses_distinct_sdk_path(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    service = _service(module, tmp_path, robot)
+
+    result = service.capture_photo_with_feedback()
+
+    photo = tmp_path / "artifacts" / "camera-feedback.jpg"
+    assert photo.read_bytes() == b"\xff\xd8media-lab-feedback\xff\xd9"
+    assert result["artifact"] == "camera-feedback.jpg"
+    assert result["bytes"] == photo.stat().st_size
+    assert result["content_type"] == "image/jpeg"
+    assert robot.camera.feedback_calls == [
+        {"width": 0, "height": 0, "quality": 0, "timeout": 10.0}
+    ]
+
+
+def test_capture_photo_with_feedback_requires_firmware_capability(tmp_path: Path) -> None:
+    module = _load_service_module()
+    robot = _robot()
+    robot.capabilities = tuple(
+        capability
+        for capability in robot.capabilities
+        if capability != "camera.capture.feedback.v1"
+    )
+    service = _service(module, tmp_path, robot)
+
+    with pytest.raises(Exception, match="camera.capture.feedback.v1"):
+        service.capture_photo_with_feedback()
 
 
 def test_record_microphone_writes_valid_pcm_wave_and_metrics(tmp_path: Path) -> None:
