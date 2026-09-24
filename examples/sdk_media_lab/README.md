@@ -24,6 +24,28 @@ runtime and hardware acceptance have been completed.
 The tested 2026-09-09 SDK/ESP32 pairing, concurrent video/audio results, and
 remaining limits are fixed in the [Himax media stage record](../../docs/himax-media-stage-20260909.md).
 
+## Camera capture
+
+The camera panel has two actions:
+
+- **Atomic Capture** calls `robot.camera.capture()` and returns one JPEG.
+- **Capture with Feedback** calls `robot.camera.capture_with_feedback()` and
+  requires the device capability `camera.capture.feedback.v1`. The firmware
+  coordinates the photo animation and shutter sound with capture.
+
+Feedback capture reserves camera, animation, microphone, and speaker resources
+until the call finishes or fails. Stop recording, playback, or audio RTC before
+using it. Atomic capture remains available during independent audio operations.
+Both methods share one camera lock, and their positive, finite `timeout` covers
+lock waiting, command acknowledgement, BUSY retries, and receiving the JPEG.
+An expired lock wait does not send a new capture command.
+
+For compatibility, the existing `capture()` command does not require a populated
+capability snapshot: older firmware or a delayed startup query can still receive
+the original command. Feedback capture always requires its explicit capability.
+A timeout reports failure to receive a result within the budget; it does not
+confirm that an already accepted device operation was cancelled.
+
 ## Face tracking test
 
 The Edge Vision panel queries `robot.vision.status()` and exposes

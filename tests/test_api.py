@@ -1043,16 +1043,17 @@ def test_media_frame_arriving_before_open_ack_is_buffered():
     assert robot.camera.capture(timeout=0.1).data == b"jpeg"
 
 
-@pytest.mark.parametrize("timeout", [0, -1])
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
 @pytest.mark.parametrize("method_name", ["capture", "capture_with_feedback"])
-def test_camera_rejects_non_positive_timeout(timeout, method_name):
+def test_camera_rejects_invalid_timeout(timeout, method_name):
     robot = WatcheRobot._from_transport(FakeTransport())
 
     with pytest.raises(ValueError, match="timeout must be positive"):
         getattr(robot.camera, method_name)(timeout=timeout)
 
 
-def test_camera_capture_uses_atomic_command() -> None:
+@pytest.mark.parametrize("capabilities_known", [True, False])
+def test_camera_capture_uses_atomic_command(capabilities_known) -> None:
     class AtomicCameraTransport(FakeTransport):
         def send_command(self, message_type, data, timeout=None):
             response = super().send_command(message_type, data, timeout)
@@ -1064,10 +1065,85 @@ def test_camera_capture_uses_atomic_command() -> None:
             return response
 
     transport = AtomicCameraTransport()
+    if not capabilities_known:
+        transport.capabilities = ()
     robot = WatcheRobot._from_transport(transport)
 
     assert robot.camera.capture(timeout=0.1).data == b"atomic"
     assert transport.commands[-1][0] == "ctrl.camera.capture"
+
+
+@pytest.mark.parametrize("method_name", ["capture", "capture_with_feedback"])
+def test_camera_timeout_includes_waiting_for_another_capture(method_name):
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    outcome = Future()
+
+    def capture():
+        try:
+            outcome.set_result(getattr(robot.camera, method_name)(timeout=0.02))
+        except Exception as error:
+            outcome.set_exception(error)
+
+    robot._camera_lock.acquire()
+    thread = threading.Thread(target=capture, daemon=True)
+    try:
+        thread.start()
+        with pytest.raises(TimeoutError, match="camera.*idle"):
+            outcome.result(timeout=1.0)
+        assert transport.commands == []
+    finally:
+        robot._camera_lock.release()
+        thread.join(timeout=1.0)
+    assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("method_name", ["capture", "capture_with_feedback"])
+@pytest.mark.parametrize("lock_wait", [0.75, 1.1])
+def test_camera_passes_only_remaining_budget_after_lock_wait(monkeypatch, method_name, lock_wait):
+    now = [10.0]
+    timeouts = []
+
+    class DelayedLock:
+        released = False
+
+        def __enter__(self):
+            now[0] += lock_wait
+            return self
+
+        def __exit__(self, *args):
+            self.release()
+
+        def acquire(self, *, timeout):
+            assert timeout == pytest.approx(1.0)
+            now[0] += lock_wait
+            return True
+
+        def release(self):
+            self.released = True
+
+    class CameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            timeouts.append(timeout)
+            response = super().send_command(message_type, data, timeout)
+            self.binary_callback(BinaryFrame(
+                FRAME_IMAGE, FLAG_FIRST | FLAG_LAST,
+                response["data"]["session_id"], 1, b"jpeg",
+            ))
+            return response
+
+    monkeypatch.setattr("watcherobot.robot.time.monotonic", lambda: now[0])
+    robot = WatcheRobot._from_transport(CameraTransport())
+    lock = DelayedLock()
+    robot._camera_lock = lock
+    if lock_wait < 1.0:
+        assert getattr(robot.camera, method_name)(timeout=1.0).data == b"jpeg"
+        assert timeouts == [pytest.approx(1.0 - lock_wait)]
+    else:
+        with pytest.raises(TimeoutError):
+            getattr(robot.camera, method_name)(timeout=1.0)
+        assert timeouts == []
+    assert lock.released
 
 
 def test_camera_capture_with_feedback_uses_distinct_command_and_shared_jpeg_path() -> None:

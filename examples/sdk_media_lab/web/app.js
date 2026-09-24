@@ -637,7 +637,7 @@ function renderStatus(status) {
   elements.playAudioButton.disabled = !availability.speaker || !hasCapability("audio.stream");
   elements.stopAudioButton.disabled = !status.connected || !hasCapability("audio.stream");
   elements.capturePhotoButton.disabled = !availability.camera || !hasCapability("camera.capture");
-  elements.capturePhotoWithFeedbackButton.disabled = !availability.camera
+  elements.capturePhotoWithFeedbackButton.disabled = !availability.cameraWithFeedback
     || !hasCapability("camera.capture.feedback.v1");
   const inferenceState = status.inference?.state || "idle";
   const inferenceSupported = status.connected && hasCapability("vision.inference.v1");
@@ -1977,7 +1977,7 @@ async function capturePhotoWithFeedback() {
     pending: "Requesting JPEG frame with device feedback…",
     complete: (value) => `Photo with feedback received · ${formatBytes(value.bytes)}`,
     station: document.querySelector(".station-camera"),
-    resources: ["camera", "animation"],
+    resources: ["camera", "animation", "microphone", "speaker"],
   });
   if (payload) showPhoto(payload.artifact_url);
   return payload;

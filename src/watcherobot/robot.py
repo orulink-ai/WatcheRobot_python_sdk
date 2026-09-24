@@ -825,11 +825,12 @@ class CameraDomain(_Domain):
         quality: int = 0,
         timeout: float = 5.0,
     ) -> ImageFrame:
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        """Capture a JPEG; timeout includes waiting for any previous capture."""
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be positive and finite")
+        # Preserve the legacy command when the startup capability sync is unavailable.
         return self._robot._capture_image(
             command_type="ctrl.camera.capture",
-            required_capability="camera.capture",
             operation_name="camera capture",
             width=width,
             height=height,
@@ -846,11 +847,11 @@ class CameraDomain(_Domain):
         timeout: float = 10.0,
     ) -> ImageFrame:
         """Capture a JPEG with the firmware-owned photo animation and shutter sound."""
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("timeout must be positive and finite")
+        self._robot._require_capability("camera.capture.feedback.v1")
         return self._robot._capture_image(
             command_type="ctrl.camera.capture_with_feedback",
-            required_capability="camera.capture.feedback.v1",
             operation_name="camera capture with feedback",
             width=width,
             height=height,
@@ -1324,15 +1325,16 @@ class WatcheRobot:
         self,
         *,
         command_type: str,
-        required_capability: str,
         operation_name: str,
         width: int,
         height: int,
         quality: int,
         timeout: float,
     ) -> ImageFrame:
-        self._require_capability(required_capability)
-        with self._camera_lock:
+        deadline = time.monotonic() + timeout
+        if not self._camera_lock.acquire(timeout=timeout):
+            raise TimeoutError(f"{operation_name}: camera did not become idle before timeout")
+        try:
             with self._image_assembly_lock:
                 self._image_assemblies.clear()
             while True:
@@ -1340,11 +1342,9 @@ class WatcheRobot:
                     self._image_queue.get_nowait()
                 except queue.Empty:
                     break
-            deadline = time.monotonic() + max(timeout, 0)
-            first_attempt = True
             while True:
                 remaining = deadline - time.monotonic()
-                if remaining <= 0 and not first_attempt:
+                if remaining <= 0:
                     raise TimeoutError("camera remained busy before capture timeout")
                 try:
                     response = self._command(
@@ -1358,7 +1358,6 @@ class WatcheRobot:
                         f"{operation_name} command was not acknowledged before timeout"
                     ) from error
                 except CommandError as error:
-                    first_attempt = False
                     if error.reason != "busy":
                         raise
                     remaining = deadline - time.monotonic()
@@ -1386,6 +1385,8 @@ class WatcheRobot:
                         ) from error
                 if image.session_id in (0, expected_stream_id):
                     return image
+        finally:
+            self._camera_lock.release()
 
     def _open_face_tracking_preview(
         self,

@@ -741,6 +741,48 @@ def test_capture_photo_with_feedback_requires_firmware_capability(tmp_path: Path
         service.capture_photo_with_feedback()
 
 
+@pytest.mark.parametrize("resource", ["microphone", "speaker"])
+def test_feedback_capture_rejects_existing_audio_owner(tmp_path, resource):
+    module = _load_service_module()
+    robot = _robot()
+    service = _service(module, tmp_path, robot)
+    with service._operation("audio_owner", resource=resource):
+        with pytest.raises(module.MediaLabBusyError, match="audio_owner"):
+            service.capture_photo_with_feedback()
+        assert robot.camera.feedback_calls == []
+        assert service.status()["resource_owners"] == {resource: "audio_owner"}
+        assert service.capture_photo()["bytes"] > 0
+    assert service.status()["resource_owners"] == {}
+
+
+@pytest.mark.parametrize("capture_fails", [False, True])
+def test_feedback_capture_reserves_audio_until_completion(tmp_path, capture_fails):
+    module = _load_service_module()
+    robot = _robot()
+    service = _service(module, tmp_path, robot)
+
+    def capture(**kwargs):
+        assert set(service.status()["resource_owners"]) == {
+            "camera", "animation", "microphone", "speaker",
+        }
+        with pytest.raises(module.MediaLabBusyError):
+            service.play_audio()
+        with pytest.raises(module.MediaLabBusyError):
+            service.record_microphone(duration=1.0)
+        if capture_fails:
+            raise TimeoutError("camera unavailable")
+        return SimpleNamespace(data=b"jpeg")
+
+    robot.camera.capture_with_feedback = capture
+    if capture_fails:
+        with pytest.raises(TimeoutError, match="camera unavailable"):
+            service.capture_photo_with_feedback()
+    else:
+        service.capture_photo_with_feedback()
+    assert service.status()["resource_owners"] == {}
+    assert all(not lock.locked() for lock in service._resource_locks.values())
+
+
 def test_record_microphone_writes_valid_pcm_wave_and_metrics(tmp_path: Path) -> None:
     module = _load_service_module()
     robot = _robot()

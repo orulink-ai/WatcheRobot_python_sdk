@@ -637,6 +637,7 @@ class MediaLabService:
             operation="capture_photo",
             method=self._robot.camera.capture,
             artifact_name="camera.jpg",
+            resources=("camera", "animation"),
         )
 
     def capture_photo_with_feedback(self) -> dict[str, object]:
@@ -645,6 +646,7 @@ class MediaLabService:
             operation="capture_photo_with_feedback",
             method=self._robot.camera.capture_with_feedback,
             artifact_name="camera-feedback.jpg",
+            resources=("camera", "animation", "microphone", "speaker"),
         )
 
     def _capture_photo(
@@ -653,8 +655,9 @@ class MediaLabService:
         operation: str,
         method: Callable[..., object],
         artifact_name: str,
+        resources: tuple[str, ...],
     ) -> dict[str, object]:
-        with self._operation(operation, resources=("camera", "animation")):
+        with self._operation(operation, resources=resources):
             image = method(
                 width=0,
                 height=0,
