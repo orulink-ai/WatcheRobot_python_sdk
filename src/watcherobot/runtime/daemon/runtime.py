@@ -74,6 +74,9 @@ def _utc_now_ms() -> int:
     return int(time.time() * 1000)
 
 
+APPLICATION_RESTART_CHANNEL_DRAIN_SECONDS = 1.0
+
+
 class DaemonRuntime:
     """Own long-lived external connections and the current Application."""
 
@@ -284,7 +287,20 @@ class DaemonRuntime:
 
         app_id = self.application.registry.current_app
         self.logs.record(f"Application restart requested (app_id={app_id})")
+        try:
+            await self.application.validate_start()
+        except Exception as exc:
+            self.logs.record(
+                "Application restart rejected before stop "
+                f"(app_id={app_id}, error={exc})"
+            )
+            raise
         await self.application.stop()
+        self.logs.record(
+            "Application restart draining prior Device channel "
+            f"(app_id={app_id}, seconds={APPLICATION_RESTART_CHANNEL_DRAIN_SECONDS:g})"
+        )
+        await asyncio.sleep(APPLICATION_RESTART_CHANNEL_DRAIN_SECONDS)
         try:
             run = await self.application.start()
         except Exception as exc:

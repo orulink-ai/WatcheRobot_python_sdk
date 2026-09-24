@@ -189,30 +189,7 @@ class ApplicationRuntimeManager:
             if self._process is not None or self.registry.active_run is not None:
                 raise SessionOccupiedError("an Application process already exists")
 
-            if self._application_dir is None or self.registry.current_app is None:
-                raise ApplicationNotSelectedError("No Application is selected")
-            if self._launch_spec is None:
-                raise ApplicationStartError(
-                    "No controlled Application launch specification is selected"
-                )
-
-            manifest = ApplicationManifest.load(self._application_dir, daemon=True)
-            if manifest.app_id != self.registry.current_app:
-                raise ApplicationStartError(
-                    "Application manifest id does not match current app"
-                )
-            try:
-                refreshed_spec = self._application_launcher.refresh_spec(
-                    self._launch_spec
-                )
-            except (OSError, ValueError) as exc:
-                raise ApplicationStartError(
-                    "Selected Application launch specification is no longer valid"
-                ) from exc
-            if refreshed_spec.app_id != self.registry.current_app:
-                raise ApplicationStartError(
-                    "Application launch spec does not match current app"
-                )
+            manifest, refreshed_spec = self._validate_start_locked()
             self._launch_spec = refreshed_spec
             command = tuple(os.fspath(item) for item in refreshed_spec.command)
 
@@ -264,6 +241,39 @@ class ApplicationRuntimeManager:
 
         await self._wait_until_ready(run)
         return run
+
+    async def validate_start(self) -> None:
+        """Validate a future start without disturbing a running Application."""
+
+        async with self._operation_lock:
+            self._validate_start_locked()
+
+    def _validate_start_locked(
+        self,
+    ) -> tuple[ApplicationManifest, ApplicationLaunchSpec]:
+        if self._application_dir is None or self.registry.current_app is None:
+            raise ApplicationNotSelectedError("No Application is selected")
+        if self._launch_spec is None:
+            raise ApplicationStartError(
+                "No controlled Application launch specification is selected"
+            )
+
+        manifest = ApplicationManifest.load(self._application_dir, daemon=True)
+        if manifest.app_id != self.registry.current_app:
+            raise ApplicationStartError(
+                "Application manifest id does not match current app"
+            )
+        try:
+            refreshed_spec = self._application_launcher.refresh_spec(self._launch_spec)
+        except (OSError, ValueError) as exc:
+            raise ApplicationStartError(
+                "Selected Application launch specification is no longer valid"
+            ) from exc
+        if refreshed_spec.app_id != self.registry.current_app:
+            raise ApplicationStartError(
+                "Application launch spec does not match current app"
+            )
+        return manifest, refreshed_spec
 
     async def stop(self) -> None:
         async with self._operation_lock:

@@ -210,8 +210,14 @@ class ExternalWebSocketServer:
             if (
                 removed is not None
                 and removed.role is ExternalClientRole.DEVICE
+                and self.registry.online_count(ExternalClientRole.DEVICE) == 0
                 and self._device_disconnect_listener is not None
             ):
+                # A device can reconnect while the old connection is still
+                # completing asynchronous cleanup. Only the connection that
+                # leaves the device role empty may transition the pairing
+                # session to reconnecting; otherwise the stale close would
+                # incorrectly mark the replacement connection offline.
                 result = self._device_disconnect_listener(
                     self._peer_ip(websocket),
                 )

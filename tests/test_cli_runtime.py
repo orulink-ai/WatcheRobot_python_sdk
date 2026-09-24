@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -1012,3 +1014,15 @@ def test_cli_rejects_missing_or_broken_installed_application(
         == 2
     )
     assert "Installed Application was not found" in capsys.readouterr().err
+
+
+def test_cli_module_entrypoint_executes_main() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "watcherobot.cli", "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+    assert "watcherobot" in completed.stdout.lower()

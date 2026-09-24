@@ -7,12 +7,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+import psutil
 import pytest
 import websockets
 from websockets.asyncio.client import connect
 
+from watcherobot.runtime.daemon import runtime as runtime_module
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
 from watcherobot.runtime.daemon.application.launcher import ApplicationLaunchError
+from watcherobot.runtime.daemon.application.manifest import (
+    ApplicationCompatibilityError,
+)
 from watcherobot.runtime.daemon.application.session import (
     ApplicationChannel,
     ApplicationState,
@@ -589,6 +594,97 @@ def test_daemon_pairing_control_does_not_stop_the_current_application(
             assert await runtime.disconnect_device() is False
         finally:
             await runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_restart_rejects_incompatible_manifest_before_stopping_running_application(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        _write_relay_application(app_dir)
+        runtime = DaemonRuntime(
+            application_dir=app_dir,
+            current_app="test_app",
+            managed_app_root=Path(sys.executable).parent,
+            external_host="127.0.0.1",
+            external_port=0,
+            control_port=0,
+            pairing_udp_port=0,
+            preview_udp_port=0,
+        )
+        _select_python_application(runtime, app_dir)
+        await runtime.start()
+
+        try:
+            await runtime.start_application()
+            running_pid = runtime.application.process_id
+            assert running_pid is not None
+
+            manifest = json.loads(
+                app_dir.joinpath("app.json").read_text(encoding="utf-8")
+            )
+            manifest["requires_watcherobot"] = ">=999"
+            app_dir.joinpath("app.json").write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+
+            with pytest.raises(ApplicationCompatibilityError):
+                await runtime.restart_application()
+
+            assert runtime.application.process_id == running_pid
+            assert runtime.application_status()["state"] == "running"
+            assert psutil.pid_exists(running_pid)
+        finally:
+            await runtime.stop()
+
+    asyncio.run(scenario())
+
+
+def test_restart_drains_old_application_channel_before_starting_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        app_dir = tmp_path / "application"
+        _write_relay_application(app_dir)
+        runtime = DaemonRuntime(
+            application_dir=app_dir,
+            current_app="test_app",
+            managed_app_root=Path(sys.executable).parent,
+            external_host="127.0.0.1",
+            external_port=0,
+            control_port=0,
+            pairing_udp_port=0,
+            preview_udp_port=0,
+        )
+        calls: list[str] = []
+
+        async def validate_start() -> None:
+            calls.append("validate")
+
+        async def stop() -> None:
+            calls.append("stop")
+
+        async def start():
+            calls.append("start")
+            return runtime.application.registry.begin_start()
+
+        async def sleep(seconds: float) -> None:
+            assert seconds == runtime_module.APPLICATION_RESTART_CHANNEL_DRAIN_SECONDS
+            calls.append("drain")
+
+        monkeypatch.setattr(runtime.application, "validate_start", validate_start)
+        monkeypatch.setattr(runtime.application, "stop", stop)
+        monkeypatch.setattr(runtime.application, "start", start)
+        monkeypatch.setattr(runtime_module.asyncio, "sleep", sleep)
+
+        run = await runtime.restart_application()
+
+        assert run.app_id == "test_app"
+        assert calls == ["validate", "stop", "drain", "start"]
 
     asyncio.run(scenario())
 

@@ -4,7 +4,7 @@ from concurrent.futures import Future
 
 import pytest
 
-from watcherobot import Job
+from watcherobot import Job, JobState
 from watcherobot.errors import CommandError, WatcheRobotError
 from watcherobot.robot import WatcheRobot
 from watcherobot.protocol import (
@@ -775,6 +775,55 @@ def test_audio_playback_start_failure_is_a_terminal_failure():
     assert playback.state.value == "failed"
     assert playback.reason == "playback_start_failed"
     assert transport.future.cancelled()
+
+
+def test_device_audio_failure_keeps_handle_until_stop_ack_then_releases_slot():
+    class DelayedStopTransport(FakeTransport):
+        def send_audio_stream(self, pcm, *, stream_id, chunk_bytes=4096):
+            self.future = Future()
+            return self.future
+
+        def send_command_nowait(self, message_type, data):
+            self.commands.append((message_type, data))
+            future = Future()
+            if message_type == "ctrl.audio.stop":
+                self.stop_future = future
+            else:
+                future.set_result({"type": "sys.ack", "code": 0, "data": {}})
+            return future
+
+    transport = DelayedStopTransport()
+    robot = WatcheRobot._from_transport(transport)
+    playback = robot.audio.play_pcm(b"\x01\x00")
+
+    transport.message_callback(
+        {
+            "type": "evt.audio.buffer_status",
+            "code": 0,
+            "data": {"reason": "playback_write_failed", "stream_id": playback.id},
+        }
+    )
+
+    assert playback.state is JobState.FAILED
+    assert robot._audio_playback is playback
+    assert [command[0] for command in transport.commands] == [
+        "ctrl.audio.stream.begin",
+        "ctrl.audio.stop",
+    ]
+
+    # A second stop must wait for/reuse the in-flight cleanup rather than
+    # issuing another stop command while the device still owns the slot.
+    stop_thread = threading.Thread(target=robot.audio.stop)
+    stop_thread.start()
+    assert stop_thread.is_alive()
+    transport.stop_future.set_result({"type": "sys.ack", "code": 0, "data": {}})
+    stop_thread.join(timeout=1)
+    assert not stop_thread.is_alive()
+    assert robot._audio_playback is None
+    assert [command[0] for command in transport.commands] == [
+        "ctrl.audio.stream.begin",
+        "ctrl.audio.stop",
+    ]
 
 
 def test_rejected_audio_stop_keeps_the_host_sender_alive():
