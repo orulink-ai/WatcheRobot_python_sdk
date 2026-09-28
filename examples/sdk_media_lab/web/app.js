@@ -2058,7 +2058,8 @@ function renderConcurrencyResults(report) {
   ["ui", "camera", "speaker", "cleanup"].forEach((name, index) => {
     const result = report.results[name];
     const cleanupErrors = report.errors.filter((item) => item.worker.endsWith("_cleanup"));
-    const status = result?.status || (report.running ? "running" : cleanupErrors.length ? "cleanup_failed" : "passed");
+    const startupAborted = !report.running && report.started === false;
+    const status = result?.status || (report.running ? "running" : startupAborted ? "not_started" : cleanupErrors.length ? "cleanup_failed" : "passed");
     const item = document.createElement("li");
     item.dataset.state = status;
     const number = document.createElement("span");
@@ -2067,7 +2068,7 @@ function renderConcurrencyResults(report) {
     title.textContent = labels[name] || "Resource Recovery";
     const detail = document.createElement("small");
     detail.textContent = name === "cleanup"
-      ? (report.running ? "Waiting for operations to finish" : cleanupErrors.length ? cleanupErrors.map((entry) => entry.error).join("; ") : "Cleanup commands acknowledged")
+      ? (report.running ? "Waiting for operations to finish" : startupAborted ? "Workload did not start; no cleanup commands sent" : cleanupErrors.length ? cleanupErrors.map((entry) => entry.error).join("; ") : "Cleanup commands acknowledged")
       : `${statuses[status]} · Succeeded: ${result.succeeded} / Failed: ${result.failed}${result.last_error ? ` · ${result.last_error}` : ""}`;
     if (name === "ui") detail.textContent += ` · Dynamic updates: ${result.updates_succeeded}`;
     item.append(number, title, detail);

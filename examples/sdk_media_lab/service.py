@@ -700,7 +700,7 @@ class MediaLabService:
             deadline = started + duration
             report: dict[str, Any] = {
                 "run_id": run_id, "duration_requested": duration,
-                "running": True, "cancelled": False, "passed": False,
+                "running": True, "started": False, "cancelled": False, "passed": False,
                 "counts": {"camera": 0, "speaker": 0, "ui": 0},
                 "operations": [], "errors": [], "samples": [],
                 "report": f"concurrency-{run_id}.json",
@@ -711,6 +711,7 @@ class MediaLabService:
             }
             report_lock = threading.Lock()
             gate = threading.Event()
+            startup_complete = threading.Event()
             cleanup_claimed: set[str] = set()
 
             def publish() -> None:
@@ -729,6 +730,8 @@ class MediaLabService:
                 self._concurrency_cancel.set()
 
             def cleanup_once(name: str) -> None:
+                if not startup_complete.is_set():
+                    return  # No device work is allowed before all submissions succeed.
                 # Claim under the report lock, but never hold it across device I/O.
                 with report_lock:
                     if name in cleanup_claimed:
@@ -746,6 +749,8 @@ class MediaLabService:
 
             def run_worker(name: str) -> None:
                 gate.wait()
+                if not startup_complete.is_set():
+                    return
                 # All three initial requests are scheduled together. A failure
                 # cancels repeats, not another channel's initial measurement.
                 first_attempt = True
@@ -814,8 +819,15 @@ class MediaLabService:
 
             try:
                 with ThreadPoolExecutor(max_workers=3) as pool:
-                    futures = [pool.submit(worker, name) for name in ("ui", "speaker", "camera")]
-                    gate.set()
+                    try:
+                        futures = [pool.submit(worker, name) for name in ("ui", "speaker", "camera")]
+                        with report_lock:
+                            report["started"] = True
+                        startup_complete.set()
+                    finally:
+                        # Release queued workers before the executor's __exit__
+                        # joins them, even when submit raises after enqueueing.
+                        gate.set()
                     while not all(future.done() for future in futures):
                         with report_lock:
                             report["samples"].append({"elapsed_s": time.monotonic() - started, "resources": dict(self._robot.resource_snapshot)})
