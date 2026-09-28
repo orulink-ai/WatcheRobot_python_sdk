@@ -188,14 +188,16 @@ def _concurrency_results(report: dict[str, Any]) -> dict[str, Any]:
     for name in ("camera", "speaker", "ui"):
         operations = [op for op in report["operations"] if op["worker"] == name]
         succeeded = sum(op["success"] for op in operations)
-        failures = [op for op in operations if not op["success"]]
+        failures = [op for op in operations if not op["success"] and not op.get("interrupted")]
+        updates = sum(op["success"] and op["stage"] == "update" for op in operations)
         cleanup = [item["error"] for item in report["errors"] if item["worker"] == f"{name}_cleanup"]
         status = (
             "failed" if failures else
             "running" if report.get("running") and (name != "speaker" or not succeeded) else
             "not_started" if not operations else
             "cleanup_failed" if cleanup else
-            "interrupted" if report["cancelled"] or report["errors"] else "passed"
+            "interrupted" if report["cancelled"] or report["errors"] else
+            "incomplete" if name == "ui" and not updates else "passed"
         )
         latencies = [(op["end_s"] - op["start_s"]) * 1000 for op in operations]
         results[name] = {
@@ -208,6 +210,9 @@ def _concurrency_results(report: dict[str, Any]) -> dict[str, Any]:
             "evidence": evidence[name] if succeeded else "No successful operation",
             "physical_confirmation": "not_verified" if name != "camera" else "jpeg_validated" if succeeded else "not_verified",
         }
+        if name == "ui":
+            results[name]["updates_succeeded"] = updates
+            results[name]["startup_succeeded"] = any(op["success"] and op["stage"] == "start" for op in operations)
         if name == "camera":
             images = [op["image"] for op in operations if op["success"]]
             results[name]["total_bytes"] = sum(item["bytes"] for item in images)
@@ -299,6 +304,9 @@ class MediaLabService:
         self._robot = robot
         self._concurrency_cancel = threading.Event()
         self._concurrency_report: dict[str, Any] | None = None
+        self._concurrency_shutdown = threading.Event()
+        self._concurrency_lifecycle_lock = threading.Lock()
+        self._concurrency_pending_cleanup: dict[str, str] = {}
         self._rtc = rtc
         self._artifacts_dir = Path(artifacts_dir)
         self._sample_audio = Path(sample_audio)
@@ -339,6 +347,7 @@ class MediaLabService:
             active_action = self._active_action
             active_actions = dict(self._active_actions)
             face_state = self._face_state
+            concurrency_cleanup = dict(self._concurrency_pending_cleanup)
         inference_session = self._inference_session
         artifacts: dict[str, dict[str, object]] = {}
         for filename, content_type in self._ARTIFACT_TYPES.items():
@@ -359,6 +368,7 @@ class MediaLabService:
             "active_action": active_action,
             "active_actions": list(active_actions.values()),
             "resource_owners": active_actions,
+            "concurrency_cleanup": concurrency_cleanup,
             "capabilities": list(self._robot.capabilities),
             "animations": list(self._robot.animation.available_ids),
             "device": dict(self._robot.device_info),
@@ -390,6 +400,12 @@ class MediaLabService:
         with self._live_video_lifecycle_lock:
             connection = self._device_status()
             rtc = self._rtc.snapshot()
+            if connection.get("online") is not True and self._concurrency_lifecycle_lock.acquire(blocking=False):
+                try:
+                    for name in tuple(self._concurrency_pending_cleanup):
+                        self._release_concurrency_cleanup(name)
+                finally:
+                    self._concurrency_lifecycle_lock.release()
             if connection.get("online") is not True and rtc.get("active") is True:
                 self._rtc.reset(reason="device_offline")
                 rtc = self._rtc.snapshot()
@@ -604,14 +620,77 @@ class MediaLabService:
         self._concurrency_cancel.set()
         return {"stop_requested": True}
 
+    def request_shutdown(self) -> None:
+        """Signal workers before the HTTP server begins draining requests."""
+        self._concurrency_shutdown.set()
+        self.stop_concurrency_test()
+
+    @staticmethod
+    def _concurrency_cleanup_resources(name: str) -> tuple[str, ...]:
+        return ("animation",) if name == "ui" else ("microphone", "speaker")
+
+    def _release_concurrency_cleanup(self, name: str) -> None:
+        # Caller owns the lifecycle lock; no test/retry can take over this lease.
+        with self._state_lock:
+            self._concurrency_pending_cleanup.pop(name, None)
+            for resource in self._concurrency_cleanup_resources(name):
+                if self._active_actions.get(resource) == "concurrency_cleanup":
+                    self._active_actions.pop(resource)
+                    self._resource_locks[resource].release()
+            self._refresh_active_action_locked()
+
+    def retry_concurrency_cleanup(self) -> dict[str, object]:
+        if not self._concurrency_lifecycle_lock.acquire(blocking=False):
+            raise MediaLabBusyError("concurrent test is still running")
+        try:
+            self._ensure_device_online()
+            for name in tuple(self._concurrency_pending_cleanup):
+                stop = self._robot.expression_runtime.stop if name == "ui" else self._robot.audio.stop
+                try:
+                    stop()
+                except Exception as exc:
+                    with self._state_lock:
+                        self._concurrency_pending_cleanup[name] = str(exc) or type(exc).__name__
+                else:
+                    self._release_concurrency_cleanup(name)
+            with self._state_lock:
+                return {"pending": dict(self._concurrency_pending_cleanup)}
+        finally:
+            self._concurrency_lifecycle_lock.release()
+
+    def _wait_concurrency_audio(self, playback: Any) -> bool:
+        deadline = time.monotonic() + 30.0
+        while not self._concurrency_cancel.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("audio playback did not finish before timeout")
+            try:
+                playback.wait(min(0.1, remaining))
+                return True
+            except TimeoutError:
+                continue
+        return False
+
     def run_concurrency_test(self, *, duration: float) -> dict[str, Any]:
+        if self._concurrency_shutdown.is_set():
+            raise MediaLabBusyError("application is shutting down")
+        if not self._concurrency_lifecycle_lock.acquire(blocking=False):
+            raise MediaLabBusyError("concurrent test or cleanup is still running")
+        try:
+            return self._run_concurrency_test(duration=duration)
+        finally:
+            self._concurrency_lifecycle_lock.release()
+
+    def _run_concurrency_test(self, *, duration: float) -> dict[str, Any]:
         """Run bounded concurrent SDK calls inside one exclusive bench lease."""
         if isinstance(duration, bool) or not math.isfinite(duration) or not 1 <= duration <= 120:
             raise ValueError("duration must be between 1 and 120 seconds")
         for capability in ("expression.runtime.v3", "camera.capture", "audio.stream"):
             self._ensure_capability(capability)
-        with self._operation("concurrency_test", resources=("camera", "animation", "microphone", "speaker")):
-            self._concurrency_cancel.clear()
+        retained_resources: set[str] = set()
+        with self._operation("concurrency_test", resources=("camera", "animation", "microphone", "speaker"), retain_resources=retained_resources):
+            if not self._concurrency_shutdown.is_set():
+                self._concurrency_cancel.clear()
             run_id = uuid.uuid4().hex[:12]
             self._artifacts_dir.mkdir(parents=True, exist_ok=True)
             started = time.monotonic()
@@ -628,6 +707,7 @@ class MediaLabService:
             }
             report_lock = threading.Lock()
             gate = threading.Event()
+            cleanup_claimed: set[str] = set()
 
             def publish() -> None:
                 # Readers receive an immutable snapshot, never a live worker list.
@@ -644,12 +724,30 @@ class MediaLabService:
                     report["errors"].append({"worker": worker, "error": str(exc) or type(exc).__name__})
                 self._concurrency_cancel.set()
 
-            def worker(name: str) -> None:
+            def cleanup_once(name: str) -> None:
+                # Claim under the report lock, but never hold it across device I/O.
+                with report_lock:
+                    if name in cleanup_claimed:
+                        return
+                    cleanup_claimed.add(name)
+                stop = self._robot.audio.stop if name == "speaker" else self._robot.expression_runtime.stop
+                try:
+                    stop()
+                except Exception as exc:
+                    error(f"{name}_cleanup", exc)
+                    with report_lock:
+                        retained_resources.update(self._concurrency_cleanup_resources(name))
+                    with self._state_lock:
+                        self._concurrency_pending_cleanup[name] = str(exc) or type(exc).__name__
+
+            def run_worker(name: str) -> None:
                 gate.wait()
                 # All three initial requests are scheduled together. A failure
                 # cancels repeats, not another channel's initial measurement.
                 first_attempt = True
                 while first_attempt or (not self._concurrency_cancel.is_set() and time.monotonic() < deadline):
+                    if self._concurrency_shutdown.is_set():
+                        break
                     tick = time.monotonic()
                     stage = ("start" if first_attempt else "update") if name == "ui" else "run"
                     operation: dict[str, Any] = {"worker": name, "stage": stage, "start_s": tick - started, "success": False}
@@ -666,7 +764,9 @@ class MediaLabService:
                                 )
                         elif name == "speaker":
                             playback = self._robot.audio.play_file(self._sample_audio)
-                            playback.wait(30.0)
+                            if not self._wait_concurrency_audio(playback):
+                                operation["interrupted"] = True
+                                break
                         else:
                             photo = self._robot.camera.capture(timeout=10.0)
                             data = bytes(photo.data)
@@ -699,6 +799,15 @@ class MediaLabService:
                         break
                     self._concurrency_cancel.wait(interval)
 
+            def worker(name: str) -> None:
+                try:
+                    run_worker(name)
+                finally:
+                    # This channel is quiescent; another channel's capture must
+                    # not delay stopping playback or restoring the display.
+                    if self._concurrency_cancel.is_set() and name in ("speaker", "ui"):
+                        cleanup_once(name)
+
             try:
                 with ThreadPoolExecutor(max_workers=3) as pool:
                     futures = [pool.submit(worker, name) for name in ("ui", "speaker", "camera")]
@@ -713,18 +822,18 @@ class MediaLabService:
             except Exception as exc:
                 error("setup", exc)
             finally:
-                report["cancelled"] = self._concurrency_cancel.is_set() and not report["errors"]
+                report["cancelled"] = self._concurrency_cancel.is_set() and not any(
+                    not item["worker"].endswith("_cleanup") for item in report["errors"]
+                )
                 self._concurrency_cancel.set()
-                for name, stop in (("speaker_cleanup", self._robot.audio.stop), ("ui_cleanup", self._robot.expression_runtime.stop)):
-                    try:
-                        stop()
-                    except Exception as exc:
-                        error(name, exc)
+                for name in ("speaker", "ui"):
+                    cleanup_once(name)
                 report["running"] = False
                 report["elapsed_s"] = time.monotonic() - started
                 report["after"] = dict(self._robot.resource_snapshot)
-                report["passed"] = not report["errors"] and not report["cancelled"] and all(report["counts"].values())
                 report["results"] = _concurrency_results(report)
+                report["passed"] = all(result["status"] == "passed" for result in report["results"].values())
+                report["incomplete"] = any(result["status"] == "incomplete" for result in report["results"].values())
                 (self._artifacts_dir / report["report"]).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
                 self._concurrency_report = report
             return report
@@ -1126,6 +1235,7 @@ class MediaLabService:
         *,
         resource: str | None = None,
         resources: tuple[str, ...] | None = None,
+        retain_resources: set[str] | None = None,
     ) -> Iterator[None]:
         selected_resources = tuple(sorted(set(resources or ((resource or "speaker"),))))
         acquired: list[str] = []
@@ -1164,10 +1274,14 @@ class MediaLabService:
             with self._state_lock:
                 for selected_resource in selected_resources:
                     if self._active_actions.get(selected_resource) == action:
-                        self._active_actions.pop(selected_resource, None)
+                        if retain_resources and selected_resource in retain_resources:
+                            self._active_actions[selected_resource] = "concurrency_cleanup"
+                        else:
+                            self._active_actions.pop(selected_resource, None)
                 self._refresh_active_action_locked()
             for acquired_resource in reversed(acquired):
-                self._resource_locks[acquired_resource].release()
+                if not retain_resources or acquired_resource not in retain_resources:
+                    self._resource_locks[acquired_resource].release()
 
     def _refresh_active_action_locked(self) -> None:
         self._active_action = next(iter(self._active_actions.values()), None)
@@ -1210,7 +1324,7 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
         try:
             yield
         finally:
-            service.stop_concurrency_test()
+            service.request_shutdown()
             maintenance_task.cancel()
             try:
                 await maintenance_task
@@ -1356,6 +1470,10 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     @app.post("/api/concurrency/stop")
     async def stop_concurrency_test() -> dict[str, object]:
         return service.stop_concurrency_test()
+
+    @app.post("/api/concurrency/cleanup")
+    async def retry_concurrency_cleanup() -> dict[str, object]:
+        return await _run_action(service.retry_concurrency_cleanup)
 
     @app.get("/api/concurrency/result")
     async def concurrency_result() -> dict[str, Any]:

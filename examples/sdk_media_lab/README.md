@@ -36,8 +36,10 @@ photo** before requesting another. The bundled audio sample plays **once**.
 Duration is 1–120 seconds, default 30, and limits scheduling new photo/UI calls.
 Unlike the old script's forced audio cancellation, in-flight operations finish
 under SDK timeouts before cleanup; a short window can therefore take longer
-than the selected duration. Failure or **Stop Test** stops new work and waits
-for in-flight operations too. Audio is not looped for the whole window; all
+than the selected duration. Failure or **Stop Test** stops new work and
+interrupts the audio wait; audio is stopped during cleanup. Camera/UI calls
+already in flight finish under their SDK timeouts. Each cancelled audio/UI worker
+cleans up its own channel without waiting for the camera. Audio is not looped for the whole window; all
 three channels overlap only while the single playback is active.
 
 The bench reserves camera, display and both audio directions during the test.
@@ -59,6 +61,23 @@ and audible sound require manual observation. The checkboxes record local UI
 observations separately from the SDK verdict, reset per run, and are not saved
 in the SDK JSON report. A channel interrupted by another failure is not marked
 as passed. Partial successes remain visible when a later call fails.
+
+UI startup and successful dynamic updates are counted separately. At least one
+successful update is required for a passing UI verdict; a window consumed by
+startup is reported as **Verification incomplete**, not passed.
+
+An unacknowledged UI stop retains the animation lease; an unacknowledged audio
+stop retains microphone and speaker leases. These prevent conflicting starts.
+**Retry Cleanup** (`POST /api/concurrency/cleanup`) releases only resources whose
+stop command succeeds; confirmed device disconnection releases the remaining
+local leases. The original run report retains its errors, while current pending
+cleanup is shown independently through `status.concurrency_cleanup`.
+
+The Application signals the test to stop before asking Uvicorn to drain HTTP
+requests. Audio waits poll for cancellation every 100 ms instead of blocking
+shutdown for the entire playback timeout. New tests are rejected once shutdown
+begins. Cleanup still depends on device acknowledgement; an unresponsive device
+can exceed the Daemon shutdown grace period.
 
 ## Camera capture
 

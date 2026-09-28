@@ -226,3 +226,132 @@ def test_concurrent_artifacts_are_downloadable_without_exposing_other_files(tmp_
     (tmp_path / "artifacts" / "private.json").write_text("{}")
     assert client.get("/artifacts/private.json").status_code == 404
     assert service.artifact_path("../private.json") is None
+
+
+def test_slow_start_without_ui_updates_is_incomplete(tmp_path):
+    module = _load_service_module()
+    robot = _stress_robot()
+    robot.expression_runtime.start = lambda **kw: time.sleep(1.05)
+    report = _service(module, tmp_path, robot).run_concurrency_test(duration=1)
+    assert report["counts"]["ui"] == 1
+    assert report["passed"] is False
+    assert report["results"]["ui"]["status"] == "incomplete"
+    assert report["results"]["ui"]["updates_succeeded"] == 0
+
+
+@pytest.mark.parametrize("worker,resources", [("ui", {"animation"}), ("speaker", {"microphone", "speaker"})])
+def test_failed_cleanup_holds_resources_until_retry_succeeds(tmp_path, worker, resources):
+    module = _load_service_module()
+    robot = _stress_robot()
+    domain = robot.expression_runtime if worker == "ui" else robot.audio
+    domain.stop = lambda: (_ for _ in ()).throw(TimeoutError("stop not confirmed"))
+    service = _service(module, tmp_path, robot)
+    report = service.run_concurrency_test(duration=1)
+    assert report["results"][worker]["status"] == "cleanup_failed"
+    assert set(service.status()["resource_owners"]) == resources
+    for resource in resources:
+        with pytest.raises(module.MediaLabBusyError):
+            with service._operation("conflicting_action", resources=(resource,)):
+                pass
+    # A failed retry retains the lease; a successful retry releases only this lease.
+    assert service.retry_concurrency_cleanup()["pending"]
+    domain.stop = lambda: None
+    assert service.retry_concurrency_cleanup()["pending"] == {}
+    assert service.status()["resource_owners"] == {}
+    assert report["results"][worker]["cleanup_error"] == "stop not confirmed"
+
+
+def test_disconnect_releases_pending_cleanup_without_sending_commands(tmp_path):
+    module = _load_service_module()
+    robot = _stress_robot()
+    robot.expression_runtime.stop = lambda: (_ for _ in ()).throw(TimeoutError("stop not confirmed"))
+    service = _service(module, tmp_path, robot)
+    service.run_concurrency_test(duration=1)
+    assert service.status()["busy"]
+    service._device_status_provider = lambda: {"online": False, "state": "disconnected"}
+    service.maintain()
+    assert service.status()["resource_owners"] == {}
+    assert service.status()["concurrency_cleanup"] == {}
+
+
+def test_shutdown_interrupts_audio_wait_and_blocks_new_work(tmp_path):
+    module = _load_service_module()
+    robot = _stress_robot()
+    entered = threading.Event()
+    waits = []
+    def wait(timeout):
+        entered.set()
+        waits.append(timeout)
+        time.sleep(min(timeout, 0.1))
+        raise TimeoutError("not finished yet")
+    robot.audio.play_file = lambda path: SimpleNamespace(wait=wait)
+    service = _service(module, tmp_path, robot)
+    reports = []
+    thread = threading.Thread(target=lambda: reports.append(service.run_concurrency_test(duration=30)))
+    thread.start()
+    try:
+        assert entered.wait(2)
+        service.request_shutdown()
+    finally:
+        service.stop_concurrency_test()
+        thread.join(3)
+    assert not thread.is_alive()
+    assert reports[0]["cancelled"]
+    assert reports[0]["results"]["speaker"]["status"] == "interrupted"
+    assert not reports[0]["errors"]
+    assert max(waits) <= 0.2
+    with pytest.raises(module.MediaLabBusyError):
+        service.run_concurrency_test(duration=1)
+
+
+def test_cleanup_endpoint_releases_only_confirmed_resources(tmp_path):
+    module = _load_service_module()
+    robot = _stress_robot()
+    robot.expression_runtime.stop = lambda: (_ for _ in ()).throw(TimeoutError("UI busy"))
+    robot.audio.stop = lambda: (_ for _ in ()).throw(TimeoutError("audio busy"))
+    service = _service(module, tmp_path, robot)
+    service.run_concurrency_test(duration=1)
+    client = _client_for_service(module, tmp_path, service)
+    robot.expression_runtime.stop = lambda: None
+    response = client.post("/api/concurrency/cleanup")
+    assert response.status_code == 200
+    assert response.json()["pending"] == {"speaker": "audio busy"}
+    assert set(service.status()["resource_owners"]) == {"microphone", "speaker"}
+    robot.audio.stop = lambda: None
+    assert client.post("/api/concurrency/cleanup").json()["pending"] == {}
+    assert not service.status()["busy"]
+
+
+def test_stop_cleans_audio_and_ui_without_waiting_for_camera(tmp_path):
+    module = _load_service_module()
+    robot = _stress_robot()
+    camera_entered = threading.Event()
+    audio_stopped, ui_stopped = threading.Event(), threading.Event()
+    def capture(**kwargs):
+        camera_entered.set()
+        assert audio_stopped.wait(2)
+        assert ui_stopped.wait(2)
+        return SimpleNamespace(data=_jpeg())
+    def wait(timeout):
+        time.sleep(min(timeout, .05))
+        raise TimeoutError("playing")
+    robot.camera.capture = capture
+    robot.audio.play_file = lambda path: SimpleNamespace(wait=wait)
+    robot.audio.stop = audio_stopped.set
+    robot.expression_runtime.stop = ui_stopped.set
+    service = _service(module, tmp_path, robot)
+    reports = []
+    thread = threading.Thread(target=lambda: reports.append(service.run_concurrency_test(duration=30)))
+    thread.start()
+    try:
+        assert camera_entered.wait(1)
+        service.stop_concurrency_test()
+        assert audio_stopped.wait(1)
+        assert ui_stopped.wait(1)
+    finally:
+        audio_stopped.set()
+        ui_stopped.set()
+        thread.join(3)
+    assert not thread.is_alive()
+    assert reports[0]["cancelled"]
+    assert not reports[0]["errors"]

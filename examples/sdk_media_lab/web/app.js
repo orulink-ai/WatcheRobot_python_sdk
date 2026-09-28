@@ -705,6 +705,12 @@ function renderStatus(status) {
     "expression.runtime.v3", "audio.stream", "camera.capture",
   ].every(hasCapability);
   document.querySelector("#concurrencyStop").disabled = !testPending && status.active_action !== "concurrency_test";
+  const cleanupEntries = Object.entries(status.concurrency_cleanup || {});
+  const cleanupBusy = document.querySelector("#concurrencyStation").dataset.cleaning === "true";
+  document.querySelector("#concurrencyCleanup").disabled = cleanupBusy || testPending || !status.connected || cleanupEntries.length === 0;
+  document.querySelector("#concurrencyCleanupState").textContent = cleanupEntries.length
+    ? `Cleanup pending: ${cleanupEntries.map(([name, error]) => `${name}: ${error}`).join("; ")}`
+    : "No pending cleanup";
 
   elements.capabilityGrid.replaceChildren(...status.capabilities.map((capability) => {
     const chip = document.createElement("span");
@@ -2030,7 +2036,7 @@ async function runAll() {
 
 function concurrencySummary(report) {
   const counts = `Photos: ${report.counts.camera}, audio: ${report.counts.speaker}, UI: ${report.counts.ui}`;
-  const verdict = report.running ? "Concurrent test running" : report.passed ? "SDK checks passed" : report.cancelled ? "Interrupted" : "Failed";
+  const verdict = report.running ? "Concurrent test running" : report.passed ? "SDK checks passed" : report.cancelled ? "Interrupted" : report.incomplete ? "Verification incomplete" : "Failed";
   return `${verdict} · ${Math.round(report.elapsed_s || 0)} s / ${report.duration_requested} s · ${counts}`;
 }
 
@@ -2046,7 +2052,7 @@ function renderConcurrencyResults(report) {
   }
   container.replaceChildren();
   const labels = { camera: "Continuous Photos", speaker: "Speaker Playback", ui: "Custom UI" };
-  const statuses = { running: "Running", passed: "SDK checks passed", failed: "Failed", not_started: "Not run", interrupted: "Interrupted", cleanup_failed: "Cleanup failed" };
+  const statuses = { incomplete: "Verification incomplete", running: "Running", passed: "SDK checks passed", failed: "Failed", not_started: "Not run", interrupted: "Interrupted", cleanup_failed: "Cleanup failed" };
   const stages = document.querySelector("#concurrencyStages");
   stages.replaceChildren();
   ["ui", "camera", "speaker", "cleanup"].forEach((name, index) => {
@@ -2063,6 +2069,7 @@ function renderConcurrencyResults(report) {
     detail.textContent = name === "cleanup"
       ? (report.running ? "Waiting for operations to finish" : cleanupErrors.length ? cleanupErrors.map((entry) => entry.error).join("; ") : "Cleanup commands acknowledged")
       : `${statuses[status]} · Succeeded: ${result.succeeded} / Failed: ${result.failed}${result.last_error ? ` · ${result.last_error}` : ""}`;
+    if (name === "ui") detail.textContent += ` · Dynamic updates: ${result.updates_succeeded}`;
     item.append(number, title, detail);
     stages.append(item);
   });
@@ -2093,7 +2100,7 @@ function renderConcurrencyResults(report) {
       lines.push(`Last image: ${photo.width} x ${photo.height}, ${photo.bytes} bytes`, photo.file);
     }
     if (name === "speaker") lines.push("Actual sound: awaiting device confirmation");
-    if (name === "ui") lines.push("Screen appearance: awaiting device confirmation", "Command counts include UI startup and updates");
+    if (name === "ui") lines.push("Screen appearance: awaiting device confirmation", "Command counts include UI startup and updates", `Dynamic updates: ${result.updates_succeeded}`);
     if (result.last_error !== null) lines.push(`Failure reason: ${result.last_error || "No error detail returned"}`);
     if (result.cleanup_error !== null) lines.push(`Cleanup error: ${result.cleanup_error || "No error detail returned"}`);
     for (const line of lines) {
@@ -2135,7 +2142,7 @@ document.querySelector("#concurrencyStart").addEventListener("click", async () =
         renderConcurrencyResults(report);
         receivedReport = true;
         const counts = `Photos: ${report.counts.camera}, audio: ${report.counts.speaker}, UI: ${report.counts.ui}`;
-        if (!report.passed) throw new Error(`${counts}. ${report.errors.map((item) => `${item.worker}: ${item.error}`).join("; ") || "Test stopped"}`);
+        if (!report.passed) throw new Error(`${counts}. ${report.errors.map((item) => `${item.worker}: ${item.error}`).join("; ") || (report.incomplete ? "Dynamic UI updates not verified" : "Test stopped")}`);
         return `${counts}. Report: ${report.report}`;
       },
     });
@@ -2145,6 +2152,24 @@ document.querySelector("#concurrencyStart").addEventListener("click", async () =
   finally {
     delete panel.dataset.requesting;
     delete details.dataset.pendingRunId;
+    await refreshStatus();
+  }
+});
+document.querySelector("#concurrencyCleanup").addEventListener("click", async () => {
+  const panel = document.querySelector("#concurrencyStation");
+  panel.dataset.cleaning = "true";
+  document.querySelector("#concurrencyCleanup").disabled = true;
+  try {
+    const response = await api("/api/concurrency/cleanup", { method: "POST" });
+    if (Object.keys(response.pending).length) {
+      notify(`Cleanup pending: ${Object.values(response.pending).join("; ")}`, "error");
+    } else {
+      notify("Cleanup commands acknowledged", "ok");
+    }
+  } catch (error) {
+    notify(error.message, "error");
+  } finally {
+    delete panel.dataset.cleaning;
     await refreshStatus();
   }
 });

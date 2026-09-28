@@ -4,6 +4,13 @@ const SUPPORTED_LOCALES = new Set(["en-US", "zh-CN"]);
 // legacy Chinese diagnostics from the device/service and powers the optional Chinese
 // presentation without putting Chinese literals back into the page or controller.
 const ENGLISH_PHRASES = new Map([
+  ["重试清理", "Retry Cleanup"],
+  ["无待确认清理", "No pending cleanup"],
+  ["清理待确认：", "Cleanup pending:"],
+  ["验证未完成", "Verification incomplete"],
+  ["动态更新次数：", "Dynamic updates:"],
+  ["尚未验证 UI 动态更新", "Dynamic UI updates not verified"],
+  ["停止会中断音频播放；拍照和 UI 当前调用结束后执行清理。", "Stop interrupts audio playback; camera and UI calls finish before cleanup."],
   ["照片：", "Photos:"],
   ["音频：", "audio:"],
   ["UI 命令：", "UI:"],

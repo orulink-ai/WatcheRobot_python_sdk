@@ -102,7 +102,10 @@
           <div class="button-row">
             <button class="station-action" id="concurrencyStart" type="button">Start Concurrent Test</button>
             <button class="quiet-action" id="concurrencyStop" type="button" disabled>Stop Test</button>
+            <button class="quiet-action" id="concurrencyCleanup" type="button" disabled>Retry Cleanup</button>
           </div>
+          <small>Stop interrupts audio playback; camera and UI calls finish before cleanup.</small>
+          <output id="concurrencyCleanupState" aria-live="polite">No pending cleanup</output>
           <output class="station-result" id="concurrencyResult" aria-live="polite">Awaiting Test</output>
           <a id="concurrencyReportLink" hidden download>Download test report</a>
         </div>
