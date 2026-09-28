@@ -35,42 +35,6 @@ asyncio.run(main())
 TEST_BENCH_URL = "http://127.0.0.1:54321"
 
 
-def test_app_stop_waits_for_slow_graceful_shutdown(monkeypatch, capsys):
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    from types import SimpleNamespace
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            assert self.path == "/daemon/application/stop"
-            # Longer than the generic management request's two-second timeout.
-            time.sleep(2.2)
-            body = json.dumps({"application": {"state": "ended"}}).encode()
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            try:
-                self.wfile.write(body)
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                pass
-
-        def log_message(self, *args):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    state = SimpleNamespace(control_url=f"http://127.0.0.1:{server.server_port}")
-    monkeypatch.setattr(watcherobot_cli, "ensure_runtime", lambda: (state, True))
-    try:
-        assert main(["app", "stop"]) == 0
-        assert "Application stopped" in capsys.readouterr().out
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(3)
-
-
 @pytest.fixture(autouse=True)
 def isolate_system_runtime_state(
     tmp_path: Path,

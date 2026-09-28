@@ -91,15 +91,18 @@ with app.robot.face_tracking.open_preview() as preview:
 See [Face-tracking preview API](face-tracking-preview.md) for the synchronized
 JPEG and telemetry contract.
 
-## Managed preview example
+## Vision Debug Lab
 
-`examples/face_tracking_preview` consumes sequence-matched preview frames
-through the managed Application Device channel:
+`examples/vision_debug_lab` combines these preflight checks with a local
+same-sequence face preview, latency/drop metrics, JPEG + JSONL recording,
+HOLD/RECENTER controls, and diagnostic report export:
 
 ```shell
-watcherobot app run ./examples/face_tracking_preview
+watcherobot app run ./examples/vision_debug_lab
 ```
 
-It logs face telemetry and saves the latest JPEG after collecting 150 frames.
-It does not provide a browser dashboard. Use the SDK APIs above for backend
-health and capability checks in your own Application.
+It listens only on `127.0.0.1` and uses the Daemon-injected Application Device
+channel rather than a robot LAN port. When the last browser viewer disconnects,
+the service automatically applies HOLD. See the
+[`Vision Debug Lab README`](../examples/vision_debug_lab/README.md) for the
+complete operator workflow and backend limitations.

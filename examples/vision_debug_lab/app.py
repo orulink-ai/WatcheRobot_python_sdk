@@ -1,4 +1,4 @@
-"""Run the standalone, loopback-only SDK Test Bench dashboard."""
+"""Run the loopback-only WatcheRobot Vision Debug Lab."""
 
 from __future__ import annotations
 
@@ -10,22 +10,16 @@ from pathlib import Path
 
 import uvicorn
 
-from service import DaemonDeviceStatusProvider, MediaLabService, create_web_app
+from service import (
+    DaemonDeviceStatusProvider,
+    VisionDebugLabService,
+    create_web_app,
+)
 from watcherobot.application import ApplicationContext
 
 
 ROOT = Path(__file__).resolve().parent
 HOST = "127.0.0.1"
-
-
-async def wait_for_server(app, server, server_task) -> None:
-    """Let HTTP lifespan cleanup finish when the Daemon requests shutdown."""
-    try:
-        while not server_task.done() and not app.shutdown_requested:
-            await asyncio.sleep(0.05)
-    finally:
-        server.should_exit = True
-        await server_task
 
 
 async def main() -> None:
@@ -46,14 +40,12 @@ async def main() -> None:
                 raise RuntimeError(
                     "Daemon did not inject WATCHER_APP_DEVICE_STATUS_URL"
                 )
-            device_manager = DaemonDeviceStatusProvider(device_status_url)
-            service = MediaLabService(
+            service = VisionDebugLabService(
                 robot=app.robot,
-                rtc=app.rtc,
                 artifacts_dir=ROOT / "artifacts",
-                sample_audio=ROOT / "assets" / "sample_speech.wav",
-                device_status_provider=device_manager,
-                device_pairer=device_manager.pair,
+                device_status_provider=DaemonDeviceStatusProvider(
+                    device_status_url
+                ),
             )
             web_app = create_web_app(service, web_root=ROOT / "web")
             server = uvicorn.Server(
@@ -67,16 +59,16 @@ async def main() -> None:
             )
             server_task = asyncio.create_task(
                 server.serve(sockets=[listener]),
-                name="sdk-test-bench-http",
+                name="vision-debug-lab-http",
             )
             while not server.started:
                 if server_task.done():
                     await server_task
                 await asyncio.sleep(0.02)
-            app.logger.info("SDK Test Bench: %s", url)
-            if os.environ.get("WATCHER_MEDIA_LAB_NO_BROWSER") != "1":
+            app.logger.info("Vision Debug Lab: %s", url)
+            if os.environ.get("WATCHER_VISION_LAB_NO_BROWSER") != "1":
                 await asyncio.to_thread(webbrowser.open, url)
-            await wait_for_server(app, server, server_task)
+            await server_task
     finally:
         listener.close()
 

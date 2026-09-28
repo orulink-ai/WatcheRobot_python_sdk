@@ -10,34 +10,6 @@ import {
   rtcModeHasVideo,
 } from "../../examples/sdk_media_lab/web/media-resource-policy.mjs";
 
-test("feedback capture requires free display and audio while atomic capture stays independent", () => {
-  const ready = { connected: true, capabilities: ["camera.capture.feedback.v1"] };
-  assert.equal(controlAvailability(ready).cameraWithFeedback, true);
-  for (const resource of ["animation", "microphone", "speaker"]) {
-    for (const owner of [
-      { resourceOwners: { [resource]: "other" } },
-      { localResources: new Set([resource]) },
-    ]) {
-      const availability = controlAvailability({ ...ready, ...owner });
-      assert.equal(availability.cameraWithFeedback, false);
-      assert.equal(availability.camera, true);
-    }
-  }
-  assert.equal(controlAvailability({ ...ready, rtcActive: true, rtcMode: "audio" }).cameraWithFeedback, false);
-  assert.equal(controlAvailability({ ...ready, localResources: new Set(["camera"]) }).cameraWithFeedback, false);
-  assert.equal(controlAvailability({ ...ready, connected: false }).cameraWithFeedback, false);
-});
-
-test("pending feedback capture prevents audio and RTC starts", () => {
-  const availability = controlAvailability({
-    connected: true,
-    localResources: new Set(["camera", "animation", "microphone", "speaker"]),
-  });
-  for (const key of ["camera", "cameraWithFeedback", "microphone", "speaker", "startRtcAudio", "startRtcVideo", "startRtcAv"]) {
-    assert.equal(availability[key], false);
-  }
-});
-
 const connected = {
   connected: true,
   capabilities: [

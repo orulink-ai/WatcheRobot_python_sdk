@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Vision Debug Lab</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+  </head>
+  <body>
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">ORULINK / HIMAX OPTICAL BENCH</p>
+        <h1>Vision Debug Lab</h1>
+      </div>
+      <div class="connection-lockup">
+        <span id="connectionLamp" class="signal"></span>
+        <div><b id="connectionState">正在检查设备</b><small>LOCAL LOOPBACK · MANAGED CHANNEL</small></div>
+      </div>
+    </header>
+
+    <main class="workbench">
+      <section class="monitor panel">
+        <div class="panel-head">
+          <div><span class="index">01</span><h2>光学监看</h2></div>
+          <div class="live-readout"><span id="streamLamp" class="signal"></span><span id="streamState">STANDBY</span></div>
+        </div>
+        <div class="viewport-shell">
+          <canvas id="visionCanvas" width="832" height="832"></canvas>
+          <div id="emptyState" class="empty-state">
+            <span class="reticle"></span>
+            <strong>等待人脸追踪预览</strong>
+            <small>先确认健康检查，再启动端侧推理</small>
+          </div>
+          <div class="viewport-meta"><span id="frameSequence">SEQ —</span><span id="frameSize">JPEG —</span></div>
+        </div>
+        <div class="legend">
+          <span><i class="face-key"></i>FACE</span>
+          <span><i class="target-key"></i>TARGET</span>
+          <span><i class="zone-key"></i>GUIDE DEAD ZONE</span>
+        </div>
+      </section>
+
+      <aside class="controls panel">
+        <div class="panel-head"><div><span class="index">02</span><h2>采集控制</h2></div></div>
+        <label>预览分辨率<select id="resolution"><option value="416x416">416 × 416</option><option value="240x240">240 × 240</option><option value="640x480">640 × 480</option></select></label>
+        <label>采样步长<select id="stride"><option value="1">每帧</option><option value="2">每 2 帧</option><option value="3">每 3 帧</option></select></label>
+        <button id="startPreview" class="primary">启动人脸预览</button>
+        <div class="button-pair"><button id="stopHold">停止 · HOLD</button><button id="stopRecenter">停止 · RECENTER</button></div>
+        <div class="rule"></div>
+        <button id="recordingButton" class="record"><span></span>开始录制 JPEG + JSONL</button>
+        <button id="exportReport">导出诊断报告</button>
+        <p class="safety-note">浏览器关闭或刷新后，将自动向机器人发送 HOLD，避免头部继续运动。</p>
+      </aside>
+
+      <section class="health panel">
+        <div class="panel-head"><div><span class="index">03</span><h2>链路健康</h2></div><button id="refreshStatus" class="text-button">刷新</button></div>
+        <div class="health-grid">
+          <article><small>VISION BACKEND</small><b id="backendValue">—</b><span id="backendDetail">等待状态</span></article>
+          <article><small>HIMAX</small><b id="himaxValue">—</b><span id="himaxDetail">等待状态</span></article>
+          <article><small>ACTIVE MODEL</small><b id="modelValue">—</b><span id="modelDetail">等待状态</span></article>
+          <article><small>CAPABILITIES</small><b id="capabilityValue">—</b><span id="capabilityDetail">等待状态</span></article>
+        </div>
+        <div id="findings" class="findings"></div>
+      </section>
+
+      <section class="telemetry panel">
+        <div class="panel-head"><div><span class="index">04</span><h2>实时测量</h2></div></div>
+        <div class="metric-strip">
+          <div><small>FPS</small><b id="fpsMetric">—</b></div><div><small>FRAME GAP P95</small><b id="gapMetric">—</b></div><div><small>DEVICE AGE P95</small><b id="ageMetric">—</b></div><div><small>INFERENCE AVG / P95</small><b id="inferenceMetric">—</b></div><div><small>APP INGRESS P95</small><b id="applicationMetric">—</b></div><div><small>APP → BROWSER</small><b id="browserMetric">—</b></div><div><small>MISSING SEQ</small><b id="missingMetric">—</b></div><div><small>JPEG AVG</small><b id="jpegMetric">—</b></div>
+        </div>
+        <div class="vector-readout"><span>ERROR X <b id="errorX">—</b></span><span>ERROR Y <b id="errorY">—</b></span><span>PAN VEL <b id="panVelocity">—</b></span><span>TILT VEL <b id="tiltVelocity">—</b></span></div>
+      </section>
+
+      <section class="events panel">
+        <div class="panel-head"><div><span class="index">05</span><h2>诊断事件</h2></div><span id="recordingState" class="recording-state">NOT RECORDING</span></div>
+        <ol id="eventList"><li class="muted">调试台已就绪，等待设备状态。</li></ol>
+      </section>
+    </main>
+    <div id="toast" class="toast" role="status"></div>
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>

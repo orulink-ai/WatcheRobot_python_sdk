@@ -79,14 +79,15 @@ with app.robot.face_tracking.open_preview() as preview:
 
 JPEG 与人脸框同帧配对合同见[人脸跟踪预览 API](face-tracking-preview.md)。
 
-## 使用托管预览示例
+## 使用 Vision Debug Lab
 
-`examples/face_tracking_preview` 通过托管 Application Device channel
-接收同帧配对的预览图像和人脸遥测：
+SDK 自带的 `examples/vision_debug_lab` 把以上预检、人脸同帧预览、延迟与丢帧指标、
+JPEG + JSONL 录制、HOLD / RECENTER 和诊断报告整合为一个本机调试界面：
 
 ```powershell
-watcherobot app run .\examples\face_tracking_preview
+watcherobot app run .\examples\vision_debug_lab
 ```
 
-它会记录人脸遥测日志，并在收集 150 帧后保存最后一帧 JPEG，不提供浏览器界面。
-在自己的 Application 中，可使用本文介绍的 SDK API 查询视觉后端健康状态与能力。
+它只监听 `127.0.0.1`，并严格使用 Daemon 注入的 Application Device channel，不会直连
+机器人局域网端口。最后一个浏览器断开后会自动 HOLD。详细说明见
+[`examples/vision_debug_lab/README.md`](../examples/vision_debug_lab/README.md)。
