@@ -51,6 +51,11 @@ failures, cleanup acknowledgement, a collapsible detail view, the latest photo
 and a JSON report download. Every JPEG is decoded and saved with a unique name.
 `GET /api/concurrency/result` returns a snapshot while running and the final
 report afterwards, including counts, timings, errors and resource telemetry.
+If the JSON report cannot be written (for example, the disk is full), the final
+result remains available in memory until the next run or Application restart.
+`report_saved` is false and `report_save_error` describes the storage error;
+device verdicts remain separate. The page shows the error and hides the report
+download link rather than leaving the run marked as active.
 The removed `ui_stroke_width` diagnostic parameter is no longer part of this
 workload; old width comparisons are separate historical diagnostic artifacts.
 
@@ -72,12 +77,17 @@ stop retains microphone and speaker leases. These prevent conflicting starts.
 stop command succeeds; confirmed device disconnection releases the remaining
 local leases. The original run report retains its errors, while current pending
 cleanup is shown independently through `status.concurrency_cleanup`.
+An unavailable or malformed status response is not proof of disconnection and
+does not release these leases; the Daemon must report a valid offline state.
 
 The Application signals the test to stop before asking Uvicorn to drain HTTP
 requests. Audio waits poll for cancellation every 100 ms instead of blocking
 shutdown for the entire playback timeout. New tests are rejected once shutdown
 begins. Cleanup still depends on device acknowledgement; an unresponsive device
 can exceed the Daemon shutdown grace period.
+The CLI allows up to 30 seconds for `app stop` and Ctrl+C cleanup in `app run`
+or `app run-installed` to receive the Daemon's stop result. This client-side
+timeout does not extend the Daemon's own graceful shutdown deadline.
 
 ## Camera capture
 

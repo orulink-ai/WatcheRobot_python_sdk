@@ -261,17 +261,87 @@ def test_failed_cleanup_holds_resources_until_retry_succeeds(tmp_path, worker, r
     assert report["results"][worker]["cleanup_error"] == "stop not confirmed"
 
 
-def test_disconnect_releases_pending_cleanup_without_sending_commands(tmp_path):
+@pytest.mark.parametrize("state", ["idle", "disconnected", "reconnecting"])
+def test_disconnect_releases_pending_cleanup_without_sending_commands(tmp_path, state):
     module = _load_service_module()
     robot = _stress_robot()
     robot.expression_runtime.stop = lambda: (_ for _ in ()).throw(TimeoutError("stop not confirmed"))
     service = _service(module, tmp_path, robot)
     service.run_concurrency_test(duration=1)
     assert service.status()["busy"]
-    service._device_status_provider = lambda: {"online": False, "state": "disconnected"}
+    service._device_status_provider = lambda: {"online": False, "state": state}
     service.maintain()
     assert service.status()["resource_owners"] == {}
     assert service.status()["concurrency_cleanup"] == {}
+
+
+@pytest.mark.parametrize("status", [
+    {"online": False, "state": "unavailable", "last_error": "status_unavailable"},
+    {},
+    {"state": "idle"},
+    {"online": False, "state": "connected"},
+    None,
+])
+def test_unavailable_status_preserves_pending_cleanup(tmp_path, status):
+    module = _load_service_module()
+    robot = _stress_robot()
+    robot.expression_runtime.stop = lambda: (_ for _ in ()).throw(TimeoutError("stop not confirmed"))
+    service = _service(module, tmp_path, robot)
+    service.run_concurrency_test(duration=1)
+
+    def unavailable():
+        if status is None:
+            raise TimeoutError("status request timed out")
+        return status
+
+    service._device_status_provider = unavailable
+    service.maintain()
+    service._device_status_provider = lambda: {"online": True, "state": "connected"}
+    assert service.status()["concurrency_cleanup"] == {"ui": "stop not confirmed"}
+    with pytest.raises(module.MediaLabBusyError):
+        with service._operation("conflicting_animation", resources=("animation",)):
+            pass
+    robot.expression_runtime.stop = lambda: None
+    assert service.retry_concurrency_cleanup()["pending"] == {}
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_report_write_failure_publishes_terminal_result(tmp_path, monkeypatch, cleanup_fails):
+    from pathlib import Path
+
+    module = _load_service_module()
+    robot = _stress_robot()
+    if cleanup_fails:
+        robot.expression_runtime.stop = lambda: (_ for _ in ()).throw(TimeoutError("stop not confirmed"))
+    service = _service(module, tmp_path, robot)
+    client = _client_for_service(module, tmp_path, service)
+    original_write = Path.write_text
+
+    def fail_report(path, *args, **kwargs):
+        if path.name.startswith("concurrency-") and path.suffix == ".json":
+            raise OSError(28, "No space left on device")
+        return original_write(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "write_text", fail_report)
+        response = client.post("/api/concurrency/start", json={"duration": 1})
+    assert response.status_code == 200
+    report = response.json()
+    assert report["running"] is False
+    assert report["report_saved"] is False
+    assert "No space left" in report["report_save_error"]
+    assert report["passed"] is (not cleanup_fails)
+    assert client.get("/api/concurrency/result").json() == report
+    assert service.status()["busy"] is cleanup_fails
+    if cleanup_fails:
+        assert service.status()["concurrency_cleanup"] == {"ui": "stop not confirmed"}
+        robot.expression_runtime.stop = lambda: None
+        service.retry_concurrency_cleanup()
+    # Storage recovery permits another run and a real downloadable report.
+    next_report = service.run_concurrency_test(duration=1)
+    assert next_report["report_saved"] is True
+    assert next_report["report_save_error"] is None
+    assert client.get(f"/artifacts/{next_report['report']}").json() == next_report
 
 
 def test_shutdown_interrupts_audio_wait_and_blocks_new_work(tmp_path):

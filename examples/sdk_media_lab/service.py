@@ -400,7 +400,10 @@ class MediaLabService:
         with self._live_video_lifecycle_lock:
             connection = self._device_status()
             rtc = self._rtc.snapshot()
-            if connection.get("online") is not True and self._concurrency_lifecycle_lock.acquire(blocking=False):
+            disconnected = connection.get("online") is False and connection.get("state") in {
+                "idle", "disconnected", "discovering", "connecting", "reconnecting",
+            }
+            if disconnected and self._concurrency_lifecycle_lock.acquire(blocking=False):
                 try:
                     for name in tuple(self._concurrency_pending_cleanup):
                         self._release_concurrency_cleanup(name)
@@ -701,6 +704,7 @@ class MediaLabService:
                 "counts": {"camera": 0, "speaker": 0, "ui": 0},
                 "operations": [], "errors": [], "samples": [],
                 "report": f"concurrency-{run_id}.json",
+                "report_saved": False, "report_save_error": None,
                 "profile": {"strategy": "legacy_concurrent", "ui_interval_s": 0.18,
                             "camera_interval_s": 1.0, "audio_repetitions": 1},
                 "baseline": dict(self._robot.resource_snapshot),
@@ -834,8 +838,18 @@ class MediaLabService:
                 report["results"] = _concurrency_results(report)
                 report["passed"] = all(result["status"] == "passed" for result in report["results"].values())
                 report["incomplete"] = any(result["status"] == "incomplete" for result in report["results"].values())
-                (self._artifacts_dir / report["report"]).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-                self._concurrency_report = report
+                try:
+                    saved_report = {**report, "report_saved": True}
+                    (self._artifacts_dir / report["report"]).write_text(
+                        json.dumps(saved_report, indent=2, ensure_ascii=False), encoding="utf-8",
+                    )
+                    report["report_saved"] = True
+                except OSError as exc:
+                    # Storage failures do not invalidate device evidence or
+                    # prevent publishing the terminal state and cleanup result.
+                    report["report_save_error"] = str(exc) or type(exc).__name__
+                finally:
+                    self._concurrency_report = report
             return report
 
     def stop_audio(self) -> dict[str, object]:
@@ -1119,7 +1133,7 @@ class MediaLabService:
         return {
             **status,
             "online": status.get("online") is True,
-            "state": str(status.get("state") or "unavailable"),
+            "state": str(status.get("state") or "unavailable") if type(status.get("online")) is bool else "unavailable",
             "last_error": status.get("last_error"),
         }
 

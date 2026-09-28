@@ -2081,8 +2081,12 @@ function renderConcurrencyResults(report) {
     preview.dataset.file = photo.file;
   }
   const link = document.querySelector("#concurrencyReportLink");
-  link.hidden = report.running;
-  link.href = `/artifacts/${encodeURIComponent(report.report)}`;
+  link.hidden = report.running || report.report_saved === false;
+  if (link.hidden) link.removeAttribute("href");
+  else link.href = `/artifacts/${encodeURIComponent(report.report)}`;
+  const saveState = document.querySelector("#concurrencyReportState");
+  saveState.hidden = !report.report_save_error;
+  saveState.textContent = report.report_save_error ? `Report save failed: ${report.report_save_error}` : "";
   for (const name of ["camera", "speaker", "ui"]) {
     const result = report.results[name];
     const section = document.createElement("section");
@@ -2123,6 +2127,7 @@ document.querySelector("#concurrencyStart").addEventListener("click", async () =
   document.querySelector("#concurrencyUiObserved").checked = false;
   document.querySelector("#concurrencyAudioObserved").checked = false;
   document.querySelector("#concurrencyReportLink").hidden = true;
+  document.querySelector("#concurrencyReportState").hidden = true;
   document.querySelector("#concurrencyPhoto").hidden = true;
   document.querySelector("#concurrencyStop").disabled = false;
   document.querySelectorAll("#concurrencyStages li").forEach((item) => {
@@ -2143,6 +2148,7 @@ document.querySelector("#concurrencyStart").addEventListener("click", async () =
         receivedReport = true;
         const counts = `Photos: ${report.counts.camera}, audio: ${report.counts.speaker}, UI: ${report.counts.ui}`;
         if (!report.passed) throw new Error(`${counts}. ${report.errors.map((item) => `${item.worker}: ${item.error}`).join("; ") || (report.incomplete ? "Dynamic UI updates not verified" : "Test stopped")}`);
+        if (report.report_save_error) return `${counts}. SDK checks passed`;
         return `${counts}. Report: ${report.report}`;
       },
     });

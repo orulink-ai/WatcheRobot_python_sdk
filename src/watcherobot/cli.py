@@ -81,6 +81,8 @@ from watcherobot.robot_cli import (
 
 
 APPLICATION_START_TIMEOUT_SECONDS = 90.0
+# Allow the Daemon to drain and, when necessary, terminate its process tree.
+APPLICATION_STOP_TIMEOUT_SECONDS = 30.0
 ROBOT_PAIR_TIMEOUT_SECONDS = 25.0
 _SETUP_SCAN_TIMEOUT_SECONDS = 10.0
 _SETUP_SCAN_PROGRESS_INTERVAL_SECONDS = 1.0
@@ -396,6 +398,7 @@ def main(argv: list[str] | None = None) -> int:
                     state.control_url,
                     "/daemon/application/stop",
                     method="POST",
+                    timeout=APPLICATION_STOP_TIMEOUT_SECONDS,
                 )
                 _print_application_runtime_result(
                     "Application stopped",
@@ -1556,6 +1559,7 @@ def run_application(application: Path) -> int:
             state.control_url,
             "/daemon/application/stop",
             method="POST",
+            timeout=APPLICATION_STOP_TIMEOUT_SECONDS,
         )
         print("Application stopped by user.")
         return 130
@@ -1689,6 +1693,7 @@ def _wait_for_application_completion(control_url: str) -> int:
             control_url,
             "/daemon/application/stop",
             method="POST",
+            timeout=APPLICATION_STOP_TIMEOUT_SECONDS,
         )
         print("Application stopped by user.")
         return 130

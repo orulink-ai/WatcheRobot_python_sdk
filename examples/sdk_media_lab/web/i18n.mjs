@@ -4,6 +4,7 @@ const SUPPORTED_LOCALES = new Set(["en-US", "zh-CN"]);
 // legacy Chinese diagnostics from the device/service and powers the optional Chinese
 // presentation without putting Chinese literals back into the page or controller.
 const ENGLISH_PHRASES = new Map([
+  ["报告保存失败：", "Report save failed:"],
   ["重试清理", "Retry Cleanup"],
   ["无待确认清理", "No pending cleanup"],
   ["清理待确认：", "Cleanup pending:"],
