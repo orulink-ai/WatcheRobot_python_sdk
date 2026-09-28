@@ -29,19 +29,16 @@ watcherobot app run .\examples\capture_photo
 watcherobot app run .\examples\record_microphone
 ```
 
-For Himax and on-device face-tracking acceptance, run Vision Debug Lab:
+For on-device face-tracking preview, run the managed preview example:
 
 ```powershell
-watcherobot app run .\examples\vision_debug_lab
+watcherobot app run .\examples\face_tracking_preview
 ```
 
-It binds only to `127.0.0.1` and uses the Runtime-injected Application Device
-channel. It does not connect to a robot LAN port. The dashboard checks the
-vision backend, Himax connection, current model and capabilities before it
-opens preview. It then displays sequence-matched JPEG and face telemetry,
-collects latency/drop metrics, records JPEG + JSONL datasets, and exports a
-diagnostic report. Closing the last dashboard viewer automatically applies
-HOLD.
+It uses the Runtime-injected Application Device channel, logs sequence-matched
+face telemetry, and saves the latest JPEG after collecting 150 frames. It has
+no browser dashboard. See [Device vision diagnostics](vision-diagnostics.md)
+for backend health and capability checks before opening preview.
 
 PTL firmware can validate the JPEG path but cannot provide face inference.
 SSCMA firmware must expose both `vision.status.v1` and

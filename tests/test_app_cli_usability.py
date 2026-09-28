@@ -296,4 +296,4 @@ def test_app_runtime_actions_render_a_readable_summary(
     if command == "start":
         assert requests == [{"method": "POST", "timeout": 90.0}]
     else:
-        assert requests == [{"method": "POST"}]
+        assert requests == [{"method": "POST", "timeout": 30.0}]
