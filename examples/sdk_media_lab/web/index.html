@@ -39,7 +39,7 @@
           <p class="section-index">00 / System Overview</p>
           <h2 id="missionTitle">One bench to validate the whole robot.</h2>
           <p class="mission-copy">
-            From motion and lighting to camera and full-duplex audio, every test uses public SDK APIs from the current Python Application
+            From motion and lighting to camera, every test uses public SDK APIs from the current Python Application
             and runs through its authorized Device channel.
           </p>
         </div>
@@ -252,8 +252,8 @@
           </div>
           <h2 id="liveVideoTitle">Live Camera Preview</h2>
           <p>
-              The browser receives Watcher MJPEG video directly over a dedicated LAN channel;
-              full-duplex audio continues over WebRTC, and the Python Application does not relay media frames.
+              The browser receives Watcher MJPEG video directly over a dedicated LAN channel,
+              and the Python Application does not relay media frames.
           </p>
           <div class="live-video-controls">
             <button class="station-action" id="startLiveVideoButton" type="button">Start Live Video</button>
@@ -287,42 +287,6 @@
         </div>
       </section>
 
-      <section class="rtc-audio-panel" id="rtcAudioPanel" data-available="false" aria-labelledby="rtcAudioTitle">
-        <div>
-          <div class="station-head">
-            <p class="section-index">04 / RTC Audio</p>
-            <span class="capability-state" id="rtcAudioCapability">Detecting</span>
-          </div>
-          <h2 id="rtcAudioTitle">Full-duplex Audio Call</h2>
-          <p>
-            Stream the computer microphone to the Watcher speaker while playing the Watcher microphone in the browser.
-            The current Python Application handles signaling while audio uses a direct LAN WebRTC connection.
-          </p>
-          <div class="rtc-audio-controls">
-            <button class="station-action" id="startRtcAudioButton" type="button">Start Full-duplex Call</button>
-            <button class="station-action" id="startRtcAvButton" type="button">Start Audio + Video</button>
-            <button class="quiet-action" id="stopRtcAudioButton" type="button" disabled>End Call</button>
-          </div>
-          <output class="station-result" id="rtcAudioResult">Awaiting Start</output>
-        </div>
-        <div class="rtc-audio-console" id="rtcAudioConsole" data-state="idle">
-          <div class="rtc-audio-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
-          <dl class="rtc-audio-metrics">
-            <div><dt>Session State</dt><dd id="rtcAudioState">IDLE</dd></div>
-            <div><dt>Computer Microphone</dt><dd id="rtcAudioLocalState">Available</dd></div>
-            <div><dt>Computer → Watcher</dt><dd id="rtcAudioUpPackets">0</dd></div>
-            <div><dt>Watcher → Computer</dt><dd id="rtcAudioDownPackets">0</dd></div>
-            <div><dt>Robot Microphone Capture</dt><dd id="rtcAudioDeviceCapture">0</dd></div>
-            <div><dt>Robot Packets Sent</dt><dd id="rtcAudioDeviceTx">0</dd></div>
-            <div><dt>Physical Mic Peak / Browser Playback</dt><dd id="rtcAudioSignal">0 / 0.000</dd></div>
-            <div><dt>Device Echo Cancellation</dt><dd id="rtcAudioAec">Waiting for Device Telemetry</dd></div>
-            <div><dt>Real-time Audio Stage Latency</dt><dd id="rtcAudioLatency">Waiting for Stage Latency Samples</dd></div>
-            <div><dt>Validation Action</dt><dd>Speak toward the robot</dd></div>
-          </dl>
-          <audio id="rtcRemoteAudio" autoplay controls aria-label="Live Watcher Microphone Audio"></audio>
-          <small>Raw microphone capture is used by default. Wear headphones to avoid an acoustic loop between the device and computer speakers.</small>
-        </div>
-      </section>
 
       <section class="stations" aria-label="Media Test Bench">
         <article class="station station-audio" data-capability="audio.stream">

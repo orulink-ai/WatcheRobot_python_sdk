@@ -1,9 +1,9 @@
 export function rtcModeHasAudio(mode) {
-  return mode === "audio" || mode === "av";
+  return false;
 }
 
 export function rtcModeHasVideo(mode) {
-  return mode === "video" || mode === "av";
+  return mode === "video";
 }
 
 export function isCurrentRtcGeneration(currentGeneration, expectedGeneration) {
@@ -11,10 +11,8 @@ export function isCurrentRtcGeneration(currentGeneration, expectedGeneration) {
 }
 
 export function resolveRtcMode(localMode, remoteMode, mediaOwner, remoteActive = false) {
-  const validModes = new Set(["audio", "video", "av"]);
+  const validModes = new Set(["video"]);
   if (validModes.has(localMode)) return localMode;
-  if (mediaOwner === "rtc_av") return "av";
-  if (mediaOwner === "rtc_audio") return "audio";
   if (mediaOwner === "live_video") return "video";
   if (remoteActive && validModes.has(remoteMode)) return remoteMode;
   return null;
@@ -44,8 +42,8 @@ export function controlAvailability({
   const speakerReady = resourceReady("speaker") && !pendingRtc;
   const ordinaryAudioReady = microphoneReady && speakerReady;
   const cameraAvailable = cameraReady && !rtcModeHasVideo(rtcMode);
-  const microphoneAvailable = ordinaryAudioReady && !rtcModeHasAudio(rtcMode);
-  const speakerAvailable = ordinaryAudioReady && !rtcModeHasAudio(rtcMode);
+  const microphoneAvailable = ordinaryAudioReady;
+  const speakerAvailable = ordinaryAudioReady;
   return {
     motion: resourceReady("motion") && capabilitySet.has("motion"),
     light: resourceReady("light") && capabilitySet.has("light"),
@@ -53,14 +51,12 @@ export function controlAvailability({
     camera: cameraAvailable,
     microphone: microphoneAvailable,
     speaker: speakerAvailable,
-    startRtcAudio: !rtcActive && microphoneReady && speakerReady,
     startRtcVideo: !rtcActive && cameraReady,
-    startRtcAv: !rtcActive && cameraReady && microphoneReady && speakerReady,
     stopRtc: Boolean(connected) && Boolean(rtcActive),
   };
 }
 
 export function rtcTransportPlan(mode) {
-  if (!["video", "audio", "av"].includes(mode)) throw new Error("Invalid RTC mode");
-  return { peer: rtcModeHasAudio(mode), jpegSocket: rtcModeHasVideo(mode) };
+  if (mode !== "video") throw new Error("Invalid RTC mode");
+  return { peer: false, jpegSocket: true };
 }

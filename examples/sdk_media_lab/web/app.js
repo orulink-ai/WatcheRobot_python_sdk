@@ -1,4 +1,3 @@
-import { evaluateRtcAudioHealth } from "./rtc-audio-health.mjs";
 import { detectionLabel, testBenchModels, createPreviewLifecycle } from "./model-preview.mjs";
 import { createDisplayAudit } from "./display-audit.mjs";
 import { createMjpegTransport } from "./mjpeg-transport.mjs";
@@ -22,12 +21,6 @@ import {
   normalizeAnimationCatalog,
 } from "./animation-random.mjs";
 import {
-  calculateRoundTripUs,
-  configureLowLatencyAudioReceivers,
-  selectMediaRoundTripUs,
-  sampleAudioJitterBuffer,
-} from "./rtc-audio-latency.mjs";
-import {
   evaluateResourceLifecycle,
   selectLifecycleBaseline,
   selectLatestReleaseSnapshot,
@@ -37,7 +30,6 @@ import {
   controlAvailability,
   isCurrentRtcGeneration,
   resolveRtcMode,
-  rtcModeHasAudio,
   rtcTransportPlan,
   rtcModeHasVideo,
 } from "./media-resource-policy.mjs";
@@ -55,7 +47,6 @@ import {
   acceptMjpegTransportPacket,
   createMjpegChunkReassembler,
 } from "./mjpeg-chunk-reassembly.mjs";
-import { createRtcMicrophoneConstraints } from "./rtc-audio-capture.mjs";
 import { initializeI18n, translateText } from "./i18n.mjs";
 
 const i18n = initializeI18n({
@@ -96,14 +87,11 @@ const state = {
     peer: null,
     channel: null,
     videoTransport: null,
-    localStream: null,
-    diagnosticAudio: null,
     remoteStream: null,
     eventCursor: 0,
     pollTimer: null,
     heartbeatTimer: null,
     feedbackTimer: null,
-    remoteCandidates: [],
     decodeBusy: false,
     pendingFrame: null,
     lastSequence: null,
@@ -114,13 +102,6 @@ const state = {
     lastFrameAt: 0,
     rttUs: 0,
     mediaRttUs: 0,
-    browserAudioSent: 0,
-    browserAudioReceived: 0,
-    browserAudioLevel: 0,
-    audioConnectedAt: 0,
-    audioHealthState: "idle",
-    audioJitterCounter: null,
-    audioLatency: { sampleValid: false, actualMs: 0, targetMs: 0, minimumMs: 0 },
     feedbackReceivedFrames: 0,
     feedbackDroppedFrames: 0,
     videoCongestionFeedback: createVideoCongestionFeedback(),
@@ -129,30 +110,13 @@ const state = {
   },
 };
 
-function rtcDiagnosticAudioEnabled() {
-  const params = new URLSearchParams(window.location.search);
-  return window.location.hostname === "127.0.0.1" && params.get("rtc_hil") === "1";
-}
-
-function rtcBrowserAudioProcessingEnabled() {
-  const params = new URLSearchParams(window.location.search);
-  return params.get("rtc_audio_processing") === "1";
-}
-
-async function createRtcDiagnosticAudioStream() {
-  const audioContext = new AudioContext();
-  await audioContext.resume();
-  const destination = audioContext.createMediaStreamDestination();
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-  oscillator.type = "sine";
-  oscillator.frequency.value = 880;
-  gain.gain.value = 0.18;
-  oscillator.connect(gain);
-  gain.connect(destination);
-  oscillator.start();
-  state.rtc.diagnosticAudio = { audioContext, oscillator };
-  return destination.stream;
+// Round-trip time for the video session clock ping/pong, in microseconds.
+// Returns 0 when the sample is invalid so callers keep the previous estimate.
+function calculateRoundTripUs(browserSendUs, browserReceiveUs) {
+  const sent = Number(browserSendUs);
+  const received = Number(browserReceiveUs);
+  if (!Number.isFinite(sent) || !Number.isFinite(received) || sent <= 0 || received <= sent) return 0;
+  return Math.round(received - sent);
 }
 
 const elements = {
@@ -240,22 +204,6 @@ const elements = {
   liveVideoDrops: document.querySelector("#liveVideoDrops"),
   liveVideoIndicator: document.querySelector("#liveVideoIndicator"),
   liveVideoFrameAge: document.querySelector("#liveVideoFrameAge"),
-  rtcAudioPanel: document.querySelector("#rtcAudioPanel"),
-  rtcAudioCapability: document.querySelector("#rtcAudioCapability"),
-  startRtcAudioButton: document.querySelector("#startRtcAudioButton"),
-  startRtcAvButton: document.querySelector("#startRtcAvButton"),
-  stopRtcAudioButton: document.querySelector("#stopRtcAudioButton"),
-  rtcAudioResult: document.querySelector("#rtcAudioResult"),
-  rtcAudioConsole: document.querySelector("#rtcAudioConsole"),
-  rtcAudioState: document.querySelector("#rtcAudioState"),
-  rtcAudioLocalState: document.querySelector("#rtcAudioLocalState"),
-  rtcAudioUpPackets: document.querySelector("#rtcAudioUpPackets"),
-  rtcAudioDownPackets: document.querySelector("#rtcAudioDownPackets"),
-  rtcAudioDeviceCapture: document.querySelector("#rtcAudioDeviceCapture"),
-  rtcAudioDeviceTx: document.querySelector("#rtcAudioDeviceTx"),
-  rtcAudioSignal: document.querySelector("#rtcAudioSignal"),
-  rtcAudioAec: document.querySelector("#rtcAudioAec"),
-  rtcAudioLatency: document.querySelector("#rtcAudioLatency"),
   resourcePanel: document.querySelector("#resourcePanel"),
   resourceState: document.querySelector("#resourceState"),
   resourceStage: document.querySelector("#resourceStage"),
@@ -270,7 +218,6 @@ const elements = {
   resourceTransitions: document.querySelector("#resourceTransitions"),
   resourceDelta: document.querySelector("#resourceDelta"),
   resourceRelease: document.querySelector("#resourceRelease"),
-  rtcRemoteAudio: document.querySelector("#rtcRemoteAudio"),
   recordMicrophoneButton: document.querySelector("#recordMicrophoneButton"),
   recordDuration: document.querySelector("#recordDuration"),
   durationValue: document.querySelector("#durationValue"),
@@ -294,7 +241,6 @@ const actionLabels = {
   record_microphone: "Microphone Recording",
   device_pairing: "Device Pairing",
   live_video: "Live Video",
-  rtc_audio: "Full-duplex Audio",
   motion_move: "Motion Control",
   motion_stop: "Motion Stop",
   light_color: "Light Settings",
@@ -302,7 +248,6 @@ const actionLabels = {
   light_off: "Lights Off",
   animation_play: "Animation Playback",
   animation_stop: "Animation Stop",
-  rtc_av: "Audio/video Call",
   system: "System",
 };
 
@@ -615,24 +560,13 @@ function renderStatus(status) {
   });
   const liveAvailable = status.connected && hasCapability("rtc.video.mjpeg.v1");
   const liveActive = rtcModeHasVideo(activeRtcMode);
-  const rtcAudioAvailable = status.connected && hasCapability("rtc.audio.full_duplex.v1");
-  const rtcAudioActive = rtcModeHasAudio(activeRtcMode);
   elements.liveVideoPanel.dataset.available = String(liveAvailable);
   elements.liveVideoCapability.textContent = !status.connected
     ? "Device Offline"
     : liveAvailable ? "Ready" : "New Firmware Required";
   elements.startLiveVideoButton.disabled = !availability.startRtcVideo || !liveAvailable || state.rtc.teardownInProgress;
   elements.stopLiveVideoButton.disabled = !availability.stopRtc || !liveActive;
-  elements.rtcAudioPanel.dataset.available = String(rtcAudioAvailable);
-  elements.rtcAudioCapability.textContent = !status.connected
-    ? "Device Offline"
-    : rtcAudioAvailable ? "Ready" : "New Firmware Required";
-  elements.startRtcAudioButton.disabled = !availability.startRtcAudio || !rtcAudioAvailable || state.rtc.teardownInProgress;
-  elements.startRtcAvButton.disabled = !availability.startRtcAv || !liveAvailable || !rtcAudioAvailable
-    || state.rtc.teardownInProgress;
-  elements.stopRtcAudioButton.disabled = !availability.stopRtc || !rtcAudioActive;
   updateLiveVideoHealth();
-  updateRtcAudioHealth();
   elements.playAudioButton.disabled = !availability.speaker || !hasCapability("audio.stream");
   elements.stopAudioButton.disabled = !status.connected || !hasCapability("audio.stream");
   elements.capturePhotoButton.disabled = !availability.camera || !hasCapability("camera.capture");
@@ -700,7 +634,7 @@ function renderStatus(status) {
   elements.capabilityGrid.replaceChildren(...status.capabilities.map((capability) => {
     const chip = document.createElement("span");
     chip.className = "capability-chip";
-    chip.dataset.media = String(["audio.stream", "camera.capture", "microphone", "rtc.video.mjpeg.v1", "rtc.audio.full_duplex.v1"].includes(capability));
+    chip.dataset.media = String(["audio.stream", "camera.capture", "microphone", "rtc.video.mjpeg.v1"].includes(capability));
     chip.textContent = capability;
     return chip;
   }));
@@ -901,7 +835,6 @@ function resetLiveVideoMetrics() {
   elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(performance.now()));
   Object.assign(state.rtc, {
     eventCursor: 0,
-    remoteCandidates: [],
     decodeBusy: false,
     pendingFrame: null,
     lastSequence: null,
@@ -1197,120 +1130,6 @@ function rtcEndpoint(action, mode = state.rtc.mode) {
   return `/api/${namespace}/session/${action}`;
 }
 
-function setRtcAudioState(value, message = null) {
-  const normalized = value === "connected" ? "live"
-    : ["starting", "signaling", "connecting"].includes(value) ? "connecting"
-      : "idle";
-  elements.rtcAudioConsole.dataset.state = normalized;
-  elements.rtcAudioState.textContent = String(value || "idle").toUpperCase();
-  if (message) setResult(elements.rtcAudioResult, message, normalized === "idle" ? "error" : "running");
-}
-
-function updateRtcAudioHealth() {
-  if (!rtcModeHasAudio(state.rtc.mode) || !state.rtc.peer) return;
-  const deviceStats = state.status?.rtc?.stats || {};
-  const captureFrames = Number(deviceStats.audio_capture_frames || 0);
-  const txPackets = Number(deviceStats.audio_tx_packets || 0);
-  const txErrors = Number(deviceStats.audio_tx_errors || 0);
-  const hasRawMicrophonePeak = Number.isFinite(Number(deviceStats.audio_microphone_peak));
-  const capturePeak = hasRawMicrophonePeak
-    ? Number(deviceStats.audio_microphone_peak)
-    : Number(deviceStats.audio_capture_peak || 0);
-  const aecActive = deviceStats.audio_aec_active === true;
-  const aecReferenceBytes = Number(
-    deviceStats.audio_aec_reference_processed_bytes
-      ?? deviceStats.audio_aec_reference_bytes
-      ?? 0,
-  );
-  const aecReferenceDrops = Number(deviceStats.audio_aec_reference_drops || 0);
-  const devicePipelineAgeUs = Number(deviceStats.audio_pipeline_age_ewma_us || 0);
-  const microphoneReadUs = Number(deviceStats.audio_microphone_read_ewma_us || 0);
-  const aecProcessUs = Number(deviceStats.audio_aec_process_ewma_us || 0);
-  const opusEncodeUs = Number(deviceStats.audio_opus_encode_ewma_us || 0);
-  const deviceRxPackets = Number(deviceStats.audio_packets || 0);
-  const deviceDecodedFrames = Number(deviceStats.audio_decoded_frames || 0);
-  const deviceRenderErrors = Number(deviceStats.audio_render_errors || 0);
-  const deviceI2sBytes = Number(deviceStats.audio_i2s_bytes || 0);
-  const devicePlaybackPeak = Number(deviceStats.audio_pcm_peak || 0);
-  elements.rtcAudioDeviceCapture.textContent = String(captureFrames);
-  elements.rtcAudioDeviceTx.textContent = txErrors > 0 ? `${txPackets} / errors ${txErrors}` : String(txPackets);
-  elements.rtcAudioSignal.textContent = `${capturePeak} / ${state.rtc.browserAudioLevel.toFixed(3)}`;
-  elements.rtcAudioAec.textContent = !hasRawMicrophonePeak
-    ? "Legacy firmware: no physical microphone telemetry"
-    : !aecActive
-      ? "Disabled (raw microphone fallback)"
-      : aecReferenceDrops > 0
-        ? `Active · reference processed ${formatBytes(aecReferenceBytes)} · dropped ${aecReferenceDrops}`
-        : aecReferenceBytes > 0
-          ? `Active · reference processed ${formatBytes(aecReferenceBytes)}`
-          : "Active · waiting for computer downlink reference audio";
-  const browserLatency = state.rtc.audioLatency;
-  const estimatedNetworkOneWayMs = state.rtc.rttUs > 0 ? state.rtc.rttUs / 2000 : 0;
-  const processingLatency = microphoneReadUs > 0 || aecProcessUs > 0 || opusEncodeUs > 0
-    ? ` · microphone frame ${(microphoneReadUs / 1000).toFixed(1)} ms · AEC ${(aecProcessUs / 1000).toFixed(1)} ms · OPUS ${(opusEncodeUs / 1000).toFixed(1)} ms`
-    : "";
-  const networkLatency = estimatedNetworkOneWayMs > 0
-    ? ` · network approx. ${estimatedNetworkOneWayMs.toFixed(1)} ms`
-    : "";
-  elements.rtcAudioLatency.textContent = browserLatency.sampleValid || devicePipelineAgeUs > 0
-    ? `Device queue ${(devicePipelineAgeUs / 1000).toFixed(1)} ms${networkLatency} · Browser ${browserLatency.actualMs} ms (target ${browserLatency.targetMs} ms, minimum ${browserLatency.minimumMs} ms)${processingLatency}`
-    : "Waiting for Stage Latency Samples";
-  const health = evaluateRtcAudioHealth({
-    peerConnected: state.rtc.peer.connectionState === "connected",
-    browserTxPackets: state.rtc.browserAudioSent,
-    browserRxPackets: state.rtc.browserAudioReceived,
-    deviceCaptureFrames: captureFrames,
-    deviceTxPackets: txPackets,
-    deviceTxErrors: txErrors,
-    deviceCapturePeak: capturePeak,
-    browserAudioLevel: state.rtc.browserAudioLevel,
-    browserPlaybackActive: !elements.rtcRemoteAudio.paused
-      && !elements.rtcRemoteAudio.muted
-      && elements.rtcRemoteAudio.volume > 0,
-    deviceRxPackets,
-    deviceDecodedFrames,
-    deviceRenderErrors,
-    deviceI2sBytes,
-    devicePlaybackPeak,
-    elapsedMs: state.rtc.audioConnectedAt ? performance.now() - state.rtc.audioConnectedAt : 0,
-  });
-  if (health.state === state.rtc.audioHealthState && health.state !== "failed") return;
-  state.rtc.audioHealthState = health.state;
-  if (health.state === "healthy") {
-    setRtcAudioState("connected");
-    setResult(elements.rtcAudioResult, "Full-duplex path verified: the browser is playing a non-silent Watcher audio track", "ok");
-  } else if (health.state === "degraded") {
-    setRtcAudioState("connected");
-    setResult(
-      elements.rtcAudioResult,
-      `Two-way audio connected, but the device had ${txErrors} send errors and the speaker had ${deviceRenderErrors} render errors`,
-      "error",
-    );
-  } else if (health.state === "failed") {
-    const missingDeviceCapture = health.missing.includes("device_capture");
-    const missingDeviceSignal = health.missing.includes("device_signal");
-    const missingBrowserSignal = health.missing.includes("browser_signal");
-    const missingBrowserPlayback = health.missing.includes("browser_playback");
-    const missingDevicePlayback = health.missing.some((item) => [
-      "device_rx", "device_decode", "device_playback", "device_playback_signal",
-    ].includes(item));
-    const message = missingDeviceCapture
-      ? "The robot microphone produced no audio frames. Inspect microphone capture and audio resource ownership"
-      : missingDeviceSignal
-        ? "The robot sent audio packets, but capture is nearly silent. Speak toward the robot microphone and inspect the capture path"
-        : missingBrowserSignal
-          ? "The browser received robot audio packets, but the decoded signal is nearly silent. Inspect encoding and the browser audio track"
-          : missingBrowserPlayback
-            ? "Robot audio arrived, but the browser player is paused or muted. Enable sound in the player"
-            : missingDevicePlayback
-              ? "Computer audio was sent, but the robot did not complete audible decode and speaker output. Inspect device playback metrics"
-      : "Robot microphone audio did not reach the computer. Inspect robot transmit counters and error codes";
-    setRtcAudioState("failed", message);
-  } else if (health.state === "verifying") {
-    setRtcAudioState("connecting", "Media connected; validating robot microphone uplink…");
-  }
-}
-
 function updateLiveVideoHealth() {
   const stats = state.status?.rtc?.stats || {};
   const sourceFps = Number(stats.source_fps_x100 || 0) / 100;
@@ -1337,22 +1156,18 @@ function updateLiveVideoHealth() {
 }
 
 function setRtcSessionState(value, message = null) {
-  if (rtcModeHasAudio(state.rtc.mode)) setRtcAudioState(value, message);
   if (rtcModeHasVideo(state.rtc.mode)) setLiveVideoState(value, message);
 }
 
 async function startRtcSession(mode) {
-  const wantsAudio = rtcModeHasAudio(mode);
-  const wantsVideo = rtcModeHasVideo(mode);
   if (
-    !["audio", "video", "av"].includes(mode)
+    mode !== "video"
     || state.rtc.mode
     || state.rtc.peer
     || state.rtc.teardownInProgress
     || state.localResources.has("media")
     || state.status?.resource_owners?.media
-    || (wantsAudio && !hasCapability("rtc.audio.full_duplex.v1"))
-    || (wantsVideo && !hasCapability("rtc.video.mjpeg.v1"))
+    || !hasCapability("rtc.video.mjpeg.v1")
   ) return;
   const generation = state.rtc.generation + 1;
   state.rtc.generation = generation;
@@ -1360,149 +1175,25 @@ async function startRtcSession(mode) {
   state.localResources.add("media");
   if (state.status) renderStatus(state.status);
   resetLiveVideoMetrics();
-  elements.rtcAudioUpPackets.textContent = "0";
-  elements.rtcAudioDownPackets.textContent = "0";
-  elements.rtcAudioDeviceCapture.textContent = "0";
-  elements.rtcAudioDeviceTx.textContent = "0";
-  elements.rtcAudioSignal.textContent = "0 / 0.000";
-  elements.rtcAudioAec.textContent = "Waiting for Device Telemetry";
-  state.rtc.browserAudioSent = 0;
-  state.rtc.browserAudioReceived = 0;
-  state.rtc.browserAudioLevel = 0;
-  state.rtc.audioConnectedAt = 0;
-  state.rtc.audioHealthState = "starting";
-  state.rtc.audioJitterCounter = null;
-  state.rtc.audioLatency = { sampleValid: false, actualMs: 0, targetMs: 0, minimumMs: 0 };
-  if (wantsAudio) setRtcAudioState("starting", "Requesting computer microphone permission…");
-  if (wantsVideo) {
-    setLiveVideoState("starting", wantsAudio
-      ? "Acquiring camera, audio, and real-time transport resources…"
-      : "Acquiring camera and real-time transport resources…");
-  }
-  elements.startRtcAudioButton.disabled = true;
+  setLiveVideoState("starting", "Acquiring camera and real-time transport resources…");
   elements.startLiveVideoButton.disabled = true;
-  elements.startRtcAvButton.disabled = true;
   try {
-    let localStream = null;
-    if (wantsAudio) {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error("This browser does not support microphone capture");
-      }
-      localStream = rtcDiagnosticAudioEnabled()
-        ? await createRtcDiagnosticAudioStream()
-        : await navigator.mediaDevices.getUserMedia({
-            audio: createRtcMicrophoneConstraints({
-              browserProcessing: rtcBrowserAudioProcessingEnabled(),
-            }),
-            video: false,
-          });
-      if (state.rtc.generation !== generation || state.rtc.mode !== mode) {
-        for (const track of localStream.getTracks()) track.stop();
-        return;
-      }
-      state.rtc.localStream = localStream;
-      elements.rtcAudioLocalState.textContent = "Capturing";
-    }
-
-    const startPath = mode === "video" ? "/api/video/session/start" : "/api/rtc/session/start";
-    if (mode === "video") {
-      await api("/api/video/session/start", {
-        method: "POST",
-        body: JSON.stringify({ mode }),
-      });
-    } else {
-      await api("/api/rtc/session/start", {
-        method: "POST",
-        body: JSON.stringify({ mode }),
-      });
-    }
-    if (state.rtc.generation !== generation || state.rtc.mode !== mode) {
-      try { await api(`${startPath.slice(0, -5)}stop`, { method: "POST" }); } catch (_) {}
-      return;
-    }
-    const transport = rtcTransportPlan(mode);
-    if (!transport.peer) {
-      createMjpegVideoTransport(null, generation);
-      startRtcControlLoops(generation);
-      await refreshStatus();
-      return;
-    }
-    const peer = new RTCPeerConnection({ iceServers: [] });
-    state.rtc.peer = peer;
-    if (wantsAudio && localStream) {
-      for (const track of localStream.getAudioTracks()) peer.addTrack(track, localStream);
-      peer.addEventListener("track", (event) => {
-        if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
-        const remoteStream = event.streams[0] || new MediaStream([event.track]);
-        state.rtc.remoteStream = remoteStream;
-        elements.rtcRemoteAudio.srcObject = remoteStream;
-        configureLowLatencyAudioReceivers(peer);
-        elements.rtcRemoteAudio.play().catch(() => {
-          setResult(elements.rtcAudioResult, "Downlink audio arrived. Click the player to enable sound", "running");
-        });
-      });
-    }
-    if (wantsVideo) createMjpegVideoTransport(peer, generation);
-    bindRtcPeerEvents(peer, generation);
-    startRtcControlLoops(generation);
-    const offer = await peer.createOffer();
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
-    await peer.setLocalDescription(offer);
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
-    await api(rtcEndpoint("signal"), {
+    await api("/api/video/session/start", {
       method: "POST",
-      body: JSON.stringify({ kind: "offer", sdp: offer.sdp }),
+      body: JSON.stringify({ mode }),
     });
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
-    if (wantsAudio) setRtcAudioState("signaling", "Computer microphone is active; waiting for Watcher…");
-    if (wantsVideo) setLiveVideoState("signaling", wantsAudio
-      ? "Audio/video offer sent; waiting for Watcher…"
-      : "Browser offer sent; waiting for Watcher…");
+    if (state.rtc.generation !== generation || state.rtc.mode !== mode) {
+      try { await api("/api/video/session/stop", { method: "POST" }); } catch (_) {}
+      return;
+    }
+    createMjpegVideoTransport(null, generation);
+    startRtcControlLoops(generation);
+    setLiveVideoState("signaling", "Connecting to Watcher live video…");
     await refreshStatus();
   } catch (error) {
     if (!isCurrentRtcGeneration(state.rtc.generation, generation)) return;
-    const message = error?.name === "NotAllowedError"
-      ? "Computer microphone permission was denied. Allow access and try again"
-      : error?.name === "NotFoundError"
-        ? "No computer microphone is available"
-        : error.message;
-    await failRtcSession(message);
+    await failRtcSession(error.message);
   }
-}
-
-function bindRtcPeerEvents(peer, generation) {
-  peer.addEventListener("connectionstatechange", () => {
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
-    const connectionState = peer.connectionState;
-    if (connectionState === "connected" && rtcModeHasAudio(state.rtc.mode)) {
-      state.rtc.audioConnectedAt = performance.now();
-      state.rtc.audioHealthState = "connecting";
-      setRtcAudioState("connecting", "Media connected; validating robot microphone uplink…");
-    }
-    if (["failed", "disconnected", "closed"].includes(connectionState) && state.rtc.peer) {
-      failRtcSession(`WebRTC connection ${connectionState === "failed" ? "Failed" : "disconnected"}`);
-    }
-  });
-  peer.addEventListener("icecandidate", (event) => {
-    if (
-      !event.candidate
-      || !isCurrentRtcGeneration(state.rtc.generation, generation)
-      || state.rtc.peer !== peer
-    ) return;
-    api(rtcEndpoint("signal"), {
-      method: "POST",
-      body: JSON.stringify({
-        kind: "candidate",
-        candidate: event.candidate.candidate,
-        sdp_mid: event.candidate.sdpMid || "0",
-        sdp_mline_index: event.candidate.sdpMLineIndex || 0,
-      }),
-    }).catch((error) => {
-      if (isCurrentRtcGeneration(state.rtc.generation, generation) && state.rtc.peer === peer) {
-        failRtcSession(error.message);
-      }
-    });
-  });
 }
 
 function setLiveVideoState(value, message = null) {
@@ -1517,7 +1208,7 @@ function setLiveVideoState(value, message = null) {
 }
 
 function createMjpegVideoTransport(peer, generation) {
-  state.rtc.channel = peer ? peer.createDataChannel("rtc-control", { ordered: true }) : null;
+  state.rtc.channel = null;
   const url = state.status?.connection?.mjpeg_websocket_url;
   if (!url) throw new Error("Device did not provide a direct live-video URL");
   state.rtc.videoTransport = createMjpegTransport({
@@ -1532,10 +1223,6 @@ function createMjpegVideoTransport(peer, generation) {
 
 async function startLiveVideo() {
   return startRtcSession("video");
-}
-
-async function startRtcAudio() {
-  return startRtcSession("audio");
 }
 
 function startRtcControlLoops(generation) {
@@ -1576,10 +1263,6 @@ function startRtcControlLoops(generation) {
     state.rtc.videoCongestionFeedback = videoCongestion;
     state.rtc.feedbackReceivedFrames = state.rtc.receivedFrames;
     state.rtc.feedbackDroppedFrames = state.rtc.droppedFrames;
-    let audio = { queueMs: 0, packetLossX100: 0, jitterUs: 0, concealedFrames: 0 };
-    try {
-      if (rtcModeHasAudio(state.rtc.mode)) audio = await collectRtcAudioStats(peer, generation);
-    } catch (_) {}
     if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
     api(rtcEndpoint("feedback"), {
       method: "POST",
@@ -1587,64 +1270,10 @@ function startRtcControlLoops(generation) {
         display_fps_x100: Math.round(fps * 100),
         frame_age_p95_us: Math.round(frameAgeMs * 1000),
         rtt_us: state.rtc.rttUs,
-        audio_queue_ms: audio.queueMs,
-        audio_packet_loss_x100: audio.packetLossX100,
-        audio_jitter_us: audio.jitterUs,
-        audio_concealed_frames: audio.concealedFrames,
         congestion_level: rtcModeHasVideo(state.rtc.mode) ? deviceVideoCongestionLevel(videoCongestion) : 0,
       }),
     }).catch(() => {});
   }, 1000);
-}
-
-async function collectRtcAudioStats(peer, generation) {
-  let sent = 0;
-  let received = 0;
-  let lost = 0;
-  let jitterUs = 0;
-  let queueMs = 0;
-  let concealedFrames = 0;
-  let audioLevel = 0;
-  const reports = await peer.getStats();
-  if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) {
-    return { queueMs: 0, packetLossX100: 0, jitterUs: 0, concealedFrames: 0, audioLevel: 0 };
-  }
-  const mediaRttUs = selectMediaRoundTripUs(reports);
-  if (mediaRttUs > 0) {
-    state.rtc.mediaRttUs = mediaRttUs;
-    state.rtc.rttUs = mediaRttUs;
-  }
-  reports.forEach((report) => {
-    if (report.kind !== "audio" && report.mediaType !== "audio") return;
-    if (report.type === "outbound-rtp") sent += report.packetsSent || 0;
-    if (report.type === "inbound-rtp") {
-      received += report.packetsReceived || 0;
-      lost += Math.max(0, report.packetsLost || 0);
-      jitterUs = Math.max(jitterUs, Math.round((report.jitter || 0) * 1_000_000));
-      const latency = sampleAudioJitterBuffer(state.rtc.audioJitterCounter, report);
-      state.rtc.audioJitterCounter = latency.counter;
-      state.rtc.audioLatency = latency;
-      if (latency.sampleValid) queueMs = Math.max(queueMs, latency.actualMs);
-      concealedFrames += report.concealedSamples || 0;
-      if (Number.isFinite(report.audioLevel)) audioLevel = Math.max(audioLevel, report.audioLevel);
-      if (report.totalSamplesDuration > 0 && report.totalAudioEnergy >= 0) {
-        audioLevel = Math.max(audioLevel, Math.sqrt(report.totalAudioEnergy / report.totalSamplesDuration));
-      }
-    }
-  });
-  elements.rtcAudioUpPackets.textContent = String(sent);
-  elements.rtcAudioDownPackets.textContent = String(received);
-  state.rtc.browserAudioSent = sent;
-  state.rtc.browserAudioReceived = received;
-  state.rtc.browserAudioLevel = audioLevel;
-  updateRtcAudioHealth();
-  return {
-    queueMs,
-    packetLossX100: Math.round((lost / Math.max(1, received + lost)) * 10_000),
-    jitterUs,
-    concealedFrames,
-    audioLevel,
-  };
 }
 
 async function pollRtcEvents(generation) {
@@ -1698,25 +1327,6 @@ async function handleRtcEvent(message, generation) {
     }
     return;
   }
-  if (message.type !== "evt.rtc.signal" || !peer) return;
-  if (data.kind === "answer" && data.sdp) {
-    if (!peer.remoteDescription) {
-      await peer.setRemoteDescription({ type: "answer", sdp: data.sdp });
-      if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
-      for (const candidate of state.rtc.remoteCandidates.splice(0)) {
-        await peer.addIceCandidate(candidate);
-        if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
-      }
-    }
-  } else if (data.kind === "candidate" && data.candidate) {
-    const candidate = new RTCIceCandidate({
-      candidate: data.candidate,
-      sdpMid: data.sdp_mid,
-      sdpMLineIndex: data.sdp_mline_index,
-    });
-    if (peer.remoteDescription) await peer.addIceCandidate(candidate);
-    else state.rtc.remoteCandidates.push(candidate);
-  }
 }
 
 async function stopRtcSession() {
@@ -1727,11 +1337,9 @@ async function stopRtcSession() {
     state.status?.rtc?.active === true,
   );
   if (state.rtc.teardownInProgress || !mode) return;
-  const hadAudio = rtcModeHasAudio(mode);
   const hadVideo = rtcModeHasVideo(mode);
   state.rtc.teardownInProgress = true;
   elements.stopLiveVideoButton.disabled = true;
-  elements.stopRtcAudioButton.disabled = true;
   /* Browser media must never depend on the device stop acknowledgement. A
    * congested or restarting device can miss the REST deadline; keeping the
    * local peer alive in that case leaks the microphone and leaves the page in
@@ -1741,12 +1349,10 @@ async function stopRtcSession() {
   try {
     await api(rtcEndpoint("stop", mode), { method: "POST" });
     if (hadVideo) setResult(elements.liveVideoResult, "Live video stopped", "ok");
-    if (hadAudio) setResult(elements.rtcAudioResult, "Full-duplex call ended", "ok");
     await refreshStatus();
   } catch (error) {
-    notify(`${error.message}; local audio/video stopped`, "error");
-    if (hadVideo) setResult(elements.liveVideoResult, "Local audio/video stopped, but device release confirmation timed out", "error");
-    if (hadAudio) setResult(elements.rtcAudioResult, "Local audio/video stopped, but device release confirmation timed out", "error");
+    notify(`${error.message}; local video stopped`, "error");
+    if (hadVideo) setResult(elements.liveVideoResult, "Local video stopped, but device release confirmation timed out", "error");
     await refreshStatus();
   } finally {
     state.rtc.teardownInProgress = false;
@@ -1757,13 +1363,11 @@ async function stopRtcSession() {
 async function failRtcSession(message) {
   if (state.rtc.teardownInProgress) return;
   const mode = state.rtc.mode;
-  const hadSession = Boolean(state.rtc.peer || state.rtc.localStream || mode);
-  const hadAudio = rtcModeHasAudio(mode);
+  const hadSession = Boolean(state.rtc.peer || mode);
   const hadVideo = rtcModeHasVideo(mode);
   const stopPath = rtcEndpoint("stop");
   state.rtc.teardownInProgress = true;
   cleanupRtcSession();
-  if (hadAudio) setRtcAudioState("failed", message);
   if (hadVideo) setLiveVideoState("failed", message);
   notify(message, "error");
   try {
@@ -1792,24 +1396,12 @@ function cleanupRtcSession() {
   state.rtc.feedbackTimer = null;
   const channel = state.rtc.channel;
   const peer = state.rtc.peer;
-  const localStream = state.rtc.localStream;
-  const diagnosticAudio = state.rtc.diagnosticAudio;
   const mode = state.rtc.mode;
   state.rtc.channel = null;
   state.rtc.peer = null;
-  state.rtc.localStream = null;
-  state.rtc.diagnosticAudio = null;
   state.rtc.remoteStream = null;
-  state.rtc.browserAudioSent = 0;
-  state.rtc.browserAudioReceived = 0;
-  state.rtc.browserAudioLevel = 0;
-  state.rtc.audioConnectedAt = 0;
-  state.rtc.audioHealthState = "idle";
   state.rtc.rttUs = 0;
   state.rtc.mediaRttUs = 0;
-  state.rtc.audioJitterCounter = null;
-  state.rtc.audioLatency = { sampleValid: false, actualMs: 0, targetMs: 0, minimumMs: 0 };
-  elements.rtcAudioLatency.textContent = "Waiting for Stage Latency Samples";
   if (channel) {
     channel.onclose = null;
     try { channel.close(); } catch (_) {}
@@ -1818,28 +1410,10 @@ function cleanupRtcSession() {
     peer.onconnectionstatechange = null;
     try { peer.close(); } catch (_) {}
   }
-  if (localStream) {
-    for (const track of localStream.getTracks()) track.stop();
-  }
-  if (diagnosticAudio) {
-    try { diagnosticAudio.oscillator.stop(); } catch (_) {}
-    diagnosticAudio.audioContext.close().catch(() => {});
-  }
-  elements.rtcRemoteAudio.pause();
-  elements.rtcRemoteAudio.srcObject = null;
-  elements.rtcAudioLocalState.textContent = "Available";
   elements.stopLiveVideoButton.disabled = true;
-  elements.stopRtcAudioButton.disabled = true;
   elements.startLiveVideoButton.disabled = state.rtc.teardownInProgress
     || !state.status?.connected || !hasCapability("rtc.video.mjpeg.v1");
-  elements.startRtcAudioButton.disabled = state.rtc.teardownInProgress
-    || !state.status?.connected || !hasCapability("rtc.audio.full_duplex.v1");
-  elements.startRtcAvButton.disabled = state.rtc.teardownInProgress
-    || !state.status?.connected
-    || !hasCapability("rtc.video.mjpeg.v1")
-    || !hasCapability("rtc.audio.full_duplex.v1");
   if (rtcModeHasVideo(mode) && elements.liveVideoStage.dataset.state !== "idle") setLiveVideoState("idle");
-  if (rtcModeHasAudio(mode) && elements.rtcAudioConsole.dataset.state !== "idle") setRtcAudioState("idle");
   state.rtc.mode = null;
 }
 
@@ -2144,9 +1718,6 @@ setInterval(async () => {
 }, 150);
 elements.startLiveVideoButton.addEventListener("click", () => { startLiveVideo(); });
 elements.stopLiveVideoButton.addEventListener("click", () => { stopRtcSession(); });
-elements.startRtcAudioButton.addEventListener("click", () => { startRtcAudio(); });
-elements.startRtcAvButton.addEventListener("click", () => { startRtcSession("av"); });
-elements.stopRtcAudioButton.addEventListener("click", () => { stopRtcSession(); });
 elements.recordMicrophoneButton.addEventListener("click", () => { recordMicrophone().catch(() => {}); });
 elements.runAllButton.addEventListener("click", runAll);
 elements.recordDuration.addEventListener("input", () => { elements.durationValue.textContent = elements.recordDuration.value; });
@@ -2173,7 +1744,7 @@ window.addEventListener("pagehide", () => {
     state.status?.resource_owners?.media,
     state.status?.rtc?.active === true,
   );
-  if (!mode && !state.rtc.peer && !state.rtc.localStream) return;
+  if (!mode && !state.rtc.peer) return;
   navigator.sendBeacon(rtcEndpoint("stop", mode));
   cleanupRtcSession();
 });

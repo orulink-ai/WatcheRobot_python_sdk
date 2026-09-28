@@ -8,15 +8,15 @@ import pytest
 
 from watcherobot.application.rtc import (
     ApplicationRtc,
-    RTC_AUDIO_CAPABILITY,
     RTC_VIDEO_CAPABILITY,
     RtcSessionRejectedError,
 )
 
 
 def test_rtc_capability_names_are_public_and_feature_specific() -> None:
-    assert RTC_AUDIO_CAPABILITY == "rtc.audio.full_duplex.v1"
     assert RTC_VIDEO_CAPABILITY == "rtc.video.mjpeg.v1"
+    assert "audio" not in RTC_VIDEO_CAPABILITY
+    assert not hasattr(__import__("watcherobot.application", fromlist=["*"]), "RTC_AUDIO_CAPABILITY")
 
 
 class FakeTransport:
@@ -52,6 +52,24 @@ class FakeTransport:
     def emit(self, message: dict[str, object]) -> None:
         for listener in tuple(self.listeners):
             listener(message)
+
+
+def test_video_feedback_keeps_legacy_wire_audio_fields_zero() -> None:
+    transport = FakeTransport()
+    rtc = ApplicationRtc(transport)
+    rtc.start(mode="video")
+    metrics = dict(display_fps_x100=2400, frame_age_p95_us=1000, rtt_us=2000, congestion_level=0)
+    rtc.feedback(**metrics)
+    assert json.loads(transport.sent[-1])["data"] == {
+        **metrics,
+        "audio_queue_ms": 0,
+        "audio_packet_loss_x100": 0,
+        "audio_jitter_us": 0,
+        "audio_concealed_frames": 0,
+    }
+    with pytest.raises(ValueError):
+        rtc.feedback(**metrics, audio_queue_ms=10)
+    rtc.close()
 
 
 def test_rtc_builds_exact_watcher_rtc_session_and_signal_envelopes() -> None:
@@ -242,6 +260,10 @@ def test_rtc_rejects_invalid_data_before_sending_to_device() -> None:
 
     with pytest.raises(ValueError, match="mode"):
         rtc.start(mode="screen")
+    with pytest.raises(ValueError, match="mode"):
+        rtc.start(mode="audio")
+    with pytest.raises(ValueError, match="mode"):
+        rtc.start(mode="av")
     rtc.start()
     with pytest.raises(ValueError, match="sdp"):
         rtc.send_offer("")

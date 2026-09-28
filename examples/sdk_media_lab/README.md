@@ -77,40 +77,26 @@ address while the normal broadcast discovery remains enabled.
 
 The dashboard tests motion, lights, host-to-device PCM playback, one-shot JPEG capture,
 decoded microphone recording, animation switching, capability discovery,
-artifacts, diagnostic events, a live camera preview, full-duplex RTC audio, and
-one combined audio/video RTC session. The live preview uses
+artifacts, diagnostic events, and a live camera preview. The live preview uses
 `watcher-rtc/1` only
 for signaling through the current Application's Device channel; MJPEG frames
-travel directly from the Watcher to the browser over an unordered,
-partially-reliable WebRTC data channel named `mjpeg-data`.
+travel directly from the Watcher to the browser over a dedicated LAN channel.
 
 Live preview requires firmware that advertises `rtc.video.mjpeg.v1`. It keeps a
 heartbeat while the page is open, uses latest-frame-wins rendering, and releases
-camera resources when stopped, disconnected, or when the page closes. Full-duplex
-audio requires `rtc.audio.full_duplex.v1`, requests the computer microphone only
-after the user starts the call, enables browser echo cancellation, and releases
-all local tracks on stop, failure, disconnect, or page close. Its healthy
-verdict also requires non-silent capture reported by the device, non-silent
-audio decoded by the browser, and an active remote player; this verifies the
-robot-to-browser path. The browser-to-robot path additionally requires device
-receive, decode, I2S output, and non-silent playback evidence with no renderer
-errors. The operator still confirms the selected OS
-output device and physical earphones. Packet counters alone do not prove that
-the robot microphone is audible. Camera and
-microphone actions capture the surrounding environment; obtain consent
-before use and handle generated artifacts appropriately.
+camera resources when stopped, disconnected, or when the page closes. The SDK no
+longer exposes the bidirectional full-duplex audio session, so the dashboard does
+not offer a full-duplex call. Camera and microphone actions capture the
+surrounding environment; obtain consent before use and handle generated
+artifacts appropriately.
 
 Controls are arbitrated by hardware resource rather than by one page-wide busy
 flag. Motion, body lights, and animation each have an independent lease, so all
-three remain available during live video, full-duplex audio, or combined AV.
-Camera has an independent lease. The standalone 24 kHz speaker path and 16 kHz
-microphone path share one ordinary-audio lease because the firmware routes both
-through the same audio runtime; playback and recording therefore cannot overlap.
-Audio-only RTC owns the microphone and speaker but leaves one-shot camera capture
-available. Video-only RTC owns the camera but leaves one standalone audio
-direction available at a time. Combined AV owns all three media leases and is
-one firmware session (`mode=av`), not two peer connections competing for the
-same codec, camera, network, and teardown resources.
+three remain available during live video. Camera has an independent lease. The
+standalone 24 kHz speaker path and 16 kHz microphone path share one
+ordinary-audio lease because the firmware routes both through the same audio
+runtime; playback and recording therefore cannot overlap. Video-only RTC owns
+the camera but leaves one standalone audio direction available at a time.
 
 The animation selector is populated from the connected device's
 `evt.sdk.ready.data.animations` catalog, so every animation actually installed
@@ -118,18 +104,7 @@ on the current SD resource set is available without a hard-coded browser list.
 **Start random** cycles through that catalog at the selected interval, avoids an
 immediate repeat, and prefetches the next animation when the firmware advertises
 `animation.prefetch.v1`. Random playback remains available during live video,
-full-duplex audio, and combined AV, and its timers are released on stop,
-disconnect, or page close.
-
-Current full-duplex firmware negotiates mono Opus with a 48 kHz WebRTC clock
-while the robot microphone, speaker, and device-side AEC remain at 16 kHz. The
-browser never attaches its local microphone track to the local audio player.
-When the computer microphone is heard again in the headphones, inspect the
-robot's acoustic echo path: healthy playback makes `audio_aec_chunks` advance,
-keeps `audio_aec_reference_drops` at zero, and leaves
-`audio_render_errors`/`audio_queue_dropped` at zero. With no far-end playback,
-`audio_aec_bypass_chunks` advances so AEC nonlinear processing does not color
-near-end robot speech.
+and its timers are released on stop, disconnect, or page close.
 
 The resource panel is backed by the public `Robot.resource_baseline`,
 `Robot.resource_rtc_baseline`, `Robot.resource_snapshot`, and
@@ -147,8 +122,7 @@ idle animation cannot hide contention that appears only under AV load.
 ## PTL preview candidate validation (2026-09-08 historical baseline)
 
 Pure video now uses the device's existing LAN MJPEG socket and Application
-session/control APIs without creating a browser WebRTC peer. Audio and AV
-sessions retain their WebRTC peer. This requires the paired ESP32 candidate
+session/control APIs. This requires the paired ESP32 candidate
 that starts video from JPEG-client readiness. The Daemon routing is unchanged.
 That historical candidate did not implement model enumeration or inference mode
 switching. The current paired firmware and SDK add both (see the generic model
@@ -166,9 +140,7 @@ A short snapshot above 15 FPS is not a ten-minute acceptance result.
 
 For the 2026-09-08 hardware investigation, failure records and the complete
 remaining integration checklist are maintained in the embedded repository's
-`docs/himax-unified-hil-2026-09-08.md`. The candidate remains experimental;
-legacy clients that require a video-only WebRTC offer need compatibility
-validation before product rollout.
+`docs/himax-unified-hil-2026-09-08.md`. The candidate remains experimental.
 
 
 ### 功能切换资源诊断

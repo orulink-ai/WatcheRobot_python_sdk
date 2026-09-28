@@ -65,18 +65,17 @@ watcherobot app run .\examples\sdk_media_lab
 It binds a temporary dashboard to `127.0.0.1`, opens the default browser, and
 keeps every hardware operation inside the managed Application Device channel.
 The dashboard tests the bundled speaker stream, one-shot JPEG capture, decoded
-microphone recording, capability discovery, artifacts, diagnostic events,
-device resource recovery, and full-duplex RTC audio. It is independent of
+microphone recording, capability discovery, artifacts, diagnostic events, and
+device resource recovery. It is independent of
 Watcher Desktop and stops with the Application process.
 
-For RTC audio acceptance, use headphones and verify both directions separately:
+The SDK no longer exposes the bidirectional full-duplex RTC audio session, so
+there is no full-duplex call to accept on this bench. Ordinary audio acceptance
+covers the two standalone directions instead:
 
-- speak to the robot and confirm its physical microphone is audible in the
-  headphones without enabling local browser microphone monitoring;
-- speak to the computer and confirm the robot speaker is audible while delayed
-  self-voice is suppressed by the device-side AEC;
-- confirm `audio_aec_reference_drops`, `audio_render_errors`, and
-  `audio_queue_dropped` remain zero;
+- play a bundled or streamed PCM clip and confirm the robot speaker is audible;
+- record with `robot.microphone.record_pcm()` and confirm the decoded WAV is
+  intelligible (detailed checks below);
 - repeat start/stop at least ten times and confirm resource snapshots return to
   a stable idle range rather than declining monotonically.
 

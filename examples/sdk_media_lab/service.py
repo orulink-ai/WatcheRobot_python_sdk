@@ -30,11 +30,6 @@ from pydantic import BaseModel, Field
 from watcherobot.application import rtc as application_rtc
 
 
-RTC_AUDIO_CAPABILITY = getattr(
-    application_rtc,
-    "RTC_AUDIO_CAPABILITY",
-    "rtc.audio.full_duplex.v1",
-)
 RTC_VIDEO_CAPABILITY = application_rtc.RTC_VIDEO_CAPABILITY
 
 
@@ -187,7 +182,7 @@ class InferenceStartRequest(BaseModel):
 
 
 class RtcSessionStartRequest(BaseModel):
-    mode: str = Field(default="video", pattern=r"^(video|audio|av)$")
+    mode: str = Field(default="video", pattern=r"^(video)$")
 
 
 class RtcSignalRequest(BaseModel):
@@ -206,10 +201,6 @@ class RtcFeedbackRequest(BaseModel):
     display_fps_x100: int = Field(ge=0)
     frame_age_p95_us: int = Field(ge=0)
     rtt_us: int = Field(ge=0)
-    audio_queue_ms: int = Field(ge=0)
-    audio_packet_loss_x100: int = Field(ge=0)
-    audio_jitter_us: int = Field(ge=0)
-    audio_concealed_frames: int = Field(ge=0)
     congestion_level: int = Field(ge=0, le=3)
 
 
@@ -241,10 +232,10 @@ class MediaLabService:
         self._sample_audio = Path(sample_audio)
         self._device_status_provider = device_status_provider
         self._device_pairer = device_pairer
-        # RTC lifecycle transitions remain atomic while camera, microphone, and
-        # speaker ownership are tracked independently. This permits the verified
-        # audio-RTC + photo and video-RTC + standalone-audio combinations without
-        # weakening same-hardware exclusion.
+        # RTC lifecycle transitions remain atomic while camera ownership is
+        # tracked independently from the standalone microphone/speaker flows.
+        # The video-only RTC session holds the camera; only the standalone
+        # recording/playback flows touch the microphone and speaker.
         self._live_video_lifecycle_lock = threading.Lock()
         self._resource_locks = {
             "camera": threading.Lock(),
@@ -678,12 +669,10 @@ class MediaLabService:
             }
 
     def start_live_video(self, *, mode: str = "video") -> dict[str, object]:
-        if mode not in {"video", "audio", "av"}:
-            raise ValueError("RTC mode must be video, audio, or av")
+        if mode != "video":
+            raise ValueError("RTC mode must be video")
         required_capabilities = {
-            "audio": {RTC_AUDIO_CAPABILITY},
             "video": {RTC_VIDEO_CAPABILITY},
-            "av": {RTC_AUDIO_CAPABILITY, RTC_VIDEO_CAPABILITY},
         }[mode]
         missing_capabilities = required_capabilities.difference(self._robot.capabilities)
         if missing_capabilities:
@@ -693,14 +682,10 @@ class MediaLabService:
                 f"Robot firmware does not advertise required RTC capabilities: {feature}",
             )
         action = {
-            "audio": "rtc_audio",
             "video": "live_video",
-            "av": "rtc_av",
         }[mode]
         rtc_resources = {
-            "audio": ("microphone", "speaker"),
             "video": ("camera",),
-            "av": ("camera", "microphone", "speaker"),
         }[mode]
         with self._live_video_lifecycle_lock:
             self._acquire_rtc_resources(action, rtc_resources)
@@ -759,7 +744,7 @@ class MediaLabService:
             with self._state_lock:
                 action = (
                     self._active_action
-                    if self._active_action in {"live_video", "rtc_audio", "rtc_av"}
+                    if self._active_action in {"live_video"}
                     else "live_video"
                 )
             stopped = bool(self._rtc.stop())
@@ -806,7 +791,7 @@ class MediaLabService:
         self._ensure_device_online()
         with self._state_lock:
             active = self._live_video_lock_held and any(
-                self._active_actions.get(resource) in {"live_video", "rtc_audio", "rtc_av"}
+                self._active_actions.get(resource) in {"live_video"}
                 for resource in self._rtc_resources_held
             )
         if not active:
@@ -853,7 +838,7 @@ class MediaLabService:
             resources = self._rtc_resources_held
             self._rtc_resources_held = ()
             for resource in resources:
-                if self._active_actions.get(resource) in {"live_video", "rtc_audio", "rtc_av"}:
+                if self._active_actions.get(resource) in {"live_video"}:
                     self._active_actions.pop(resource, None)
             self._refresh_active_action_locked()
         for resource in reversed(resources):
