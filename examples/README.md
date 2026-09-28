@@ -34,3 +34,7 @@ Available examples include:
 - `record_microphone`: record a short WAV file.
 - `face_tracking_preview`: consume typed, sequence-matched live preview frames
   without opening a device socket in Application code.
+
+`vision_debug_lab` has been retired. The examples above do not replace all of its
+dataset-recording and diagnostic-export workflows; see the
+[retirement and migration notes](../docs/vision-diagnostics.md#vision-debug-lab-retirement-and-migration).

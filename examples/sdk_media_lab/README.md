@@ -45,6 +45,10 @@ three channels overlap only while the single playback is active.
 The bench reserves camera, display and both audio directions during the test.
 All three initial requests are scheduled together even if another initial
 request fails. Atomic capture does not use the photo sound/animation feedback.
+If the worker pool cannot submit all three tasks, startup is aborted before any
+device calls. Queued workers are released, local leases are returned, and the
+report records `started: false` with a setup error. No device cleanup commands
+are sent for an unstarted workload; the next test can be attempted normally.
 
 The compact panel below device pairing shows live per-channel successes and
 failures, cleanup acknowledgement, a collapsible detail view, the latest photo

@@ -103,3 +103,23 @@ watcherobot app run ./examples/face_tracking_preview
 It logs face telemetry and saves the latest JPEG after collecting 150 frames.
 It does not provide a browser dashboard. Use the SDK APIs above for backend
 health and capability checks in your own Application.
+
+## Vision Debug Lab retirement and migration
+
+`examples/vision_debug_lab` was explicitly retired at the maintainer's request
+because that application was outdated. Its removal is an intentional breaking
+change to the example launch command, not a removal of SDK camera or vision
+APIs. `face_tracking_preview` is a smaller example, **not an equivalent replacement**.
+
+| Previous workflow | Available path and limitation |
+| --- | --- |
+| Browser face preview with matching boxes | `sdk_media_lab` supports face preview; this is not the old diagnostic dashboard. |
+| Sequence-matched JPEG and telemetry consumption | `face_tracking_preview` demonstrates the SDK API and saves only the last JPEG after 150 frames. |
+| JPEG + JSONL dataset recording | No equivalent recorder is supplied; an Application must implement recording through the preview API. |
+| Vision-specific latency/drop reports and export | No equivalent report export is supplied; retain the old tool if this is required. |
+| Last-browser disconnect automatically applies HOLD | Not guaranteed by the CLI preview example; Applications must manage tracking shutdown explicitly. |
+
+For workflows that still require the complete old tool, retain its source from
+the parent of removal commit `2e60466` in an isolated checkout. This is a legacy
+source reference, not a claim that the old tool has been validated with current
+firmware. Existing datasets should be kept separately before changing versions.

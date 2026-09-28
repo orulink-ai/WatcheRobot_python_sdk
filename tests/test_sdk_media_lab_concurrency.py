@@ -36,6 +36,64 @@ def _jpeg():
     return buffer.getvalue()
 
 
+@pytest.mark.parametrize("failure_index", [1, 2, 3])
+def test_partial_worker_submission_aborts_without_hardware_calls(tmp_path, failure_index):
+    """Use a child process so a regression cannot strand pytest executor threads."""
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent('''
+        import sys
+        from pathlib import Path
+        from concurrent.futures import ThreadPoolExecutor
+        from tests.test_sdk_media_lab import _load_service_module, _service
+        from tests.test_sdk_media_lab_concurrency import _stress_robot
+
+        module = _load_service_module()
+        real_pool = ThreadPoolExecutor
+        failure_index = int(sys.argv[2])
+        class PartialPool(real_pool):
+            submissions = 0
+            def submit(self, *args, **kwargs):
+                self.submissions += 1
+                # submit may enqueue work before thread creation fails.
+                future = super().submit(*args, **kwargs)
+                if self.submissions == failure_index:
+                    raise RuntimeError("cannot start new thread")
+                return future
+
+        calls = []
+        robot = _stress_robot()
+        def unexpected(*args, **kwargs):
+            calls.append("hardware")
+            raise AssertionError("aborted startup must not call hardware")
+        robot.camera.capture = unexpected
+        robot.audio.play_file = robot.audio.stop = unexpected
+        robot.expression_runtime.start = robot.expression_runtime.update = unexpected
+        robot.expression_runtime.stop = unexpected
+        service = _service(module, Path(sys.argv[1]), robot)
+        module.ThreadPoolExecutor = PartialPool
+        report = service.run_concurrency_test(duration=1)
+        assert report["running"] is False and report["passed"] is False
+        assert report["started"] is False
+        assert report["errors"] == [{"worker": "setup", "error": "cannot start new thread"}]
+        assert report["counts"] == {"camera": 0, "speaker": 0, "ui": 0}
+        assert report["operations"] == [] and calls == []
+        assert service.status()["resource_owners"] == {}
+        assert service.status()["concurrency_cleanup"] == {}
+        # Both the lifecycle lock and all resource locks must be reusable.
+        module.ThreadPoolExecutor = real_pool
+        service._robot = _stress_robot()
+        assert service.run_concurrency_test(duration=1)["passed"] is True
+    ''')
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), str(failure_index)],
+        capture_output=True, text=True, timeout=8,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 def test_combined_test_overlaps_all_workers_and_excludes_other_actions(tmp_path):
     module = _load_service_module()
     robot = _stress_robot()
