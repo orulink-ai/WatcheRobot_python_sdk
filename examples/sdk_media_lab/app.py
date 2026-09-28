@@ -18,12 +18,14 @@ ROOT = Path(__file__).resolve().parent
 HOST = "127.0.0.1"
 
 
-async def wait_for_server(app, server, server_task) -> None:
+async def wait_for_server(app, server, server_task, *, service=None) -> None:
     """Let HTTP lifespan cleanup finish when the Daemon requests shutdown."""
     try:
         while not server_task.done() and not app.shutdown_requested:
             await asyncio.sleep(0.05)
     finally:
+        if service is not None:
+            service.request_shutdown()
         server.should_exit = True
         await server_task
 
@@ -76,7 +78,7 @@ async def main() -> None:
             app.logger.info("SDK Test Bench: %s", url)
             if os.environ.get("WATCHER_MEDIA_LAB_NO_BROWSER") != "1":
                 await asyncio.to_thread(webbrowser.open, url)
-            await wait_for_server(app, server, server_task)
+            await wait_for_server(app, server, server_task, service=service)
     finally:
         listener.close()
 

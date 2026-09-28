@@ -51,6 +51,8 @@ export function controlAvailability({
     light: resourceReady("light") && capabilitySet.has("light"),
     animation: resourceReady("animation") && capabilitySet.has("animation"),
     camera: cameraAvailable,
+    cameraWithFeedback: cameraAvailable && resourceReady("animation")
+      && microphoneAvailable && speakerAvailable,
     microphone: microphoneAvailable,
     speaker: speakerAvailable,
     startRtcAudio: !rtcActive && microphoneReady && speakerReady,
