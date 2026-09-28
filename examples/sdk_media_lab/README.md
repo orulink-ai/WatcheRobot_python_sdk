@@ -24,6 +24,42 @@ runtime and hardware acceptance have been completed.
 The tested 2026-09-09 SDK/ESP32 pairing, concurrent video/audio results, and
 remaining limits are fixed in the [Himax media stage record](../../docs/himax-media-stage-20260909.md).
 
+## Concurrent photo, speaker and custom UI test
+
+The panel follows the lightweight workload from historical commit `809876b`:
+three workers start together with no SDK FIFO scheduler. The display starts the
+`thinking` / `watcher_pulse` eyes, then cycles four gaze, openness, tilt and color
+frames, waiting 0.18 seconds after each update. There is no custom vector or
+sphere shading. Atomic photo capture waits **one second after each completed
+photo** before requesting another. The bundled audio sample plays **once**.
+
+Duration is 1–120 seconds, default 30, and limits scheduling new photo/UI calls.
+Unlike the old script's forced audio cancellation, in-flight operations finish
+under SDK timeouts before cleanup; a short window can therefore take longer
+than the selected duration. Failure or **Stop Test** stops new work and waits
+for in-flight operations too. Audio is not looped for the whole window; all
+three channels overlap only while the single playback is active.
+
+The bench reserves camera, display and both audio directions during the test.
+All three initial requests are scheduled together even if another initial
+request fails. Atomic capture does not use the photo sound/animation feedback.
+
+The compact panel below device pairing shows live per-channel successes and
+failures, cleanup acknowledgement, a collapsible detail view, the latest photo
+and a JSON report download. Every JPEG is decoded and saved with a unique name.
+`GET /api/concurrency/result` returns a snapshot while running and the final
+report afterwards, including counts, timings, errors and resource telemetry.
+The removed `ui_stroke_width` diagnostic parameter is no longer part of this
+workload; old width comparisons are separate historical diagnostic artifacts.
+
+Success means a validated JPEG, a completed SDK playback job, or acknowledged
+UI commands, respectively. Cleanup acknowledgement does not prove the absence
+of a device memory leak; inspect the resource panel as well. Screen appearance
+and audible sound require manual observation. The checkboxes record local UI
+observations separately from the SDK verdict, reset per run, and are not saved
+in the SDK JSON report. A channel interrupted by another failure is not marked
+as passed. Partial successes remain visible when a later call fails.
+
 ## Camera capture
 
 The camera panel has two actions:

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import ipaddress
+import io
 import json
 import logging
 import math
@@ -16,6 +18,8 @@ import urllib.error
 import urllib.request
 import urllib.parse
 import wave
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
@@ -27,6 +31,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
+from PIL import Image
 from watcherobot.application import rtc as application_rtc
 
 
@@ -155,6 +160,61 @@ class RecordMicrophoneRequest(BaseModel):
     duration: float = Field(default=5.0, gt=0.0, le=30.0, allow_inf_nan=False)
 
 
+class ConcurrencyTestRequest(BaseModel):
+    duration: float = Field(default=30.0, ge=1.0, le=120.0, allow_inf_nan=False)
+
+
+def _concurrency_expression(frame: int) -> dict[str, Any]:
+    """The four lightweight eye frames from the original concurrent bench."""
+    frames = (
+        (-0.65, -0.25, 0.72, -12, "#A1F03C"),
+        (0.0, 0.25, 1.0, 0, "#42D9FF"),
+        (0.65, -0.10, 0.82, 12, "#FFB43C"),
+        (0.0, 0.0, 0.92, 0, "#C38BFF"),
+    )
+    gaze_x, gaze_y, openness, tilt_deg, color = frames[frame % len(frames)]
+    return dict(gaze_x=gaze_x, gaze_y=gaze_y, openness=openness,
+                tilt_deg=tilt_deg, color=color, transition_ms=120)
+
+
+def _concurrency_results(report: dict[str, Any]) -> dict[str, Any]:
+    """Keep per-channel evidence separate from the overall workload verdict."""
+    results = {}
+    evidence = {
+        "camera": "JPEG decoded and saved",
+        "speaker": "SDK playback job completed",
+        "ui": "Device acknowledged UI commands",
+    }
+    for name in ("camera", "speaker", "ui"):
+        operations = [op for op in report["operations"] if op["worker"] == name]
+        succeeded = sum(op["success"] for op in operations)
+        failures = [op for op in operations if not op["success"]]
+        cleanup = [item["error"] for item in report["errors"] if item["worker"] == f"{name}_cleanup"]
+        status = (
+            "failed" if failures else
+            "running" if report.get("running") and (name != "speaker" or not succeeded) else
+            "not_started" if not operations else
+            "cleanup_failed" if cleanup else
+            "interrupted" if report["cancelled"] or report["errors"] else "passed"
+        )
+        latencies = [(op["end_s"] - op["start_s"]) * 1000 for op in operations]
+        results[name] = {
+            "status": status, "attempted": len(operations), "succeeded": succeeded,
+            "failed": len(failures),
+            "average_ms": round(sum(latencies) / len(latencies), 2) if latencies else None,
+            "max_ms": round(max(latencies), 2) if latencies else None,
+            "last_error": failures[-1]["error"] if failures else None,
+            "cleanup_error": cleanup[-1] if cleanup else None,
+            "evidence": evidence[name] if succeeded else "No successful operation",
+            "physical_confirmation": "not_verified" if name != "camera" else "jpeg_validated" if succeeded else "not_verified",
+        }
+        if name == "camera":
+            images = [op["image"] for op in operations if op["success"]]
+            results[name]["total_bytes"] = sum(item["bytes"] for item in images)
+            results[name]["last_image"] = images[-1] if images else None
+    return results
+
+
 class MotionMoveRequest(BaseModel):
     pan_deg: int = Field(ge=30, le=150)
     tilt_deg: int = Field(ge=100, le=130)
@@ -237,6 +297,8 @@ class MediaLabService:
         self._inference_lease = None
         self._inference_state = "idle"
         self._robot = robot
+        self._concurrency_cancel = threading.Event()
+        self._concurrency_report: dict[str, Any] | None = None
         self._rtc = rtc
         self._artifacts_dir = Path(artifacts_dir)
         self._sample_audio = Path(sample_audio)
@@ -538,6 +600,135 @@ class MediaLabService:
                 "bytes": self._sample_audio.stat().st_size,
             }
 
+    def stop_concurrency_test(self) -> dict[str, object]:
+        self._concurrency_cancel.set()
+        return {"stop_requested": True}
+
+    def run_concurrency_test(self, *, duration: float) -> dict[str, Any]:
+        """Run bounded concurrent SDK calls inside one exclusive bench lease."""
+        if isinstance(duration, bool) or not math.isfinite(duration) or not 1 <= duration <= 120:
+            raise ValueError("duration must be between 1 and 120 seconds")
+        for capability in ("expression.runtime.v3", "camera.capture", "audio.stream"):
+            self._ensure_capability(capability)
+        with self._operation("concurrency_test", resources=("camera", "animation", "microphone", "speaker")):
+            self._concurrency_cancel.clear()
+            run_id = uuid.uuid4().hex[:12]
+            self._artifacts_dir.mkdir(parents=True, exist_ok=True)
+            started = time.monotonic()
+            deadline = started + duration
+            report: dict[str, Any] = {
+                "run_id": run_id, "duration_requested": duration,
+                "running": True, "cancelled": False, "passed": False,
+                "counts": {"camera": 0, "speaker": 0, "ui": 0},
+                "operations": [], "errors": [], "samples": [],
+                "report": f"concurrency-{run_id}.json",
+                "profile": {"strategy": "legacy_concurrent", "ui_interval_s": 0.18,
+                            "camera_interval_s": 1.0, "audio_repetitions": 1},
+                "baseline": dict(self._robot.resource_snapshot),
+            }
+            report_lock = threading.Lock()
+            gate = threading.Event()
+
+            def publish() -> None:
+                # Readers receive an immutable snapshot, never a live worker list.
+                with report_lock:
+                    snapshot = copy.deepcopy(report)
+                snapshot["elapsed_s"] = time.monotonic() - started
+                snapshot["results"] = _concurrency_results(snapshot)
+                self._concurrency_report = snapshot
+
+            publish()
+
+            def error(worker: str, exc: Exception) -> None:
+                with report_lock:
+                    report["errors"].append({"worker": worker, "error": str(exc) or type(exc).__name__})
+                self._concurrency_cancel.set()
+
+            def worker(name: str) -> None:
+                gate.wait()
+                # All three initial requests are scheduled together. A failure
+                # cancels repeats, not another channel's initial measurement.
+                first_attempt = True
+                while first_attempt or (not self._concurrency_cancel.is_set() and time.monotonic() < deadline):
+                    tick = time.monotonic()
+                    stage = ("start" if first_attempt else "update") if name == "ui" else "run"
+                    operation: dict[str, Any] = {"worker": name, "stage": stage, "start_s": tick - started, "success": False}
+                    try:
+                        if name == "ui":
+                            if first_attempt:
+                                self._robot.expression_runtime.start(
+                                    preset="thinking", style="watcher_pulse", color="#A1F03C",
+                                    gaze_x=0.0, gaze_y=0.0, auto_blink=True, transition_ms=0,
+                                )
+                            else:
+                                self._robot.expression_runtime.update(
+                                    **_concurrency_expression(report["counts"][name] - 1)
+                                )
+                        elif name == "speaker":
+                            playback = self._robot.audio.play_file(self._sample_audio)
+                            playback.wait(30.0)
+                        else:
+                            photo = self._robot.camera.capture(timeout=10.0)
+                            data = bytes(photo.data)
+                            with Image.open(io.BytesIO(data)) as decoded:
+                                if decoded.format != "JPEG":
+                                    raise ValueError("Camera returned a non-JPEG image")
+                                decoded.load()
+                                width, height = decoded.size
+                            filename = f"concurrency-{run_id}-{report['counts'][name]:03d}.jpg"
+                            (self._artifacts_dir / filename).write_bytes(data)
+                            operation["image"] = {"file": filename, "bytes": len(data), "width": width, "height": height}
+                        operation["success"] = True
+                        with report_lock:
+                            report["counts"][name] += 1
+                    except Exception as exc:
+                        operation["error"] = str(exc) or type(exc).__name__
+                        error(name, exc)
+                        break
+                    finally:
+                        first_attempt = False
+                        operation["end_s"] = time.monotonic() - started
+                        with report_lock:
+                            report["operations"].append(operation)
+                        publish()
+                    if name == "speaker":
+                        break  # The legacy workload plays the sample exactly once.
+                    # Delay after completion, not after the request's start time.
+                    interval = 1.0 if name == "camera" else 0.0 if stage == "start" else 0.18
+                    if time.monotonic() + interval >= deadline:
+                        break
+                    self._concurrency_cancel.wait(interval)
+
+            try:
+                with ThreadPoolExecutor(max_workers=3) as pool:
+                    futures = [pool.submit(worker, name) for name in ("ui", "speaker", "camera")]
+                    gate.set()
+                    while not all(future.done() for future in futures):
+                        with report_lock:
+                            report["samples"].append({"elapsed_s": time.monotonic() - started, "resources": dict(self._robot.resource_snapshot)})
+                        publish()
+                        time.sleep(0.5)
+                    for future in futures:
+                        future.result()
+            except Exception as exc:
+                error("setup", exc)
+            finally:
+                report["cancelled"] = self._concurrency_cancel.is_set() and not report["errors"]
+                self._concurrency_cancel.set()
+                for name, stop in (("speaker_cleanup", self._robot.audio.stop), ("ui_cleanup", self._robot.expression_runtime.stop)):
+                    try:
+                        stop()
+                    except Exception as exc:
+                        error(name, exc)
+                report["running"] = False
+                report["elapsed_s"] = time.monotonic() - started
+                report["after"] = dict(self._robot.resource_snapshot)
+                report["passed"] = not report["errors"] and not report["cancelled"] and all(report["counts"].values())
+                report["results"] = _concurrency_results(report)
+                (self._artifacts_dir / report["report"]).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+                self._concurrency_report = report
+            return report
+
     def stop_audio(self) -> dict[str, object]:
         self._ensure_device_online()
         self._robot.audio.stop()
@@ -796,9 +987,13 @@ class MediaLabService:
         return self._rtc.events(after=max(0, after))
 
     def artifact_path(self, filename: str) -> Path | None:
-        if filename not in self._ARTIFACT_TYPES:
+        if filename not in self._ARTIFACT_TYPES and not re.fullmatch(
+            r"concurrency-[0-9a-f]{12}(?:-[0-9]{3,}\.jpg|\.json)", filename
+        ):
             return None
-        candidate = self._artifacts_dir / filename
+        candidate = (self._artifacts_dir / filename).resolve()
+        if candidate.parent != self._artifacts_dir.resolve():
+            return None
         return candidate if candidate.is_file() else None
 
     def _artifact_output(self, filename: str) -> Path:
@@ -1015,6 +1210,7 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
         try:
             yield
         finally:
+            service.stop_concurrency_test()
             maintenance_task.cancel()
             try:
                 await maintenance_task
@@ -1149,6 +1345,21 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
             pairing_code=request.pairing_code,
             device_ip=request.device_ip,
         )
+
+    @app.post("/api/concurrency/start")
+    async def run_concurrency_test(request: ConcurrencyTestRequest) -> dict[str, Any]:
+        return await _run_action(
+            service.run_concurrency_test,
+            duration=request.duration,
+        )
+
+    @app.post("/api/concurrency/stop")
+    async def stop_concurrency_test() -> dict[str, object]:
+        return service.stop_concurrency_test()
+
+    @app.get("/api/concurrency/result")
+    async def concurrency_result() -> dict[str, Any]:
+        return service._concurrency_report or {}
 
     @app.post("/api/actions/play-audio")
     async def play_audio() -> dict[str, object]:
@@ -1302,7 +1513,9 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
         path = service.artifact_path(filename)
         if path is None:
             raise HTTPException(status_code=404, detail="artifact not found")
-        return FileResponse(path, media_type=MediaLabService._ARTIFACT_TYPES[filename])
+        return FileResponse(path, media_type=MediaLabService._ARTIFACT_TYPES.get(
+            filename, "application/json" if filename.endswith(".json") else "image/jpeg"
+        ))
 
     return app
 
