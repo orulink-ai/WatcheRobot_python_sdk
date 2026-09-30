@@ -17,6 +17,7 @@ from .daemon.instance import (
 from .repository import operation_lock
 from .cleanup import cleanup_after
 from .background_process import CREATE_NO_WINDOW, background_process_options
+from .windows_paths import native_executable_options
 
 
 class RuntimeActivationCancelled(RuntimeError):
@@ -51,6 +52,7 @@ def describe_command(
     options: dict[str, Any] = {}
     if os.name == "nt":
         options["creationflags"] = CREATE_NO_WINDOW
+    options.update(native_executable_options(command))
     try:
         result = subprocess.run(
             [*command, "--check-runtime"],
@@ -410,6 +412,7 @@ def ensure_command(
             with (log_root / "runtime.log").open("ab") as log:
                 process = subprocess.Popen(
                     selected,
+                    **native_executable_options(selected),
                     stdin=subprocess.DEVNULL,
                     stdout=log,
                     stderr=log,
@@ -481,6 +484,7 @@ def ensure_command(
                 with (log_root / "runtime.log").open("ab") as log:
                     restored = subprocess.Popen(
                         old_command,
+                        **native_executable_options(old_command),
                         stdin=subprocess.DEVNULL,
                         stdout=log,
                         stderr=log,

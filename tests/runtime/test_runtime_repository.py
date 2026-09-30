@@ -15,6 +15,19 @@ from watcherobot.runtime.repository import (
 from watcherobot.runtime.daemon.instance import RuntimeAlreadyRunningError
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows MAX_PATH regression")
+def test_publish_with_repository_directory_beyond_max_path(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "runtime.exe").write_bytes(b"fixture")
+    root = tmp_path
+    while len(str(root)) < 280:
+        root /= "中文长目录" * 4
+    published = prepare_bundle(source, root)
+    assert (published / "runtime.exe").read_bytes() == b"fixture"
+    assert prepare_bundle(source, root) == published
+
+
 def test_bundle_versions_coexist_and_reuse_verified_content(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()

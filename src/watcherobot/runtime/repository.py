@@ -58,7 +58,7 @@ def _published_path(path: Path) -> Path:
 def operation_lock(root: Path | None = None, *, timeout: float = 30) -> Iterator[None]:
     """Serialize short-lived managers, independently of the Daemon lifetime lock."""
     lock = RuntimeInstanceLock(
-        (root or default_runtime_instance_root()) / "operation.lock"
+        _published_path((root or default_runtime_instance_root()) / "operation.lock")
     )
     deadline = time.monotonic() + timeout
     while True:

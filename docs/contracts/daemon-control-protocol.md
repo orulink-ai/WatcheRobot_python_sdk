@@ -90,3 +90,13 @@ Daemon 每次启动 Application 时会注入仅对当前运行实例有效的停
 
 该停止信号只用于进程生命周期协调，不是业务消息，不改变 Desktop、Application 与 Device 之间的业务帧路由。
 
+# Runtime CLI 字节编码
+
+Daemon CLI（包括冻结可执行文件）的 stdout、stderr 固定使用 UTF-8，不依赖系统代码页或 Python 编码环境变量。`--prepare-bundle` 成功时 stdout 只返回发布目录的绝对路径及换行；诊断写入 stderr。调用方必须严格按 UTF-8 解码，不能用替换字符后的路径继续访问文件。
+
+此约定保障 Windows 中文及其他 Unicode 用户目录，也适用于 macOS。回归测试覆盖 GBK、CP1252、UTF-8 下的源码和冻结入口；发布前还需验证真实冻结产物的管道输出。
+
+Windows 冻结入口还为包内原生扩展启用扩展路径加载：通过公开 importlib API 使用 `\\?\` / `\\?\UNC\` 路径定位及加载 `.pyd`，避免普通 Win32 路径达到 MAX_PATH 后出现模块找不到或 DLL 加载失败。该处理仅适用于冻结依赖目录，不改变源码模式、其他包搜索路径、macOS 或系统长路径策略。验收必须包含真实扩展文件超过 260 字符的场景，不能仅测试目录发布成功。
+
+Windows Daemon 验证、启动、回退及安装守卫在调用 subprocess 时，显式传入扩展绝对路径作为 executable，避免 CreateProcess 在未提供 lpApplicationName 时对命令行首项施加 MAX_PATH 限制。裸命令仍保留 PATH 搜索行为。完整验收同时覆盖原生扩展路径与可执行文件路径超过 260 字符的场景。
+
