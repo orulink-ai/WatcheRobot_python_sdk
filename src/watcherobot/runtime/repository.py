@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from collections.abc import Iterator
 
-from .bundle_verification import remember, verified_digest
+from .bundle_verification import bundle_paths, remember, verified_digest
 
 from .daemon.instance import (
     RuntimeAlreadyRunningError,
@@ -81,7 +81,7 @@ def bundle_digest(root: Path) -> str:
     """Hash names, executable semantics and bytes of one Runtime bundle."""
     root = Path(_windows_extended_path(root))
     digest = hashlib.sha256(b"watcher-runtime-bundle-v2\0")
-    for path in sorted(root.rglob("*")):
+    for path in sorted(bundle_paths(root)):
         if path.is_symlink():
             target = os.readlink(path)
             if Path(target).is_absolute() or not path.resolve(

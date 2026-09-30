@@ -622,6 +622,8 @@ def test_cli_preserves_source_default_launcher_through_application_launcher(
             str(application_root),
             "--source-default-launcher",
             str(virtualenv_python),
+            "--instance-root",
+            str(tmp_path / "instance"),
         ]
     )
 

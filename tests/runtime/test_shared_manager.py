@@ -150,6 +150,7 @@ def test_ensure_runtime_with_custom_state_root_and_ephemeral_ports(
     state_root = tmp_path / "custom-state"
     instance_root = tmp_path / "instance"
     monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(instance_root))
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2] / "src"))
     try:
         state, reused = cli.ensure_runtime(

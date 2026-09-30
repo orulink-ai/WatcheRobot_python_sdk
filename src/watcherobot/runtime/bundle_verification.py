@@ -15,7 +15,7 @@ import sys
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 
@@ -69,11 +69,27 @@ def _change_time(path: Path, metadata: os.stat_result) -> int:
         api.CloseHandle(handle)
 
 
+def bundle_paths(root: Path) -> Iterator[Path]:
+    """Enumerate every entry, propagating errors instead of skipping subtrees."""
+    with os.scandir(root) as entries:
+        children = sorted(entries, key=lambda entry: entry.name)
+    for entry in children:
+        path = Path(entry.path)
+        yield path
+        metadata = entry.stat(follow_symlinks=False)
+        is_link = stat.S_ISLNK(metadata.st_mode) or bool(
+            getattr(metadata, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        )
+        if stat.S_ISDIR(metadata.st_mode) and not is_link:
+            yield from bundle_paths(path)
+
+
 def tree_stamp(root: Path) -> str | None:
     """Cover names, identity, content-change times, link targets and permissions."""
     digest = hashlib.sha256(b"watcher-bundle-metadata-v1\0")
     try:
-        for path in sorted(root.rglob("*")):
+        for path in sorted(bundle_paths(root)):
             metadata = path.lstat()
             is_link = stat.S_ISLNK(metadata.st_mode) or bool(
                 getattr(metadata, "st_file_attributes", 0)

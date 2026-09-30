@@ -15,6 +15,26 @@ from watcherobot.runtime.repository import (
 from watcherobot.runtime.daemon.instance import RuntimeAlreadyRunningError
 
 
+def test_unreadable_subtree_cannot_produce_a_verification_receipt(tmp_path, monkeypatch):
+    from watcherobot.runtime import bundle_verification
+
+    source = tmp_path / "source"
+    nested = source / "dependencies"
+    nested.mkdir(parents=True)
+    (nested / "runtime.bin").write_bytes(b"runtime")
+    original = os.scandir
+
+    def restricted_scandir(path):
+        if Path(path) == nested:
+            raise PermissionError("dependency tree unavailable")
+        return original(path)
+
+    monkeypatch.setattr(os, "scandir", restricted_scandir)
+    assert bundle_verification.tree_stamp(source) is None
+    with pytest.raises(PermissionError, match="dependency tree unavailable"):
+        bundle_digest(source)
+
+
 def test_unchanged_publication_does_not_reread_bundle_contents(tmp_path, monkeypatch):
     from watcherobot.runtime import repository
 
