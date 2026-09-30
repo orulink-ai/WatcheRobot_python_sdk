@@ -8,7 +8,7 @@
 
 ## 约定
 
-SDK 应用运行入口 ensure_runtime 也委托共享管理器，删除独立的 Popen 和 10 秒轮询路径。已有实例直接复用；没有实例时使用已保存的启动器或当前 SDK Python，由同一管理器负责并发锁、就绪确认、失败进程清理及启动指针。Windows 使用当前 Python 和隐藏进程标志，不额外改用 pythonw 解释器。显式 daemon start 的版本切换策略与应用运行的复用策略保持分离。
+SDK 应用运行入口 ensure_runtime 也委托共享管理器，删除独立的 Popen 和 10 秒轮询路径。显式 SDK 启动比较实际 sdk_version：同版本复用，不同版本停止旧进程并启动当前 SDK Python，由同一管理器负责并发锁、就绪确认、失败进程清理及启动指针。Windows 使用当前 Python 和隐藏进程标志，不额外改用 pythonw 解释器。SDK 自动启动与 daemon start 使用相同版本选择策略；被动观察及断线重连不重新激活。
 
 冻结 Runtime 管理器激活自身可执行文件时，在当前已成功加载的进程中计算候选身份，避免重复启动 onefile 解压进程；其他可执行文件仍单独启动校验。候选与实际 Daemon 继续计算完整资源摘要，并在就绪时比较 build_id，校验失败不提交启动指针。桌面应独立呈现启动中、启动失败及断线重连，不应在后台轮询中反复接管。
 
@@ -18,7 +18,7 @@ SDK 应用运行入口 ensure_runtime 也委托共享管理器，删除独立的
 | --- | --- | --- |
 | SDK 共享管理模块 | 实例锁、启动记录、Runtime 发布与切换、失败恢复、引用登记与目录回收 | 桌面安装器和 UI |
 | SDK Daemon | 唯一常驻实例，管理 Application 进程、连接和透明路由 | 随业务类型绕过 Application |
-| SDK 开发/分发工具 | 创建下载源码、安装独立依赖、登记项目、调用共享管理模块 | 为每个项目另起 Daemon或自动抢占运行版本 |
+| SDK 开发/分发工具 | 创建下载源码、安装独立依赖、登记项目、调用共享管理模块 | 为每个项目另起 Daemon或在被动重连时抢占运行版本 |
 | 桌面端 | 构建锁定 SDK 候选、显示状态、调用 SDK 管理/分发能力、处理 OTA 前置检查 | 维护第二份 Daemon、递归删除用户数据、实现另一套清理规则 |
 | Application | 使用自己的 SDK 环境处理业务和注入通道 | 管理常驻 Daemon 或直接依赖内部 Runtime 存储路径 |
 
@@ -27,9 +27,9 @@ SDK 应用运行入口 ensure_runtime 也委托共享管理器，删除独立的
 ## 启动、联调、切换
 
 - SDK 与桌面任意先后启动，显式启动时同 SDK 版本直接复用，不同版本停止当前应用和旧 Daemon，切换到请求方提供的版本（允许降级）。同版本即使路径、提交不同也不重启。生命周期操作使用 operation.lock，Daemon 自身持有实例锁；多个启动请求不会得到多个健康实例。
-- 首次启动成功保存 current-launcher.json。普通 app run 冷启动使用记录的启动器；桌面首次启动和 SDK daemon start 选择请求方候选。同版本复用不更新启动记录。
+- 首次启动成功保存 current-launcher.json。普通 app run、SDK daemon start 和桌面首次启动选择请求方候选。同版本复用不更新启动记录。
 - SDK 项目仍用自己的 Python 环境开发应用。CLI 将应用目录和解释器注册给共享 Daemon，由它创建、停止 Application 进程。
-- 修改 Daemon 源码但版本号未变时，执行 `watcherobot daemon activate` 强制重载，它会停止当前应用；普通 daemon start 同版本直接复用。Desktop 安装或更新内置 Runtime 后，只要目标 `build_id` 与运行实例不同，即使 `sdk_version` 相同，也必须显式执行 `daemon activate`。`build_id` 用于候选构建确认和 Desktop 更新判定，不改变普通 SDK 启动的版本复用策略。
+- 修改 Daemon 源码但版本号未变时，执行 `watcherobot daemon activate` 强制重载，它会停止当前应用；普通 daemon start 同版本直接复用。桌面启动同样按 sdk_version 复用，不再因 build_id 不同自动强制重载；build_id 用于候选就绪确认。需要加载同版本源码修改时由开发者明确执行 daemon activate。
 - 用户正常退出桌面时先释放本客户端登记；只有最后一个登记客户端退出才停止当前 Application 和共享 Daemon，包括 SDK 启动的实例。后台等待完成再退出，失败保留窗口提示重试。SDK 单独使用可执行 `watcherobot daemon stop`。强杀桌面、崩溃或断电不能保证退出回调执行。不要删除仍被记录的项目虚拟环境，先切换到其他有效启动器。
 
 本地注册通过用户实例目录中的一次性文件精确授权目录与解释器，HTTP 请求不能凭空声明任意启动路径。默认应用配置仅传递白名单环境变量。这不是对同一操作系统用户的安全沙箱。
@@ -145,6 +145,10 @@ SDK 负责版本判定、操作锁、实例锁、应用停止、进程退出等�
 Windows OTA 的下载失败不停止现有 Runtime；`prepare-update` 为每次更新返回专属 token，只有持有同一 token 的 `cancel-update` 才能解除排空，避免一个桌面取消另一个桌面的更新。Daemon 进入关机流程后 token 立即失效，取消更新不能重新开放 Application 启动入口。安装失败恢复桌面退出状态，后续由用户重试。操作系统强制终止桌面不等同于正常退出，不能保证执行停止回调。
 
 ## 启动就绪与端口监听
+
+Daemon 初始化维护接口时不加载 PyAV/FFmpeg；只有 Creator 音频转换入口加载音频依赖，转换能力仍随冻结 Runtime 打包。签名后的 macOS arm64 单文件 Runtime 在本机隔离测试中，旧版就绪耗时 32.28 秒，按需加载后的首次就绪为 6.17 秒；完整安装包验收另由 Desktop 记录。
+
+桌面启动取消标记通过 WATCHER_RUNTIME_CANCEL_FILE 传递给资源发布和激活管理命令。发布过程在等待操作锁、遍历文件、分块哈希、逐文件复制和提交目录前检查取消；取消会清理本次 staging，不发布半成品。独立候选预检期间也检查取消并清理本次候选进程树；预检失败或取消不停止原有服务。Desktop 必须在准备资源之前登记取消标记，并在退出时等待本次激活完成清理，即使其他 Desktop 仍持有共享服务登记。取消不是业务帧路由的一部分。
 
 Windows 后台 Daemon、失败恢复和安装维护守卫统一使用 `CREATE_NO_WINDOW`，标准输出与错误仍写入日志。不得叠加 `DETACHED_PROCESS`，该标志会让 Windows 忽略隐藏控制台设置，虚拟环境转发到子 Python 时可能弹出黑窗。macOS/Linux 保持独立会话。此策略同时供源码和 SDK 冻结安装包使用，已有进程需要重新启动才会生效。
 

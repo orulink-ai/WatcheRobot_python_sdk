@@ -28,7 +28,7 @@ def _write_application(root: Path) -> Path:
     return root.resolve()
 
 
-def test_activate_shared_forces_requested_build_and_state_root(
+def test_activate_shared_selects_version_without_forcing_same_version_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from watcherobot.runtime import manager
@@ -43,7 +43,7 @@ def test_activate_shared_forces_requested_build_and_state_root(
 
     assert ensure.call_args.kwargs == {
         "activate": True,
-        "force": True,
+        "force": False,
         "state_root": state_root,
     }
 
@@ -622,6 +622,8 @@ def test_cli_preserves_source_default_launcher_through_application_launcher(
             str(application_root),
             "--source-default-launcher",
             str(virtualenv_python),
+            "--instance-root",
+            str(tmp_path / "instance"),
         ]
     )
 

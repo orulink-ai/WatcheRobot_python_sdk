@@ -5,10 +5,15 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 
+from watcherobot.runtime.stdio import configure_runtime_stdio
+from watcherobot.runtime.windows_paths import configure_frozen_native_paths
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Route the frozen executable to the Daemon or maintenance tooling."""
 
+    configure_runtime_stdio()
+    configure_frozen_native_paths()
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "--maintenance-esptool":
         try:

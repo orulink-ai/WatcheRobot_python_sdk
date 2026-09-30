@@ -14,6 +14,7 @@ from .daemon.instance import RuntimeInstanceLock, default_runtime_instance_root
 from .manager import _stop_and_wait
 from .repository import operation_lock
 from .background_process import background_process_options
+from .windows_paths import native_executable_options
 
 _GUARD_START_TIMEOUT_SECONDS = 150.0
 _GUARD_CANCEL_WAIT_SECONDS = 125.0
@@ -67,6 +68,7 @@ def begin_installation(pid: int, handshake: Path) -> None:
     command.extend(["--guard-installation", str(pid), str(handshake)])
     environment = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
     options = background_process_options()
+    options.update(native_executable_options(command))
     with (handshake / "guard.log").open("ab") as log:
         process = subprocess.Popen(
             command,

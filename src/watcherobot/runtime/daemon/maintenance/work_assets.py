@@ -11,8 +11,6 @@ from io import BytesIO
 from pathlib import PurePosixPath
 from typing import Any
 
-import av
-from av.audio.resampler import AudioResampler
 from PIL import Image, ImageSequence, UnidentifiedImageError
 
 
@@ -162,6 +160,11 @@ def _animation_payload(source: bytes) -> bytes:
 
 
 def _audio_payload(source: bytes) -> bytes:
+    # Loading FFmpeg can be expensive in signed frozen macOS processes. Only
+    # Creator audio conversion needs it; Daemon readiness and images do not.
+    import av
+    from av.audio.resampler import AudioResampler
+
     output = bytearray()
     try:
         with av.open(BytesIO(source), mode="r") as container:

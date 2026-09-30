@@ -119,8 +119,9 @@ def test_real_version_takeover_and_downgrade(tmp_path, monkeypatch):
         assert ensure_command(old, activate=True) is False
         first = cli._live_runtime_state()
         monkeypatch.setenv("PYTHONPATH", str(source))
-        assert ensure_command(current, activate=True) is False
-        second = cli._live_runtime_state()
+        # SDK starts after the Desktop-like older launcher and must select its own version.
+        second, reused = cli.ensure_runtime()
+        assert reused is False
         assert first.pid != second.pid
         assert (
             cli._request_json(second.control_url, "/daemon/status")["runtime"][
@@ -150,6 +151,7 @@ def test_ensure_runtime_with_custom_state_root_and_ephemeral_ports(
     state_root = tmp_path / "custom-state"
     instance_root = tmp_path / "instance"
     monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(instance_root))
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2] / "src"))
     try:
         state, reused = cli.ensure_runtime(
