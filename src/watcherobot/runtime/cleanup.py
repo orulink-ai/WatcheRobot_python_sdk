@@ -149,7 +149,12 @@ def process_references() -> list[Path] | None:
                 continue
             values = [process.exe(), process.cwd(), *process.cmdline()]
             values.extend(item.path for item in process.open_files())
-            values.extend(item.path for item in process.memory_maps())
+            memory_maps = getattr(process, "memory_maps", None)
+            if memory_maps is None:
+                # macOS psutil cannot enumerate mappings. Preserve bundles when
+                # liveness cannot be established rather than failing installation.
+                return None
+            values.extend(item.path for item in memory_maps())
             paths.extend(Path(value) for value in values if Path(value).is_absolute())
             executable = Path(process.exe())
             for root in (executable.parent, executable.parent.parent):

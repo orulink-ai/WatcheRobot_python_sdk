@@ -584,6 +584,7 @@ def test_cli_preserves_source_default_launcher_through_application_launcher(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path / "instance"))
     application_root = _write_application(
         tmp_path / "workspace" / "WatcheRobot_server"
     )

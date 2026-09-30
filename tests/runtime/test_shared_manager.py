@@ -147,6 +147,8 @@ def test_real_version_takeover_and_downgrade(tmp_path, monkeypatch):
 def test_ensure_runtime_with_custom_state_root_and_ephemeral_ports(
     tmp_path, monkeypatch
 ):
+    # Ephemeral instances must not probe the user's default control endpoint.
+    monkeypatch.setenv("WATCHER_RUNTIME_CONTROL_PORT", "0")
     state_root = tmp_path / "custom-state"
     instance_root = tmp_path / "instance"
     monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(instance_root))
