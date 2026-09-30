@@ -17,6 +17,7 @@ from functools import lru_cache
 from pathlib import Path
 from collections.abc import Callable, Iterator
 from typing import Any
+from .cancellation import check_cancelled
 
 
 @lru_cache(maxsize=1)
@@ -74,6 +75,7 @@ def bundle_paths(root: Path) -> Iterator[Path]:
     with os.scandir(root) as entries:
         children = sorted(entries, key=lambda entry: entry.name)
     for entry in children:
+        check_cancelled()
         path = Path(entry.path)
         yield path
         metadata = entry.stat(follow_symlinks=False)

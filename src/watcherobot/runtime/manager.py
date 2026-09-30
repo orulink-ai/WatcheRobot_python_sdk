@@ -18,19 +18,10 @@ from .repository import operation_lock
 from .cleanup import cleanup_after
 from .background_process import CREATE_NO_WINDOW, background_process_options
 from .windows_paths import native_executable_options
-
-
-class RuntimeActivationCancelled(RuntimeError):
-    """The requesting launcher explicitly cancelled its pending activation."""
+from .cancellation import RuntimeActivationCancelled, check_cancelled as _check_activation_cancelled
 
 
 _ROLLBACK_READINESS_TIMEOUT_SECONDS = 60.0
-
-
-def _check_activation_cancelled() -> None:
-    marker = os.environ.get("WATCHER_RUNTIME_CANCEL_FILE")
-    if marker and Path(marker).exists():
-        raise RuntimeActivationCancelled("Runtime activation cancelled by launcher")
 
 
 def describe_command(
@@ -54,7 +45,7 @@ def describe_command(
         options["creationflags"] = CREATE_NO_WINDOW
     options.update(native_executable_options(command))
     try:
-        result = subprocess.run(
+        result = _run_validation(
             [*command, "--check-runtime"],
             capture_output=True,
             text=True,
@@ -75,6 +66,35 @@ def describe_command(
     ):
         raise ValueError("Candidate Runtime did not report a valid build identity")
     return identity
+
+
+def _run_validation(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
+    """Allow a Desktop to cancel validation without interrupting the live service."""
+    if not os.environ.get("WATCHER_RUNTIME_CANCEL_FILE"):
+        return subprocess.run(command, **options)
+    _check_activation_cancelled()
+    timeout = options.pop("timeout")
+    options.pop("check")
+    options.pop("capture_output")
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **options)
+    tree = _SpawnedProcessTree(process)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            _check_activation_cancelled()
+            tree.refresh()
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                stdout, stderr = process.communicate(timeout=0.05)
+                if process.returncode:
+                    raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+                return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                continue
+    except BaseException:
+        _terminate_process_tree(process, tree)
+        raise
 
 
 def stop_shared_runtime(state_root: Path | None = None) -> None:

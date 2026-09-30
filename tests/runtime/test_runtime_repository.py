@@ -231,7 +231,8 @@ def test_windows_bundle_copy_uses_extended_paths(tmp_path: Path, monkeypatch) ->
     extended_prefix = chr(92) * 2 + "?" + chr(92)
     assert str(captured[0][0]).startswith(extended_prefix)
     assert str(captured[0][1]).startswith(extended_prefix)
-    assert captured[1] == {"symlinks": True}
+    assert captured[1]["symlinks"] is True
+    assert callable(captured[1]["copy_function"])
 
 
 def test_windows_bundle_cleanup_uses_extended_path(tmp_path: Path, monkeypatch) -> None:

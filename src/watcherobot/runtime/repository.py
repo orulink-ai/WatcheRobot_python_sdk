@@ -16,6 +16,7 @@ from pathlib import Path
 from collections.abc import Iterator
 
 from .bundle_verification import bundle_paths, remember, verified_digest
+from .cancellation import check_cancelled
 
 from .daemon.instance import (
     RuntimeAlreadyRunningError,
@@ -41,10 +42,17 @@ def _windows_extended_path(path: Path) -> str | Path:
 
 
 def _copy_bundle(source: Path, destination: Path) -> None:
+    def copy_file(src: str, dst: str) -> str:
+        check_cancelled()
+        result = shutil.copy2(src, dst)
+        check_cancelled()
+        return result
+
     shutil.copytree(
         _windows_extended_path(source),
         _windows_extended_path(destination),
         symlinks=True,
+        copy_function=copy_file,
     )
 
 
@@ -64,6 +72,7 @@ def operation_lock(root: Path | None = None, *, timeout: float = 30) -> Iterator
     )
     deadline = time.monotonic() + timeout
     while True:
+        check_cancelled()
         try:
             lock.acquire()
             break
@@ -82,6 +91,7 @@ def bundle_digest(root: Path) -> str:
     root = Path(_windows_extended_path(root))
     digest = hashlib.sha256(b"watcher-runtime-bundle-v2\0")
     for path in sorted(bundle_paths(root)):
+        check_cancelled()
         if path.is_symlink():
             target = os.readlink(path)
             if Path(target).is_absolute() or not path.resolve(
@@ -109,6 +119,7 @@ def bundle_digest(root: Path) -> str:
             digest.update(path.stat().st_size.to_bytes(8, "big"))
             with path.open("rb") as stream:
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    check_cancelled()
                     digest.update(block)
     return digest.hexdigest()
 
@@ -136,11 +147,13 @@ def prepare_bundle(source: Path, repository: Path | None = None) -> Path:
         published_staging = _published_path(staging)
         try:
             _copy_bundle(source, staging)
+            check_cancelled()
             staged_identity, staged_stamp = verified_digest(published_staging, cache, bundle_digest)
             if staged_identity != identity:
                 raise ValueError("Staged Runtime integrity check failed")
             # copytree preserves source timestamps; grace must start at publication.
             os.utime(published_staging, None)
+            check_cancelled()
             os.replace(published_staging, published_target)
             remember(published_target, cache, identity, staged_stamp)
         finally:
