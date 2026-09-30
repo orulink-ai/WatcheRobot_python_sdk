@@ -7,7 +7,7 @@ import ntpath
 import os
 import sys
 from types import ModuleType
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Sequence, TypedDict
 
 if TYPE_CHECKING:
     from importlib.abc import MetaPathFinder
@@ -25,7 +25,11 @@ def _extended_path(path: str) -> str:
     return "\\\\?\\" + path
 
 
-def native_executable_options(command: Sequence[str]) -> dict[str, str]:
+class NativeExecutableOptions(TypedDict, total=False):
+    executable: str
+
+
+def native_executable_options(command: Sequence[str]) -> NativeExecutableOptions:
     """Pass lpApplicationName explicitly; Windows otherwise limits argv[0]."""
     if os.name == "nt" and command and ntpath.isabs(command[0]):
         return {"executable": _extended_path(command[0])}

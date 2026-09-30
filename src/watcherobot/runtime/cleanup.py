@@ -147,9 +147,14 @@ def process_references() -> list[Path] | None:
         try:
             if process.username() != username:
                 continue
+            memory_maps = getattr(process, "memory_maps", None)
+            if not callable(memory_maps):
+                # macOS psutil has no mapping API. Incomplete visibility must
+                # defer collection, not fail startup or delete possibly live files.
+                return None
             values = [process.exe(), process.cwd(), *process.cmdline()]
             values.extend(item.path for item in process.open_files())
-            values.extend(item.path for item in process.memory_maps())
+            values.extend(item.path for item in memory_maps())
             paths.extend(Path(value) for value in values if Path(value).is_absolute())
             executable = Path(process.exe())
             for root in (executable.parent, executable.parent.parent):

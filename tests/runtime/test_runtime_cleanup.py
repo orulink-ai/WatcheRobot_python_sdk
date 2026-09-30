@@ -4,6 +4,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +17,32 @@ def version(root, name):
     (path / "python.exe").write_bytes(b"test")
     os.utime(path, (1, 1))
     return path
+
+
+def test_missing_memory_maps_defers_cleanup_without_failing_launch(tmp_path, monkeypatch):
+    monkeypatch.setenv("WATCHER_RUNTIME_INSTANCE_ROOT", str(tmp_path))
+    old = version(tmp_path / "bundles", "a")
+    process = SimpleNamespace(
+        pid=123,
+        username=lambda: "runtime-test-user",
+        exe=lambda: str(tmp_path / "python"),
+        cwd=lambda: str(tmp_path),
+        cmdline=lambda: [],
+        open_files=lambda: [],
+    )
+    # psutil omits memory_maps entirely on macOS, rather than raising on call.
+    monkeypatch.setattr(cleanup.psutil, "Process", lambda: process)
+    monkeypatch.setattr(cleanup.psutil, "process_iter", lambda: iter([process]))
+
+    @cleanup.cleanup_after
+    def launch():
+        return "ready"
+
+    assert launch() == "ready"
+    report = cleanup.collect_runtime_garbage()
+    assert report["deleted"] == []
+    assert "Process references unavailable" in report["error"]
+    assert old.exists()
 
 
 def test_publication_grace_starts_now_not_at_source_mtime(tmp_path, monkeypatch):

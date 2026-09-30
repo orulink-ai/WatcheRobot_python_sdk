@@ -15,6 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from collections.abc import Iterator
 
+from .bundle_verification import remember, verified_digest
+
 from .daemon.instance import (
     RuntimeAlreadyRunningError,
     RuntimeInstanceLock,
@@ -121,11 +123,12 @@ def prepare_bundle(source: Path, repository: Path | None = None) -> Path:
     if root == source or root.is_relative_to(source):
         raise ValueError("Runtime repository must be outside its source")
     with operation_lock(root):
-        identity = bundle_digest(source)
+        cache = _published_path(root / ".verification")
+        identity, _ = verified_digest(_published_path(source), cache, bundle_digest)
         target = root / identity
         published_target = _published_path(target)
         if published_target.exists():
-            if bundle_digest(published_target) != identity:
+            if verified_digest(published_target, cache, bundle_digest)[0] != identity:
                 raise ValueError("Published Runtime integrity check failed")
             os.utime(published_target, None)
             return published_target
@@ -133,11 +136,13 @@ def prepare_bundle(source: Path, repository: Path | None = None) -> Path:
         published_staging = _published_path(staging)
         try:
             _copy_bundle(source, staging)
-            if bundle_digest(published_staging) != identity:
+            staged_identity, staged_stamp = verified_digest(published_staging, cache, bundle_digest)
+            if staged_identity != identity:
                 raise ValueError("Staged Runtime integrity check failed")
             # copytree preserves source timestamps; grace must start at publication.
             os.utime(published_staging, None)
             os.replace(published_staging, published_target)
+            remember(published_target, cache, identity, staged_stamp)
         finally:
             if published_staging.exists():
                 _remove_bundle(staging)
