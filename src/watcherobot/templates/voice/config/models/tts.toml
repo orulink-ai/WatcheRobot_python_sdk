@@ -1,0 +1,5 @@
+schema_version = 1
+provider = "volcengine"
+resource_id = "seed-tts-2.0"
+voice_id = "zh_female_vv_uranus_bigtts"
+timeout = 45
