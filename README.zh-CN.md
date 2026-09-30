@@ -17,7 +17,7 @@
 
 - 已安装 Python 3.10–3.12（推荐 3.11）；
 - 首次蓝牙配网使用 Windows 或 macOS；
-- 硬件步骤需要机器人在身边并保持开机；没有机器人时，仍可离线创建并运行示例 Application；
+- 硬件步骤需要机器人在身边并保持开机；没有机器人时，仍可离线创建并运行基础 Application；
 - 配对时电脑和机器人处于同一 Wi-Fi 网络。
 
 ### 1. 安装 SDK
@@ -95,15 +95,15 @@ watcherobot robot status
 以下命令逐行执行，兼容 Windows PowerShell 5.1、PowerShell 7 和 macOS/Linux Shell：
 
 ```powershell
-watcherobot app init hello_robot
-cd hello_robot
+watcherobot app init my_app
+cd my_app
 watcherobot app run
 ```
 
 初始化器会生成：
 
 ```text
-hello_robot/
+my_app/
 ├─ app.json     # Application 身份、版本和依赖
 ├─ app.py       # 受管 Application 入口
 ├─ README.md    # 生成项目的使用说明
@@ -111,33 +111,34 @@ hello_robot/
 └─ .gitignore
 ```
 
-`watcherobot app run` 会通过 Runtime/Daemon 启动项目。终端会输出 Application 问候；
-连接兼容机器人后还会播放一次 `happy` 行为。没有机器人时，Application 会继续以离线模式
-运行并提示连接方法。
+`watcherobot app run` 通过 Runtime/Daemon 启动项目，输出启动日志并等待停止。
+基础应用不内置设备演示；在 app.py 中编写自己的应用逻辑。
 
 必须使用 `watcherobot app run`，不要直接运行 `python app.py`：Application 需要由
 Daemon 注入 Device channel 和 Desktop channel。配对或连接失败时参见
 [故障排查](docs/troubleshooting.md)。
 
-### 4. 理解并修改示例
+### 4. 选择模板并开发
 
-第 3 步生成的 `hello_robot/app.py` 就是下面这段代码。在 `hello_robot` 目录修改文件后，
-重新执行 `watcherobot app run` 即可看到变化：
+`watcherobot app init my_app`（或显式指定 `--template base`）生成五文件基础应用。
+编辑 `my_app/app.py`，停止后重新运行即可应用修改。
+`ApplicationContext.from_environment()` 获取 Runtime 注入的受管上下文。
+可运行的演示应用另见 [examples](examples/README.md)。
 
-```python
-import asyncio
+需要语音功能时，直接选择语音模板创建另一个项目：
 
-from watcherobot.application import ApplicationContext
-
-
-async def main() -> None:
-    async with ApplicationContext.from_environment() as app:
-        job = await asyncio.to_thread(app.robot.behavior.play, "happy")
-        await asyncio.to_thread(job.wait, 20.0)
-
-
-asyncio.run(main())
+```powershell
+watcherobot app init my_voice_app --template voice
+cd my_voice_app
+watcherobot app configure
+# 可选：只配置某一项凭据
+watcherobot app configure --service asr
 ```
+
+配置命令隐藏输入，已有值按回车保留；仅校验本地配置，不调用云服务，也支持直接编辑 TOML。
+按生成的 README 配对和运行。两个模板独立选择，
+无需先创建基础应用再转换。语音模板复用五文件基础结构，增加语音代码、配置、凭据和提示词。
+SDK 的测试和扩展文档不复制到生成工程。
 
 Application 上下文提供 `app.robot`（机器人能力）、`app.desktop`（与 Watcher Desktop
 交换业务消息）和 `app.logger`（Application 日志）。准备正式项目时，可以显式生成稳定元数据：

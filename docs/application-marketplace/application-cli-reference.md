@@ -38,7 +38,8 @@ watcherobot app marketplace --provider huggingface --details
 
 | Command | Purpose | Starts Daemon | Human output |
 | --- | --- | --- | --- |
-| `init` | Create a runnable Hello World project without overwriting an existing path | No | Directory, ID, version, SDK range, and next commands |
+| `init` | Create a minimal base project without overwriting an existing path | No | Directory, ID, version, SDK range, and next commands |
+| `configure [PATH] [--service asr\|llm\|tts]` | Interactively configure template credentials; defaults to the current directory, hides input, preserves existing values on Enter, validates locally without cloud calls; --service limits reading, validation and writes to one service | No | Credential directory and validation result |
 | `check` | Validate `app.json`, `app.py`, SDK compatibility, dependencies, and publishable files | No | Manifest summary |
 | `run` | Select and run a source directory through the SDK Daemon | Yes or reuses it | Start path and final state |
 | `login` | Authorize Hugging Face Device Flow; `--status` checks identity and `--force` replaces a valid login | No | Browser URL, code, expiry, and identity |
