@@ -119,8 +119,9 @@ def test_real_version_takeover_and_downgrade(tmp_path, monkeypatch):
         assert ensure_command(old, activate=True) is False
         first = cli._live_runtime_state()
         monkeypatch.setenv("PYTHONPATH", str(source))
-        assert ensure_command(current, activate=True) is False
-        second = cli._live_runtime_state()
+        # SDK starts after the Desktop-like older launcher and must select its own version.
+        second, reused = cli.ensure_runtime()
+        assert reused is False
         assert first.pid != second.pid
         assert (
             cli._request_json(second.control_url, "/daemon/status")["runtime"][

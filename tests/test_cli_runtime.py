@@ -130,6 +130,7 @@ def test_ensure_runtime_reuses_shared_instance_state_across_private_roots(
         lambda *_args, **_kwargs: pytest.fail("a shared Daemon must not start a second process"),
     )
 
+    monkeypatch.setattr("watcherobot.runtime.manager.describe_command", lambda *_args: {"sdk_version": "0.1.8", "build_id": "same-version"})
     discovered, reused = watcherobot_cli.ensure_runtime(state_root=private_root)
 
     assert reused is True
@@ -182,6 +183,7 @@ def test_ensure_runtime_reuses_environment_isolated_instance(
         lambda *_args, **_kwargs: pytest.fail("the isolated Daemon must be reused"),
     )
 
+    monkeypatch.setattr("watcherobot.runtime.manager.describe_command", lambda *_args: {"sdk_version": "0.1.8", "build_id": "same-version"})
     discovered, reused = watcherobot_cli.ensure_runtime(state_root=tmp_path / "data")
 
     assert reused is True

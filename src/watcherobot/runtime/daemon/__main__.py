@@ -305,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
         ensure_command(
             command + forwarded,
             activate=args.activate_shared,
-            force=args.activate_shared,
+            force=False,
             state_root=args.state_root,
         )
         return 0
