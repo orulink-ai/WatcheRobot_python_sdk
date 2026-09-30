@@ -547,6 +547,8 @@ def _write_runtime(root: Path) -> None:
 def _platform_name() -> str:
     if platform.system() == "Windows":
         return "win32-x64"
+    if platform.system() == "Darwin":
+        return "darwin-arm64"
     return "linux-x64"
 
 

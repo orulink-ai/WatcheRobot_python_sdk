@@ -318,3 +318,14 @@ def test_launcher_rotation_accepts_legacy_and_corrupt_pointer(tmp_path, monkeypa
     save_launcher([str(new / "python.exe")], {})
     assert json.loads(pointer.read_text())["command"] == [str(new / "python.exe")]
     assert json.loads(previous.read_text())["command"] == [str(old / "python.exe")]
+
+
+def test_process_references_defers_when_memory_maps_is_unavailable(monkeypatch):
+    """macOS psutil omits memory_maps; installation must still succeed safely."""
+    from types import SimpleNamespace
+
+    process = SimpleNamespace(pid=123, username=lambda: 'test-user', exe=lambda: '/test/python',
+                              cwd=lambda: '/test', cmdline=lambda: [], open_files=lambda: [])
+    monkeypatch.setattr(cleanup.psutil, 'Process', lambda: process)
+    monkeypatch.setattr(cleanup.psutil, 'process_iter', lambda: iter([process]))
+    assert cleanup.process_references() is None

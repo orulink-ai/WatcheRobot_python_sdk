@@ -27,6 +27,7 @@ _EXCLUDED_DIRECTORY_NAMES = frozenset(
         ".vscode",
         "__pycache__",
         "build",
+        "credentials",
         "dist",
         "env",
         "venv",
