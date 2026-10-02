@@ -15,7 +15,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from watcherobot import __version__
 from watcherobot.runtime.daemon.application.runtime import ApplicationStartError
@@ -25,6 +25,7 @@ from watcherobot.runtime.daemon.application.manifest import (
 )
 from watcherobot.runtime.daemon.application.session import (
     ApplicationNotSelectedError,
+    ApplicationSelectionChangedError,
     SessionOccupiedError,
 )
 from watcherobot.runtime.daemon.pairing.session import PairingSessionError
@@ -61,6 +62,12 @@ class SelectApplicationRequest(BaseModel):
     application_dir: str
     launcher: ApplicationLauncherRequest
     local_registration: str | None = None
+
+
+class UnselectApplicationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    application_id: str = Field(min_length=1)
 
 
 class CancelUpdateRequest(BaseModel):
@@ -168,6 +175,9 @@ class ApplicationController(Protocol):
 
     def commit_application_selection(self, prepared: tuple[Any, Any]) -> None:
         """Commit a prepared selection on the control event loop."""
+
+    def unselect_application(self, application_id: str) -> None:
+        """Clear only this idle selection, preserving the Daemon and peers."""
 
     def request_shutdown(self) -> None:
         """Ask the owning Runtime process to stop cleanly."""
@@ -420,6 +430,26 @@ class DaemonControlAPI:
                 )
             finally:
                 authorized_launch.reset(token)
+            return self._status_response()
+
+        @app.post("/daemon/application/unselect")
+        async def unselect_application(request: UnselectApplicationRequest) -> Any:
+            if self._draining:
+                return JSONResponse(status_code=409, content={"error": "runtime_draining"})
+            if self._starting_requests:
+                return JSONResponse(status_code=409, content={"error": "application_occupied"})
+            try:
+                # No await between the idle check and mutation. Start/stop and
+                # selection commits also execute on this control event loop.
+                self._controller.unselect_application(request.application_id)
+            except SessionOccupiedError as exc:
+                return JSONResponse(status_code=409, content={
+                    "error": "application_occupied", "message": str(exc),
+                })
+            except ApplicationSelectionChangedError as exc:
+                return JSONResponse(status_code=409, content={
+                    "error": "application_selection_changed", "message": str(exc),
+                })
             return self._status_response()
 
         @app.post("/daemon/stop", status_code=202)

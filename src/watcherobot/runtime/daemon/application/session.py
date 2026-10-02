@@ -33,6 +33,10 @@ class SessionOccupiedError(ApplicationSessionError):
     """Raised when the single runtime or channel slot is already occupied."""
 
 
+class ApplicationSelectionChangedError(ApplicationSessionError):
+    """Raised when a caller tries to clear a different Application selection."""
+
+
 class InvalidRunCredentialError(ApplicationSessionError):
     """Raised when a channel doesn't belong to the current Application run."""
 
@@ -69,6 +73,15 @@ class ApplicationSessionRegistry:
         if not normalized_app_id:
             raise ValueError("app_id must not be empty")
         self._current_app = normalized_app_id
+
+    def clear_current_app(self, expected_app_id: str) -> None:
+        if self._active_run is not None:
+            raise SessionOccupiedError(
+                "current app cannot change while an Application session exists"
+            )
+        if self._current_app is not None and self._current_app != expected_app_id:
+            raise ApplicationSelectionChangedError("Application selection has changed")
+        self._current_app = None
 
     def begin_start(self) -> ApplicationRun:
         if self._active_run is not None:
