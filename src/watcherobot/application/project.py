@@ -7,11 +7,17 @@ import re
 import shutil
 import tempfile
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
 
 from watcherobot import __version__
+from watcherobot.application.templates import (
+    DEFAULT_TEMPLATE,
+    copy_template_files,
+    get_template,
+)
 from watcherobot.runtime.daemon.application.manifest import (
     ApplicationManifest,
     ApplicationManifestError,
@@ -19,64 +25,8 @@ from watcherobot.runtime.daemon.application.manifest import (
 )
 
 
-_INITIAL_APPLICATION_VERSION = "0.1.0"
-_ICON_PATH = "icon.svg"
-_DEFAULT_PROJECT_SLUG = "hello_robot"
+_DEFAULT_PROJECT_SLUG = "my_app"
 _LOCAL_APPLICATION_ID_PREFIX = "local."
-_APP_TEMPLATE = '''"""WatcheRobot Application entrypoint."""
-
-import asyncio
-
-from watcherobot.application import ApplicationContext
-
-
-async def main() -> None:
-    async with ApplicationContext.from_environment() as app:
-        app.logger.info("Hello, WatcheRobot! Your first Application worked.")
-        if not app.robot.supports("behavior"):
-            app.logger.info(
-                "No compatible robot is connected, so the happy behavior was "
-                "skipped. Run 'watcherobot robot setup' to connect one."
-            )
-            return
-
-        job = await asyncio.to_thread(
-            app.robot.behavior.play,
-            "happy",
-            repeat=1,
-        )
-        await asyncio.to_thread(job.wait, 20.0)
-        app.logger.info("The robot played the happy behavior.")
-
-
-asyncio.run(main())
-'''
-_ICON_TEMPLATE = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#121826"/>
-  <rect x="96" y="128" width="320" height="288" rx="96" fill="#4da3ff"/>
-  <circle cx="192" cy="256" r="32" fill="#ffffff"/>
-  <circle cx="320" cy="256" r="32" fill="#ffffff"/>
-  <path d="M176 336c48 32 112 32 160 0" fill="none" stroke="#ffffff"
-        stroke-width="24" stroke-linecap="round"/>
-  <path d="M256 80v48" stroke="#4da3ff" stroke-width="24"
-        stroke-linecap="round"/>
-  <circle cx="256" cy="64" r="24" fill="#4da3ff"/>
-</svg>
-"""
-_GITIGNORE_TEMPLATE = """__pycache__/
-*.py[cod]
-.venv/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-build/
-dist/
-*.egg-info/
-.env
-.env.*
-!.env.example
-"""
-
 
 class ApplicationProjectInitError(RuntimeError):
     """Raised when a new project cannot be validated or created safely."""
@@ -127,7 +77,7 @@ def default_application_project_metadata(
     if not slug:
         slug = _DEFAULT_PROJECT_SLUG
     display_name = re.sub(r"[-_]+", " ", project_name).strip()
-    display_name = display_name.title() or "Hello Robot"
+    display_name = display_name.title() or "My App"
     return ApplicationProjectDefaults(
         app_id=f"{_LOCAL_APPLICATION_ID_PREFIX}{slug}",
         name=display_name,
@@ -145,10 +95,15 @@ def init_application_project(
     description: str,
     supported_host_platforms: list[str],
     watcherobot_version: str | None = None,
+    template: str = DEFAULT_TEMPLATE,
 ) -> ApplicationProjectInitResult:
     """Create one new publish-ready project without overwriting a target."""
 
     target = Path(directory).resolve()
+    try:
+        selected_template = get_template(template)
+    except ValueError as exc:
+        raise ApplicationProjectInitError(str(exc)) from exc
     if target.exists():
         raise ApplicationProjectInitError(f"Target already exists: {target}")
 
@@ -199,6 +154,8 @@ def init_application_project(
             author=metadata.author,
             description=metadata.description,
         )
+        if selected_template.customize is not None:
+            selected_template.customize(staging)
         ApplicationManifest.load(
             staging,
             watcherobot_version=sdk_version,
@@ -219,6 +176,11 @@ def init_application_project(
         raise ApplicationProjectInitError(
             f"Unable to create Application project: {target}"
         ) from exc
+    except BaseException:
+        # Template code and user interrupts must not leave a partial scaffold.
+        # Preserve the original exception, including KeyboardInterrupt.
+        _remove_staging(staging)
+        raise
 
     files = tuple(sorted(path.name for path in target.iterdir()))
     return ApplicationProjectInitResult(
@@ -255,18 +217,19 @@ def _manifest_document(
     requires_watcherobot: str,
     supported_host_platforms: list[str],
 ) -> bytes:
-    payload = {
-        "schema_version": 2,
+    payload = json.loads(
+        files("watcherobot")
+        .joinpath("templates/base/app.json")
+        .read_text(encoding="utf-8")
+    )
+    payload.update({
         "id": app_id.strip(),
         "name": name.strip(),
-        "version": _INITIAL_APPLICATION_VERSION,
         "requires_watcherobot": requires_watcherobot,
-        "dependencies": [],
         "supported_host_platforms": supported_host_platforms,
         "description": description,
         "author": author,
-        "icon": _ICON_PATH,
-    }
+    })
     return (
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     ).encode("utf-8")
@@ -281,52 +244,15 @@ def _write_project_files(
     author: str,
     description: str,
 ) -> None:
+    copy_template_files("base", root)
     root.joinpath("app.json").write_bytes(manifest_document)
-    root.joinpath("app.py").write_text(_APP_TEMPLATE, encoding="utf-8")
-    root.joinpath("icon.svg").write_text(_ICON_TEMPLATE, encoding="utf-8")
-    root.joinpath(".gitignore").write_text(
-        _GITIGNORE_TEMPLATE,
-        encoding="utf-8",
-    )
-    root.joinpath("README.md").write_text(
-        _readme(
-            name=name,
-            app_id=app_id,
-            author=author,
-            description=description,
+    readme = root / "README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8").format(
+            name=name, app_id=app_id, author=author, description=description,
         ),
         encoding="utf-8",
     )
-
-
-def _readme(
-    *,
-    name: str,
-    app_id: str,
-    author: str,
-    description: str,
-) -> str:
-    return f"""# {name}
-
-{description}
-
-- Application ID: `{app_id}`
-- Author: {author}
-
-## Develop
-
-```powershell
-watcherobot robot setup  # first robot only
-watcherobot robot status
-watcherobot app run
-watcherobot app check .
-watcherobot app publish .
-```
-
-The generated `app.py` always logs a Hello World success. With a compatible
-robot connected, it also plays the `happy` behavior once. Run it through the
-SDK Runtime; do not execute `app.py` directly.
-"""
 
 
 def _remove_staging(staging: Path) -> None:

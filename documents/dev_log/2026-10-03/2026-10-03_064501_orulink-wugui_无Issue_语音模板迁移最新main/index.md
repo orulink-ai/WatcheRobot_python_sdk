@@ -7,7 +7,7 @@
 - 分支：codex/voice-application-template-20261003。
 - 来源：codex/voice-application-template，aa3f652f27620dc8f4afa87044c85d04d1eb7ea7；原 PR：https://github.com/orulink-ai/WatcheRobot_python_sdk/pull/132 。本次未新建 PR。
 - 基线：远端 main=30ad9eaef9d22a89d1b276f6fca5f67b9e9cdd45，已通过本机 gh 账号查询并拉取。
-- 当前状态：迁移进行中，尚未提交。
+- 当前状态：语音核心已提交；模板和配置命令专项通过，准备第二批提交。
 - 规范：SDK 无独立 AGENTS.md、documents/dev_log/README.md 或 temp_log.md；已读取工作区的开发档案规范与模板，档案保存在 SDK 内随代码提交。
 
 ## 背景、范围与验收
@@ -45,3 +45,9 @@
 来源 6085566 已迁移，无冲突；pyproject.toml 自动合并后保留主线 huggingface-hub>=1.32,<2。新增 voice 源码与专项测试逐文件来自原提交，未改业务逻辑。
 
 执行 `.venv-ci/bin/python -m pytest tests/voice/test_asr.py tests/voice/test_catalog.py tests/voice/test_device.py tests/voice/test_providers.py tests/voice/test_runtime.py`：30 passed in 2.34s。`git diff --cached --check` 通过；新增行凭据字面值扫描无供应商长密钥或私钥标记。语音核心准备提交；后续迁移模板与文档后再执行完整开发 CI。
+
+### 2026-10-03｜orulink-wugui / Codex｜模板与配置命令提交前验证
+
+语音核心提交为 6512169。来源 ab65108 已无冲突迁移，CLI 自动合并后保留主线新增入口行为；暂存 diff 仅包含模板初始化和配置命令的原有增量。
+
+执行 `.venv-ci/bin/python -m pytest tests/application/test_project_init.py tests/application/test_templates.py tests/test_app_cli_usability.py tests/voice/test_configuration.py tests/voice/test_configure.py tests/voice/test_template_assets.py`：91 passed in 1.57s。`pip check` 与暂存差异格式检查通过。没有新增密钥，credential-examples 保持空白模板。剩余文档与示例测试将在第三批迁移后做完整回归。
