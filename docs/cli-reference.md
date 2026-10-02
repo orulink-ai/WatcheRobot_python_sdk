@@ -17,7 +17,7 @@ For the JSONL event and error contract used by Desktop, see the
 watcherobot
 ├─ daemon      start | status | stop
 ├─ robot       setup | pair | status
-├─ app         init | check | run | run-installed | start | stop
+├─ app         init | configure | check | run | run-installed | start | stop
 │              login | logout | publish | submit | marketplace
 │              download | install | list | uninstall
 └─ bluetooth   scan | provision | status | clear
@@ -186,7 +186,7 @@ shortcut for directly executing `app.py`.
 
 #### `watcherobot app init [directory]`
 
-Creates a runnable Hello World Application without overwriting an existing
+Creates a minimal base Application without overwriting an existing
 target. When the directory is omitted, an interactive terminal prompts for it.
 That directory is the only interactive question: ID, display name, author, and
 description are generated automatically. For example, `my_app` receives the
@@ -211,8 +211,29 @@ a username, timestamp, or random value. Published apps should use a stable
 team-owned namespace such as `com.example.my_app`.
 
 It creates `app.json`, `app.py`, `README.md`, `icon.svg`, and `.gitignore`.
-The generated `app.py` always logs a Hello World success. When a compatible
-robot is connected, it also plays the `happy` behavior once.
+The generated `app.py` starts a managed Application and waits for shutdown.
+Add your application logic there. Use `--template voice` to extend the base with
+ASR/LLM/TTS configuration and voice conversation code.
+
+#### `watcherobot app configure [directory] [--service asr|llm|tts]`
+
+Configure voice template credentials in an interactive terminal; the directory defaults to the current project.
+Fields follow the existing provider configuration. Input is hidden, and Enter preserves existing values.
+All input and local configuration are validated before saving. Ctrl+C during input leaves files unchanged.
+This command does not start Runtime, connect hardware, or call cloud services. Direct TOML editing remains supported.
+
+```powershell
+watcherobot app configure
+watcherobot app configure ./my_voice_app
+watcherobot app configure --service asr
+watcherobot app configure --service llm
+watcherobot app configure --service tts
+```
+
+Omit `--service` to configure all services. Selecting one reads, validates and updates only that service,
+independently of the other configurations. A successful single-service update does not validate the whole app.
+
+The base template has no credential wizard. Models, voices and prompts remain file-based configuration.
 
 #### `watcherobot app check <directory>`
 

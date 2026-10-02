@@ -104,15 +104,15 @@ Run each command separately so the flow works in Windows PowerShell 5.1,
 PowerShell 7, and macOS/Linux shells:
 
 ```powershell
-watcherobot app init hello_robot
-cd hello_robot
+watcherobot app init my_app
+cd my_app
 watcherobot app run
 ```
 
 The initializer creates:
 
 ```text
-hello_robot/
+my_app/
 ├─ app.json     # Application identity, version, and dependencies
 ├─ app.py       # managed Application entry point
 ├─ README.md    # generated project instructions
@@ -121,35 +121,37 @@ hello_robot/
 ```
 
 `watcherobot app run` starts the project through the Runtime/Daemon. The
-terminal prints the Application greeting; when a compatible robot is
-connected, it also plays the `happy` behavior once. Without a robot, the
-Application continues in offline mode and explains how to connect one.
+terminal reports that the Application started and waits for shutdown. The base
+template has no example behavior; edit `app.py` to implement your application.
 
 Always start an Application with `watcherobot app run`, never with
 `python app.py`: the Daemon must inject the Device and Desktop channels.
 For setup or connection failures, see [troubleshooting](docs/troubleshooting.md).
 
-### 4. Understand and modify the sample
+### 4. Develop from the base template
 
-The generated `hello_robot/app.py` contains the code below. Edit that file,
-then run `watcherobot app run` again from the `hello_robot` directory:
+`watcherobot app init my_app` (or `--template base`) creates the five-file base
+Application. Its source is packaged in `src/watcherobot/templates/base/`.
+Edit `my_app/app.py`, then stop and rerun the project to apply your changes.
+Working examples are maintained separately in [examples/](examples/README.md).
 
-```python
-import asyncio
+The voice template extends the same base with ASR/LLM/TTS configuration,
+credentials, prompts and voice application code:
 
-from watcherobot.application import ApplicationContext
-
-
-async def main() -> None:
-    async with ApplicationContext.from_environment() as app:
-        job = await asyncio.to_thread(app.robot.behavior.play, "happy")
-        await asyncio.to_thread(job.wait, 20.0)
-
-
-asyncio.run(main())
+```powershell
+watcherobot app init my_voice_app --template voice
+cd my_voice_app
+watcherobot app configure
+# Optional: configure just one service
+watcherobot app configure --service asr
 ```
 
-The context exposes `app.robot` for robot capabilities, `app.desktop` for
+The configure command hides credential input and preserves existing values on Enter.
+It validates local configuration without calling cloud services. Direct TOML editing remains supported.
+Follow the generated README to pair the robot and run it.
+SDK tests and reference documents are not copied into generated projects.
+
+`ApplicationContext.from_environment()` obtains the managed context, which exposes `app.robot` for robot capabilities, `app.desktop` for
 Watcher Desktop business messages, and `app.logger` for Application logs.
 When preparing a real project, generate its stable metadata explicitly:
 
@@ -295,3 +297,12 @@ discovery and response details. See the
 See the PyPI badge above for the current stable release.
 For maintainers, see the [release process](docs/releasing.md).
 Licensed under [Apache-2.0](LICENSE).
+
+## 基础语音模板
+
+语音应用模板提供可独立开发和发布的完整工程：创建项目、填写凭据、运行对话、二次开发、检查与发布。它与用于演示 SDK 调用的示例应用分开说明。
+
+模板源码位于 `src/watcherobot/templates/voice/`，完整目录、配置与运行步骤见[模板 README](src/watcherobot/templates/voice/README.md)。
+
+使用 `watcherobot app init my_voice_app --template voice` 生成用户自己的分层语音项目，填写本地凭据后执行 `watcherobot app run`。
+支持开放的 ASR/LLM/TTS 适配器、默认半双工与应用广场发布；详见 [语音模板指南](docs/voice-template.zh-CN.md)。
