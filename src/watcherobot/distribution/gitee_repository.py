@@ -19,6 +19,7 @@ from .download import MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_FILES
 from .gitee_public import GiteePublicRepository, _validate_reference
 from .ports import (
     AccessToken,
+    SnapshotProgress,
     CatalogDocument,
     CatalogPullRequest,
     HubAuthenticationError,
@@ -47,6 +48,9 @@ class _NoRedirect(HTTPRedirectHandler):
 class GiteeApi:
     """Bounded JSON transport; credentials never enter URLs or error messages."""
 
+    def __init__(self, *, timeout: float | None = 30.0) -> None:
+        self._timeout = timeout
+
     def request(
         self,
         method: str,
@@ -64,7 +68,7 @@ class GiteeApi:
             method=method,
         )
         try:
-            with build_opener(_NoRedirect()).open(request, timeout=30) as response:
+            with build_opener(_NoRedirect()).open(request, timeout=self._timeout) as response:
                 limit = 2 * MAX_SNAPSHOT_BYTES + 1024 * 1024
                 raw = response.read(limit + 1)
                 if len(raw) > limit:
@@ -114,15 +118,15 @@ class GiteeRepository:
             status == 403 and isinstance(payload, dict)
             and payload.get("rate_limited") is True
         ):
-            raise HubRateLimitError("Gitee 请求频率超限，请稍后重试；不会自动重试或切换凭据")
+            raise HubRateLimitError("Gitee 请求频率超限，请稍后重试；不会自动重试或切换凭据", http_status=status)
         if status == 403 and token is None:
-            raise HubNetworkError("Gitee 匿名读取被拒绝（HTTP 403），可能涉及限流或仓库访问限制")
+            raise HubNetworkError("Gitee 匿名读取被拒绝（HTTP 403），可能涉及限流或仓库访问限制", http_status=status)
         if status in (401, 403):
             raise HubAuthenticationError(
-                "Gitee permission denied; check token scope and account security binding"
+                "Gitee permission denied; check token scope and account security binding", http_status=status
             )
         if status not in allowed:
-            raise HubNetworkError(f"Gitee API operation failed (HTTP {status})")
+            raise HubNetworkError(f"Gitee API operation failed (HTTP {status})", http_status=status)
         return payload
 
     def ensure_public_repository(
@@ -389,8 +393,17 @@ class GiteeRepository:
         )
         return self._pull(item)
 
+    def download_repository_snapshot_with_progress(
+        self, *, repo_id: str, commit: str, target: Path,
+        on_progress: SnapshotProgress,
+    ) -> RepositoryRevision:
+        return self.download_repository_snapshot(
+            repo_id=repo_id, commit=commit, target=target, on_progress=on_progress,
+        )
+
     def download_repository_snapshot(
-        self, *, repo_id: str, commit: str, target: Path
+        self, *, repo_id: str, commit: str, target: Path,
+        on_progress: SnapshotProgress | None = None,
     ) -> RepositoryRevision:
         _validate_reference(repo_id, commit, "app.json")
         if not target.is_dir() or any(target.iterdir()):
@@ -403,6 +416,7 @@ class GiteeRepository:
         return self._export_snapshot(
             repo_id, commit, target, tree,
             lambda **kwargs: self._read_blob(repo_id, kwargs["path"], blobs),
+            on_progress=on_progress,
         )
 
     def _tree(
@@ -465,6 +479,7 @@ class GiteeRepository:
 
     def _export_snapshot(
         self, repo_id: str, commit: str, target: Path, tree: Any, read_file: Any,
+        *, on_progress: SnapshotProgress | None = None,
     ) -> RepositoryRevision:
         if (
             not isinstance(tree, dict)
@@ -496,6 +511,9 @@ class GiteeRepository:
             files.append(item)
         if len(files) > MAX_SNAPSHOT_FILES or total > MAX_SNAPSHOT_BYTES:
             raise HubInvalidResponse("Snapshot exceeds size limits")
+        downloaded = 0
+        if on_progress is not None:
+            on_progress(0, total, 0)
         try:
             for item in files:
                 data = read_file(
@@ -505,6 +523,9 @@ class GiteeRepository:
                 destination = target / item["path"]
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(data)
+                downloaded += len(data)
+                if on_progress is not None:
+                    on_progress(downloaded, total, 0)
                 if item["mode"] == "100755":
                     destination.chmod(0o755)
         except Exception:

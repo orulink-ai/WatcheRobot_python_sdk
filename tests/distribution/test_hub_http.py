@@ -115,3 +115,15 @@ def test_hub_client_rejects_invalid_identity_payload(
 
     with pytest.raises(HubInvalidResponse):
         client.whoami(AccessToken("hf_secret-token"))
+
+@pytest.mark.parametrize('status,body,limited', [(403,b'rate limit exceeded',True),(429,b'busy',True),(403,b'forbidden',False)])
+def test_public_http_rate_limit_is_classified_without_leaking_body(monkeypatch, status, body, limited):
+    from io import BytesIO
+    from urllib.error import HTTPError
+    from watcherobot.distribution import hub_http
+    def fail(*args, **kwargs):
+        raise HTTPError('https://gitee.com/api/v5/test',status,'error',{},BytesIO(body))
+    monkeypatch.setattr(hub_http,'urlopen',fail)
+    result=hub_http.UrllibJsonTransport().get_json('https://gitee.com/api/v5/test',{},timeout=1)
+    assert (result.payload.get('rate_limited') is True) == limited
+    assert body.decode() not in repr(result)
