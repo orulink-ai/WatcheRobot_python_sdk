@@ -13,3 +13,11 @@
 延续用户要求：不新增服务器；拿到实际响应、不靠固定超时推断。公开读取transport允许timeout=None，Gitee广场CLI目录与manifest全部选用该策略；发布、安装及下载默认超时未改变。HubError可携带可选HTTP状态；广场仅返回状态码与阶段，不透传远端文本。Desktop对应档案为客户端 documents/dev_log/2026-10-02/2026-10-02_应用广场加载失败排查/index.md，双方均已记录配套关系。
 
 TDD：先写无截止参数测试及HTTP详情测试并得到预期失败，再实现。HubError原先可无参数构造，完整分发回归发现兼容问题，修复默认空message后404项通过。源码CLI实测1.746秒返回HTTP403、rate_limited、fetching_catalog，远程仍受限；无虚构恢复状态。文档distribution-contract.md已更新。未提交/发布。
+
+
+## 2026-10-03 完整CI与提交审查｜orulink-wugui / Codex
+用户已授权提交与推送，不创建PR。分支codex/desktop-distribution-20261003基于最新origin/main=7d9fc51；49b337a为空闲取消选择，3afac46为分发进度与远端状态。
+
+本地SDK CI对照sdk-ci.yml执行：Python3.11全量pytest 1546通过、5跳过；mypy 109个源文件无问题；pip check通过；浏览器辅助JS测试84通过；sdist/wheel构建及twine check通过；全新隔离环境安装wheel、pip check与watcherobot --help通过。Python3.10/3.12全矩阵和Windows硬件并非本轮执行范围。
+
+审查确认取消选择不更改业务帧路由，拒绝运行中/启动中/目标变化；下载按字节与重试代次报告；HTTP状态只保留数字，不输出凭据或响应正文。通用扫描命中AccessToken类型、运行时读取表达式及假测试数据，人工复核无真实密钥；diff --check通过。没有为绕过403新增服务、轮换凭据或伪造成功。配套Desktop分支codex/desktop-scope-marketplace-20261003会锁定此SDK分支最终提交。
