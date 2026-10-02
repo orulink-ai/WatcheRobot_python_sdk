@@ -101,3 +101,15 @@ def test_large_unicode_blob_is_downloaded_by_blob_sha(tmp_path):
     )
 
     assert (tmp_path / path).read_bytes() == data
+
+
+def test_snapshot_reports_actual_blob_bytes_with_fixed_total(tmp_path):
+    files = {"a": b"123", "b": b"1234567"}
+    items = [entry(path, content) for path, content in files.items()]
+    api = Api({"tree": items}, {item["sha"]: files[item["path"]] for item in items})
+    progress = []
+    GiteeRepository(api=api).download_repository_snapshot_with_progress(
+        repo_id="owner/app", commit=SHA, target=tmp_path,
+        on_progress=lambda *values: progress.append(values),
+    )
+    assert progress == [(0, 10, 0), (3, 10, 0), (10, 10, 0)]

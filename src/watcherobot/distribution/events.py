@@ -29,6 +29,7 @@ class ErrorCode(str, Enum):
     SPACE_OWNERSHIP_CONFLICT = "space_ownership_conflict"
     CATALOG_INVALID = "catalog_invalid"
     CATALOG_PR_CONFLICT = "catalog_pr_conflict"
+    RATE_LIMITED = "rate_limited"
     REMOTE_ERROR = "remote_error"
     OPERATION_CANCELLED = "operation_cancelled"
     RUNTIME_MANIFEST_INVALID = "runtime_manifest_invalid"
@@ -160,6 +161,7 @@ _REMOTE_ERROR_CODES = frozenset(
         ErrorCode.CATALOG_INVALID,
         ErrorCode.CATALOG_PR_CONFLICT,
         ErrorCode.REMOTE_ERROR,
+        ErrorCode.RATE_LIMITED,
     }
 )
 

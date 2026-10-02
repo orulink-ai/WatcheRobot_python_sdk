@@ -242,3 +242,41 @@ def test_default_download_dependencies_use_public_hub_adapter() -> None:
     dependencies = _build_download_dependencies("huggingface")
 
     assert isinstance(dependencies.hub, HuggingFaceMarketplaceHubClient)
+
+
+def test_cli_gitee_download_emits_actual_bytes_from_adapter(tmp_path, monkeypatch, capsys):
+    import base64
+    import hashlib
+    from watcherobot.distribution.gitee_repository import GiteeRepository
+
+    files = {
+        "app.json": json.dumps({"schema_version": 1, "id": "com.example.demo",
+            "name": "Demo", "version": "1.0.0", "requires_watcherobot": ">=0.0.0",
+            "dependencies": []}).encode(),
+        "app.py": b"print('hello')\n",
+    }
+    entries = [{"path": path, "type": "blob", "mode": "100644", "size": len(data),
+        "sha": hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()}
+        for path, data in files.items()]
+
+    class Api:
+        def request(self, method, path, token, data=None):
+            if "/commits/" in path:
+                return 200, {"sha": COMMIT}
+            if "/git/trees/" in path:
+                return 200, {"tree": entries}
+            item = next(item for item in entries if path.endswith(item["sha"]))
+            return 200, {"encoding": "base64", "content": base64.b64encode(files[item["path"]]).decode()}
+
+    monkeypatch.setattr("watcherobot.distribution.cli._build_download_dependencies",
+        lambda provider: SimpleNamespace(hub=GiteeRepository(api=Api())))
+    assert main(["app", "download", "--provider", "gitee", "--repo-id", SPACE_ID,
+        "--commit", COMMIT, "--target", str(tmp_path), "--jsonl"]) == 0
+    output = capsys.readouterr()
+    assert output.err == ""
+    events = _json_lines(output.out)
+    progress = [e["data"] for e in events if e["type"] == "progress" and "downloaded_bytes" in e.get("data", {})]
+    total = sum(map(len, files.values()))
+    assert [(e["downloaded_bytes"], e["total_bytes"]) for e in progress] == [
+        (0, total), (len(files["app.json"]), total), (total, total)]
+    assert events[-1]["type"] == "result"

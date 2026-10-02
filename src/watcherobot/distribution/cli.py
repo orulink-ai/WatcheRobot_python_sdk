@@ -15,7 +15,8 @@ from watcherobot.runtime.daemon.application.manifest import (
 
 from .check import check_application
 from .credentials import CredentialStoreError, SystemCredentialStore
-from .gitee_repository import GiteeRepository
+from .gitee_repository import GiteeApi, GiteeRepository
+from .gitee_public import GiteePublicRepository
 from .gitee_auth import GiteeHubClient
 from .download import DownloadError, DownloadResult, download_application_snapshot
 from .events import (
@@ -758,7 +759,9 @@ class _HumanMarketplaceEventSink:
 def _build_marketplace_dependencies(provider: str) -> _MarketplaceDependencies:
     return _MarketplaceDependencies(
         hub=(
-            GiteeRepository()
+            GiteeRepository(
+                api=GiteeApi(timeout=None), public=GiteePublicRepository(timeout=None),
+            )
             if provider == "gitee"
             else HuggingFaceMarketplaceHubClient()
         )

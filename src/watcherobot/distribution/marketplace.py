@@ -20,7 +20,7 @@ from .catalog_submission import (
 )
 from .events import ErrorCode, EventSink, ProgressEvent
 from .providers import get_provider
-from .ports import HubError, MarketplaceHubClient
+from .ports import HubError, HubRateLimitError, MarketplaceHubClient
 
 
 class MarketplaceError(RuntimeError):
@@ -151,8 +151,9 @@ def load_official_marketplace(
         )
     except HubError as exc:
         raise MarketplaceError(
-            ErrorCode.REMOTE_ERROR,
+            ErrorCode.RATE_LIMITED if isinstance(exc, HubRateLimitError) else ErrorCode.REMOTE_ERROR,
             "Unable to load the latest Application marketplace",
+            details=_http_details(exc, "fetching_catalog"),
         ) from exc
 
     try:
@@ -186,9 +187,9 @@ def load_official_marketplace(
             )
         except HubError as exc:
             raise MarketplaceError(
-                ErrorCode.REMOTE_ERROR,
+                ErrorCode.RATE_LIMITED if isinstance(exc, HubRateLimitError) else ErrorCode.REMOTE_ERROR,
                 "Unable to load the latest Application marketplace",
-                details=source_details,
+                details={**source_details, **_http_details(exc, "reading_manifest")},
             ) from exc
         try:
             metadata = parse_application_manifest(manifest_document)
@@ -232,3 +233,10 @@ def load_official_marketplace(
         catalog_commit=document.commit,
         applications=tuple(applications),
     )
+
+
+def _http_details(error: HubError, stage: str) -> dict[str, object]:
+    status = error.http_status
+    if type(status) is int and 100 <= status <= 599:
+        return {"http_status": status, "stage": stage}
+    return {}

@@ -342,6 +342,10 @@ class DaemonRuntime:
             f"launcher={selected.kind.value})"
         )
 
+    def unselect_application(self, application_id: str) -> None:
+        self.application.unselect_application(application_id)
+        self.logs.record(f"Application unselected (app_id={application_id})")
+
     def request_shutdown(self) -> None:
         self.logs.record("Daemon shutdown requested")
         self._shutdown_event.set()

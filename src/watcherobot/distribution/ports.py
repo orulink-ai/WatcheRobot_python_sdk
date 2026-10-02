@@ -5,7 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import Callable, Protocol
+
+
+# Cumulative snapshot bytes, fixed total (or unknown), and explicit retry generation.
+SnapshotProgress = Callable[[int, int | None, int], None]
 
 
 _FULL_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -259,7 +263,11 @@ class MarketplaceHubClient(Protocol):
 
 
 class HubError(RuntimeError):
-    """Base failure raised by an authenticated Hub adapter."""
+    """Base failure with optional safe HTTP diagnostics, never response bodies."""
+
+    def __init__(self, message: str = "", *, http_status: int | None = None) -> None:
+        super().__init__(message)
+        self.http_status = http_status
 
 
 class HubAuthenticationError(HubError):

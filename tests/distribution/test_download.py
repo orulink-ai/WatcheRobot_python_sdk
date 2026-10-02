@@ -335,3 +335,23 @@ def test_same_fixed_commit_is_independent_from_later_main_changes(
     assert first_target.joinpath("app.py").read_bytes() == second_target.joinpath(
         "app.py"
     ).read_bytes()
+
+
+def test_snapshot_forwards_byte_updates_as_jsonl_progress(tmp_path):
+    class Hub(FakeSnapshotHub):
+        def download_repository_snapshot_with_progress(self, *, on_progress, **kwargs):
+            on_progress(0, 100, 0)
+            on_progress(40, 100, 0)
+            on_progress(0, 100, 1)
+            on_progress(100, 100, 1)
+            return self.download_repository_snapshot(**kwargs)
+
+    events = RecordingEvents()
+    download_application_snapshot(provider="huggingface", repo_id=SPACE_ID,
+        commit=COMMIT, target=tmp_path, hub=Hub(), events=events,
+        watcherobot_version="1.5.0")
+    updates = [event.to_dict()["data"] for event in events.events
+               if "downloaded_bytes" in event.data]
+    assert [(v["downloaded_bytes"], v["total_bytes"], v["download_attempt"]) for v in updates] == [
+        (0, 100, 0), (40, 100, 0), (0, 100, 1), (100, 100, 1)]
+    assert events.events[-2].stage == "validating_snapshot"

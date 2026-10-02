@@ -109,3 +109,15 @@ Windows Daemon 验证、启动、回退及安装守卫在调用 subprocess 时�
 凭据损坏、元数据不可用或文件变化时回退完整内容校验；校验期间检测到变化则拒绝发布。凭据是减少磁盘读取的缓存，不是签名或同用户恶意修改的安全边界。不跳过首次验证、不延长启动等待、不增加用户名或路径长度限制。就绪仍依据实际进程存活、服务状态和本次 launch_id/build_id 校验，进程退出立即报告失败。
 
 元数据枚举与内容摘要共用显式目录遍历，不依赖会静默跳过不可读子目录的 glob。任何子目录无法枚举时，元数据凭据失效；完整内容校验同样传播文件系统错误并拒绝发布，不能将不完整文件树记为已验证。遍历不进入符号链接或 Windows reparse point，保留原有链接校验与摘要排序。回归测试通过注入子目录 PermissionError 验证此行为；安装测试按宿主平台生成资源合同，真实进程测试使用隔离实例与动态端口，避免干扰本机默认 Daemon。
+
+## 空闲 Application 取消选择
+
+`POST /daemon/application/unselect` 接收 `{"application_id":"待取消的应用 ID"}`。这是管理操作，不接收业务帧，也不引入按业务消息类型分支的路由。只清除当前空闲应用的选择、启动规格和上次退出状态；Daemon、Desktop 与 Device 的连接保持不变，之后使用已有的无 Application 透明路由。
+
+- 成功返回 HTTP 200 和完整状态；`application.selected=false`、`current_app=null`、`state=not_selected`、`process_id=null`、`last_exit_code=null`。本来就未选择时可重复调用。
+- 存在进程、活动 Application 会话、启动请求或正在进行的启动/停止操作时返回 HTTP 409 `application_occupied`，不修改选择。
+- 当前选择不是请求指定的 ID 时返回 HTTP 409 `application_selection_changed`，防止旧界面误清除其他客户端选择的应用。
+- Runtime 排空更新时返回 HTTP 409 `runtime_draining`。
+- 旧 Runtime 没有此接口时，桌面应明确要求更新，不能伪造空目录或 `select(null)`，也不能自动切换到不存在的内置默认应用。
+
+卸载当前选中的空闲应用时，Desktop 先验证取消选择成功，再调用 SDK 分发卸载，最后仅在卸载成功后删除对应本地选择记录。卸载失败时保留记录供恢复；不影响其他当前应用。正式 Desktop 包必须固定到已经提交且包含本接口的 SDK commit，并通过源码能力预检。本地工作区修改不等于已更新正式发行锁。

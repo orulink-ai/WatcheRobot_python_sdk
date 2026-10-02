@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 from .hub_http import JsonTransport, UrllibJsonTransport
 from .ports import (
-    CatalogDocument, HubFileNotFound, HubInvalidResponse, HubNetworkError,
+    CatalogDocument, HubFileNotFound, HubInvalidResponse, HubNetworkError, HubRateLimitError,
 )
 
 CATALOG_REPO_ID = "orulink-sz/watcherobot-app-store"
@@ -22,23 +22,26 @@ _MAX_FILE_BYTES = 1024 * 1024
 class GiteePublicRepository:
     """Read metadata without credentials, redirects to download URLs, or archives."""
 
-    def __init__(self, *, transport: JsonTransport | None = None) -> None:
+    def __init__(self, *, transport: JsonTransport | None = None, timeout: float | None = 15.0) -> None:
         self._transport = transport or UrllibJsonTransport()
+        self._timeout = timeout
         self._verified_revision: tuple[str, str] | None = None
 
     def _get(self, path: str) -> dict[str, object]:
         try:
             response = self._transport.get_json(
-                _BASE + path, {"Accept": "application/json"}, timeout=15.0,
+                _BASE + path, {"Accept": "application/json"}, timeout=self._timeout,
             )
         except HubNetworkError:
             raise HubNetworkError("Gitee public read failed") from None
         except HubInvalidResponse:
             raise HubInvalidResponse("Gitee returned invalid JSON") from None
+        if response.status == 429 or (response.status == 403 and response.payload.get("rate_limited") is True):
+            raise HubRateLimitError("Gitee public API rate limit exceeded", http_status=response.status)
         if response.status == 404:
-            raise HubFileNotFound("Gitee public resource was not found")
+            raise HubFileNotFound("Gitee public resource was not found", http_status=response.status)
         if response.status != 200:
-            raise HubNetworkError("Gitee public resource is unavailable")
+            raise HubNetworkError("Gitee public resource is unavailable", http_status=response.status)
         if not isinstance(response.payload, dict):
             raise HubInvalidResponse("Gitee returned a non-object response")
         return response.payload

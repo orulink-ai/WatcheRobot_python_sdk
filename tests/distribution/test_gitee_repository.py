@@ -213,3 +213,18 @@ def test_stale_catalog_is_rejected_before_fork_write():
             AccessToken("test"), repo_id="team/catalog", path="app-list.json",
             content=b"[]", parent_commit=SHA, title="review", description="manual",
         )
+
+
+def test_gitee_api_allows_unbounded_marketplace_reads(monkeypatch):
+    from watcherobot.distribution import gitee_repository as module
+    import io
+    class Response(io.BytesIO):
+        status = 200
+    class Opener:
+        def open(self, request, *, timeout):
+            assert timeout is None
+            return Response(b'{"sha": "actual-response"}')
+    monkeypatch.setattr(module, 'build_opener', lambda *_: Opener())
+    assert module.GiteeApi(timeout=None).request('GET', 'repos/owner/app', None) == (
+        200, {'sha': 'actual-response'},
+    )
