@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import threading
+import time
 import uuid
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future
@@ -69,6 +70,7 @@ class DaemonApplicationTransport:
         self.resource_baseline: dict[str, Any] = {}
         self.resource_rtc_baseline: dict[str, Any] = {}
         self.resource_snapshot: dict[str, Any] = {}
+        self.resource_snapshot_received_at: float | None = None
         self.resource_history: list[dict[str, Any]] = []
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -491,6 +493,7 @@ class DaemonApplicationTransport:
             elif snapshot.get("stage") == "rtc_pre_start":
                 self.resource_rtc_baseline = snapshot
             self.resource_snapshot = snapshot
+            self.resource_snapshot_received_at = time.monotonic()
             self.resource_history = [*self.resource_history[-63:], snapshot]
         if message_type in {"sys.ack", "sys.nack"}:
             command_id = data.get("command_id")

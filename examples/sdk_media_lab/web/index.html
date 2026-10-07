@@ -96,6 +96,65 @@
         <div><span>Last Sync</span><strong id="lastSync">—</strong></div>
       </section>
 
+      <section class="scene-panel" id="scenePanel" aria-labelledby="sceneTitle">
+        <div class="scene-heading">
+          <div>
+            <p class="section-index">00.7 / Combined Scene</p>
+            <h2 id="sceneTitle">Talk, Animate, Take a Photo</h2>
+            <p><strong>JoyInside Default Procedural Expression · RADIAL 09</strong></p>
+            <p>Start the scene to enable JoyInside RADIAL 09 before the full-duplex call. The robot mouth follows audio actually played by its speaker.</p>
+          </div>
+          <span class="scene-capability" id="sceneCapability">Waiting for device capabilities</span>
+        </div>
+        <div class="scene-grid">
+          <div class="scene-controls">
+            <div class="button-row scene-actions">
+              <button class="station-action" id="startProceduralButton" type="button" disabled>Enable Procedural Animation</button>
+              <button class="quiet-action" id="stopProceduralButton" type="button" disabled>Disable Animation</button>
+            </div>
+            <div class="button-row scene-actions">
+              <button class="station-action" id="startSceneAudioButton" type="button" disabled>Start JoyInside Animation + Call</button>
+              <button class="quiet-action" id="stopSceneAudioButton" type="button" disabled>End Scene</button>
+              <button class="station-action" id="captureScenePhotoButton" type="button" disabled>Take Photo During Call</button>
+            </div>
+            <output class="station-result" id="sceneResult" aria-live="polite">Start the scene, then speak into the computer microphone</output>
+            <p class="scene-note">End Scene stops the call and animation started by this scene. An independently enabled animation stays on; leaving the page stops both.</p>
+            <dl class="scene-live-metrics">
+              <div><dt>Procedural Animation</dt><dd id="sceneAnimationState">Waiting for Telemetry</dd></div>
+              <div><dt>Actual / Target FPS</dt><dd id="sceneAnimationFps">—</dd></div>
+              <div><dt>Audio-driven Mouth Target</dt><dd id="sceneMouth">—</dd></div>
+              <div><dt>Audio Path</dt><dd id="sceneAudioState">IDLE</dd></div>
+              <div><dt>Device Audio Drops</dt><dd id="sceneAudioDrops">—</dd></div>
+            </dl>
+            <p class="scene-note">Silence closes the mouth after the playback buffer drains. The robot microphone returns to the browser at the same time; use the call player below to listen.</p>
+          </div>
+          <figure class="scene-photo">
+            <img id="scenePhotoPreview" alt="Latest robot camera photo" hidden />
+            <div id="scenePhotoEmpty"><span class="section-index">CAMERA / JPEG</span><strong>No Photo Yet</strong><small>Capture a photo without ending the audio call</small></div>
+            <figcaption id="scenePhotoCaption">Latest Captured Photo</figcaption>
+          </figure>
+        </div>
+        <div class="scene-recording-controls">
+          <label for="sceneRecordingLabel">Measurement label<input id="sceneRecordingLabel" type="text" maxlength="80" placeholder="Animation + RTC + photo" /></label>
+          <button class="station-action" id="startSceneRecordingButton" type="button" disabled>Start Measurement</button>
+          <button class="quiet-action" id="stopSceneRecordingButton" type="button" disabled>Stop Measurement</button>
+          <button class="quiet-action" id="exportSceneReportButton" type="button" disabled>Export JSON Report</button>
+          <output id="sceneRecordingState" aria-live="polite">No measurement recorded</output>
+        </div>
+        <div class="scene-resource-grid">
+          <table class="scene-memory-table">
+            <caption id="sceneMemoryCaption">Live Device Memory</caption>
+            <thead><tr><th>Heap</th><th>Free</th><th>Boot Minimum</th><th>Largest Block</th></tr></thead>
+            <tbody id="sceneMemoryRows"></tbody>
+          </table>
+          <div class="scene-chart">
+            <canvas id="sceneResourceChart" width="900" height="240" role="img" aria-label="Recent internal free memory, DMA largest block and PSRAM free memory"></canvas>
+            <p id="sceneSampleSummary">Waiting for Device Snapshot</p>
+            <small>Each trace uses its own scale. The chart keeps the latest 240 device samples; the report records the measurement separately.</small>
+          </div>
+        </div>
+      </section>
+
       <section class="resource-panel" id="resourcePanel" data-state="waiting" aria-labelledby="resourceTitle">
         <div class="resource-heading">
           <div>
@@ -123,6 +182,7 @@
           <div><span>Against Baseline</span><strong id="resourceDelta">Waiting for Baseline</strong></div>
           <div><span>Release Result</span><strong id="resourceRelease">No RTC Stop Record</strong></div>
         </div>
+        <p id="resourceAnimationResidency">Waiting for Telemetry</p>
         <details class="resource-transition-table" open>
           <summary>Recent Feature Resource Snapshots</summary>
           <p>Worker stack sizes describe resident allocations, not total memory owned by a feature. Full transition history is printed to the device log.</p>
@@ -185,7 +245,8 @@
             <p class="section-index">02.5 / Screen Animation</p>
             <span class="capability-state">Detecting</span>
           </div>
-          <h2>Concurrent Animation Validation</h2>
+          <h2>SD Asset Animation Test</h2>
+          <p>This separate test plays animation assets from the SD card. Use the Combined Scene above for the JoyInside default RADIAL 09 procedural expression.</p>
           <p>The device reports the complete animation catalog available on its SD card. You can switch animations manually or use randomized playback during an audio/video session.</p>
           <div class="control-fields">
             <label>Animation ID
@@ -314,13 +375,15 @@
             <div><dt>Watcher → Computer</dt><dd id="rtcAudioDownPackets">0</dd></div>
             <div><dt>Robot Microphone Capture</dt><dd id="rtcAudioDeviceCapture">0</dd></div>
             <div><dt>Robot Packets Sent</dt><dd id="rtcAudioDeviceTx">0</dd></div>
+            <div><dt>Device Audio Drops</dt><dd id="rtcAudioDeviceDrops">—</dd></div>
             <div><dt>Physical Mic Peak / Browser Playback</dt><dd id="rtcAudioSignal">0 / 0.000</dd></div>
             <div><dt>Device Echo Cancellation</dt><dd id="rtcAudioAec">Waiting for Device Telemetry</dd></div>
+            <div><dt>Robot Playback Level: Input → Output</dt><dd id="rtcAudioPlaybackLevel">—</dd></div>
             <div><dt>Real-time Audio Stage Latency</dt><dd id="rtcAudioLatency">Waiting for Stage Latency Samples</dd></div>
             <div><dt>Validation Action</dt><dd>Speak toward the robot</dd></div>
           </dl>
           <audio id="rtcRemoteAudio" autoplay controls aria-label="Live Watcher Microphone Audio"></audio>
-          <small>Raw microphone capture is used by default. Wear headphones to avoid an acoustic loop between the device and computer speakers.</small>
+            <small>Calls request echo cancellation and microphone level adaptation. Robot playback boosts quiet speech by up to 18 dB with peak limiting. Headphones help prevent feedback when the computer and robot are close together.</small>
         </div>
       </section>
 

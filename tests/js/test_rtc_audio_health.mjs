@@ -4,7 +4,18 @@ import test from "node:test";
 import {
   RTC_AUDIO_VERIFY_TIMEOUT_MS,
   evaluateRtcAudioHealth,
+  formatRtcPlaybackLevel,
 } from "../../examples/sdk_media_lab/web/rtc-audio-health.mjs";
+
+test("playback level exposes received and processed PCM without inventing old firmware measurements", () => {
+  assert.equal(formatRtcPlaybackLevel({}), "—");
+  assert.equal(formatRtcPlaybackLevel({ audio_voice_raw_rms: 400, audio_voice_output_rms: 1500,
+    audio_voice_gain_db_x100: 1148 }), "RMS 400 → 1500 · +11.5 dB");
+  assert.equal(formatRtcPlaybackLevel({ audio_voice_raw_rms: 0, audio_voice_output_rms: 0,
+    audio_voice_gain_db_x100: 0 }), "RMS 0 → 0 · +0.0 dB");
+  assert.equal(formatRtcPlaybackLevel({ audio_voice_raw_rms: NaN, audio_voice_output_rms: 500,
+    audio_voice_gain_db_x100: 0 }), "—");
+});
 
 const healthy = {
   peerConnected: true,
@@ -98,4 +109,22 @@ test("browser RTP send alone cannot prove robot speaker playback", () => {
 
 test("robot audio renderer failures degrade an otherwise audible call", () => {
   assert.equal(evaluateRtcAudioHealth({ ...healthy, deviceRenderErrors: 1 }).state, "degraded");
+});
+
+test("silence after audible full-duplex verification is a quiet call, not a failed connection", () => {
+  const quiet = { ...healthy, previouslyVerified: true, deviceCapturePeak: 0,
+    devicePlaybackPeak: 0, browserAudioLevel: 0, elapsedMs: RTC_AUDIO_VERIFY_TIMEOUT_MS + 1000 };
+  assert.equal(evaluateRtcAudioHealth(quiet).state, "quiet");
+  assert.equal(evaluateRtcAudioHealth({ ...quiet, deviceRenderErrors: 1 }).state, "degraded");
+  assert.equal(evaluateRtcAudioHealth({ ...quiet, browserPlaybackActive: false }).state, "failed");
+  assert.equal(evaluateRtcAudioHealth({ ...quiet, deviceTxPackets: 0 }).state, "failed");
+});
+
+test("device audio drops degrade an otherwise audible call even without send or render errors", () => {
+  assert.equal(evaluateRtcAudioHealth({ ...healthy, deviceTxDroppedFrames: 1399, deviceQueueDroppedFrames: 6 }).state, "degraded");
+  assert.equal(evaluateRtcAudioHealth({ ...healthy, deviceTxDroppedFrames: 0, deviceQueueDroppedFrames: 1 }).state, "degraded");
+  assert.equal(evaluateRtcAudioHealth({ ...healthy, deviceTxDroppedFrames: null, deviceQueueDroppedFrames: null }).state, "healthy");
+  assert.equal(evaluateRtcAudioHealth({ ...healthy, previouslyVerified: true, deviceCapturePeak: 0,
+    devicePlaybackPeak: 0, browserAudioLevel: 0, deviceTxDroppedFrames: 1,
+    elapsedMs: RTC_AUDIO_VERIFY_TIMEOUT_MS + 1000 }).state, "degraded");
 });

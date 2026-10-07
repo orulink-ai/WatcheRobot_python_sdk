@@ -2,6 +2,30 @@ export const RESOURCE_BASELINE_TOLERANCE_BYTES = 8192;
 export const RESOURCE_PSRAM_TOLERANCE_BYTES = 128 * 1024;
 const LIFECYCLE_CONTEXT_RESOURCES = ["animation", "animation_runtime"];
 
+export function readAnimationResidency(snapshot, available = true) {
+  const animation = available ? snapshot?.animation : null;
+  const sd = animation?.sd_resources;
+  const bytes = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+  const flag = value => typeof value === "boolean" ? value : null;
+  const result = {
+    sdFramePoolBytes: bytes(sd?.frame_pool_bytes),
+    sdPayloadCacheBytes: bytes(sd?.payload_cache_bytes),
+    sdWorkerStackBytes: bytes(sd?.worker_stack_bytes),
+    sdDirectLcdDmaBytes: bytes(sd?.direct_lcd_dma_bytes),
+    sdWorkerRunning: flag(sd?.worker_running),
+    sdReleaseFailed: flag(sd?.release_failed),
+    proceduralFrameBytes: bytes(animation?.procedural_frame_bytes),
+    proceduralActive: flag(animation?.procedural_active),
+  };
+  const known = Object.values(result).every(value => value !== null);
+  result.state = result.sdReleaseFailed === true ? "failed"
+    : !known ? "unknown"
+    : result.sdWorkerRunning || result.proceduralActive
+      || [result.sdFramePoolBytes, result.sdPayloadCacheBytes, result.sdWorkerStackBytes,
+        result.sdDirectLcdDmaBytes, result.proceduralFrameBytes].some(value => value > 0) ? "resident" : "released";
+  return result;
+}
+
 export function selectFeatureResourceSnapshots(history, limit = 12) {
   return (history || []).filter(snapshot =>
     /^(before:|after:|handled:|completed:|released:|rtc_release_\d+ms$|rtc_pre_start$|baseline$)/.test(snapshot?.stage || "")
@@ -22,7 +46,9 @@ export function selectLifecycleBaseline(resources) {
 
 function metric(snapshot, heap, field) {
   const value = snapshot?.memory?.[heap]?.[field];
-  return Number.isFinite(Number(value)) ? Number(value) : null;
+  if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
 function delta(current, baseline, heap, field) {

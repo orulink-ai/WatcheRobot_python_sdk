@@ -197,9 +197,15 @@ class ExpressionRuntimeDomain(_Domain):
         super().__init__(robot)
         self._lock = threading.RLock()
         self._owns_display = False
+        self._audio_follow_enabled = False
 
     def _close(self) -> None:
         with self._lock:
+            if self._audio_follow_enabled:
+                try:
+                    self.set_audio_follow(False)
+                except Exception:
+                    self.set_audio_follow(False)
             if self._owns_display:
                 try:
                     self.stop()
@@ -207,6 +213,27 @@ class ExpressionRuntimeDomain(_Domain):
                     # A transient command failure should not make the only
                     # cleanup attempt impossible before the transport closes.
                     self.stop()
+
+    def set_audio_follow(self, enabled: bool) -> None:
+        """Draw the device's procedural mouth from successfully played RTC PCM.
+
+        Requires ``expression.audio_follow.v1``. Firmware owns the audio clock
+        and mouth calculation; no browser microphone levels are transmitted.
+        Enabling selects the radial design without SD animation reads. Disabling
+        closes the mouth and returns display ownership to the built-in state.
+        """
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled must be a bool")
+        self._robot._require_capability("expression.audio_follow.v1")
+        with self._lock:
+            if enabled and (self._robot._closed or self._robot._closing):
+                raise WatcheRobotError("robot is closing or closed")
+            # The device may apply enable even if its ACK is lost. Keep cleanup
+            # ownership until disable is acknowledged, including uncertain start.
+            if enabled:
+                self._audio_follow_enabled = True
+            self._robot._command("ctrl.expression.audio_follow", {"enabled": enabled})
+            self._audio_follow_enabled = enabled
 
     def _mark_display_released(self) -> None:
         """Forget local cleanup ownership after firmware takes the display back."""
@@ -908,6 +935,16 @@ class WatcheRobot:
         """Return the latest device-wide resource snapshot."""
 
         return dict(getattr(self._transport, "resource_snapshot", {}))
+
+    @property
+    def resource_snapshot_received_at(self) -> float | None:
+        """Host monotonic receipt time for the latest device resource event.
+
+        This is not a device timestamp. ``None`` means no receipt evidence;
+        reconnecting alone does not make a cached snapshot fresh.
+        """
+        received = getattr(self._transport, "resource_snapshot_received_at", None)
+        return float(received) if isinstance(received, (int, float)) else None
 
     @property
     def resource_baseline(self) -> dict[str, Any]:

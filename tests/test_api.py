@@ -131,6 +131,77 @@ def test_custom_display_is_returned_before_robot_transport_closes():
     assert transport.closed
 
 
+def test_expression_audio_follow_requires_capability_and_strict_boolean():
+    transport = FakeTransport()
+    robot = WatcheRobot._from_transport(transport)
+    with pytest.raises(WatcheRobotError, match="expression.audio_follow.v1"):
+        robot.expression_runtime.set_audio_follow(True)
+    transport.capabilities += ("expression.audio_follow.v1",)
+    with pytest.raises(TypeError, match="enabled"):
+        robot.expression_runtime.set_audio_follow(1)
+    assert transport.commands == []
+    robot.close()
+
+
+def test_expression_audio_follow_uses_device_playback_and_cleans_up_on_close():
+    transport = FakeTransport()
+    transport.capabilities += ("expression.audio_follow.v1",)
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.set_audio_follow(True)
+    robot.close()
+    assert transport.commands == [
+        ("ctrl.expression.audio_follow", {"enabled": True}),
+        ("ctrl.expression.audio_follow", {"enabled": False}),
+    ]
+    assert transport.closed
+
+
+def test_expression_audio_follow_retries_failed_disable_before_close():
+    transport = FakeTransport()
+    transport.capabilities += ("expression.audio_follow.v1",)
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.set_audio_follow(True)
+    original = transport.send_command
+    attempts = []
+
+    def disable_once_fails(message_type, data, timeout=None):
+        if message_type == "ctrl.expression.audio_follow" and data["enabled"] is False:
+            attempts.append(message_type)
+            if len(attempts) == 1:
+                raise TimeoutError("unconfirmed disable")
+        assert not transport.closed
+        return original(message_type, data, timeout)
+
+    transport.send_command = disable_once_fails
+    robot.close()
+    assert len(attempts) == 2
+    assert transport.closed
+
+
+def test_expression_audio_follow_lost_enable_ack_still_disables_on_close():
+    transport = FakeTransport()
+    transport.capabilities += ("expression.audio_follow.v1",)
+    robot = WatcheRobot._from_transport(transport)
+    original = transport.send_command
+    device_enabled = [False]
+
+    def lost_enable_ack(message_type, data, timeout=None):
+        if message_type == "ctrl.expression.audio_follow":
+            device_enabled[0] = data["enabled"]
+            if data["enabled"]:
+                raise TimeoutError("enable applied, acknowledgement lost")
+        return original(message_type, data, timeout)
+
+    transport.send_command = lost_enable_ack
+    with pytest.raises(TimeoutError, match="acknowledgement lost"):
+        robot.expression_runtime.set_audio_follow(True)
+    assert device_enabled[0] is True
+    robot.close()
+    assert device_enabled[0] is False
+    assert transport.commands == [("ctrl.expression.audio_follow", {"enabled": False})]
+    assert transport.closed
+
+
 def test_custom_display_failed_start_does_not_claim_cleanup_ownership():
     transport = FakeTransport()
     robot = WatcheRobot._from_transport(transport)

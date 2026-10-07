@@ -403,3 +403,22 @@ def test_transport_keeps_resource_baseline_latest_snapshot_and_history() -> None
         assert transport.resource_history == [reconnected_baseline["data"]]
 
     asyncio.run(scenario())
+
+
+def test_resource_snapshot_tracks_receipt_time_even_when_payload_repeats(monkeypatch) -> None:
+    import watcherobot.application.transport as module
+    current = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: current[0])
+
+    async def scenario() -> None:
+        transport = DaemonApplicationTransport()
+        assert transport.resource_snapshot_received_at is None
+        frame = json.dumps({"type": "evt.sdk.resource_snapshot", "code": 0,
+                            "data": {"sequence": 1, "captured_at_ms": 40}})
+        await transport._on_frame(ApplicationChannel.DEVICE, frame)
+        assert transport.resource_snapshot_received_at == 100.0
+        current[0] += 6.0
+        await transport._on_frame(ApplicationChannel.DEVICE, frame)
+        assert transport.resource_snapshot_received_at == 106.0
+
+    asyncio.run(scenario())

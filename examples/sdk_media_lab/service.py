@@ -19,6 +19,7 @@ import wave
 from collections import deque
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
+from copy import deepcopy
 from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
@@ -42,6 +43,12 @@ _MDNS_HOST_CANDIDATE = re.compile(
     r"(?im)(^(?:a=)?candidate:\S+\s+\d+\s+\S+\s+\d+\s+)(\S+\.local)(\s+\d+\s+typ\s+host\b)"
 )
 _MAINTENANCE_INTERVAL_SECONDS = 0.25
+_SCENARIO_MAX_SAMPLES = 3600
+_SCENARIO_SAMPLE_INTERVAL_SECONDS = 1.0
+_TELEMETRY_STALE_SECONDS = 5.0
+_PROCEDURAL_CAPABILITY = "expression.audio_follow.v1"
+_SD_BASELINE_BEHAVIOR_ID = "desktop_expression_panel"
+_SD_BASELINE_ANIMATION_ID = "standby"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -188,6 +195,15 @@ class InferenceStartRequest(BaseModel):
 
 class RtcSessionStartRequest(BaseModel):
     mode: str = Field(default="video", pattern=r"^(video|audio|av)$")
+    request_id: str | None = Field(default=None, min_length=8, max_length=63, pattern=r"^[A-Za-z0-9._:-]+$")
+
+
+class RtcSessionStopRequest(BaseModel):
+    request_id: str | None = Field(default=None, min_length=8, max_length=63, pattern=r"^[A-Za-z0-9._:-]+$")
+
+
+class ScenarioRecordingStartRequest(BaseModel):
+    label: str = Field(default="combined-scene", min_length=1, max_length=120)
 
 
 class RtcSignalRequest(BaseModel):
@@ -263,12 +279,33 @@ class MediaLabService:
         self._refreshed_connection_token: str | None = None
         self._live_video_lock_held = False
         self._rtc_resources_held: tuple[str, ...] = ()
+        self._rtc_request_id: str | None = None
         self._browser_host_ipv4: str | None = None
         self._face_lock = threading.RLock()
         self._face_lease: Any = None
         self._face_state = "idle"
         self._face_preview: Any = None
         self._face_preview_last_frame_at = 0.0
+        self._procedural_lock = threading.RLock()
+        self._procedural_lease: Any = None
+        self._procedural_state = "idle"
+        self._sd_baseline_lock = threading.RLock()
+        self._sd_baseline_lease: Any = None
+        self._sd_baseline_state = "idle"
+        self._sd_baseline_operation_id: int | None = None
+        self._recording_lock = threading.RLock()
+        self._recording: dict[str, Any] = {"active": False, "sample_count": 0}
+        self._recording_samples: deque[dict[str, object]] = deque(maxlen=_SCENARIO_MAX_SAMPLES)
+        self._recording_last_sample_at: float | None = None
+        self._recording_started_monotonic = 0.0
+        self._telemetry_identity: tuple[object, ...] | None = None
+        self._telemetry_updated_at: float | None = None
+        self._telemetry_lock = threading.RLock()
+        self._telemetry_context: tuple[object, ...] | None = None
+        self._telemetry_waiting_for_frame = False
+        self._recording_device: dict[str, object] = {}
+        self._recording_capabilities: list[str] = []
+        self._recording_baseline: dict[str, object] = {}
         self._append_event("system", "SDK Test Bench ready", "ok")
 
     def status(self) -> dict[str, object]:
@@ -304,8 +341,12 @@ class MediaLabService:
                 "rtc_baseline": dict(self._robot.resource_rtc_baseline),
                 "current": dict(self._robot.resource_snapshot),
                 "history": list(self._robot.resource_history),
+                "telemetry": self.resource_telemetry_status(connection=connection),
             },
             "rtc": rtc,
+            "procedural": self.procedural_status(),
+            "sd_baseline": self.sd_baseline_status(),
+            "scenario_recording": self.scenario_recording_status(),
             "inference": {"state": self._inference_state,
                           "session_id": inference_session.id if inference_session else None,
                           "model_id": inference_session.model_id if inference_session else None},
@@ -349,6 +390,257 @@ class MediaLabService:
                     self._set_face_state("stop_required")
                 elif self._face_state == "stop_required":
                     self.stop_face_tracking()
+        with self._procedural_lock:
+            if self._procedural_lease is not None:
+                if connection.get("online") is not True:
+                    self._procedural_state = "stop_required"
+                elif self._procedural_state == "stop_required":
+                    self.stop_procedural()
+        with self._sd_baseline_lock:
+            if self._sd_baseline_lease is not None:
+                if connection.get("online") is not True:
+                    self._sd_baseline_state = "stop_required"
+                elif self._sd_baseline_state == "stop_required":
+                    self.stop_sd_baseline()
+        self._sample_scenario(connection=connection)
+
+    def sd_baseline_status(self) -> dict[str, object]:
+        """Identify the fixed, silent SD loop used for comparison recordings."""
+        with self._sd_baseline_lock:
+            return {
+                "supported": (
+                    "behavior" in self._robot.capabilities
+                    and "animation" in self._robot.capabilities
+                    and _SD_BASELINE_ANIMATION_ID in self._robot.animation.available_ids
+                ),
+                "state": self._sd_baseline_state,
+                "behavior_id": _SD_BASELINE_BEHAVIOR_ID,
+                "animation_id": _SD_BASELINE_ANIMATION_ID,
+                "operation_id": self._sd_baseline_operation_id,
+            }
+
+    def start_sd_baseline(self) -> dict[str, object]:
+        with self._sd_baseline_lock:
+            self._ensure_device_online()
+            self._ensure_capability("behavior")
+            self._ensure_capability("animation")
+            if _SD_BASELINE_ANIMATION_ID not in self._robot.animation.available_ids:
+                raise ValueError("Fixed SD baseline requires the advertised standby animation")
+            if self._sd_baseline_lease is not None:
+                if self._sd_baseline_state == "running":
+                    return self.sd_baseline_status()
+                raise MediaLabBusyError("Confirm SD baseline stop before starting again")
+            lease = self._operation("sd_baseline", resource="animation")
+            lease.__enter__()
+            self._sd_baseline_lease = lease
+            self._sd_baseline_state = "starting"
+            try:
+                # The firmware catalog defines a fixed standby loop with no
+                # motion or sound. AnimationDomain.play is a one-shot contract.
+                job = self._robot.behavior.play(_SD_BASELINE_BEHAVIOR_ID)
+            except Exception:
+                self._sd_baseline_state = "stop_required"
+                try:
+                    self.stop_sd_baseline()
+                except Exception:
+                    _LOGGER.exception("SD baseline startup cleanup remains unconfirmed")
+                raise
+            self._sd_baseline_operation_id = job.id
+            self._sd_baseline_state = "running"
+            return self.sd_baseline_status()
+
+    def stop_sd_baseline(self) -> dict[str, object]:
+        with self._sd_baseline_lock:
+            if self._sd_baseline_lease is None:
+                return self.sd_baseline_status()
+            self._sd_baseline_state = "stop_required"
+            self._ensure_device_online()
+            self._robot.behavior.stop()
+            self._sd_baseline_lease.__exit__(None, None, None)
+            self._sd_baseline_lease = None
+            self._sd_baseline_operation_id = None
+            self._sd_baseline_state = "idle"
+            return self.sd_baseline_status()
+
+    def procedural_status(self) -> dict[str, object]:
+        """Expose device mouth evidence without substituting browser activity."""
+        animation = self._robot.resource_snapshot.get("animation", {})
+        if not isinstance(animation, Mapping):
+            animation = {}
+        with self._procedural_lock:
+            state = self._procedural_state
+        available = (
+            isinstance(animation.get("audio_follow"), bool)
+            and isinstance(animation.get("mouth_level_milli"), int)
+            and isinstance(animation.get("pcm_frames"), int)
+            and animation.get("source") == "rtc_playback"
+            and self.resource_telemetry_status()["status"] == "available"
+        )
+        return {
+            "supported": _PROCEDURAL_CAPABILITY in self._robot.capabilities,
+            "state": state,
+            "style": "radial",
+            "mouth_source": "rtc_playback",
+            "telemetry_available": available,
+            "audio_follow": animation.get("audio_follow") if available else None,
+            "mouth_level_milli": animation.get("mouth_level_milli") if available else None,
+            "pcm_frames": animation.get("pcm_frames") if available else None,
+            "design_id": animation.get("design_id") if available else None,
+        }
+
+    def start_procedural(self) -> dict[str, object]:
+        with self._procedural_lock:
+            self._ensure_device_online()
+            self._ensure_capability(_PROCEDURAL_CAPABILITY)
+            if self._procedural_lease is not None:
+                if self._procedural_state == "running":
+                    return self.procedural_status()
+                raise MediaLabBusyError("Confirm procedural stop before starting again")
+            lease = self._operation("procedural", resource="animation")
+            lease.__enter__()
+            self._procedural_lease = lease
+            self._procedural_state = "starting"
+            try:
+                self._robot.expression_runtime.set_audio_follow(True)
+            except Exception:
+                self._procedural_state = "stop_required"
+                try:
+                    self.stop_procedural()
+                except Exception:
+                    _LOGGER.exception("Procedural startup cleanup remains unconfirmed")
+                raise
+            self._procedural_state = "running"
+            return self.procedural_status()
+
+    def stop_procedural(self) -> dict[str, object]:
+        with self._procedural_lock:
+            if self._procedural_lease is None:
+                return self.procedural_status()
+            self._procedural_state = "stop_required"
+            self._ensure_device_online()
+            self._robot.expression_runtime.set_audio_follow(False)
+            self._procedural_lease.__exit__(None, None, None)
+            self._procedural_lease = None
+            self._procedural_state = "idle"
+            return self.procedural_status()
+
+    def scenario_recording_status(self) -> dict[str, object]:
+        with self._recording_lock:
+            return {key: value for key, value in self._recording.items() if key != "summary"}
+
+    def start_scenario_recording(self, *, label: str = "combined-scene") -> dict[str, object]:
+        if not isinstance(label, str) or not 1 <= len(label.strip()) <= 120:
+            raise ValueError("label must contain 1 to 120 characters")
+        with self._recording_lock:
+            if self._recording.get("active") is True:
+                raise MediaLabBusyError("Stop the current scenario recording first")
+            self._recording = {
+                "active": True, "label": label.strip(), "started_at": time.time(),
+                "stopped_at": None, "sample_count": 0, "dropped_samples": 0,
+                "max_samples": _SCENARIO_MAX_SAMPLES, "summary": {"memory": {}},
+            }
+            self._recording_samples = deque(maxlen=_SCENARIO_MAX_SAMPLES)
+            self._recording_started_monotonic = time.monotonic()
+            self._recording_last_sample_at = None
+            self._recording_device = deepcopy(self._robot.device_info)
+            self._recording_capabilities = list(self._robot.capabilities)
+            self._recording_baseline = deepcopy(self._robot.resource_baseline)
+        self._sample_scenario()
+        self._append_event("scenario_recording", f"Recording started: {label.strip()}", "running")
+        return self.scenario_recording_status()
+
+    def stop_scenario_recording(self) -> dict[str, object]:
+        self._sample_scenario()
+        with self._recording_lock:
+            if self._recording.get("active") is True:
+                self._recording["active"] = False
+                self._recording["stopped_at"] = time.time()
+        return self.scenario_recording_status()
+
+    def scenario_report(self) -> dict[str, object]:
+        with self._recording_lock:
+            report = deepcopy(self._recording)
+            report["samples"] = deepcopy(list(self._recording_samples))
+            report["device"] = deepcopy(self._recording_device)
+            report["capabilities"] = list(self._recording_capabilities)
+            report["baseline"] = deepcopy(self._recording_baseline)
+        report.update(
+            schema="watcher-media-lab-scene/1", exported_at=time.time(),
+            events=self.events(),
+        )
+        return report
+
+    def resource_telemetry_status(self, *, connection: Mapping[str, object] | None = None) -> dict[str, object]:
+        """Age actual device events; a new connection does not refresh cached data."""
+        connection = self._device_status() if connection is None else connection
+        snapshot = self._robot.resource_snapshot
+        received = getattr(self._robot, "resource_snapshot_received_at", None)
+        now = time.monotonic()
+        has_receipt = isinstance(received, (int, float)) and not isinstance(received, bool) and math.isfinite(received)
+        marker = ("received", received) if has_receipt else ("snapshot", snapshot.get("sequence"), snapshot.get("captured_at_ms"))
+        if not snapshot or (not has_receipt and all(value is None for value in marker[1:])):
+            marker = None
+        context = (self._robot.device_info.get("device_id"), connection.get("request_id"), connection.get("connection_id"))
+        online = connection.get("online") is True
+        with self._telemetry_lock:
+            if not online or (self._telemetry_context is not None and self._telemetry_context != context):
+                self._telemetry_waiting_for_frame = True
+            if marker is not None and marker != self._telemetry_identity:
+                self._telemetry_identity = marker
+                self._telemetry_updated_at = min(float(received), now) if has_receipt else now
+                if online:
+                    self._telemetry_waiting_for_frame = False
+            self._telemetry_context = context
+            age = None if self._telemetry_updated_at is None else max(0.0, now - self._telemetry_updated_at)
+            state = (
+                "unavailable" if not online or marker is None or self._telemetry_waiting_for_frame
+                else "stale" if age is None or age >= _TELEMETRY_STALE_SECONDS
+                else "available"
+            )
+            return {"status": state, "age_seconds": age}
+
+    def _sample_scenario(self, *, connection: Mapping[str, object] | None = None) -> None:
+        connection = self._device_status() if connection is None else connection
+        snapshot = deepcopy(self._robot.resource_snapshot)
+        rtc = deepcopy(self._rtc.snapshot())
+        procedural = self.procedural_status()
+        sd_baseline = self.sd_baseline_status()
+        telemetry = self.resource_telemetry_status(connection=connection)
+        with self._state_lock:
+            owners = dict(self._active_actions)
+        now = time.monotonic()
+        with self._recording_lock:
+            if self._recording.get("active") is not True:
+                return
+            if self._recording_last_sample_at is not None and now - self._recording_last_sample_at < _SCENARIO_SAMPLE_INTERVAL_SECONDS:
+                return
+            self._recording_last_sample_at = now
+            sample = {
+                "timestamp": time.time(), "elapsed_seconds": round(now - self._recording_started_monotonic, 3),
+                "connected": connection.get("online") is True, "resource_owners": owners,
+                "device_id": self._robot.device_info.get("device_id"),
+                "connection": {key: connection.get(key) for key in ("request_id", "connection_id")},
+                "telemetry": telemetry,
+                "resources": snapshot, "rtc": rtc, "procedural": procedural,
+                "sd_baseline": sd_baseline,
+            }
+            if len(self._recording_samples) == self._recording_samples.maxlen:
+                self._recording["dropped_samples"] += 1
+            self._recording_samples.append(sample)
+            self._recording["sample_count"] += 1
+            memory = snapshot.get("memory", {})
+            if telemetry["status"] == "available" and isinstance(memory, Mapping):
+                summary = self._recording["summary"]["memory"]
+                for domain in ("internal", "dma", "psram"):
+                    metrics = memory.get(domain)
+                    if not isinstance(metrics, Mapping):
+                        continue
+                    for metric in ("free_bytes", "largest_free_block_bytes", "minimum_free_bytes"):
+                        value = metrics.get(metric)
+                        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                            minima = summary.setdefault(domain, {})
+                            key = f"{metric}_min"
+                            minima[key] = min(minima.get(key, value), value)
 
     def vision_models(self) -> dict[str, object]:
         self._ensure_device_online()
@@ -620,9 +912,14 @@ class MediaLabService:
             return {"prefetched": True, "animation_id": animation_id}
 
     def stop_animation(self) -> dict[str, object]:
-        self._ensure_device_online()
-        self._ensure_capability("animation")
-        self._robot.animation.stop()
+        with self._procedural_lock, self._sd_baseline_lock:
+            if self._procedural_lease is not None:
+                raise MediaLabBusyError("Stop procedural animation with its own control first")
+            if self._sd_baseline_lease is not None:
+                raise MediaLabBusyError("Stop SD baseline with its own control first")
+            self._ensure_device_online()
+            self._ensure_capability("animation")
+            self._robot.animation.stop()
         self._append_event("animation_stop", "Animation stop requested", "ok")
         return {"stopped": True}
 
@@ -632,20 +929,39 @@ class MediaLabService:
             raise ValueError("animation_id must be a catalog-safe resource id")
 
     def capture_photo(self) -> dict[str, object]:
-        with self._operation("capture_photo", resources=("camera", "animation")):
-            image = self._robot.camera.capture(
-                width=0,
-                height=0,
-                quality=0,
-                timeout=10.0,
-            )
-            output = self._artifact_output("camera.jpg")
-            output.write_bytes(bytes(image.data))
-            return {
-                "artifact": output.name,
-                "bytes": output.stat().st_size,
-                "content_type": "image/jpeg",
-            }
+        # The audio-follow firmware keeps its procedural display running during
+        # plain still capture. Older SD feedback captures retain display exclusion.
+        with self._procedural_lock:
+            if self._procedural_lease is not None and self._procedural_state != "running":
+                raise MediaLabBusyError("Confirm procedural lifecycle before capturing")
+            resources = ("camera",) if self._procedural_state == "running" else ("camera", "animation")
+            # Acquire before dropping the lifecycle lock so an idle capture's
+            # display lease cannot race procedural startup. Do not keep that
+            # lock during camera IO: status and resource recording must continue.
+            lease = self._operation("capture_photo", resources=resources)
+            lease.__enter__()
+        try:
+            result = self._capture_photo()
+        except Exception as error:
+            lease.__exit__(type(error), error, error.__traceback__)
+            raise
+        lease.__exit__(None, None, None)
+        return result
+
+    def _capture_photo(self) -> dict[str, object]:
+        image = self._robot.camera.capture(
+            width=0,
+            height=0,
+            quality=0,
+            timeout=10.0,
+        )
+        output = self._artifact_output("camera.jpg")
+        output.write_bytes(bytes(image.data))
+        return {
+            "artifact": output.name,
+            "bytes": output.stat().st_size,
+            "content_type": "image/jpeg",
+        }
 
     def record_microphone(self, *, duration: float) -> dict[str, object]:
         if (
@@ -677,7 +993,7 @@ class MediaLabService:
                 "decode_failures": recording.decode_failures,
             }
 
-    def start_live_video(self, *, mode: str = "video") -> dict[str, object]:
+    def start_live_video(self, *, mode: str = "video", request_id: str | None = None) -> dict[str, object]:
         if mode not in {"video", "audio", "av"}:
             raise ValueError("RTC mode must be video, audio, or av")
         required_capabilities = {
@@ -704,6 +1020,7 @@ class MediaLabService:
         }[mode]
         with self._live_video_lifecycle_lock:
             self._acquire_rtc_resources(action, rtc_resources)
+            self._rtc_request_id = request_id
             try:
                 self._ensure_device_online()
                 self._browser_host_ipv4 = self._resolve_browser_host_ipv4()
@@ -754,8 +1071,12 @@ class MediaLabService:
         self._rtc.feedback(**request.model_dump())
         return {"accepted": True}
 
-    def stop_live_video(self) -> dict[str, object]:
+    def stop_live_video(self, *, request_id: str | None = None) -> dict[str, object]:
         with self._live_video_lifecycle_lock:
+            # Browser cleanup belongs to one start attempt, even if its ACK
+            # arrives late. Unscoped controls retain the diagnostic/HIL API.
+            if request_id is not None and request_id != self._rtc_request_id:
+                return {"stopped": False, "matched": False}
             with self._state_lock:
                 action = (
                     self._active_action
@@ -850,6 +1171,7 @@ class MediaLabService:
             if not self._live_video_lock_held:
                 return
             self._live_video_lock_held = False
+            self._rtc_request_id = None
             resources = self._rtc_resources_held
             self._rtc_resources_held = ()
             for resource in resources:
@@ -996,6 +1318,15 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
             except asyncio.CancelledError:
                 pass
             try:
+                if service._rtc.snapshot().get("active") is True:
+                    await asyncio.to_thread(service.stop_live_video)
+            except Exception:
+                _LOGGER.exception("RTC shutdown could not be confirmed")
+            try:
+                await asyncio.to_thread(service.stop_sd_baseline)
+            except Exception:
+                _LOGGER.exception("SD baseline shutdown could not be confirmed")
+            try:
                 await asyncio.to_thread(service.stop_inference)
             except Exception:
                 _LOGGER.exception("Inference shutdown could not be confirmed")
@@ -1003,6 +1334,11 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
                 await asyncio.to_thread(service.stop_face_tracking)
             except Exception:
                 _LOGGER.exception("Face tracking shutdown could not be confirmed")
+            try:
+                await asyncio.to_thread(service.stop_procedural)
+            except Exception:
+                _LOGGER.exception("Procedural shutdown could not be confirmed")
+            await asyncio.to_thread(service.stop_scenario_recording)
 
     app = FastAPI(
         title="WatcheRobot SDK Test Bench",
@@ -1218,6 +1554,35 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     async def stop_animation() -> dict[str, object]:
         return await _run_action(service.stop_animation)
 
+    @app.post("/api/controls/procedural/start")
+    async def start_procedural() -> dict[str, object]:
+        return await _run_action(service.start_procedural)
+
+    @app.post("/api/controls/procedural/stop")
+    async def stop_procedural() -> dict[str, object]:
+        return await _run_action(service.stop_procedural)
+
+    @app.post("/api/controls/sd-baseline/start")
+    async def start_sd_baseline() -> dict[str, object]:
+        return await _run_action(service.start_sd_baseline)
+
+    @app.post("/api/controls/sd-baseline/stop")
+    async def stop_sd_baseline() -> dict[str, object]:
+        return await _run_action(service.stop_sd_baseline)
+
+    @app.post("/api/scenario/recording/start")
+    async def start_scenario_recording(request: ScenarioRecordingStartRequest) -> dict[str, object]:
+        return await _run_action(service.start_scenario_recording, label=request.label)
+
+    @app.post("/api/scenario/recording/stop")
+    async def stop_scenario_recording() -> dict[str, object]:
+        return await _run_action(service.stop_scenario_recording)
+
+    @app.get("/api/scenario/report")
+    async def scenario_report() -> JSONResponse:
+        report = await asyncio.to_thread(service.scenario_report)
+        return JSONResponse(report, headers={"Content-Disposition": 'attachment; filename="media-lab-scene.json"'})
+
     @app.post("/api/actions/capture-photo")
     async def capture_photo() -> dict[str, object]:
         result = await _run_action(service.capture_photo)
@@ -1236,7 +1601,7 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     @app.post("/api/rtc/session/start")
     @app.post("/api/video/session/start")
     async def start_video(request: RtcSessionStartRequest) -> dict[str, object]:
-        return await _run_action(service.start_live_video, mode=request.mode)
+        return await _run_action(service.start_live_video, mode=request.mode, request_id=request.request_id)
 
     @app.post("/api/rtc/session/signal")
     @app.post("/api/video/session/signal")
@@ -1263,8 +1628,8 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
 
     @app.post("/api/rtc/session/stop")
     @app.post("/api/video/session/stop")
-    async def stop_video() -> dict[str, object]:
-        return await _run_action(service.stop_live_video)
+    async def stop_video(request: RtcSessionStopRequest | None = None) -> dict[str, object]:
+        return await _run_action(service.stop_live_video, request_id=request.request_id if request else None)
 
     @app.get("/artifacts/{filename}")
     async def artifact(filename: str) -> FileResponse:

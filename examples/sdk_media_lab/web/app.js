@@ -1,4 +1,4 @@
-import { evaluateRtcAudioHealth } from "./rtc-audio-health.mjs";
+import { evaluateRtcAudioHealth, formatRtcPlaybackLevel } from "./rtc-audio-health.mjs";
 import { detectionLabel, testBenchModels, createPreviewLifecycle } from "./model-preview.mjs";
 import { createDisplayAudit } from "./display-audit.mjs";
 import { createMjpegTransport } from "./mjpeg-transport.mjs";
@@ -29,6 +29,7 @@ import {
 } from "./rtc-audio-latency.mjs";
 import {
   evaluateResourceLifecycle,
+  readAnimationResidency,
   selectLifecycleBaseline,
   selectLatestReleaseSnapshot,
   selectFeatureResourceSnapshots,
@@ -57,6 +58,18 @@ import {
 } from "./mjpeg-chunk-reassembly.mjs";
 import { createRtcMicrophoneConstraints } from "./rtc-audio-capture.mjs";
 import { initializeI18n, translateText } from "./i18n.mjs";
+import {
+  appendSceneSample,
+  audioDropCounters,
+  combinedSceneAvailability,
+  createSceneSample,
+  createScenePageLifecycle,
+  createCombinedSceneLifecycle,
+  evaluateProceduralRender,
+  sceneRecordingLabel,
+  summarizeSceneSamples,
+} from "./combined-scene.mjs";
+const scenePageLifecycle = createScenePageLifecycle();
 
 const i18n = initializeI18n({
   defaultLocale: "en-US",
@@ -70,6 +83,7 @@ const state = {
   localResources: new Set(),
   pairingBusy: false,
   hiddenEventIds: new Set(),
+  scene: { samples: [], recordingPending: false, reportPending: false, audioResultActive: false, operationGeneration: 0 },
   animation: {
     requestedId: null,
     requestedAtMs: 0,
@@ -92,6 +106,7 @@ const state = {
   },
   rtc: {
     generation: 0,
+    requestId: null,
     mode: null,
     peer: null,
     channel: null,
@@ -119,6 +134,7 @@ const state = {
     browserAudioLevel: 0,
     audioConnectedAt: 0,
     audioHealthState: "idle",
+    audioVerified: false,
     audioJitterCounter: null,
     audioLatency: { sampleValid: false, actualMs: 0, targetMs: 0, minimumMs: 0 },
     feedbackReceivedFrames: 0,
@@ -136,7 +152,7 @@ function rtcDiagnosticAudioEnabled() {
 
 function rtcBrowserAudioProcessingEnabled() {
   const params = new URLSearchParams(window.location.search);
-  return params.get("rtc_audio_processing") === "1";
+  return params.get("rtc_audio_processing") !== "0";
 }
 
 async function createRtcDiagnosticAudioStream() {
@@ -156,6 +172,30 @@ async function createRtcDiagnosticAudioStream() {
 }
 
 const elements = {
+  sceneCapability: document.querySelector("#sceneCapability"),
+  startProceduralButton: document.querySelector("#startProceduralButton"),
+  stopProceduralButton: document.querySelector("#stopProceduralButton"),
+  startSceneAudioButton: document.querySelector("#startSceneAudioButton"),
+  stopSceneAudioButton: document.querySelector("#stopSceneAudioButton"),
+  captureScenePhotoButton: document.querySelector("#captureScenePhotoButton"),
+  sceneResult: document.querySelector("#sceneResult"),
+  sceneAnimationState: document.querySelector("#sceneAnimationState"),
+  sceneAnimationFps: document.querySelector("#sceneAnimationFps"),
+  sceneMouth: document.querySelector("#sceneMouth"),
+  sceneAudioState: document.querySelector("#sceneAudioState"),
+  sceneAudioDrops: document.querySelector("#sceneAudioDrops"),
+  scenePhotoPreview: document.querySelector("#scenePhotoPreview"),
+  scenePhotoEmpty: document.querySelector("#scenePhotoEmpty"),
+  scenePhotoCaption: document.querySelector("#scenePhotoCaption"),
+  sceneRecordingLabel: document.querySelector("#sceneRecordingLabel"),
+  startSceneRecordingButton: document.querySelector("#startSceneRecordingButton"),
+  stopSceneRecordingButton: document.querySelector("#stopSceneRecordingButton"),
+  exportSceneReportButton: document.querySelector("#exportSceneReportButton"),
+  sceneRecordingState: document.querySelector("#sceneRecordingState"),
+  sceneMemoryRows: document.querySelector("#sceneMemoryRows"),
+  sceneMemoryCaption: document.querySelector("#sceneMemoryCaption"),
+  sceneResourceChart: document.querySelector("#sceneResourceChart"),
+  sceneSampleSummary: document.querySelector("#sceneSampleSummary"),
   connectionBadge: document.querySelector("#connectionBadge"),
   connectionText: document.querySelector("#connectionText"),
   deviceId: document.querySelector("#deviceId"),
@@ -253,8 +293,10 @@ const elements = {
   rtcAudioDownPackets: document.querySelector("#rtcAudioDownPackets"),
   rtcAudioDeviceCapture: document.querySelector("#rtcAudioDeviceCapture"),
   rtcAudioDeviceTx: document.querySelector("#rtcAudioDeviceTx"),
+  rtcAudioDeviceDrops: document.querySelector("#rtcAudioDeviceDrops"),
   rtcAudioSignal: document.querySelector("#rtcAudioSignal"),
   rtcAudioAec: document.querySelector("#rtcAudioAec"),
+  rtcAudioPlaybackLevel: document.querySelector("#rtcAudioPlaybackLevel"),
   rtcAudioLatency: document.querySelector("#rtcAudioLatency"),
   resourcePanel: document.querySelector("#resourcePanel"),
   resourceState: document.querySelector("#resourceState"),
@@ -269,6 +311,7 @@ const elements = {
   resourceOwners: document.querySelector("#resourceOwners"),
   resourceTransitions: document.querySelector("#resourceTransitions"),
   resourceDelta: document.querySelector("#resourceDelta"),
+  resourceAnimationResidency: document.querySelector("#resourceAnimationResidency"),
   resourceRelease: document.querySelector("#resourceRelease"),
   rtcRemoteAudio: document.querySelector("#rtcRemoteAudio"),
   recordMicrophoneButton: document.querySelector("#recordMicrophoneButton"),
@@ -287,6 +330,26 @@ const elements = {
   footerClock: document.querySelector("#footerClock"),
 };
 
+const sceneRtcRequestPrefix = crypto.randomUUID();
+const sceneRtcRequestId = owner => owner == null ? null : `${sceneRtcRequestPrefix}:${owner}`;
+const combinedScene = createCombinedSceneLifecycle({
+  isProceduralRunning: () => state.status?.procedural?.state === "running",
+  startProcedural: () => proceduralAction("start"),
+  stopProcedural: () => proceduralAction("stop"),
+  startAudio: async (owner) => {
+    state.scene.audioResultActive = true;
+    const started = await startRtcAudio(sceneRtcRequestId(owner));
+    if (!started) throw new Error(translateText(elements.rtcAudioResult.textContent) || "Full-duplex call did not start");
+    return true;
+  },
+  stopAudio: async (owner) => {
+    const retainedSceneRequest = state.rtc.requestId?.startsWith(`${sceneRtcRequestPrefix}:`) ? state.rtc.requestId : null;
+    const requestId = sceneRtcRequestId(owner) || retainedSceneRequest;
+    if (requestId && await stopRtcSession(requestId) === false) throw new Error("RTC stop is unconfirmed; retry End Scene");
+  },
+  onChange: () => { if (state.status) updateCombinedScene(state.status); },
+});
+
 const actionLabels = {
   play_audio: "Speaker Playback",
   stop_audio: "Stop Playback",
@@ -302,6 +365,7 @@ const actionLabels = {
   light_off: "Lights Off",
   animation_play: "Animation Playback",
   animation_stop: "Animation Stop",
+  procedural: "Procedural Animation",
   rtc_av: "Audio/video Call",
   system: "System",
 };
@@ -387,6 +451,7 @@ function localizeEvent(event) {
 }
 
 function formatBytes(value) {
+  if (value === null || value === undefined || value === "" || typeof value === "boolean") return "—";
   const bytes = Number(value);
   if (!Number.isFinite(bytes)) return "—";
   if (Math.abs(bytes) < 1024) return `${bytes} B`;
@@ -395,12 +460,15 @@ function formatBytes(value) {
 }
 
 function formatSignedBytes(value) {
+  if (value === null || value === undefined || value === "" || typeof value === "boolean") return "—";
   const bytes = Number(value);
   if (!Number.isFinite(bytes)) return "—";
   return `${bytes > 0 ? "+" : ""}${formatBytes(bytes)}`;
 }
 
 function updateResourceMonitor(status) {
+  const telemetry = status.resources?.telemetry;
+  const fresh = status.connected && (!telemetry || telemetry.status === "available");
   const baseline = status.resources?.baseline;
   const rtcBaseline = status.resources?.rtc_baseline;
   const current = status.resources?.current;
@@ -432,10 +500,11 @@ function updateResourceMonitor(status) {
     rtc_release_1000ms: "1 s After RTC Stop",
     rtc_release_3000ms: "3 s After RTC Stop",
   };
-  elements.resourcePanel.dataset.state = health.state;
-  elements.resourceState.textContent = stateLabels[health.state] || health.state;
+  elements.resourcePanel.dataset.state = fresh ? health.state : "waiting";
+  elements.resourceState.textContent = fresh ? stateLabels[health.state] || health.state
+    : telemetry?.status === "stale" ? "Device Telemetry Stale" : "Waiting for Device Snapshot";
   elements.resourceStage.textContent = current
-    ? `${status.connected ? "Live" : "Device offline, last sample"} · ${stageLabels[current.stage] || current.stage || "Unknown Stage"} · #${current.sequence || 0}`
+    ? `${fresh ? "Live" : "Last Device Snapshot"} · ${stageLabels[current.stage] || current.stage || "Unknown Stage"} · #${current.sequence || 0}${telemetry?.age_seconds !== null && telemetry?.age_seconds !== undefined ? ` · age ${Number(telemetry.age_seconds).toFixed(1)} s` : ""}`
     : "No evt.sdk.resource_snapshot received";
 
   const memory = current?.memory || {};
@@ -488,6 +557,11 @@ function updateResourceMonitor(status) {
   elements.resourceDelta.textContent = lifecycleBaseline
     ? `Against ${hasRtcBaseline ? "RTC pre-start" : "Connection Baseline"}: internal ${formatSignedBytes(health.deltas.internalFreeBytes)} / ${formatSignedBytes(health.deltas.internalLargestBytes)} · DMA ${formatSignedBytes(health.deltas.dmaLargestBytes)} · PSRAM ${formatSignedBytes(health.deltas.psramLargestBytes)}${health.trend?.monotonicDecline ? " · declined after 4 consecutive releases" : ""}`
     : "Waiting for Resource Baseline";
+
+  const residency = readAnimationResidency(current, fresh);
+  const residencyStates = { unknown: "Allocation telemetry unavailable", released: "Allocations released",
+    resident: "Allocations resident", failed: "Allocation release failed" };
+  elements.resourceAnimationResidency.textContent = `${residencyStates[residency.state]} · SD frames ${formatBytes(residency.sdFramePoolBytes)} · SD payload ${formatBytes(residency.sdPayloadCacheBytes)} · SD task ${formatBytes(residency.sdWorkerStackBytes)} · LCD DMA ${formatBytes(residency.sdDirectLcdDmaBytes)} · Procedural canvas ${formatBytes(residency.proceduralFrameBytes)}`;
 
   const release = current?.release;
   if (!release || !release.sequence) {
@@ -549,6 +623,229 @@ function renderAnimationCatalog(value, connected) {
       : "The current firmware has not reported an animation catalog";
 }
 
+function sceneBytes(value) {
+  return value === null || value === undefined ? "—" : formatBytes(value);
+}
+
+function updateCombinedScene(status) {
+  const controls = combinedSceneAvailability(status, {
+    localResources: state.localResources, rtcMode: state.rtc.mode,
+    teardownInProgress: state.rtc.teardownInProgress,
+  });
+  const scene = combinedScene.snapshot();
+  elements.sceneCapability.textContent = !status.connected ? "Device Offline"
+    : controls.proceduralSupported ? "Speaker-driven animation available" : "Audio-follow Firmware Required";
+  elements.sceneCapability.dataset.state = status.connected && controls.proceduralSupported ? "ready" : "waiting";
+  elements.startProceduralButton.disabled = !controls.startProcedural || scene.busy;
+  elements.stopProceduralButton.disabled = !controls.stopProcedural || scene.busy;
+  elements.startSceneAudioButton.disabled = scene.busy || scene.active || !controls.startAudio
+    || !controls.proceduralSupported || (status.procedural?.state !== "running" && !controls.startProcedural);
+  elements.stopSceneAudioButton.disabled = scene.stopping
+    || !(controls.stopAudio || scene.starting || scene.active || scene.ownsProcedural);
+  elements.captureScenePhotoButton.disabled = !controls.snapshot;
+  const proceduralLabels = {
+    idle: "Animation Idle", starting: "Starting Animation", running: "Procedural Animation Running",
+    stopping: "Stopping Animation", stop_required: "Animation stop unconfirmed; retry stop",
+    warming: "Waiting for Rendered Frames", waiting_data: "Waiting for Device Snapshot",
+    failed: "Procedural Display Updates Failed", degraded: "Animation Running with Update Errors",
+  };
+  const render = evaluateProceduralRender(status);
+  elements.sceneAnimationState.textContent = !status.connected ? "Device Offline"
+    : !controls.proceduralSupported ? "Not Advertised"
+      : `${proceduralLabels[render.state] || "Waiting for Telemetry"}${render.updateErrors > 0 ? ` · ${render.updateErrors} errors` : ""}`;
+  elements.sceneAnimationState.dataset.tone = ["failed", "degraded"].includes(render.state) ? "error" : "normal";
+  const lastDevice = state.scene.samples.at(-1)?.deviceId;
+  if (lastDevice && status.device?.device_id && lastDevice !== status.device.device_id) state.scene.samples = [];
+  const sample = createSceneSample(status, { rtcMode: state.rtc.mode });
+  state.scene.samples = appendSceneSample(state.scene.samples, sample);
+  elements.sceneAnimationFps.textContent = sample?.animationFps === null || sample?.animationFps === undefined
+    ? render.state === "idle" ? "Animation Idle" : "Waiting for Frame Samples"
+    : `${sample.animationFps.toFixed(1)} / ${sample.animationTargetFps?.toFixed(1) ?? "—"} FPS`;
+  elements.sceneMouth.textContent = sample?.mouthLevelMilli === null || sample?.mouthLevelMilli === undefined
+    ? "Waiting for Speaker Telemetry"
+    : `${(sample.mouthLevelMilli / 10).toFixed(1)}% · ${sample.pcmFrames ?? "—"} PCM frames`;
+  elements.sceneAudioDrops.textContent = `Uplink drops ${sample?.audioTxDroppedFrames ?? "—"} / Playback queue drops ${sample?.audioQueueDroppedFrames ?? "—"}`;
+  elements.sceneAudioDrops.dataset.tone = sample?.audioTxDroppedFrames > 0 || sample?.audioQueueDroppedFrames > 0 ? "error" : "normal";
+  const audioMode = state.rtc.mode || (status.rtc?.active ? status.rtc.mode : null);
+  elements.sceneAudioState.textContent = !status.connected ? "Device Offline" : rtcModeHasAudio(audioMode)
+    ? state.rtc.mode
+      ? `${String(state.rtc.audioHealthState || "connecting").toUpperCase()} · ↑ ${state.rtc.browserAudioSent} / ↓ ${state.rtc.browserAudioReceived}`
+      : "Device Call Active · browser not connected"
+    : "IDLE";
+  if (state.scene.audioResultActive) {
+    setResult(elements.sceneResult, translateText(elements.rtcAudioResult.textContent), elements.rtcAudioResult.dataset.tone || "running");
+  }
+  const currentMemory = sample || state.scene.samples.at(-1);
+  elements.sceneMemoryCaption.textContent = sample ? "Live Device Memory" : "Last Device Snapshot";
+  elements.sceneMemoryRows.replaceChildren(...["internal", "dma", "psram"].map(heap => {
+    const row = document.createElement("tr");
+    for (const value of [heap === "internal" ? "Internal RAM" : heap.toUpperCase(),
+      sceneBytes(currentMemory?.[heap]?.free), sceneBytes(currentMemory?.[heap]?.minimum),
+      sceneBytes(currentMemory?.[heap]?.largest)]) {
+      const cell = document.createElement("td"); cell.textContent = value; row.append(cell);
+    }
+    return row;
+  }));
+  const summary = summarizeSceneSamples(state.scene.samples);
+  elements.sceneSampleSummary.textContent = summary.sampleCount
+    ? `${summary.sampleCount} samples · ${(summary.durationMs / 1000).toFixed(0)} s · observed lows: internal ${sceneBytes(summary.internalFreeLow)} / DMA block ${sceneBytes(summary.dmaLargestLow)} / PSRAM ${sceneBytes(summary.psramFreeLow)}`
+    : "Waiting for Device Snapshot";
+  drawSceneResourceChart(state.scene.samples);
+  updateSceneRecordingControls(status);
+}
+
+function drawSceneResourceChart(samples) {
+  const canvas = elements.sceneResourceChart;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const traces = [
+    { label: "Internal Free", color: "#d9ff57", value: sample => sample.internal.free },
+    { label: "DMA Largest Block", color: "#62e7d7", value: sample => sample.dma.largest },
+    { label: "PSRAM Free", color: "#ffb650", value: sample => sample.psram.free },
+  ];
+  const rowHeight = canvas.height / traces.length;
+  traces.forEach((trace, index) => {
+    const top = index * rowHeight;
+    const values = samples.map(trace.value).filter(value => value !== null);
+    const low = values.length ? Math.min(...values) : 0;
+    const high = values.length ? Math.max(...values) : 0;
+    const span = Math.max(high - low, 1024);
+    const margin = span * 0.15;
+    ctx.fillStyle = trace.color; ctx.font = "16px sans-serif";
+    ctx.fillText(i18n.translate(trace.label), 12, top + 22);
+    ctx.fillStyle = "#929b94"; ctx.font = "14px monospace";
+    ctx.fillText(values.length ? `${formatBytes(low)} — ${formatBytes(high)}` : "—", 12, top + 47);
+    ctx.strokeStyle = "#303a35"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(230, top + rowHeight - 8); ctx.lineTo(canvas.width - 12, top + rowHeight - 8); ctx.stroke();
+    ctx.strokeStyle = trace.color; ctx.lineWidth = 2;
+    ctx.beginPath(); let connected = false;
+    samples.forEach((sample, sampleIndex) => {
+      const value = trace.value(sample);
+      if (value === null) { connected = false; return; }
+      const x = 240 + (canvas.width - 256) * sampleIndex / Math.max(samples.length - 1, 1);
+      const y = top + rowHeight - 12 - (rowHeight - 28) * (value - low + margin) / (span + margin * 2);
+      if (connected) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      connected = true;
+    });
+    ctx.stroke();
+  });
+}
+
+function updateSceneRecordingControls(status = state.status) {
+  const recording = status?.scenario_recording || {};
+  const active = recording.active === true;
+  elements.startSceneRecordingButton.disabled = !status?.connected || active || state.scene.recordingPending;
+  elements.stopSceneRecordingButton.disabled = !active || state.scene.recordingPending;
+  elements.sceneRecordingLabel.disabled = active || state.scene.recordingPending;
+  elements.exportSceneReportButton.disabled = !(Number(recording.sample_count) > 0) || state.scene.reportPending;
+  elements.sceneRecordingState.textContent = recording.started_at
+    ? `${active ? "Measurement Running" : "Measurement Stopped"} · ${recording.sample_count ?? 0} samples${recording.label ? ` · ${recording.label}` : ""}${recording.dropped_samples > 0 ? ` · ${recording.dropped_samples} older samples trimmed` : ""}`
+    : "No measurement recorded";
+}
+
+async function proceduralAction(action) {
+  state.scene.audioResultActive = false;
+  stopRandomAnimation({ quiet: true });
+  const request = () => runAction({
+    path: `/api/controls/procedural/${action}`,
+    result: elements.sceneResult, resource: "animation",
+    pending: action === "start" ? "Starting procedural animation…" : "Stopping procedural animation…",
+    complete: () => action === "start" ? "Procedural animation requested; speak during the call to test the mouth"
+      : "Procedural animation stopped",
+    interrupt: action === "stop",
+  });
+  if (action === "start") {
+    return scenePageLifecycle.startProcedural(request, () => fetch("/api/controls/procedural/stop", {
+      method: "POST", keepalive: true,
+    }));
+  }
+  const result = await request();
+  if (result?.state !== "idle") throw new Error("Procedural stop is unconfirmed");
+  combinedScene.proceduralStopped();
+  return result;
+}
+
+async function startCombinedScene() {
+  if (elements.startSceneAudioButton.disabled) return;
+  const operation = ++state.scene.operationGeneration;
+  state.scene.audioResultActive = false;
+  setResult(elements.sceneResult, "Starting JoyInside RADIAL 09 animation and call…", "running");
+  try {
+    const started = await combinedScene.start();
+    if (operation !== state.scene.operationGeneration) return;
+    if (!started) {
+      state.scene.audioResultActive = false;
+      setResult(elements.sceneResult, "Scene start cancelled", "running");
+    }
+  } catch (error) {
+    if (operation !== state.scene.operationGeneration) return;
+    state.scene.audioResultActive = false;
+    setResult(elements.sceneResult, error.message, "error");
+    notify(error.message, "error");
+  }
+}
+
+async function endCombinedScene() {
+  if (elements.stopSceneAudioButton.disabled) return;
+  const operation = ++state.scene.operationGeneration;
+  state.scene.audioResultActive = false;
+  setResult(elements.sceneResult, "Ending the combined scene…", "running");
+  try {
+    await combinedScene.end();
+    await refreshStatus();
+    if (operation !== state.scene.operationGeneration) return;
+    setResult(elements.sceneResult, "Scene ended; independently enabled animation is preserved", "ok");
+  } catch (error) {
+    if (operation !== state.scene.operationGeneration) return;
+    setResult(elements.sceneResult, error.message, "error");
+    notify(error.message, "error");
+  }
+}
+
+async function settleCombinedAudioStop() {
+  try { await combinedScene.audioStopped(); }
+  catch (error) {
+    state.scene.audioResultActive = false;
+    setResult(elements.sceneResult, error.message, "error");
+    notify(error.message, "error");
+  }
+}
+
+async function sceneRecordingAction(action) {
+  if (state.scene.recordingPending) return;
+  state.scene.recordingPending = true; updateSceneRecordingControls();
+  try {
+    await api(`/api/scenario/recording/${action}`, {
+      method: "POST",
+      body: action === "start" ? JSON.stringify({ label: sceneRecordingLabel(elements.sceneRecordingLabel.value) }) : undefined,
+    });
+    if (action === "start") state.scene.samples = [];
+    await refreshStatus();
+  } catch (error) {
+    setResult(elements.sceneResult, error.message, "error"); notify(error.message, "error");
+  } finally {
+    state.scene.recordingPending = false; updateSceneRecordingControls();
+  }
+}
+
+async function exportSceneReport() {
+  if (state.scene.reportPending) return;
+  state.scene.reportPending = true; updateSceneRecordingControls();
+  let objectUrl = null;
+  try {
+    const report = await api("/api/scenario/report");
+    objectUrl = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a"); link.href = objectUrl;
+    link.download = `watche-scene-${new Date().toISOString().replaceAll(":", "-")}.json`;
+    document.body.append(link); link.click(); link.remove();
+  } catch (error) {
+    setResult(elements.sceneResult, error.message, "error"); notify(error.message, "error");
+  } finally {
+    if (objectUrl) window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    state.scene.reportPending = false; updateSceneRecordingControls();
+  }
+}
+
 function renderStatus(status) {
   state.status = status;
   renderAnimationCatalog(status.animations, status.connected);
@@ -560,10 +857,11 @@ function renderStatus(status) {
   elements.capabilityCount.textContent = String(status.capabilities.length).padStart(2, "0");
   elements.lastSync.textContent = new Date().toLocaleTimeString([], { hour12: false });
   updateResourceMonitor(status);
+  updateCombinedScene(status);
   updateAnimationConfirmation(status);
   const owners = status.resource_owners || {};
   const localActions = [...state.localResources];
-  const activeLabels = Object.values(owners).map(actionLabel);
+  const activeLabels = [...new Set(Object.values(owners))].map(actionLabel);
   elements.activeOperation.textContent = !status.connected
     ? "Device disconnected. Reconnect before testing"
     : activeLabels.length > 0
@@ -736,6 +1034,9 @@ async function refreshStatus({ quiet = true } = {}) {
   try {
     renderStatus(await api("/api/status"));
   } catch (error) {
+    if (state.status) renderStatus({ ...state.status, connected: false,
+      resources: { ...state.status.resources, telemetry: { status: "unavailable", age_seconds: null } },
+    });
     elements.connectionBadge.dataset.state = "offline";
     elements.connectionText.textContent = "Test Bench Offline";
     if (!quiet) notify(error.message, "error");
@@ -834,6 +1135,9 @@ function showPhoto(url) {
   elements.cameraEmpty.hidden = true;
   elements.downloadPhoto.href = url;
   elements.downloadPhoto.hidden = false;
+  elements.scenePhotoPreview.src = url;
+  elements.scenePhotoPreview.hidden = false;
+  elements.scenePhotoEmpty.hidden = true;
 }
 
 async function showRecording(url, redraw = true) {
@@ -1209,6 +1513,8 @@ function setRtcAudioState(value, message = null) {
 function updateRtcAudioHealth() {
   if (!rtcModeHasAudio(state.rtc.mode) || !state.rtc.peer) return;
   const deviceStats = state.status?.rtc?.stats || {};
+  const deviceDrops = audioDropCounters(deviceStats);
+  elements.rtcAudioDeviceDrops.textContent = `Uplink drops ${deviceDrops.uplinkFrames ?? "—"} / Playback queue drops ${deviceDrops.playbackFrames ?? "—"}`;
   const captureFrames = Number(deviceStats.audio_capture_frames || 0);
   const txPackets = Number(deviceStats.audio_tx_packets || 0);
   const txErrors = Number(deviceStats.audio_tx_errors || 0);
@@ -1235,6 +1541,7 @@ function updateRtcAudioHealth() {
   elements.rtcAudioDeviceCapture.textContent = String(captureFrames);
   elements.rtcAudioDeviceTx.textContent = txErrors > 0 ? `${txPackets} / errors ${txErrors}` : String(txPackets);
   elements.rtcAudioSignal.textContent = `${capturePeak} / ${state.rtc.browserAudioLevel.toFixed(3)}`;
+  elements.rtcAudioPlaybackLevel.textContent = formatRtcPlaybackLevel(deviceStats);
   elements.rtcAudioAec.textContent = !hasRawMicrophonePeak
     ? "Legacy firmware: no physical microphone telemetry"
     : !aecActive
@@ -1270,20 +1577,28 @@ function updateRtcAudioHealth() {
     deviceRxPackets,
     deviceDecodedFrames,
     deviceRenderErrors,
+    deviceTxDroppedFrames: deviceDrops.uplinkFrames,
+    deviceQueueDroppedFrames: deviceDrops.playbackFrames,
     deviceI2sBytes,
     devicePlaybackPeak,
     elapsedMs: state.rtc.audioConnectedAt ? performance.now() - state.rtc.audioConnectedAt : 0,
+    previouslyVerified: state.rtc.audioVerified,
   });
-  if (health.state === state.rtc.audioHealthState && health.state !== "failed") return;
+  if (health.state === state.rtc.audioHealthState && !["failed", "degraded"].includes(health.state)) return;
   state.rtc.audioHealthState = health.state;
   if (health.state === "healthy") {
+    state.rtc.audioVerified = true;
     setRtcAudioState("connected");
     setResult(elements.rtcAudioResult, "Full-duplex path verified: the browser is playing a non-silent Watcher audio track", "ok");
+  } else if (health.state === "quiet") {
+    setRtcAudioState("connected");
+    setResult(elements.rtcAudioResult, "Call connected · waiting for speech", "running");
   } else if (health.state === "degraded") {
+    if (health.missing.length === 0) state.rtc.audioVerified = true;
     setRtcAudioState("connected");
     setResult(
       elements.rtcAudioResult,
-      `Two-way audio connected, but the device had ${txErrors} send errors and the speaker had ${deviceRenderErrors} render errors`,
+      `Connected with Audio Loss · Uplink drops ${deviceDrops.uplinkFrames ?? "—"} / Playback queue drops ${deviceDrops.playbackFrames ?? "—"} · send/render errors ${txErrors}/${deviceRenderErrors}`,
       "error",
     );
   } else if (health.state === "failed") {
@@ -1341,21 +1656,23 @@ function setRtcSessionState(value, message = null) {
   if (rtcModeHasVideo(state.rtc.mode)) setLiveVideoState(value, message);
 }
 
-async function startRtcSession(mode) {
+async function startRtcSession(mode, requestId = crypto.randomUUID()) {
   const wantsAudio = rtcModeHasAudio(mode);
   const wantsVideo = rtcModeHasVideo(mode);
   if (
     !["audio", "video", "av"].includes(mode)
     || state.rtc.mode
     || state.rtc.peer
+    || state.rtc.requestId
     || state.rtc.teardownInProgress
     || state.localResources.has("media")
     || state.status?.resource_owners?.media
     || (wantsAudio && !hasCapability("rtc.audio.full_duplex.v1"))
     || (wantsVideo && !hasCapability("rtc.video.mjpeg.v1"))
-  ) return;
+  ) return false;
   const generation = state.rtc.generation + 1;
   state.rtc.generation = generation;
+  state.rtc.requestId = requestId;
   state.rtc.mode = mode;
   state.localResources.add("media");
   if (state.status) renderStatus(state.status);
@@ -1364,13 +1681,16 @@ async function startRtcSession(mode) {
   elements.rtcAudioDownPackets.textContent = "0";
   elements.rtcAudioDeviceCapture.textContent = "0";
   elements.rtcAudioDeviceTx.textContent = "0";
+  elements.rtcAudioDeviceDrops.textContent = "—";
   elements.rtcAudioSignal.textContent = "0 / 0.000";
+  elements.rtcAudioPlaybackLevel.textContent = "—";
   elements.rtcAudioAec.textContent = "Waiting for Device Telemetry";
   state.rtc.browserAudioSent = 0;
   state.rtc.browserAudioReceived = 0;
   state.rtc.browserAudioLevel = 0;
   state.rtc.audioConnectedAt = 0;
   state.rtc.audioHealthState = "starting";
+  state.rtc.audioVerified = false;
   state.rtc.audioJitterCounter = null;
   state.rtc.audioLatency = { sampleValid: false, actualMs: 0, targetMs: 0, minimumMs: 0 };
   if (wantsAudio) setRtcAudioState("starting", "Requesting computer microphone permission…");
@@ -1398,34 +1718,54 @@ async function startRtcSession(mode) {
           });
       if (state.rtc.generation !== generation || state.rtc.mode !== mode) {
         for (const track of localStream.getTracks()) track.stop();
-        return;
+        return false;
       }
       state.rtc.localStream = localStream;
-      elements.rtcAudioLocalState.textContent = "Capturing";
+      const micSettings = localStream.getAudioTracks()[0]?.getSettings?.() || {};
+      elements.rtcAudioLocalState.textContent = micSettings.autoGainControl === true
+        ? "Capturing · microphone gain active"
+        : micSettings.autoGainControl === false
+          ? "Capturing · microphone gain inactive"
+          : "Capturing · microphone gain unreported";
     }
 
     const startPath = mode === "video" ? "/api/video/session/start" : "/api/rtc/session/start";
     if (mode === "video") {
       await api("/api/video/session/start", {
         method: "POST",
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode, request_id: requestId }),
       });
     } else {
       await api("/api/rtc/session/start", {
         method: "POST",
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ mode, request_id: requestId }),
       });
     }
     if (state.rtc.generation !== generation || state.rtc.mode !== mode) {
-      try { await api(`${startPath.slice(0, -5)}stop`, { method: "POST" }); } catch (_) {}
-      return;
+      // Match the old HTTP attempt in the Application, including when a
+      // diagnostic client has started a later session outside this page.
+      const holdTeardown = !state.rtc.mode && !state.rtc.peer && !state.rtc.localStream && !state.rtc.teardownInProgress;
+      if (holdTeardown) {
+        state.rtc.teardownInProgress = true;
+        if (state.status) renderStatus(state.status);
+      }
+      try {
+        await api(`${startPath.slice(0, -5)}stop`, { method: "POST", body: JSON.stringify({ request_id: requestId }) });
+        if (state.rtc.requestId === requestId) state.rtc.requestId = null;
+      } catch (_) {} finally {
+        if (holdTeardown) {
+          state.rtc.teardownInProgress = false;
+          if (state.status) renderStatus(state.status);
+        }
+      }
+      return false;
     }
     const transport = rtcTransportPlan(mode);
     if (!transport.peer) {
       createMjpegVideoTransport(null, generation);
       startRtcControlLoops(generation);
       await refreshStatus();
-      return;
+      return true;
     }
     const peer = new RTCPeerConnection({ iceServers: [] });
     state.rtc.peer = peer;
@@ -1446,27 +1786,29 @@ async function startRtcSession(mode) {
     bindRtcPeerEvents(peer, generation);
     startRtcControlLoops(generation);
     const offer = await peer.createOffer();
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
+    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return false;
     await peer.setLocalDescription(offer);
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
+    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return false;
     await api(rtcEndpoint("signal"), {
       method: "POST",
       body: JSON.stringify({ kind: "offer", sdp: offer.sdp }),
     });
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
+    if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return false;
     if (wantsAudio) setRtcAudioState("signaling", "Computer microphone is active; waiting for Watcher…");
     if (wantsVideo) setLiveVideoState("signaling", wantsAudio
       ? "Audio/video offer sent; waiting for Watcher…"
       : "Browser offer sent; waiting for Watcher…");
     await refreshStatus();
+    return isCurrentRtcGeneration(state.rtc.generation, generation) && state.rtc.peer === peer;
   } catch (error) {
-    if (!isCurrentRtcGeneration(state.rtc.generation, generation)) return;
+    if (!isCurrentRtcGeneration(state.rtc.generation, generation)) return false;
     const message = error?.name === "NotAllowedError"
       ? "Computer microphone permission was denied. Allow access and try again"
       : error?.name === "NotFoundError"
         ? "No computer microphone is available"
         : error.message;
     await failRtcSession(message);
+    return false;
   }
 }
 
@@ -1534,8 +1876,8 @@ async function startLiveVideo() {
   return startRtcSession("video");
 }
 
-async function startRtcAudio() {
-  return startRtcSession("audio");
+async function startRtcAudio(requestId) {
+  return startRtcSession("audio", requestId);
 }
 
 function startRtcControlLoops(generation) {
@@ -1719,14 +2061,22 @@ async function handleRtcEvent(message, generation) {
   }
 }
 
-async function stopRtcSession() {
+async function stopRtcSession(requestId = state.rtc.requestId) {
+  if (!requestId) return true;
+  if (state.rtc.requestId !== requestId) {
+    // Controller cleanup for an old attempt must preserve a newer local peer.
+    try {
+      await api("/api/rtc/session/stop", { method: "POST", body: JSON.stringify({ request_id: requestId }) });
+      return true;
+    } catch (_) { return false; }
+  }
   const mode = resolveRtcMode(
     state.rtc.mode,
     state.status?.rtc?.mode,
     state.status?.resource_owners?.media,
     state.status?.rtc?.active === true,
-  );
-  if (state.rtc.teardownInProgress || !mode) return;
+  ) || "audio";
+  if (state.rtc.teardownInProgress) return false;
   const hadAudio = rtcModeHasAudio(mode);
   const hadVideo = rtcModeHasVideo(mode);
   state.rtc.teardownInProgress = true;
@@ -1739,18 +2089,22 @@ async function stopRtcSession() {
    * for the device-side resource lock and can still expose a retry. */
   cleanupRtcSession();
   try {
-    await api(rtcEndpoint("stop", mode), { method: "POST" });
+    await api(rtcEndpoint("stop", mode), { method: "POST", body: JSON.stringify({ request_id: requestId }) });
+    if (state.rtc.requestId === requestId) state.rtc.requestId = null;
     if (hadVideo) setResult(elements.liveVideoResult, "Live video stopped", "ok");
     if (hadAudio) setResult(elements.rtcAudioResult, "Full-duplex call ended", "ok");
     await refreshStatus();
+    return true;
   } catch (error) {
     notify(`${error.message}; local audio/video stopped`, "error");
     if (hadVideo) setResult(elements.liveVideoResult, "Local audio/video stopped, but device release confirmation timed out", "error");
     if (hadAudio) setResult(elements.rtcAudioResult, "Local audio/video stopped, but device release confirmation timed out", "error");
     await refreshStatus();
+    return false;
   } finally {
     state.rtc.teardownInProgress = false;
     if (state.status) renderStatus(state.status);
+    await settleCombinedAudioStop();
   }
 }
 
@@ -1761,18 +2115,24 @@ async function failRtcSession(message) {
   const hadAudio = rtcModeHasAudio(mode);
   const hadVideo = rtcModeHasVideo(mode);
   const stopPath = rtcEndpoint("stop");
+  const requestId = state.rtc.requestId;
   state.rtc.teardownInProgress = true;
   cleanupRtcSession();
   if (hadAudio) setRtcAudioState("failed", message);
   if (hadVideo) setLiveVideoState("failed", message);
   notify(message, "error");
   try {
-    if (mode) await api(stopPath, { method: "POST" });
+    if (mode && requestId) {
+      await api(stopPath, { method: "POST", body: JSON.stringify({ request_id: requestId }) });
+      if (state.rtc.requestId === requestId) state.rtc.requestId = null;
+    }
   } catch (_) {
     // The local peer is already closed; status refresh remains the source of truth.
   } finally {
     if (hadSession || state.status) await refreshStatus();
     state.rtc.teardownInProgress = false;
+    if (state.status) renderStatus(state.status);
+    await settleCombinedAudioStop();
   }
 }
 
@@ -1805,6 +2165,7 @@ function cleanupRtcSession() {
   state.rtc.browserAudioLevel = 0;
   state.rtc.audioConnectedAt = 0;
   state.rtc.audioHealthState = "idle";
+  state.rtc.audioVerified = false;
   state.rtc.rttUs = 0;
   state.rtc.mediaRttUs = 0;
   state.rtc.audioJitterCounter = null;
@@ -1954,16 +2315,23 @@ async function playAudio() {
   });
 }
 
-async function capturePhoto() {
+async function capturePhoto({ scene = false } = {}) {
+  if (scene) state.scene.audioResultActive = false;
+  const controls = combinedSceneAvailability(state.status, {
+    rtcMode: state.rtc.mode, localResources: state.localResources,
+  });
   const payload = await runAction({
     path: "/api/actions/capture-photo",
-    result: elements.cameraResult,
+    result: scene ? elements.sceneResult : elements.cameraResult,
     pending: "Requesting JPEG frame…",
     complete: (value) => `Photo received · ${formatBytes(value.bytes)}`,
     station: document.querySelector(".station-camera"),
-    resources: ["camera", "animation"],
+    resources: controls.photoResources,
   });
-  if (payload) showPhoto(payload.artifact_url);
+  if (payload) {
+    showPhoto(payload.artifact_url);
+    elements.scenePhotoCaption.textContent = `Photo received · ${formatBytes(payload.bytes)}`;
+  }
   return payload;
 }
 
@@ -2010,6 +2378,14 @@ document.querySelectorAll("[data-motion-preset]").forEach((button) => {
     updateMotionPreview();
   });
 });
+elements.startProceduralButton.addEventListener("click", () => { proceduralAction("start").catch(() => {}); });
+elements.stopProceduralButton.addEventListener("click", () => { proceduralAction("stop").catch(() => {}); });
+elements.startSceneAudioButton.addEventListener("click", startCombinedScene);
+elements.stopSceneAudioButton.addEventListener("click", endCombinedScene);
+elements.captureScenePhotoButton.addEventListener("click", () => { capturePhoto({ scene: true }).catch(() => {}); });
+elements.startSceneRecordingButton.addEventListener("click", () => { sceneRecordingAction("start"); });
+elements.stopSceneRecordingButton.addEventListener("click", () => { sceneRecordingAction("stop"); });
+elements.exportSceneReportButton.addEventListener("click", exportSceneReport);
 elements.applyMotionButton.addEventListener("click", () => { applyMotion().catch(() => {}); });
 elements.stopMotionButton.addEventListener("click", () => { stopMotion().catch(() => {}); });
 elements.lightColor.addEventListener("input", updateLightPreview);
@@ -2165,18 +2541,25 @@ setInterval(() => {
   }
 }, 1000);
 window.addEventListener("pagehide", () => {
+  state.scene.operationGeneration++;
+  combinedScene.cancelForPageExit();
   stopRandomAnimation({ quiet: true });
   window.clearTimeout(state.animation.prefetchDebounceTimer);
+  if (scenePageLifecycle.close(state.status?.procedural?.state)) {
+    navigator.sendBeacon("/api/controls/procedural/stop");
+  }
   const mode = resolveRtcMode(
     state.rtc.mode,
     state.status?.rtc?.mode,
     state.status?.resource_owners?.media,
     state.status?.rtc?.active === true,
   );
-  if (!mode && !state.rtc.peer && !state.rtc.localStream) return;
-  navigator.sendBeacon(rtcEndpoint("stop", mode));
+  const requestId = state.rtc.requestId;
+  if (!requestId) return;
+  navigator.sendBeacon(rtcEndpoint("stop", mode), new Blob([JSON.stringify({ request_id: requestId })], { type: "application/json" }));
   cleanupRtcSession();
 });
+window.addEventListener("pageshow", (event) => { if (event.persisted) scenePageLifecycle.reopen(); });
 setInterval(refreshStatus, 1000);
 refreshStatus({ quiet: false });
 drawEmptyWaveform();

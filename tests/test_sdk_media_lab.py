@@ -431,9 +431,463 @@ def test_status_exposes_device_resource_snapshot_outside_rtc(tmp_path: Path) -> 
         "rtc_baseline": service._robot.resource_rtc_baseline,
         "current": service._robot.resource_snapshot,
         "history": service._robot.resource_history,
+        "telemetry": {"status": "available", "age_seconds": pytest.approx(0.0, abs=0.1)},
     }
     assert status["rtc"]["stats"] == {}
     assert status["animations"] == ["boot", "happy", "thinking", "standby_little4"]
+
+
+class FakeProceduralExpression:
+    def __init__(self):
+        self.calls = []
+        self.fail_enable = False
+        self.fail_disable = False
+
+    def set_audio_follow(self, enabled):
+        self.calls.append(enabled)
+        if (enabled and self.fail_enable) or (not enabled and self.fail_disable):
+            raise TimeoutError("audio follow command unconfirmed")
+
+
+def _procedural_robot():
+    robot = _robot()
+    robot.capabilities += ("expression.audio_follow.v1",)
+    robot.expression_runtime = FakeProceduralExpression()
+    return robot
+
+
+class FakeBaselineBehavior:
+    def __init__(self):
+        self.played = []
+        self.stop_calls = 0
+        self.fail_start = False
+        self.fail_stop = False
+
+    def play(self, behavior_id, *, repeat=1):
+        self.played.append((behavior_id, repeat))
+        if self.fail_start:
+            raise TimeoutError("behavior start unconfirmed")
+        return FakeJob(404)
+
+    def stop(self):
+        self.stop_calls += 1
+        if self.fail_stop:
+            raise TimeoutError("behavior stop unconfirmed")
+
+
+def _sd_baseline_robot():
+    robot = _procedural_robot()
+    robot.capabilities += ("behavior",)
+    robot.animation.available_ids += ("standby",)
+    robot.behavior = FakeBaselineBehavior()
+    return robot
+
+
+def test_sd_baseline_http_owns_fixed_animation_until_confirmed_stop(tmp_path):
+    module = _load_service_module()
+    robot = _sd_baseline_robot()
+    service = _service(module, tmp_path, robot)
+    client = _client_for_service(module, tmp_path, service)
+    started = client.post("/api/controls/sd-baseline/start")
+    assert started.status_code == 200
+    assert started.json() == {
+        "supported": True, "state": "running", "behavior_id": "desktop_expression_panel",
+        "animation_id": "standby", "operation_id": 404,
+    }
+    assert client.post("/api/controls/sd-baseline/start").json() == started.json()
+    assert robot.behavior.played == [("desktop_expression_panel", 1)]
+    assert service.status()["resource_owners"] == {"animation": "sd_baseline"}
+    for action in (service.start_procedural, service.stop_animation):
+        with pytest.raises(module.MediaLabBusyError):
+            action()
+    with pytest.raises(module.MediaLabBusyError):
+        service.play_animation(animation_id="boot")
+    stopped = client.post("/api/controls/sd-baseline/stop")
+    assert stopped.status_code == 200
+    assert stopped.json()["state"] == "idle"
+    assert stopped.json()["operation_id"] is None
+    assert robot.behavior.stop_calls == 1
+    assert not service.status()["resource_owners"]
+    service.start_procedural()
+    with pytest.raises(module.MediaLabBusyError):
+        service.start_sd_baseline()
+
+
+@pytest.mark.parametrize("rtc_first", [False, True])
+def test_sd_baseline_coexists_with_full_duplex_rtc_and_recording(tmp_path, rtc_first):
+    module = _load_service_module()
+    robot = _sd_baseline_robot()
+    service = _service(module, tmp_path, robot)
+    if rtc_first:
+        service.start_live_video(mode="audio")
+    service.start_sd_baseline()
+    if not rtc_first:
+        service.start_live_video(mode="audio")
+    service.start_scenario_recording(label="sd-rtc")
+    assert service.status()["resource_owners"] == {
+        "animation": "sd_baseline", "microphone": "rtc_audio", "speaker": "rtc_audio",
+    }
+    assert service.scenario_report()["samples"][0]["sd_baseline"]["animation_id"] == "standby"
+    service.stop_sd_baseline()
+    assert service.status()["rtc"]["active"] is True
+    assert service.status()["resource_owners"] == {"microphone": "rtc_audio", "speaker": "rtc_audio"}
+    service.stop_live_video()
+    assert not service.status()["resource_owners"]
+
+
+@pytest.mark.parametrize("uncertain_start", [False, True])
+def test_sd_baseline_unconfirmed_stop_retains_lease_for_retry(tmp_path, uncertain_start):
+    module = _load_service_module()
+    robot = _sd_baseline_robot()
+    service = _service(module, tmp_path, robot)
+    robot.behavior.fail_start = uncertain_start
+    if not uncertain_start:
+        service.start_sd_baseline()
+    robot.behavior.fail_stop = True
+    with pytest.raises(TimeoutError):
+        service.start_sd_baseline() if uncertain_start else service.stop_sd_baseline()
+    assert robot.behavior.stop_calls == 1
+    assert service.status()["sd_baseline"]["state"] == "stop_required"
+    assert service.status()["resource_owners"] == {"animation": "sd_baseline"}
+    with pytest.raises(module.MediaLabBusyError):
+        service.start_sd_baseline()
+    with pytest.raises(module.MediaLabBusyError):
+        service.start_procedural()
+    robot.behavior.fail_stop = False
+    service.stop_sd_baseline()
+    assert robot.behavior.stop_calls == 2
+    assert service.status()["sd_baseline"]["state"] == "idle"
+    assert not service.status()["resource_owners"]
+
+
+def test_sd_baseline_shutdown_stops_rtc_before_display(tmp_path):
+    module = _load_service_module()
+    robot = _sd_baseline_robot()
+    rtc = FakeRtc()
+    service = _service(module, tmp_path, robot, rtc=rtc)
+    shutdown_order = []
+    stop_rtc, stop_behavior = rtc.stop, robot.behavior.stop
+
+    def tracked_rtc_stop():
+        shutdown_order.append("rtc")
+        return stop_rtc()
+
+    def tracked_behavior_stop():
+        shutdown_order.append("sd_baseline")
+        stop_behavior()
+
+    rtc.stop = tracked_rtc_stop
+    robot.behavior.stop = tracked_behavior_stop
+    with _client_for_service(module, tmp_path, service) as client:
+        assert client.post("/api/controls/sd-baseline/start").status_code == 200
+        service.start_live_video(mode="audio")
+    assert shutdown_order == ["rtc", "sd_baseline"]
+    assert service.status()["sd_baseline"]["state"] == "idle"
+    assert not service.status()["resource_owners"]
+
+
+@pytest.mark.parametrize("api_prefix", ["rtc", "video"])
+def test_scoped_rtc_stop_cannot_stop_later_external_session(tmp_path, api_prefix):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    client = _client_for_service(module, tmp_path, service)
+    prefix = f"/api/{api_prefix}/session"
+    old_request = "browser-request-0001"
+    assert client.post(f"{prefix}/start", json={"mode": "audio", "request_id": old_request}).status_code == 200
+    assert client.post(f"{prefix}/stop", json={"request_id": old_request}).json() == {"stopped": True}
+    assert client.post(f"{prefix}/start", json={"mode": "audio"}).status_code == 200
+    calls_before = list(service._rtc.calls)
+    late_stop = client.post(f"{prefix}/stop", json={"request_id": old_request})
+    assert late_stop.status_code == 200
+    assert late_stop.json() == {"stopped": False, "matched": False}
+    assert service._rtc.calls == calls_before
+    assert service.status()["rtc"]["active"] is True
+    assert service.status()["resource_owners"] == {"microphone": "rtc_audio", "speaker": "rtc_audio"}
+    assert client.post(f"{prefix}/stop").json() == {"stopped": True}
+
+
+def test_scoped_rtc_stop_timeout_preserves_owner_for_confirmed_retry(tmp_path):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    client = _client_for_service(module, tmp_path, service)
+    request_id = "browser-request-0002"
+    assert client.post("/api/rtc/session/start", json={"mode": "audio", "request_id": request_id}).status_code == 200
+    original_stop = service._rtc.stop
+
+    def unconfirmed_stop():
+        raise TimeoutError("RTC stop unconfirmed")
+
+    service._rtc.stop = unconfirmed_stop
+    assert client.post("/api/rtc/session/stop", json={"request_id": request_id}).status_code == 502
+    assert service.status()["resource_owners"] == {"microphone": "rtc_audio", "speaker": "rtc_audio"}
+    service._rtc.stop = original_stop
+    assert client.post("/api/rtc/session/stop", json={"request_id": request_id}).json() == {"stopped": True}
+    assert not service.status()["resource_owners"]
+    assert client.post("/api/rtc/session/start", json={"mode": "audio", "request_id": "new-browser-request"}).status_code == 200
+    assert client.post("/api/rtc/session/stop", json={"request_id": request_id}).json() == {"stopped": False, "matched": False}
+    assert service.status()["rtc"]["active"] is True
+
+
+def test_cancelled_microphone_attempt_has_no_rtc_stop_ownership(tmp_path):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    client = _client_for_service(module, tmp_path, service)
+    service.start_live_video(mode="audio")
+    cancelled = client.post("/api/rtc/session/stop", json={"request_id": "no-device-start-request"})
+    assert cancelled.json() == {"stopped": False, "matched": False}
+    assert service.status()["rtc"]["active"] is True
+    assert ("stop", None) not in service._rtc.calls
+
+
+def test_sd_baseline_disconnect_requires_stop_before_reuse(tmp_path):
+    module = _load_service_module()
+    robot = _sd_baseline_robot()
+    service = _service(module, tmp_path, robot)
+    service.start_sd_baseline()
+    service._device_status_provider = lambda: {"online": False}
+    service.maintain()
+    assert service.status()["sd_baseline"]["state"] == "stop_required"
+    assert service.status()["resource_owners"] == {"animation": "sd_baseline"}
+    service._device_status_provider = lambda: {"online": True}
+    service.maintain()
+    assert robot.behavior.stop_calls == 1
+    assert service.status()["sd_baseline"]["state"] == "idle"
+    assert not service.status()["resource_owners"]
+
+
+@pytest.mark.parametrize("missing", ["behavior", "standby"])
+def test_sd_baseline_requires_firmware_capability_and_fixed_asset(tmp_path, missing):
+    module = _load_service_module()
+    robot = _sd_baseline_robot()
+    if missing == "behavior":
+        robot.capabilities = tuple(cap for cap in robot.capabilities if cap != "behavior")
+    else:
+        robot.animation.available_ids = tuple(asset for asset in robot.animation.available_ids if asset != "standby")
+    service = _service(module, tmp_path, robot)
+    client = _client_for_service(module, tmp_path, service)
+    assert service.status()["sd_baseline"]["supported"] is False
+    expected_status = 409 if missing == "behavior" else 422
+    assert client.post("/api/controls/sd-baseline/start").status_code == expected_status
+    assert not robot.behavior.played
+    assert not service.status()["resource_owners"]
+
+
+def test_procedural_scene_allows_audio_rtc_and_plain_photo_together(tmp_path):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    service.start_procedural()
+    service.start_live_video(mode="audio")
+    assert service.capture_photo()["bytes"] > 0
+    assert service.status()["resource_owners"] == {
+        "animation": "procedural", "microphone": "rtc_audio", "speaker": "rtc_audio"
+    }
+    assert robot.expression_runtime.calls == [True]
+    assert service.status()["procedural"]["state"] == "running"
+    assert service.status()["procedural"]["telemetry_available"] is False
+    with pytest.raises(module.MediaLabBusyError):
+        service.play_animation(animation_id="boot")
+    with pytest.raises(module.MediaLabBusyError):
+        service.stop_animation()
+    service.stop_procedural()
+    assert robot.expression_runtime.calls == [True, False]
+    assert "animation" not in service.status()["resource_owners"]
+
+
+def test_procedural_unsupported_does_not_send_commands(tmp_path):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    client = _client_for_service(module, tmp_path, service)
+    result = client.post("/api/controls/procedural/start")
+    assert result.status_code == 409
+    assert result.json()["capability"] == "expression.audio_follow.v1"
+    assert service.status()["procedural"]["supported"] is False
+    assert not service.status()["resource_owners"]
+
+
+def test_procedural_uncertain_start_and_stop_hold_lease_until_retry(tmp_path):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    robot.expression_runtime.fail_enable = True
+    robot.expression_runtime.fail_disable = True
+    service = _service(module, tmp_path, robot)
+    with pytest.raises(TimeoutError):
+        service.start_procedural()
+    assert robot.expression_runtime.calls == [True, False]
+    assert service.status()["procedural"]["state"] == "stop_required"
+    assert service.status()["resource_owners"] == {"animation": "procedural"}
+    with pytest.raises(module.MediaLabBusyError):
+        service.start_procedural()
+    robot.expression_runtime.fail_disable = False
+    service.stop_procedural()
+    assert not service.status()["resource_owners"]
+
+
+def test_procedural_disconnect_stops_on_reconnect_and_application_shutdown(tmp_path):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    service.start_procedural()
+    service._device_status_provider = lambda: {"online": False}
+    service.maintain()
+    assert service.status()["procedural"]["state"] == "stop_required"
+    service._device_status_provider = lambda: {"online": True}
+    service.maintain()
+    assert robot.expression_runtime.calls == [True, False]
+    with _client_for_service(module, tmp_path, service) as client:
+        assert client.post("/api/controls/procedural/start").status_code == 200
+    assert robot.expression_runtime.calls == [True, False, True, False]
+
+
+def test_procedural_video_still_conflicts_with_camera(tmp_path):
+    module = _load_service_module()
+    service = _service(module, tmp_path, _procedural_robot())
+    service.start_procedural()
+    service.start_live_video(mode="av")
+    with pytest.raises(module.MediaLabBusyError):
+        service.capture_photo()
+
+
+def test_procedural_camera_io_does_not_block_status_and_recording(tmp_path):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    service.start_procedural()
+    service.start_scenario_recording()
+    entered, release, status_ready = threading.Event(), threading.Event(), threading.Event()
+    original = robot.camera.capture
+
+    def blocked_capture(**kwargs):
+        entered.set()
+        assert release.wait(timeout=2.0)
+        return original(**kwargs)
+
+    robot.camera.capture = blocked_capture
+    photo_thread = threading.Thread(target=service.capture_photo)
+    photo_thread.start()
+    assert entered.wait(timeout=1.0)
+
+    def inspect_during_capture():
+        status = service.status()
+        assert status["resource_owners"]["camera"] == "capture_photo"
+        service.maintain()
+        status_ready.set()
+
+    status_thread = threading.Thread(target=inspect_during_capture)
+    status_thread.start()
+    try:
+        assert status_ready.wait(timeout=1.0)
+    finally:
+        release.set()
+        photo_thread.join(timeout=2.0)
+        status_thread.join(timeout=2.0)
+    assert not photo_thread.is_alive()
+
+
+def test_procedural_status_uses_only_device_mouth_telemetry(tmp_path):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    robot.resource_snapshot["animation"] = {
+        "audio_follow": True, "mouth_level_milli": 345, "pcm_frames": 42,
+        "source": "rtc_playback", "design_id": 9,
+    }
+    service = _service(module, tmp_path, robot)
+    service.start_procedural()
+    state = service.status()["procedural"]
+    assert state["telemetry_available"] is True
+    assert state["mouth_level_milli"] == 345
+    assert state["pcm_frames"] == 42
+    assert state["mouth_source"] == "rtc_playback"
+
+
+def test_scene_recording_is_bounded_and_exports_missing_telemetry_honestly(tmp_path, monkeypatch):
+    module = _load_service_module()
+    robot = _robot()
+    robot.resource_snapshot = {}
+    robot.resource_history = []
+    service = _service(module, tmp_path, robot)
+    current = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: current[0])
+    monkeypatch.setattr(module, "_SCENARIO_MAX_SAMPLES", 2)
+    client = _client_for_service(module, tmp_path, service)
+    response = client.post("/api/scenario/recording/start", json={"label": "combined"})
+    assert response.status_code == 200
+    with pytest.raises(module.MediaLabBusyError):
+        service.start_scenario_recording(label="again")
+    for sequence in range(1, 4):
+        current[0] += 1.1
+        robot.resource_snapshot = {"sequence": sequence, "memory": {"internal": {"free_bytes": 200 - sequence}}}
+        service.maintain()
+    stopped = client.post("/api/scenario/recording/stop").json()
+    assert stopped["active"] is False
+    report = client.get("/api/scenario/report").json()
+    assert report["sample_count"] == 4
+    assert report["dropped_samples"] == 2
+    assert len(report["samples"]) == 2
+    assert report["samples"][0]["resources"]["sequence"] == 2
+    assert report["summary"]["memory"]["internal"]["free_bytes_min"] == 197
+    assert "dma" not in report["summary"]["memory"]
+    assert report["samples"][0]["rtc"]["stats"] == {}
+
+
+def test_scene_recording_marks_repeated_snapshot_stale(tmp_path, monkeypatch):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    current = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: current[0])
+    service.start_scenario_recording()
+    current[0] += 6.0
+    service.maintain()
+    report = service.scenario_report()
+    assert report["samples"][-1]["telemetry"]["status"] == "stale"
+    assert report["samples"][-1]["telemetry"]["age_seconds"] == 6.0
+
+
+def test_procedural_telemetry_is_not_live_offline_or_after_reconnect_without_new_frame(tmp_path, monkeypatch):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    robot.resource_snapshot["animation"] = {
+        "audio_follow": True, "mouth_level_milli": 345, "pcm_frames": 42,
+        "source": "rtc_playback", "design_id": 9,
+    }
+    robot.resource_snapshot_received_at = 100.0
+    current = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: current[0])
+    connection = {"online": True, "request_id": "first"}
+    service = _service(module, tmp_path, robot)
+    service._device_status_provider = lambda: connection
+    assert service.status()["procedural"]["telemetry_available"] is True
+    current[0] = 106.0
+    status = service.status()
+    assert status["resources"]["telemetry"]["status"] == "stale"
+    assert status["procedural"]["mouth_level_milli"] is None
+    connection["online"] = False
+    assert service.status()["resources"]["telemetry"]["status"] == "unavailable"
+    connection.update(online=True, request_id="second")
+    assert service.status()["resources"]["telemetry"]["status"] == "unavailable"
+    robot.resource_snapshot_received_at = 106.0
+    assert service.status()["resources"]["telemetry"]["status"] == "available"
+    assert service.status()["procedural"]["mouth_level_milli"] == 345
+
+
+def test_recording_freezes_initial_identity_and_excludes_cached_other_device_minima(tmp_path, monkeypatch):
+    module = _load_service_module()
+    robot = _robot()
+    current = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: current[0])
+    service = _service(module, tmp_path, robot)
+    service.start_scenario_recording()
+    initial_baseline = service._robot.resource_baseline
+    current[0] += 1.1
+    robot.device_info = {"device_id": "another-device", "firmware_version": "new"}
+    robot.resource_baseline = {"sequence": 99}
+    service.maintain()
+    report = service.scenario_report()
+    assert report["device"]["device_id"] == "watcher-test"
+    assert report["baseline"] == initial_baseline
+    assert report["samples"][-1]["device_id"] == "another-device"
+    assert report["samples"][-1]["telemetry"]["status"] == "unavailable"
+    assert report["samples"][-1]["connection"]["request_id"] is None
 
 
 def _service(
@@ -1499,7 +1953,7 @@ def test_media_lab_ui_uses_resource_owners_instead_of_global_busy_for_controls()
     assert 'id="animationId"' in document
     assert 'state.localResources.add("media")' in javascript
     assert 'state.localResources.delete("media")' in javascript
-    assert 'navigator.sendBeacon(rtcEndpoint("stop", mode))' in javascript
+    assert 'navigator.sendBeacon(rtcEndpoint("stop", mode), new Blob' in javascript
     assert "status.rtc?.active === true" in javascript
     assert "state.status?.rtc?.active === true" in javascript
 
@@ -1513,19 +1967,19 @@ def test_media_lab_ui_can_start_one_combined_audio_video_rtc_session() -> None:
     assert "rtcModeHasAudio" in javascript
     assert "rtcModeHasVideo" in javascript
     assert "teardownInProgress" in javascript
-    assert 'JSON.stringify({ mode })' in javascript
+    assert 'JSON.stringify({ mode, request_id: requestId })' in javascript
     assert "isCurrentRtcGeneration(state.rtc.generation, generation)" in javascript
     assert "pollRtcEvents(generation)" in javascript
 
 
 def test_media_lab_stop_closes_browser_media_before_waiting_for_device_release() -> None:
     javascript = LAB_ROOT.joinpath("web", "app.js").read_text(encoding="utf-8")
-    stop_body = javascript.split("async function stopRtcSession()", 1)[1].split(
+    stop_body = javascript.split("async function stopRtcSession(", 1)[1].split(
         "async function failRtcSession", 1
     )[0]
 
     assert stop_body.index("cleanupRtcSession();") < stop_body.index(
-        'await api(rtcEndpoint("stop", mode), { method: "POST" });'
+        'await api(rtcEndpoint("stop", mode), { method: "POST", body: JSON.stringify({ request_id: requestId }) });'
     )
     assert "Local audio/video stopped, but device release confirmation timed out" in stop_body
     assert "elements.stopLiveVideoButton.disabled = !hadVideo || !state.rtc.peer" not in stop_body
@@ -1712,7 +2166,7 @@ def test_local_ui_uses_english_source_copy_without_chinese_hardcoding() -> None:
     assert 'resource: "light"' in javascript
     assert 'resource: "animation"' in javascript
     assert 'resources: ["microphone", "speaker"]' in javascript
-    assert 'resources: ["camera", "animation"]' in javascript
+    assert "resources: controls.photoResources" in javascript
     assert javascript.count('resources: ["microphone", "speaker"]') == 2
     assert 'path: "/api/actions/stop-audio"' in javascript
     assert 'path: "/api/controls/motion/stop"' in javascript

@@ -24,6 +24,111 @@ runtime and hardware acceptance have been completed.
 The tested 2026-09-09 SDK/ESP32 pairing, concurrent video/audio results, and
 remaining limits are fixed in the [Himax media stage record](../../docs/himax-media-stage-20260909.md).
 
+## Combined procedural audio and photo scene
+
+The combined scene uses JoyInside's default **RADIAL 09** procedural expression
+and reuses the existing full-duplex audio RTC session. Click **Start JoyInside
+Animation + Call** to confirm procedural startup before starting the audio call;
+an independently enabled procedural expression is reused. Computer microphone audio is
+played by the robot while the robot microphone returns independently to the
+browser. The radial mouth follows successfully played RTC PCM on the device,
+not a browser microphone estimate. Silence closes the mouth. Click Capture Photo
+during the call to receive a JPEG without stopping the audio or procedural display.
+Use headphones to inspect the robot-to-browser direction without a local
+acoustic loop.
+
+**End Scene** cancels a pending start or stops the call and the procedural
+expression newly started by that scene. An expression enabled independently
+before the scene remains running after End Scene or a failed call startup.
+Unconfirmed releases remain available for retry. Closing the page retains the
+existing cleanup policy and stops its procedural expression and RTC session,
+including independently enabled expressions. Opening the page does not start
+hardware features automatically. The independent procedural and RTC buttons
+remain available for isolated measurements. **SD Asset Animation Test** is a
+separate SD-file playback test; it does not start the JoyInside procedural face.
+
+Procedural start requires `expression.audio_follow.v1` and reserves the display
+until stop is acknowledged. Unsupported firmware disables that feature explicitly.
+Audio-only RTC reserves microphone and speaker, leaving the camera available.
+Video or combined AV RTC still owns the camera and rejects a simultaneous still.
+The plain SDK camera capture is used; capture feedback that takes over the display
+is excluded. Ordinary SD animation switching is blocked while procedural mode owns
+the display. Stop failures keep that lease reserved for retry, and disconnects
+require cleanup on reconnection rather than automatic restart. Application shutdown
+stops owned procedural mode; the page also sends a cleanup request on exit.
+
+Start a recording before changing the load. The backend records at most one
+sample per second and retains the latest 3600 samples; `sample_count` includes
+all samples and `dropped_samples` identifies truncation. Memory minima are
+retained across the entire recording even after the sample buffer rolls over.
+Export includes device identity/capabilities, baseline, memory snapshots, RTC
+stats, procedural mouth evidence, resource owners, and recent action events.
+Missing telemetry is unavailable and an unchanged snapshot becomes stale after
+five seconds. A free-memory lifetime minimum is not a scenario-local minimum;
+compare free bytes and largest blocks against the recorded idle baseline as well.
+Freshness uses the host receipt time of a device resource event, rather than
+HTTP polling or a changed pairing request. Offline and reconnected sessions keep
+cached data unavailable until a new event arrives; mouth and frame-rate readings
+follow the same rule. Reports retain the recording's initial device identity and
+baseline, and identify the device and connection on each sample when a run crosses
+a reconnect or device change.
+One-second samples do not alone prove every camera allocation peak; firmware
+capture-stage/lifetime minima and audio error counters provide complementary evidence.
+
+Compare four loads in order: idle, procedural only, RTC audio only, and procedural
++ audio RTC + repeated photos. Speak, pause, and speak while robot uplink is active;
+then stop both features and wait for resource release. Record whether counters and
+memory recover, and physically confirm sound and mouth motion. Browser or SDK
+capability availability by itself is not a successful hardware test.
+
+Local HTTP controls are `POST /api/controls/procedural/start`, `/stop`,
+`POST /api/scenario/recording/start` with `{ "label": "combined-scene" }`,
+`POST /api/scenario/recording/stop`, and `GET /api/scenario/report`. These wrap
+public SDK APIs through the current Application Device channel and leave Daemon
+business routing unchanged. See the [audio-follow API](../../docs/procedural-expressions.md).
+
+Browser RTC starts attach a unique `request_id` to the local HTTP request and
+use the same ID for stop, failure cleanup, and page-exit cleanup. The Application
+matches it under the RTC lifecycle lock before stopping anything. A stale ID
+returns `{ "stopped": false, "matched": false }` without affecting a later
+session, including one started by an external diagnostic client. An unconfirmed
+stop retains ownership for retry. This ID stays in the Application; it does not
+change the Device wire protocol. Diagnostic clients may continue to omit the
+ID and use the existing unscoped start/stop controls.
+
+### Fixed SD loop for resource comparisons
+
+`POST /api/controls/sd-baseline/start` and `/api/controls/sd-baseline/stop`
+take no request body. The start calls the public
+`robot.behavior.play("desktop_expression_panel")` with its default `repeat=1`;
+the stop calls `robot.behavior.stop()`. In the paired firmware's SPIFFS behavior
+catalog, this behavior has only the SD asset `standby`, with
+`loop_until_replaced`, `loop=true`, and `hold_until_replaced=true`. Its motion
+and sound lists are empty. Ordinary `robot.animation.play()` uses a one-shot
+behavior and does not provide the sustained load needed for this comparison.
+
+The API checks the `behavior`/`animation` capabilities and advertised `standby`
+asset. It relies on that fixed firmware catalog contract; ready metadata does
+not expose the full behavior definition. Confirm continuous SD playback from
+the device screen and fresh animation telemetry during hardware measurements.
+`status.sd_baseline` and each recording sample identify `behavior_id`,
+`animation_id`, `operation_id`, and `state` (`idle`, `starting`, `running`, or
+`stop_required`). A running start is idempotent. The `animation` resource owner
+is `sd_baseline`, so SD and procedural modes exclude each other while audio RTC
+can run alongside either one. Stop failures retain the lease for a confirmed
+retry. Disconnects require cleanup on reconnect; Application shutdown stops
+RTC before releasing the display mode. This entry does not add browser buttons.
+
+Use the same RTC audio source, warmup time, and measurement duration for SD-only,
+procedural-only, SD+RTC, and procedural+RTC phases; reverse the paired phase order
+for a repeat. Compare without photos first, then use identical photo schedules
+for a separate combined-load comparison. Report warm runs separately from cold
+boot measurements. Record current free bytes and largest blocks independently
+from firmware lifetime minima, and compare RTC error/drop counter deltas within
+each session. SD FPS telemetry uses a recent measurement window; procedural FPS
+is averaged since renderer startup. Identify those windows rather than treating
+them as identical per-second measurements.
+
 ## Face tracking test
 
 The Edge Vision panel queries `robot.vision.status()` and exposes
@@ -124,6 +229,24 @@ disconnect, or page close.
 Current full-duplex firmware negotiates mono Opus with a 48 kHz WebRTC clock
 while the robot microphone, speaker, and device-side AEC remain at 16 kHz. The
 browser never attaches its local microphone track to the local audio player.
+Ordinary browser calls request echo cancellation, noise suppression, and automatic
+microphone gain control. `?rtc_audio_processing=0` explicitly selects raw microphone
+capture for headphone diagnostics; `=1` and an ordinary URL use the processed profile.
+Updated firmware adapts robot RTC playback levels before the codec write: quiet
+voice receives a gradual boost of at most +18 dB (8× amplitude), normal
+voice is preserved, and peaks are limited to 29203/32768. RMS at or below 104 is
+not additionally amplified. The shared device volume remains user controlled.
+Short pauses retain the learned voice gain while noise passes unchanged; one
+second of silence clears it. This prevents every syllable from starting at unity.
+The target speech RMS is 8000/32768; gain rises with a 12% step toward the target
+per 20 ms frame and falls immediately when required by the target or peak limiter.
+The console shows input/output PCM RMS and effective gain; these values are
+digital levels, not acoustic loudness measurements. Expression callbacks and
+the hardware AEC reference receive the processed playback PCM. The processor
+adds no task or audio buffer and resets when the renderer opens a new session.
+Inspect the actual microphone track's `getSettings()` to confirm what the browser
+applied. The device AEC remains enabled independently. Close-range speakerphone use
+can still feed sound between both endpoints; compare with headphones and low volume.
 When the computer microphone is heard again in the headphones, inspect the
 robot's acoustic echo path: healthy playback makes `audio_aec_chunks` advance,
 keeps `audio_aec_reference_drops` at zero, and leaves
@@ -183,6 +306,39 @@ DMA 剩余量和最大连续块见内存列，不能由一个常驻布尔值推�
 Boot Minimum Internal RAM 是本次设备启动以来的低水位，不会在停止视频时复原。
 判断回收应比较当前剩余量和最大连续块，不能把启动以来的最低值当作当前剩余量。
 表格仅展示内存历史窗口中最近的功能边界；完整排障记录应同时保存设备串口日志。
+
+程序表情测试固件的 SDK 空闲状态使用静态界面，停止功能后不会自动重启 SD 待机动画。
+资源面板另外显示实际 SD 帧池、素材缓存、读取任务栈、LCD DMA 条带与程序画布字节数；
+遥测缺失或过期时显示未知，不能当作已经释放。约 331.5 KiB 的程序画布与 LCD DMA
+条带在表情运行时是正常分配。配套固件的 SD 读取任务改为首次播放／预取时创建，
+程序表情接管前等待读取任务退出，释放 SD 帧池和素材缓存；较旧固件仍可能保留读取栈，
+应以设备遥测确认。全部显示功能关闭并成功解绑后，这些动态播放器资源应归零；
+动画服务自身仍有静态基础设施。
+
+上述静态空闲是分项诊断基线。产品模式合同要求 RTC 关闭后恢复随机表情及自动行为，
+可以按需重新启用 SD 动画；这条恢复路径尚需实现和验收，不能用静态空闲冒充。
+通话模式固定本地默认程序表情，只根据机器人实际播放音频更新说话／静默嘴形，
+期间不随机更换表情，不为两种嘴形状态重建任务。模式切换验收须先确认 SD 专用
+资源释放再启动 RTC，以及 RTC 动态资源释放后才恢复静默行为；手动运动始终保留。
+
+### 2026-10-08 配套固件验收边界
+
+本轮配套程序表情优化的同条件实测为：单独运行约 13.12 → 19.98 FPS，
+双向 RTC 音频加偶尔拍照约 6.92 → 12.12 FPS；后者仍未达到 20 FPS 目标。
+60 秒自动双向媒体用例完成两次 640 × 480 JPEG 拍照，拍照期间反向音频持续到达。
+用例通过不代表零丢帧，末次设备播放队列仍记录 18 帧丢弃。
+
+配套固件可额外使用约 331.5 KiB PSRAM 保存上一帧，跳过不变条带的屏幕传输；
+它与程序画布是两项独立分配，分别由 `procedural_cache_bytes` 和
+`procedural_frame_bytes` 上报。停止后两项及 LCD DMA 均已确认归零，不能只看当前
+内部剩余量来推断缓存是否释放，也不能凭一轮记录宣称全系统无泄漏。
+
+自动用例结束后恢复浏览器真实麦克风通话时，WebRTC 建连失败；失败后的重试还出现
+设备启动确认超时。设备重启后浏览器建连仍失败，因此网页真人通话恢复和反复切换
+尚未验收通过。当前保留程序表情单独运行供观察，不将自动媒体用例通过描述为网页
+真人全流程已经通过。持续视频、STM32 真实运动和静默随机表情恢复也不在本轮验收内。
+详细测量、失败记录及固件二进制校验见配套 ESP32 仓库的
+`docs/development/sdk-procedural-expression-fps-optimization-20261008.md`。
 
 ### 通用端侧模型调用
 
