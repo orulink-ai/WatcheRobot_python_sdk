@@ -4,8 +4,23 @@ import vm from "node:vm";
 import test from "node:test";
 import { resolveRtcMode, rtcModeHasAudio, rtcModeHasVideo } from "../../examples/sdk_media_lab/web/media-resource-policy.mjs";
 import { createCombinedSceneLifecycle } from "../../examples/sdk_media_lab/web/combined-scene.mjs";
+import { microphoneProcessingStatus } from "../../examples/sdk_media_lab/web/rtc-noise-playback.mjs";
 
 const source = fs.readFileSync(new URL("../../examples/sdk_media_lab/web/app.js", import.meta.url), "utf8");
+test('diagnostic retains receive loss, concealment and measured worklet input rather than a zero RTC meter', async () => {
+  const peer = { getStats: async () => [{ type: 'inbound-rtp', kind: 'audio', packetsReceived: 100,
+    packetsLost: 3, concealedSamples: 960, jitter: .02, audioLevel: 0 }] };
+  const state = { rtc: { peer, generation: 1, noiseTelemetry: { inputRms: .03 } } };
+  const context = { state, elements: { rtcAudioUpPackets: {}, rtcAudioDownPackets: {} },
+    isCurrentRtcGeneration: (a,b) => a === b, selectMediaRoundTripUs: () => 0,
+    sampleAudioJitterBuffer: () => ({ counter: {}, sampleValid: false }), updateRtcAudioHealth() {}, Math };
+  const collect = productionFunction('collectRtcAudioStats', 'async function pollRtcEvents', context);
+  await collect(peer, 1);
+  assert.equal(state.rtc.browserAudioLevel, .03);
+  assert.equal(state.rtc.audioReceiveStats.packetsLost, 3);
+  assert.equal(state.rtc.audioReceiveStats.concealedSamples, 960);
+  assert.equal(state.rtc.audioReceiveStats.jitterUs, 20000);
+});
 function productionFunction(name, nextName, context) {
   const start = source.indexOf(`async function ${name}(`);
   const end = source.indexOf(`\n${nextName}`, start);
@@ -22,7 +37,7 @@ function fixture() {
     scene: { operationGeneration: 0 }, localResources: new Set(), status: { connected: true, rtc: {} } };
   const elements = new Proxy({}, { get(target, key) { return target[key] ||= { textContent: "", disabled: false, dataset: {} }; } });
   const context = {
-    state, elements, resolveRtcMode, rtcModeHasAudio, rtcModeHasVideo,
+    state, elements, resolveRtcMode, rtcModeHasAudio, rtcModeHasVideo, microphoneProcessingStatus,
     hasCapability: () => true, renderStatus: () => {}, resetLiveVideoMetrics: () => {},
     setRtcAudioState: () => {}, setLiveVideoState: () => {}, notify: () => {},
     refreshStatus: async () => {}, settleCombinedAudioStop: async () => {},

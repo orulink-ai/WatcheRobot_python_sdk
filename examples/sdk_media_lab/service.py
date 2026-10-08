@@ -235,6 +235,10 @@ class MediaLabService:
     _ARTIFACT_TYPES = {
         "camera.jpg": "image/jpeg",
         "microphone.wav": "audio/wav",
+        "rtc-diagnostic-computer.webm": "audio/webm",
+        "rtc-diagnostic-robot-raw.webm": "audio/webm",
+        "rtc-diagnostic-robot-clean.webm": "audio/webm",
+        "rtc-diagnostic-report.json": "application/json",
     }
 
     def __init__(
@@ -487,6 +491,12 @@ class MediaLabService:
             "pcm_frames": animation.get("pcm_frames") if available else None,
             "design_id": animation.get("design_id") if available else None,
         }
+
+    def diagnostic_speech_path(self) -> Path:
+        """Expose only the configured bundled fixture, never a caller's path."""
+        if not self._sample_audio.is_file():
+            raise HTTPException(status_code=404, detail="RTC speech fixture not found")
+        return self._sample_audio
 
     def start_procedural(self) -> dict[str, object]:
         with self._procedural_lock:
@@ -1354,7 +1364,7 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "
-            "script-src 'self'; style-src 'self'; connect-src 'self' ws:; frame-ancestors 'none'"
+            "script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' ws:; frame-ancestors 'none'"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -1414,6 +1424,31 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     async def index() -> HTMLResponse:
         return HTMLResponse(web_root.joinpath("index.html").read_text(encoding="utf-8"))
 
+    @app.post("/api/diagnostics/rtc-audio/{channel}")
+    async def save_rtc_audio_diagnostic(channel: str, request: Request) -> dict[str, object]:
+        if channel not in {"computer", "robot-raw", "robot-clean", "report"}:
+            raise HTTPException(status_code=404, detail="Unknown diagnostic channel")
+        limit = 65536 if channel == "report" else 2 * 1024 * 1024
+        data = bytearray()
+        async for chunk in request.stream():
+            if len(data) + len(chunk) > limit:
+                raise HTTPException(status_code=413, detail="Diagnostic upload too large")
+            data.extend(chunk)
+        if channel == "report":
+            try:
+                report = json.loads(data)
+                if not isinstance(report, dict) or not isinstance(report.get("samples"), list):
+                    raise ValueError("Invalid report")
+            except (ValueError, UnicodeDecodeError) as error:
+                raise HTTPException(status_code=400, detail="Invalid diagnostic report") from error
+        elif not data.startswith(b"\x1a\x45\xdf\xa3"):
+            raise HTTPException(status_code=400, detail="Diagnostic audio must be WebM")
+        suffix = "json" if channel == "report" else "webm"
+        filename = f"rtc-diagnostic-{channel}.{suffix}"
+        path = service._artifact_output(filename)
+        await asyncio.to_thread(path.write_bytes, bytes(data))
+        return {"saved": True, "bytes": len(data), "url": f"/artifacts/{filename}"}
+
     @app.get("/assets/app.js")
     async def javascript() -> FileResponse:
         return FileResponse(web_root / "app.js", media_type="text/javascript")
@@ -1448,6 +1483,10 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
     @app.get("/api/status")
     async def status() -> dict[str, object]:
         return await asyncio.to_thread(service.status)
+
+    @app.get("/api/diagnostics/rtc-speech")
+    async def diagnostic_speech() -> FileResponse:
+        return FileResponse(service.diagnostic_speech_path(), media_type="audio/wav")
 
     @app.get("/api/events")
     async def events(after: int = 0) -> dict[str, object]:

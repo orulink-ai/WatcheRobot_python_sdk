@@ -1,4 +1,6 @@
 import { evaluateRtcAudioHealth, formatRtcPlaybackLevel } from "./rtc-audio-health.mjs";
+import { createRtcNoisePlayback, microphoneProcessingStatus } from "./rtc-noise-playback.mjs";
+import { recordRtcAudioDiagnostic, selectDiagnosticDeviceStats } from "./rtc-audio-diagnostic.mjs";
 import { detectionLabel, testBenchModels, createPreviewLifecycle } from "./model-preview.mjs";
 import { createDisplayAudit } from "./display-audit.mjs";
 import { createMjpegTransport } from "./mjpeg-transport.mjs";
@@ -155,20 +157,15 @@ function rtcBrowserAudioProcessingEnabled() {
   return params.get("rtc_audio_processing") !== "0";
 }
 
-async function createRtcDiagnosticAudioStream() {
-  const audioContext = new AudioContext();
-  await audioContext.resume();
-  const destination = audioContext.createMediaStreamDestination();
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-  oscillator.type = "sine";
-  oscillator.frequency.value = 880;
-  gain.gain.value = 0.18;
-  oscillator.connect(gain);
-  gain.connect(destination);
-  oscillator.start();
-  state.rtc.diagnosticAudio = { audioContext, oscillator };
-  return destination.stream;
+async function createRtcDiagnosticAudioStream(generation) {
+  const { createRtcTestSpeech } = await import("/assets/rtc-test-speech.mjs");
+  const diagnostic = await createRtcTestSpeech();
+  if (state.rtc.generation !== generation) {
+    await diagnostic.dispose();
+    throw new Error("RTC speech diagnostic was cancelled");
+  }
+  state.rtc.diagnosticAudio = diagnostic;
+  return diagnostic.stream;
 }
 
 const elements = {
@@ -289,6 +286,13 @@ const elements = {
   rtcAudioConsole: document.querySelector("#rtcAudioConsole"),
   rtcAudioState: document.querySelector("#rtcAudioState"),
   rtcAudioLocalState: document.querySelector("#rtcAudioLocalState"),
+  rtcMicrophoneProcessing: document.querySelector("#rtcMicrophoneProcessing"),
+  rtcNoiseEnabled: document.querySelector("#rtcNoiseEnabled"),
+  rtcNoiseStrength: document.querySelector("#rtcNoiseStrength"),
+  rtcNoiseStrengthValue: document.querySelector("#rtcNoiseStrengthValue"),
+  rtcNoiseState: document.querySelector("#rtcNoiseState"),
+  recordRtcDiagnostic: document.querySelector("#recordRtcDiagnostic"),
+  rtcDiagnosticState: document.querySelector("#rtcDiagnosticState"),
   rtcAudioUpPackets: document.querySelector("#rtcAudioUpPackets"),
   rtcAudioDownPackets: document.querySelector("#rtcAudioDownPackets"),
   rtcAudioDeviceCapture: document.querySelector("#rtcAudioDeviceCapture"),
@@ -1709,7 +1713,7 @@ async function startRtcSession(mode, requestId = crypto.randomUUID()) {
         throw new Error("This browser does not support microphone capture");
       }
       localStream = rtcDiagnosticAudioEnabled()
-        ? await createRtcDiagnosticAudioStream()
+        ? await createRtcDiagnosticAudioStream(generation)
         : await navigator.mediaDevices.getUserMedia({
             audio: createRtcMicrophoneConstraints({
               browserProcessing: rtcBrowserAudioProcessingEnabled(),
@@ -1722,6 +1726,9 @@ async function startRtcSession(mode, requestId = crypto.randomUUID()) {
       }
       state.rtc.localStream = localStream;
       const micSettings = localStream.getAudioTracks()[0]?.getSettings?.() || {};
+      const processing = microphoneProcessingStatus(micSettings);
+      elements.rtcMicrophoneProcessing.textContent = `Echo cancellation ${processing.echoCancellation} · Noise suppression ${processing.noiseSuppression} · Microphone gain ${processing.autoGainControl}`;
+      elements.rtcMicrophoneProcessing.dataset.settings = JSON.stringify(processing);
       elements.rtcAudioLocalState.textContent = micSettings.autoGainControl === true
         ? "Capturing · microphone gain active"
         : micSettings.autoGainControl === false
@@ -1773,6 +1780,7 @@ async function startRtcSession(mode, requestId = crypto.randomUUID()) {
       for (const track of localStream.getAudioTracks()) peer.addTrack(track, localStream);
       peer.addEventListener("track", (event) => {
         if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
+        if (event.track.kind !== "audio") return;
         const remoteStream = event.streams[0] || new MediaStream([event.track]);
         state.rtc.remoteStream = remoteStream;
         elements.rtcRemoteAudio.srcObject = remoteStream;
@@ -1780,6 +1788,7 @@ async function startRtcSession(mode, requestId = crypto.randomUUID()) {
         elements.rtcRemoteAudio.play().catch(() => {
           setResult(elements.rtcAudioResult, "Downlink audio arrived. Click the player to enable sound", "running");
         });
+        attachRtcNoisePlayback(remoteStream, generation, peer).catch(() => {});
       });
     }
     if (wantsVideo) createMjpegVideoTransport(peer, generation);
@@ -1810,6 +1819,82 @@ async function startRtcSession(mode, requestId = crypto.randomUUID()) {
     await failRtcSession(message);
     return false;
   }
+}
+
+function rtcNoiseOptions() {
+  return { enabled: elements.rtcNoiseEnabled.checked, strength: Number(elements.rtcNoiseStrength.value) };
+}
+
+function renderRtcNoiseStatus(status) {
+  state.rtc.noiseTelemetry = status;
+  elements.rtcNoiseState.dataset.processing = JSON.stringify(status);
+  const labels = {
+    loading: "Noise suppression loading", active: "Noise suppression active",
+    bypass: "Noise suppression bypassed", suspended: "Noise suppression waiting for playback",
+    unavailable: "Noise suppression unavailable · original audio playing",
+  };
+  const detail = ["active", "bypass"].includes(status.state)
+    ? ` · ${status.strength}% · ${status.frames} frames · RMS ${(status.inputRms || 0).toFixed(4)} → ${(status.outputRms || 0).toFixed(4)}` : "";
+  elements.rtcNoiseState.textContent = `${labels[status.state] || status.state}${detail}`;
+}
+
+async function attachRtcNoisePlayback(remoteStream, generation, peer) {
+  state.rtc.noiseAbort?.abort();
+  state.rtc.noisePlayback?.dispose();
+  state.rtc.noisePlayback = null;
+  const abort = new AbortController();
+  state.rtc.noiseAbort = abort;
+  const current = () => isCurrentRtcGeneration(state.rtc.generation, generation)
+    && state.rtc.peer === peer && state.rtc.remoteStream === remoteStream && state.rtc.noiseAbort === abort;
+  const playback = await createRtcNoisePlayback(remoteStream, {
+    ...rtcNoiseOptions(), signal: abort.signal, isCurrent: current, onState: renderRtcNoiseStatus,
+    onFallback: () => {
+      if (!current()) return;
+      state.rtc.noisePlayback = null;
+      elements.rtcRemoteAudio.srcObject = remoteStream;
+      elements.rtcRemoteAudio.play().catch(() => {});
+    },
+  });
+  if (!playback) return;
+  if (!current()) { await playback.dispose(); return; }
+  state.rtc.noisePlayback = playback;
+  playback.setOptions(rtcNoiseOptions());
+  elements.rtcRemoteAudio.srcObject = playback.stream;
+  elements.rtcRemoteAudio.play().catch(() => {
+    setResult(elements.rtcAudioResult, "Downlink audio arrived. Click the player to enable sound", "running");
+  });
+}
+
+function updateRtcNoiseOptions() {
+  elements.rtcNoiseStrengthValue.textContent = `${elements.rtcNoiseStrength.value}%`;
+  elements.rtcNoiseStrength.disabled = !elements.rtcNoiseEnabled.checked;
+  state.rtc.noisePlayback?.setOptions(rtcNoiseOptions());
+}
+
+async function recordRtcDiagnostic() {
+  if (!state.rtc.localStream || !state.rtc.remoteStream || state.rtc.diagnosticRecording) {
+    elements.rtcDiagnosticState.textContent = "Diagnostic needs an active call"; return;
+  }
+  const abort = new AbortController();
+  state.rtc.diagnosticRecording = abort;
+  elements.recordRtcDiagnostic.disabled = true;
+  document.querySelector('#rtcDiagnosticFiles').hidden = true;
+  try {
+    await recordRtcAudioDiagnostic({ computer: state.rtc.localStream, 'robot-raw': state.rtc.remoteStream,
+      'robot-clean': state.rtc.noisePlayback?.stream || state.rtc.remoteStream }, {
+      signal: abort.signal,
+      onState: value => { elements.rtcDiagnosticState.textContent = value === "recording"
+        ? "Recording 20 seconds · speak normally with short pauses"
+        : "Diagnostic saved · computer, robot original, robot processed, timing report"; },
+      snapshot: () => ({ device: selectDiagnosticDeviceStats(state.status?.rtc?.stats),
+        browser: { sent: state.rtc.browserAudioSent, received: state.rtc.browserAudioReceived,
+          level: state.rtc.browserAudioLevel, latency: state.rtc.audioLatency,
+          receive: state.rtc.audioReceiveStats || {} },
+        noise: state.rtc.noiseTelemetry || {} }),
+    });
+    document.querySelector('#rtcDiagnosticFiles').hidden = false;
+  } catch (error) { elements.rtcDiagnosticState.textContent = error.message; }
+  finally { state.rtc.diagnosticRecording = null; elements.recordRtcDiagnostic.disabled = false; }
 }
 
 function bindRtcPeerEvents(peer, generation) {
@@ -1978,7 +2063,8 @@ async function collectRtcAudioStats(peer, generation) {
   elements.rtcAudioDownPackets.textContent = String(received);
   state.rtc.browserAudioSent = sent;
   state.rtc.browserAudioReceived = received;
-  state.rtc.browserAudioLevel = audioLevel;
+  state.rtc.browserAudioLevel = Math.max(audioLevel, state.rtc.noiseTelemetry?.inputRms || 0);
+  state.rtc.audioReceiveStats = { packetsLost: lost, concealedSamples: concealedFrames, jitterUs };
   updateRtcAudioHealth();
   return {
     queueMs,
@@ -2141,6 +2227,17 @@ function cleanupRtcSession() {
     elements.liveVideoCanvas.dataset.displayAudit = JSON.stringify(displayAudit.snapshot(performance.now()));
   }
   state.rtc.generation += 1;
+  state.rtc.diagnosticRecording?.abort();
+  state.rtc.noiseTelemetry = null;
+  state.rtc.audioReceiveStats = null;
+  state.rtc.noiseAbort?.abort();
+  state.rtc.noiseAbort = null;
+  state.rtc.noisePlayback?.dispose();
+  state.rtc.noisePlayback = null;
+  elements.rtcNoiseState.textContent = "Noise suppression ready for next call";
+  elements.rtcNoiseState.dataset.processing = "{}";
+  elements.rtcMicrophoneProcessing.textContent = "Waiting for microphone settings";
+  elements.rtcMicrophoneProcessing.dataset.settings = "{}";
   state.rtc.videoTransport?.stop();
   state.rtc.videoTransport = null;
   state.localResources.delete("media");
@@ -2183,8 +2280,7 @@ function cleanupRtcSession() {
     for (const track of localStream.getTracks()) track.stop();
   }
   if (diagnosticAudio) {
-    try { diagnosticAudio.oscillator.stop(); } catch (_) {}
-    diagnosticAudio.audioContext.close().catch(() => {});
+    diagnosticAudio.dispose().catch(() => {});
   }
   elements.rtcRemoteAudio.pause();
   elements.rtcRemoteAudio.srcObject = null;
@@ -2379,6 +2475,10 @@ document.querySelectorAll("[data-motion-preset]").forEach((button) => {
   });
 });
 elements.startProceduralButton.addEventListener("click", () => { proceduralAction("start").catch(() => {}); });
+elements.rtcNoiseEnabled.addEventListener("change", updateRtcNoiseOptions);
+elements.recordRtcDiagnostic.addEventListener("click", recordRtcDiagnostic);
+elements.rtcNoiseStrength.addEventListener("input", updateRtcNoiseOptions);
+elements.rtcRemoteAudio.addEventListener("play", () => { state.rtc.noisePlayback?.resume().catch(() => {}); });
 elements.stopProceduralButton.addEventListener("click", () => { proceduralAction("stop").catch(() => {}); });
 elements.startSceneAudioButton.addEventListener("click", startCombinedScene);
 elements.stopSceneAudioButton.addEventListener("click", endCombinedScene);
@@ -2616,3 +2716,7 @@ setInterval(async () => {
     }
   } finally { modelPreviewPending = false; }
 }, 200);
+
+if (new URLSearchParams(window.location.search).get('rtc_echo_probe') === '1') {
+  import('./rtc-echo-probe.mjs').then(({ mountEchoProbe }) => mountEchoProbe());
+}

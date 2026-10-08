@@ -365,12 +365,29 @@
             <button class="quiet-action" id="stopRtcAudioButton" type="button" disabled>End Call</button>
           </div>
           <output class="station-result" id="rtcAudioResult">Awaiting Start</output>
+          <fieldset class="rtc-noise-controls">
+            <legend>Robot Incoming Audio Noise Suppression</legend>
+            <label><input id="rtcNoiseEnabled" type="checkbox" checked> Reduce Robot Background Noise</label>
+            <label for="rtcNoiseStrength">Noise Suppression Strength <output id="rtcNoiseStrengthValue">70%</output></label>
+            <input id="rtcNoiseStrength" type="range" min="0" max="85" step="5" value="70">
+            <output id="rtcNoiseState" role="status">Noise suppression ready for next call</output>
+            <button id="recordRtcDiagnostic" class="quiet-action" type="button">Record 20-second Audio Diagnostic</button>
+            <output id="rtcDiagnosticState" role="status">Diagnostic audio stays on this computer</output>
+            <div id="rtcDiagnosticFiles" hidden>
+              <a href="/artifacts/rtc-diagnostic-computer.webm" download>Computer Recording</a> ·
+              <a href="/artifacts/rtc-diagnostic-robot-raw.webm" download>Robot Original Recording</a> ·
+              <a href="/artifacts/rtc-diagnostic-robot-clean.webm" download>Robot Processed Recording</a> ·
+              <a href="/artifacts/rtc-diagnostic-report.json" download>Timing Report</a>
+            </div>
+            <small>Processed locally on this computer. Toggle during a call to compare. Lower the strength if quiet speech sounds muffled. Echo cancellation remains separate.</small>
+          </fieldset>
         </div>
         <div class="rtc-audio-console" id="rtcAudioConsole" data-state="idle">
           <div class="rtc-audio-orbit" aria-hidden="true"><i></i><i></i><i></i></div>
           <dl class="rtc-audio-metrics">
             <div><dt>Session State</dt><dd id="rtcAudioState">IDLE</dd></div>
             <div><dt>Computer Microphone</dt><dd id="rtcAudioLocalState">Available</dd></div>
+            <div><dt>Computer Microphone Processing</dt><dd id="rtcMicrophoneProcessing">Waiting for microphone settings</dd></div>
             <div><dt>Computer → Watcher</dt><dd id="rtcAudioUpPackets">0</dd></div>
             <div><dt>Watcher → Computer</dt><dd id="rtcAudioDownPackets">0</dd></div>
             <div><dt>Robot Microphone Capture</dt><dd id="rtcAudioDeviceCapture">0</dd></div>

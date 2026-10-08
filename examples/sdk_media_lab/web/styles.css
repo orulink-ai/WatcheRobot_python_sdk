@@ -408,6 +408,13 @@ main { width: min(1540px, 100%); margin: 0 auto; padding: 0 clamp(18px, 4vw, 64p
 .rtc-audio-panel p:not(.section-index) { max-width: 650px; margin-top: 18px; color: var(--muted); font-size: 0.9rem; line-height: 1.7; }
 .rtc-audio-controls { display: flex; gap: 10px; margin-top: 30px; }
 .rtc-audio-controls button { flex: 1; min-height: 48px; }
+.rtc-noise-controls { display: grid; gap: 14px; margin: 24px 0 0; padding: 18px; border: 1px solid var(--line); }
+.rtc-noise-controls legend, .rtc-noise-controls label { font: 0.7rem/1.5 var(--mono); }
+.rtc-noise-controls label:first-of-type { display: flex; align-items: center; gap: 10px; }
+.rtc-noise-controls input { accent-color: var(--signal); }
+.rtc-noise-controls input[type="range"] { width: 100%; }
+.rtc-noise-controls > output { color: var(--cyan); font: 0.65rem/1.6 var(--mono); }
+.rtc-noise-controls small { color: var(--muted); font: 0.65rem/1.6 var(--mono); }
 .rtc-audio-console { display: grid; align-content: center; gap: 24px; background: radial-gradient(circle at 50% 40%, rgba(255,182,80,0.09), transparent 48%); }
 .rtc-audio-orbit { position: relative; width: 112px; height: 112px; margin: 0 auto; border: 1px solid var(--line-bright); border-radius: 50%; }
 .rtc-audio-orbit::before, .rtc-audio-orbit::after { content: ""; position: absolute; border: 1px solid var(--amber); border-radius: 50%; inset: 24px; opacity: 0.7; }

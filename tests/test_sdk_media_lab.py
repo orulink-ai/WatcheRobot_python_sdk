@@ -938,6 +938,19 @@ def _client_for_service(module: ModuleType, tmp_path: Path, service: object) -> 
     return TestClient(module.create_web_app(service, web_root=web_root))
 
 
+def test_rtc_diagnostic_speech_serves_only_the_bundled_fixture(tmp_path: Path) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    client = _client_for_service(module, tmp_path, service)
+    response = client.get("/api/diagnostics/rtc-speech")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "audio/wav"
+    assert response.content == b"RIFF-test-audio"
+    assert client.get("/api/diagnostics/rtc-speech/other.wav").status_code == 404
+    (tmp_path / "sample.wav").unlink()
+    assert client.get("/api/diagnostics/rtc-speech").status_code == 404
+
+
 def test_status_exposes_device_capabilities_and_idle_operation(tmp_path: Path) -> None:
     module = _load_service_module()
     service = _service(module, tmp_path)
@@ -2133,8 +2146,8 @@ def test_local_ui_uses_english_source_copy_without_chinese_hardcoding() -> None:
         "rtc_audio_processing",
         'window.location.hostname === "127.0.0.1"',
         'params.get("rtc_hil") === "1"',
-        "createMediaStreamDestination",
-        "createOscillator",
+        "createRtcTestSpeech",
+        "diagnosticAudio.dispose()",
         "state.rtc.diagnosticAudio",
         "for (const track of localStream.getTracks()) track.stop();",
         "state.rtc.generation !== generation",
@@ -2188,6 +2201,22 @@ def test_media_lab_csp_allows_direct_device_websocket(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert "connect-src 'self' ws:" in response.headers["content-security-policy"]
+    assert "'wasm-unsafe-eval'" in response.headers["content-security-policy"]
+    assert "'unsafe-eval'" not in response.headers["content-security-policy"]
+
+
+def test_local_rtc_diagnostic_upload_is_bounded_and_names_are_fixed(tmp_path: Path) -> None:
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    client = TestClient(module.create_web_app(service, web_root=LAB_ROOT / "web"))
+    body = b"\x1a\x45\xdf\xa3" + b"fixture"
+    assert client.post("/api/diagnostics/rtc-audio/robot-raw", content=body,
+                       headers={"Content-Type": "audio/webm"}).status_code == 200
+    assert client.get("/artifacts/rtc-diagnostic-robot-raw.webm").content == body
+    assert client.post("/api/diagnostics/rtc-audio/unknown", content=body).status_code == 404
+    assert client.post("/api/diagnostics/rtc-audio/computer", content=b"invalid").status_code == 400
+    assert client.post("/api/diagnostics/rtc-audio/computer", content=body + bytes(2 * 1024 * 1024)).status_code == 413
+    assert client.post("/api/diagnostics/rtc-audio/report", json={"samples": []}).status_code == 200
 
 
 def test_generic_inference_owns_only_camera_and_retries_stop(tmp_path):

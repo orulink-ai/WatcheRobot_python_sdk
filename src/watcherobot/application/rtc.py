@@ -39,7 +39,7 @@ class ApplicationRtc:
         transport: DaemonApplicationTransport,
         *,
         id_factory: Callable[[], str] | None = None,
-        send_timeout: float = 2.0,
+        send_timeout: float = 10.0,
     ) -> None:
         self._transport = transport
         self._id_factory = id_factory or (lambda: uuid.uuid4().hex)

@@ -54,6 +54,34 @@ class FakeTransport:
             listener(message)
 
 
+def test_default_stop_waits_for_a_device_release_ack_after_two_seconds() -> None:
+    class SlowReleaseTransport(FakeTransport):
+        def send_device(self, frame):
+            message = json.loads(frame)
+            if message["type"] != "ctrl.rtc.session.stop":
+                return super().send_device(frame)
+            self.sent.append(frame)
+            future = Future()
+            future.set_result(None)
+            self.timer = Timer(2.1, lambda: self.emit({
+                "type": "sys.ack", "code": 0, "protocol": message["protocol"],
+                "client_id": message["client_id"], "session_id": message["session_id"],
+                "command_id": message["command_id"], "data": {"type": message["type"]},
+            }))
+            self.timer.start()
+            return future
+
+    transport = SlowReleaseTransport()
+    rtc = ApplicationRtc(transport)  # type: ignore[arg-type]
+    rtc.start(mode="audio")
+    try:
+        assert rtc.stop() is True
+        assert rtc.snapshot()["active"] is False
+        assert len([frame for frame in transport.sent if json.loads(frame)["type"] == "ctrl.rtc.session.stop"]) == 1
+    finally:
+        transport.timer.cancel()
+
+
 def test_rtc_builds_exact_watcher_rtc_session_and_signal_envelopes() -> None:
     transport = FakeTransport()
     rtc = ApplicationRtc(
