@@ -176,8 +176,8 @@ This is a release-acceptance path, not the normal production installation.
 ```powershell
 watcherobot robot setup
 watcherobot robot status
-watcherobot app init hello_robot
-cd hello_robot
+watcherobot app init my_app
+cd my_app
 watcherobot app run
 ```
 

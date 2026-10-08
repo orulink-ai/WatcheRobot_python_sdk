@@ -21,7 +21,7 @@ Desktop 使用的 JSONL 事件和错误合同见
 watcherobot
 ├─ daemon      start | status | stop
 ├─ robot       setup | pair | status
-├─ app         init | check | run | run-installed | start | stop
+├─ app         init | configure | check | run | run-installed | start | stop
 │              login | logout | publish | submit | marketplace
 │              download | install | list | uninstall
 └─ bluetooth   scan | provision | status | clear
@@ -152,7 +152,7 @@ watcherobot robot status
 
 #### `watcherobot app init [目录]`
 
-创建一个可直接运行的 Hello World Application，且不会覆盖已有目标。省略目录时，交互式终端只会询问项目目录；
+创建一个可直接运行的五文件基础 Application，且不会覆盖已有目标。省略目录时，交互式终端只会询问项目目录；
 ID、显示名称、作者和简介都会自动生成，不要求开发者手工填写。例如 `my_app` 默认得到稳定、可读的
 `local.my_app`。准备发布时再通过参数覆盖正式元数据。
 
@@ -173,7 +173,27 @@ CLI。先激活安装源码的虚拟环境，再在 Windows 使用 `where.exe wa
 变成不同应用。正式发布应使用团队持有的稳定命名空间，例如 `com.example.my_app`。
 
 会生成 `app.json`、`app.py`、`README.md`、`icon.svg` 和 `.gitignore`；默认
-`app.py` 一定会输出 Hello World 成功日志，连接兼容机器人时还会播放一次 `happy` 行为。
+`app.py` 启动受管 Application 并等待停止，在其中编写自己的应用逻辑。
+增加 `--template voice` 可从基础模板扩展生成含 ASR/LLM/TTS 配置的语音应用。
+
+#### `watcherobot app configure [目录] [--service asr|llm|tts]`
+
+在交互终端中配置语音模板凭据；省略目录时使用当前项目。命令根据现有供应商配置提示字段，
+输入不回显，已有值按回车保留；全部输入并通过本地校验后保存。输入期间 Ctrl+C 取消不保存。
+命令不启动 Runtime、不连接设备、不调用云服务；也可手动编辑凭据文件。
+
+```powershell
+watcherobot app configure
+watcherobot app configure ./my_voice_app
+watcherobot app configure --service asr
+watcherobot app configure --service llm
+watcherobot app configure --service tts
+```
+
+不传 `--service` 时配置全部；指定后只读写并校验所选服务，不依赖其他服务的凭据或配置。
+单项成功不代表整个应用已配置完成，运行前仍需补齐三项。
+
+基础模板没有凭据向导；模型、音色和提示词继续通过项目文件配置。
 
 #### `watcherobot app check <目录>`
 

@@ -74,7 +74,7 @@ the publishing flow:
 ```
 
 The target must not exist. Initialization does not start the Daemon or access
-Hugging Face. The generated `app.py` plays `happy` once and exits. It creates:
+Hugging Face. The generated `app.py` starts a managed Application and waits for shutdown; add your own logic there. It creates:
 
 ```text
 my_sdk_test/
@@ -132,6 +132,8 @@ Rules:
 Minimal `app.py`:
 
 ```python
+"""Application 固定入口，由 watcherobot app run 启动。"""
+
 import asyncio
 
 from watcherobot.application import ApplicationContext
@@ -139,17 +141,14 @@ from watcherobot.application import ApplicationContext
 
 async def main() -> None:
     async with ApplicationContext.from_environment() as app:
-        app.logger.info("app_id=%s", app.app_id)
-        app.logger.info("device=%s", app.robot.device_info)
-        job = await asyncio.to_thread(
-            app.robot.behavior.play,
-            "happy",
-            repeat=1,
-        )
-        await asyncio.to_thread(job.wait, 20.0)
+        app.logger.info("Application started.")
+        # 在这里编写应用逻辑，使用 app.robot 和 app.desktop 与设备、桌面交互。
+        while not app.shutdown_requested:
+            await asyncio.sleep(0.1)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 The main APIs are `app.robot` for typed robot capabilities, `app.desktop` for the

@@ -166,8 +166,8 @@ python -m pip install --pre --index-url https://test.pypi.org/simple/ --extra-in
 ```powershell
 watcherobot robot setup
 watcherobot robot status
-watcherobot app init hello_robot
-cd hello_robot
+watcherobot app init my_app
+cd my_app
 watcherobot app run
 ```
 

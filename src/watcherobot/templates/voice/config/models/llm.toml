@@ -1,0 +1,8 @@
+schema_version = 1
+provider = "qwen"
+model = "qwen-flash"
+timeout = 45
+
+[parameters]
+temperature = 0.7
+max_tokens = 1024
