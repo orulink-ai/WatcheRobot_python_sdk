@@ -295,3 +295,114 @@ def test_disconnect_clears_history_even_when_listening_is_paused(monkeypatch):
         assert sessions[0].history == []
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('fail_after_reconnect', [False, True])
+def test_disconnect_cleanup_is_retried_before_listening_again(monkeypatch, fail_after_reconnect):
+    import logging
+    from types import SimpleNamespace
+    import watcherobot.voice.device as device_module
+    from watcherobot.voice.providers import ProviderRegistry
+    from watcherobot.voice.runtime import VoiceApplication
+
+    async def run():
+        app = SimpleNamespace(robot=None, shutdown_requested=False, logger=logging.getLogger('test.voice'))
+        events = []
+
+        class DisconnectDevice(Device):
+            probes = 0
+            turns = 0
+            connected = True
+            failed_recovery = False
+
+            async def ready(self):
+                self.probes += 1
+                self.connected = self.probes != 2
+                events.append(('probe', self.probes))
+                return self.connected
+
+            async def utterance(self):
+                self.turns += 1
+                events.append(('listen', self.turns))
+                if self.turns == 2:
+                    assert ('cleanup-ok', self.probes) in events
+                    app.shutdown_requested = True
+                    return
+                try:
+                    await asyncio.Event().wait()
+                    yield b'\x00\x00'
+                finally:
+                    await self.stop()
+
+            async def stop(self):
+                if not self.connected:
+                    events.append(('cleanup-offline', self.probes))
+                    raise ConnectionError('offline during cleanup')
+                if fail_after_reconnect and self.probes == 3 and not self.failed_recovery:
+                    self.failed_recovery = True
+                    events.append(('cleanup-timeout', self.probes))
+                    raise TimeoutError('first recovery attempt timed out')
+                events.append(('cleanup-ok', self.probes))
+
+        device = DisconnectDevice()
+        monkeypatch.setattr(device_module, 'SDKVoiceDevice', lambda *args: device)
+
+        async def receive(timeout):
+            await asyncio.sleep(.02)
+            return None
+
+        app.desktop = SimpleNamespace(receive=receive)
+        registry = ProviderRegistry()
+        registry.register_asr('fake', lambda c: ASR())
+        registry.register_llm('fake', lambda c: LLM())
+        registry.register_tts('fake', lambda c: TTS())
+        await asyncio.wait_for(VoiceApplication(app, config(), registry).run(), 9)
+        assert device.probes >= (4 if fail_after_reconnect else 3)
+        assert device.turns == 2
+        assert ('cleanup-offline', 2) in events
+        assert len(asyncio.all_tasks()) == 1
+
+    asyncio.run(run())
+
+
+def test_pause_cancels_scheduled_turn_before_awaiting_device_cleanup(monkeypatch):
+    import logging
+    from types import SimpleNamespace
+    import watcherobot.voice.device as device_module
+    from watcherobot.voice.providers import ProviderRegistry
+    from watcherobot.voice.runtime import VoiceApplication
+
+    async def run():
+        listens = []
+        app = SimpleNamespace(robot=None, shutdown_requested=False, logger=logging.getLogger('test.voice'))
+
+        class DelayedStopDevice(Device):
+            async def ready(self):
+                return True
+            async def utterance(self):
+                listens.append(True)
+                await asyncio.Event().wait()
+                yield b'\x00\x00'
+            async def stop(self):
+                await asyncio.sleep(0)
+
+        monkeypatch.setattr(device_module, 'SDKVoiceDevice', lambda *args: DelayedStopDevice())
+        frames = iter([None, '{"type":"ctrl.microphone.close"}'])
+
+        async def receive(timeout):
+            try:
+                return next(frames)
+            except StopIteration:
+                app.shutdown_requested = True
+                return None
+
+        app.desktop = SimpleNamespace(receive=receive)
+        registry = ProviderRegistry()
+        registry.register_asr('fake', lambda c: ASR())
+        registry.register_llm('fake', lambda c: LLM())
+        registry.register_tts('fake', lambda c: TTS())
+        await VoiceApplication(app, config(), registry).run()
+        assert not listens
+        assert len(asyncio.all_tasks()) == 1
+
+    asyncio.run(run())

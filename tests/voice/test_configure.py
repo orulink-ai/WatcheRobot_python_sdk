@@ -125,8 +125,134 @@ def test_override_matches_runtime_and_does_not_write_project_credentials(project
     before = snapshot(project)
     answers(monkeypatch, ['app-id', 'token', 'key', 'app-id', 'token'])
     assert cli.main(['app', 'configure', str(project)]) == 0
-    assert snapshot(project) == before
+    after = snapshot(project)
+    marker = Path('credentials/.source.toml')
+    assert {p: b for p, b in after.items() if p != marker} == before
+    assert read_toml(project / marker)['directory'] == str(target.resolve())
     assert load_configuration(project, credentials_dir=target).llm.credentials['api_key'] == 'key'
+
+
+@pytest.mark.parametrize('relative', ['private-credentials', '.', 'config/models'])
+def test_unsafe_project_credential_directory_rejected_before_writing(project, monkeypatch, relative):
+    before = snapshot(project)
+    monkeypatch.setenv('WATCHER_VOICE_CREDENTIALS_DIR', relative)
+    answers(monkeypatch, ['app-id', 'token', 'key', 'app-id', 'token'])
+    assert cli.main(['app', 'configure', str(project)]) == 2
+    assert snapshot(project) == before
+
+
+def test_protected_nested_credentials_are_excluded_from_publishing(project, monkeypatch):
+    from watcherobot.distribution.source_files import collect_application_source_files
+
+    monkeypatch.setenv('WATCHER_VOICE_CREDENTIALS_DIR', 'credentials/team')
+    answers(monkeypatch, ['app-id', 'token', 'key', 'app-id', 'token'])
+    assert cli.main(['app', 'configure', str(project)]) == 0
+    assert read_toml(project / 'credentials/team/llm.toml')['api_key'] == 'key'
+    assert not any(p.parts[0] == 'credentials' for p in collect_application_source_files(project))
+
+
+def test_single_service_cannot_switch_global_credential_source(project, monkeypatch, capsys):
+    from watcherobot.voice.configuration import credential_directory
+
+    answers(monkeypatch, ['app-id', 'asr-token', 'key', 'app-id', 'tts-token'])
+    assert cli.main(['app', 'configure', str(project)]) == 0
+    before = snapshot(project)
+    target = project.parent / 'new-private'
+    monkeypatch.setenv('WATCHER_VOICE_CREDENTIALS_DIR', str(target))
+    answers(monkeypatch, ['new-key'])
+    assert cli.main(['app', 'configure', str(project), '--service', 'llm']) == 2
+    assert '--service' in capsys.readouterr().err
+    assert snapshot(project) == before
+    assert not target.exists()
+    directory = credential_directory(project, 'local.voice', use_environment=False)
+    config = load_configuration(project, credentials_dir=directory)
+    assert config.asr.credentials['access_token'] == 'asr-token'
+    assert config.tts.credentials['access_token'] == 'tts-token'
+
+    # Explicit full configuration may switch all services together.
+    answers(monkeypatch, ['app-id', 'new-asr', 'new-key', 'app-id', 'new-tts'])
+    assert cli.main(['app', 'configure', str(project)]) == 0
+    assert credential_directory(project, 'local.voice', use_environment=False) == target.resolve()
+
+
+def test_configured_directory_survives_a_daemon_with_different_environment(project, monkeypatch):
+    from watcherobot.voice.configuration import credential_directory
+
+    target = project.parent / 'private'
+    monkeypatch.setenv('WATCHER_VOICE_CREDENTIALS_DIR', str(target))
+    answers(monkeypatch, ['app-id', 'token', 'key', 'app-id', 'token'])
+    assert cli.main(['app', 'configure', str(project)]) == 0
+    monkeypatch.setenv('WATCHER_VOICE_CREDENTIALS_DIR', str(project.parent / 'stale'))
+    directory = credential_directory(project, 'local.voice', use_environment=False)
+    assert directory == target.resolve()
+    assert load_configuration(project, credentials_dir=directory).llm.credentials['api_key'] == 'key'
+
+    # A later terminal need not repeat the directory override to edit this app.
+    monkeypatch.delenv('WATCHER_VOICE_CREDENTIALS_DIR')
+    answers(monkeypatch, ['replacement-key'])
+    assert cli.main(['app', 'configure', str(project), '--service', 'llm']) == 0
+    assert load_configuration(project, credentials_dir=directory).llm.credentials['api_key'] == 'replacement-key'
+
+
+def test_generated_application_uses_saved_directory_with_stale_daemon_environment(project, monkeypatch):
+    import asyncio
+    import importlib.util
+
+    target = project.parent / 'private'
+    monkeypatch.setenv('WATCHER_VOICE_CREDENTIALS_DIR', str(target))
+    answers(monkeypatch, ['app-id', 'token', 'key', 'app-id', 'token'])
+    assert cli.main(['app', 'configure', str(project)]) == 0
+    monkeypatch.setenv('WATCHER_VOICE_CREDENTIALS_DIR', str(project.parent / 'stale'))
+    spec = importlib.util.spec_from_file_location('voice_entry_review', project / 'application/voice.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    calls = []
+
+    class Context:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+
+    class Application:
+        def __init__(self, app, config, registry):
+            calls.append(config.llm.credentials['api_key'])
+        async def run(self):
+            pass
+
+    monkeypatch.setattr(module.ApplicationContext, 'from_environment', lambda: Context())
+    monkeypatch.setattr(module, 'VoiceApplication', Application)
+    asyncio.run(module.main(project))
+    assert calls == ['key']
+
+
+def test_failed_override_save_does_not_change_runtime_directory(project, monkeypatch):
+    from watcherobot.voice import configure
+    from watcherobot.voice.configuration import credential_directory
+
+    target = project.parent / 'private'
+    monkeypatch.setenv('WATCHER_VOICE_CREDENTIALS_DIR', str(target))
+    replace = configure.os.replace
+    def fail_marker(source, destination):
+        if Path(destination).name == '.source.toml':
+            raise OSError('simulated marker write failure')
+        return replace(source, destination)
+    monkeypatch.setattr(configure.os, 'replace', fail_marker)
+    before = snapshot(project)
+    answers(monkeypatch, ['app-id', 'token', 'key', 'app-id', 'token'])
+    assert cli.main(['app', 'configure', str(project)]) == 2
+    assert snapshot(project) == before
+    assert credential_directory(project, 'local.voice', use_environment=False) == project / 'credentials'
+    assert not list(target.glob('*.toml'))
+
+
+def test_environment_references_explain_daemon_startup_requirement(project, monkeypatch, capsys):
+    monkeypatch.setenv('REVIEW_VOICE_KEY', 'test-placeholder')
+    answers(monkeypatch, ['app-id', 'token', '${env:REVIEW_VOICE_KEY}', 'app-id', 'token'])
+    assert cli.main(['app', 'configure', str(project)]) == 0
+    output = capsys.readouterr().out
+    assert 'Daemon' in output and '启动前' in output
+    assert 'test-placeholder' not in output
 
 
 def test_base_template_is_unchanged_and_has_no_configuration(project, tmp_path, monkeypatch):

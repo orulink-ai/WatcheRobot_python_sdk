@@ -17,7 +17,9 @@ def create_registry() -> ProviderRegistry:
 
 async def main(root: Path) -> None:
     app_id = json.loads((root / 'app.json').read_text(encoding='utf-8'))['id']
-    config = load_configuration(root, credentials_dir=credential_directory(root, app_id))
+    config = load_configuration(
+        root, credentials_dir=credential_directory(root, app_id, use_environment=False),
+    )
     registry = create_registry()
     # 设备由 robot pair 配对并由 Runtime 管理；应用复用注入通道。
     async with ApplicationContext.from_environment() as app:

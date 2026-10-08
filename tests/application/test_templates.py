@@ -22,12 +22,12 @@ def test_minimal_cli_generates_independent_application(tmp_path: Path, capsys, t
     assert (root / 'icon.svg').is_file()
     if template == 'voice':
         assert (root / 'application/voice.py').is_file()
-        assert (root / 'credentials/llm.toml').read_text() == 'api_key = ""\n'
+        assert (root / 'credentials/llm.toml').read_text(encoding='utf-8') == 'api_key = ""\n'
         assert 'credentials/' in capsys.readouterr().out
     else:
         assert not (root / 'credentials').exists()
-        assert 'ApplicationContext.from_environment()' in (root / 'app.py').read_text()
-        assert 'behavior.play' not in (root / 'app.py').read_text()
+        assert 'ApplicationContext.from_environment()' in (root / 'app.py').read_text(encoding='utf-8')
+        assert 'behavior.play' not in (root / 'app.py').read_text(encoding='utf-8')
 
 
 @pytest.mark.parametrize('failure', [RuntimeError, KeyboardInterrupt])
@@ -50,7 +50,7 @@ def test_template_failure_removes_partial_scaffold(tmp_path: Path, monkeypatch, 
             description='Test', supported_host_platforms=['windows'], template='broken',
         )
     assert list(tmp_path.iterdir()) == [existing]
-    assert existing.read_text() == 'keep'
+    assert existing.read_text(encoding='utf-8') == 'keep'
 
 
 def test_voice_init_guides_configuration_pairing_then_run(tmp_path, capsys) -> None:
@@ -77,8 +77,8 @@ def test_default_template_is_packaged_five_file_base(tmp_path, capsys):
     assert main(['app', 'init', str(root)]) == 0
     assert {item.name for item in root.iterdir()} == expected
     assert (root / 'app.py').read_bytes() == assets.joinpath('app.py').read_bytes()
-    assert json.loads((root / 'app.json').read_text())['id'] == 'local.my_app'
-    assert 'Hello' not in (root / 'README.md').read_text()
+    assert json.loads((root / 'app.json').read_text(encoding='utf-8'))['id'] == 'local.my_app'
+    assert 'Hello' not in (root / 'README.md').read_text(encoding='utf-8')
 
 
 def test_voice_extends_base_without_sdk_development_artifacts(tmp_path, capsys):
@@ -90,7 +90,7 @@ def test_voice_extends_base_without_sdk_development_artifacts(tmp_path, capsys):
         'application', 'config', 'credentials', 'credential-examples', 'prompts',
     }
     assert (voice / 'icon.svg').read_bytes() == (base / 'icon.svg').read_bytes()
-    assert (voice / '.gitignore').read_text().startswith((base / '.gitignore').read_text())
+    assert (voice / '.gitignore').read_text(encoding='utf-8').startswith((base / '.gitignore').read_text(encoding='utf-8'))
 
 
 def test_base_entry_can_be_imported_and_stops_with_context_cleanup(tmp_path, monkeypatch):

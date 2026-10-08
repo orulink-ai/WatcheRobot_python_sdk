@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from watcherobot.media import MicrophoneSession
 from watcherobot.voice.configuration import ConversationConfig
 from watcherobot.voice.device import SDKVoiceDevice
 
@@ -66,4 +67,44 @@ def test_cancel_during_blocking_play_stops_late_playback():
         release.set()
         await asyncio.gather(task, return_exceptions=True)
         assert stopped == [True]
+    asyncio.run(run())
+
+
+def test_microphone_close_can_be_retried_after_transient_failure():
+    async def run():
+        calls = []
+
+        def close(session_id):
+            calls.append(session_id)
+            if len(calls) == 1:
+                raise TimeoutError("simulated close acknowledgement timeout")
+
+        robot = SimpleNamespace(_close_microphone=close)
+        device = SDKVoiceDevice(robot, ConversationConfig())
+        device.microphone = MicrophoneSession(robot, 42)
+        with pytest.raises(TimeoutError):
+            await device._close_microphone()
+        await device.stop()
+        assert calls == [42, 42], "Recovery must retry the unconfirmed close"
+
+    asyncio.run(run())
+
+
+def test_speaker_stop_can_be_retried_after_transient_failure():
+    async def run():
+        calls = []
+
+        def stop():
+            calls.append(True)
+            if len(calls) == 1:
+                raise TimeoutError("simulated stop acknowledgement timeout")
+
+        playback = SimpleNamespace(wait=lambda timeout: None)
+        audio = SimpleNamespace(play_pcm=lambda *a, **kw: playback, stop=stop)
+        device = SDKVoiceDevice(SimpleNamespace(audio=audio), ConversationConfig())
+        with pytest.raises(TimeoutError):
+            await device.play(b"\x00\x00")
+        await device.stop()
+        assert len(calls) == 2, "Recovery must retry the unconfirmed stop"
+
     asyncio.run(run())

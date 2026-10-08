@@ -213,15 +213,24 @@ class VoiceApplication:
         turn: asyncio.Task[None] | None = None
         enabled = True
         ready = False
+        cleanup_pending = False
 
         async def cancel_turn() -> None:
-            nonlocal turn
+            nonlocal turn, cleanup_pending
             assert session is not None
-            await session.cancel()
+            # Cancel even a scheduled turn before yielding to device cleanup;
+            # otherwise it could acquire new resources while stop is pending.
             if turn is not None:
                 turn.cancel()
                 await asyncio.gather(turn, return_exceptions=True)
                 turn = None
+            try:
+                await session.cancel()
+            except Exception:
+                cleanup_pending = True
+                self.app.logger.warning('设备资源清理未确认，暂停收音；连接可用后重试')
+            else:
+                cleanup_pending = False
 
         next_probe = 0.0
         try:
@@ -245,7 +254,12 @@ class VoiceApplication:
                             await cancel_turn()
                         session.history.clear()
                         if was_ready:
-                            self.app.logger.info('设备连接不可用，已清理会话，等待恢复')
+                            self.app.logger.info('设备连接不可用，已停止会话，等待恢复')
+                    elif cleanup_pending:
+                        # Retry at the readiness probe cadence, even while the
+                        # user has paused the microphone. Do not start new work
+                        # until all earlier device leases have been released.
+                        await cancel_turn()
                 try:
                     frame = await self.app.desktop.receive(timeout=0.1)
                 except TimeoutError:
@@ -267,11 +281,11 @@ class VoiceApplication:
                     except asyncio.CancelledError:
                         pass
                     except Exception:
-                        self.app.logger.warning('%s 阶段失败，已清理；请检查该服务凭据、网络及设备连接', session.last_error_stage)
-                        await device.stop()
+                        self.app.logger.warning('%s 阶段失败，正在清理；请检查该服务凭据、网络及设备连接', session.last_error_stage)
+                        await cancel_turn()
                         await asyncio.sleep(1)
                     turn = None
-                if ready and enabled and turn is None:
+                if ready and enabled and turn is None and not cleanup_pending:
                     turn = asyncio.create_task(session.turn())
         finally:
             if session is not None:

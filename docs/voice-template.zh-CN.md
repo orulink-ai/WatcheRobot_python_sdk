@@ -2,6 +2,8 @@
 
 本模板提供设备语音 → ASR → LLM → TTS → 设备播放。无需网页、skill、工具系统或长期记忆。
 公共能力在 SDK 的 `watcherobot.voice` 中，生成项目的 `application/voice.py` 是用户拥有的组装入口。
+语音组件仅由选择它的应用加载；原有拍照、麦克风、喇叭等原子接口不依赖语音配置或云服务凭据。
+应用继续通过 Daemon 注入的通道使用设备，语音业务处理留在 Application 内。
 
 ## 基础模板与语音模板
 
@@ -55,7 +57,9 @@ watcherobot app configure
 向导按当前 `config/models/*.toml` 的供应商提示字段，全部输入并通过本地校验后保存；输入期间 Ctrl+C 取消不保存。
 命令不启动 Runtime 或连接设备，不调用云服务，不修改模型、音色、语言或提示词。更改后重启应用生效。
 可指定项目路径：`watcherobot app configure ./my_voice_app`。基础模板没有凭据向导，仍可直接运行。
-`${env:变量名}` 引用会保留，校验时需设置对应变量；设置 `WATCHER_VOICE_CREDENTIALS_DIR` 时与运行时使用同一凭据目录。
+`${env:变量名}` 引用会保留，校验时需设置对应变量。托管运行还要求这些变量在 Daemon 启动前已设置；
+新终端中的变量不会自动传给已运行的 Daemon。本地校验通过不代表 Daemon 环境中也有这些变量。
+设置 `WATCHER_VOICE_CREDENTIALS_DIR` 后执行向导，会保存该应用的凭据来源目录，运行时读取同一记录。
 阿里云 ASR 默认提示 AppKey、AccessKey ID/Secret；已有非空 token 时使用 Token 方式。自定义供应商按凭据文件已有字段提示。
 
 只更新某一项凭据时使用：
@@ -68,6 +72,7 @@ watcherobot app configure --service tts
 
 不传 `--service` 时配置全部。指定后只读取和更新所选服务，不要求另外两项已配置；
 成功只代表该服务本地校验通过，运行完整应用前仍需补齐三项。模型、音色和供应商仍在配置文件中修改。
+`--service` 仅更新当前凭据目录中的所选服务。切换凭据目录时须去掉 `--service`，完整配置三项服务后才切换来源，避免影响其他服务。
 
 默认火山 ASR/TTS 各需要 `app_id` 和 `access_token`，通义需要 `api_key`。
 在供应商控制台开通对应资源，凭据有效不等于已购买或获准使用全部模型/音色。
@@ -87,6 +92,7 @@ watcherobot app run
 | --- | --- | --- |
 | `config/models/{asr,llm,tts}.toml` | 供应商、模型、音色、端点、参数 | 是 |
 | `credentials/{asr,llm,tts}.toml` | 本地凭据 | 否 |
+| `credentials/.source.toml` | 可选的外部凭据目录记录，不含密钥 | 否 |
 | `credential-examples/` | 空白凭据示例 | 是 |
 | `config/persona.toml` | `name`、`reply_style` 等用户提示词变量 | 是 |
 | `prompts/system.md` | 默认提示词正文 | 是 |
@@ -107,7 +113,8 @@ watcherobot app run
 api_key = "${env:QWEN_API_KEY}"
 ```
 
-不会自动读取 `.env`。提示词仅替换 `{{name}}` 等变量，不执行 Python；用户说的话不进行二次模板解析。
+环境变量需在 Daemon 启动前设置；只在运行 `app configure` 的终端设置不足以让已有 Daemon 读取。
+不会自动读取 `.env`，也不会把环境变量引用自动替换成明文保存。提示词仅替换 `{{name}}` 等变量，不执行 Python；用户说的话不进行二次模板解析。
 
 ## 首批供应商与配置
 
@@ -292,8 +299,12 @@ ASR/TTS 继续使用原配置和有效凭据。执行 `watcherobot app run` 后�
 - macOS：`~/Library/Application Support/watcherobot/applications/<app-id>/credentials/`
 - Linux：`$XDG_CONFIG_HOME/watcherobot/applications/<app-id>/credentials/`，未设置时使用 `~/.config/`。
 
-`WATCHER_VOICE_CREDENTIALS_DIR` 可显式覆盖目录；相对路径始终按项目根目录解析，与启动进程的工作目录无关。本地源码开发优先使用项目 `credentials/`；已发布包无该目录，
-自动使用应用用户目录。升级包不覆盖用户凭据。生成项目记录当前 SDK 兼容范围，SDK 升级不会重写用户源码。
+本地源码开发默认使用项目 `credentials/`；已发布包无该目录，自动使用应用用户目录。
+若要使用外部凭据目录，设置 `WATCHER_VOICE_CREDENTIALS_DIR` 后执行 `watcherobot app configure`。
+相对路径按项目根目录解析。向导将绝对目录记录在默认凭据目录的 `.source.toml` 中，与凭据一起保存，失败时回滚；该记录不含密钥，也不随应用发布。
+为防止密钥被发布，项目内只允许使用 `credentials/` 及其子目录；其他自定义目录必须位于项目外。向导在收集凭据前检查路径，不会自动迁移或删除已有文件。
+托管运行读取这份记录，不依赖 Daemon 中可能过时的目录覆盖变量。后续向导也沿用此目录；切换目录时重新设置变量并执行向导。
+升级包不覆盖用户凭据。生成项目记录当前 SDK 兼容范围，SDK 升级不会重写用户源码。
 语音模块使用跨平台 Python；现有应用清单仅接受 Windows、macOS，Linux 不在当前应用广场的主机支持声明中。
 Linux 凭据路径可供 SDK 开发测试使用。本功能未新增平台系统脚本。
 
@@ -302,13 +313,11 @@ Linux 凭据路径可供 SDK 开发测试使用。本功能未新增平台系统
 在生成的应用项目目录执行：
 
 ```powershell
-python -m pip install pytest
-python -m pytest tests
 watcherobot app check .
 watcherobot app run
 ```
 
-生成的测试只检查基础配置，不会调用云服务。运行后对设备说“你好，请介绍自己”，确认听到回复；
+模板不生成 `tests/`。运行后对设备说“你好，请介绍自己”，确认听到回复；
 再问“我刚才问了什么”，确认多轮上下文。修改模型、提示词或 Python 代码后重复检查。
 `app check` 检查应用工程，不证明凭据权限或真实设备链路可用。
 
@@ -320,9 +329,10 @@ SDK 维护者在 SDK 源码仓库执行协议与运行测试，以及完整 pyte
 - 缺配置：按报错给出的文件和字段补齐。
 - HTTP 401/403：检查当前供应商和区域、Key 类型、Token 过期与资源权限。
 - 没有设备：先 `watcherobot robot status`，再按现有配对流程连接；应用会等待。
+- 设备断线或清理未确认：应用暂停收音并保留待清理状态，连接恢复后重试；清理成功后才开始下一轮。用户已暂停麦克风时不会自动恢复收音。
 - ASR 失败：检查资源、NLS 项目配置、麦克风丢帧和录音能量阈值。
 - TTS 失败：确认模型与音色/资源匹配，以及 PCM 权限。
-- 替换适配器：先用生成项目测试，再验证取消、异常和实际设备。
+- 替换适配器：为自己的适配器补充测试，再验证取消、异常和实际设备。
 
 ### 协议参考
 

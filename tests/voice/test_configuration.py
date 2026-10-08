@@ -45,12 +45,24 @@ def test_environment_prompt_and_secret_repr(tmp_path, monkeypatch):
 def test_publish_excludes_credentials_even_without_ignore_file(tmp_path):
     root = project(tmp_path)
     configured(root)
+    (root / 'credentials/.source.toml').write_text('directory = "private-local-path"', encoding='utf-8')
     for name in ('.gitignore', '.watcherignore'):
         (root / name).unlink(missing_ok=True)
     files = {p.as_posix() for p in collect_application_source_files(root)}
     assert not any(p.startswith('credentials/') for p in files)
     assert 'config/models/asr.toml' in files
     assert 'prompts/system.md' in files
+
+
+@pytest.mark.parametrize('content', ['directory = "relative"', 'directory = 1', 'unknown = "value"'])
+def test_invalid_saved_credential_source_fails_explicitly(tmp_path, monkeypatch, content):
+    from watcherobot.voice.configuration import credential_directory
+
+    root = project(tmp_path)
+    monkeypatch.delenv('WATCHER_VOICE_CREDENTIALS_DIR', raising=False)
+    (root / 'credentials/.source.toml').write_text(content, encoding='utf-8')
+    with pytest.raises(ConfigurationError, match='凭据来源配置'):
+        credential_directory(root, 'local.voice', use_environment=False)
 
 
 def test_unknown_config_field_and_unbounded_recording_rejected(tmp_path, monkeypatch):

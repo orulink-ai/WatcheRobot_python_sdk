@@ -94,10 +94,9 @@ class SDKVoiceDevice:
     async def _close_microphone(self) -> None:
         microphone = self.microphone
         if microphone is not None:
-            try:
-                await blocking(microphone.close)
-            finally:
-                self.microphone = None
+            # Keep ownership until the close is acknowledged so recovery can retry.
+            await blocking(microphone.close)
+            self.microphone = None
 
     async def play(self, pcm: bytes) -> None:
         self._playing = True
@@ -112,10 +111,8 @@ class SDKVoiceDevice:
                     pass
             raise VoiceError('playback 设备播放超时')
         finally:
-            try:
-                await blocking(self.robot.audio.stop)
-            finally:
-                self._playing = False
+            await blocking(self.robot.audio.stop)
+            self._playing = False
 
     async def stop(self) -> None:
         await self._close_microphone()

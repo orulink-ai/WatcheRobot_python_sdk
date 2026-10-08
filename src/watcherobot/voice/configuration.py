@@ -77,13 +77,9 @@ def _credential(value: Any, location: str) -> str:
     return value.strip()
 
 
-def credential_directory(root: Path, app_id: str, *, installed: bool = False) -> Path:
-    """Resolve explicit credentials, source credentials, or per-app user storage."""
+def default_credential_directory(root: Path, app_id: str, *, installed: bool = False) -> Path:
+    """Locate this application's private storage independently of shell overrides."""
     root = root.resolve()
-    override = os.environ.get("WATCHER_VOICE_CREDENTIALS_DIR")
-    if override:
-        path = Path(override).expanduser()
-        return (root / path).resolve()
     if not installed and (root / "credentials").is_dir():
         return root / "credentials"
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", app_id):
@@ -95,6 +91,32 @@ def credential_directory(root: Path, app_id: str, *, installed: bool = False) ->
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
     return base / "watcherobot/applications" / app_id / "credentials"
+
+
+def credential_directory(
+    root: Path, app_id: str, *, installed: bool = False, use_environment: bool = True,
+) -> Path:
+    """Resolve a configure override, a saved source, or per-app private storage.
+
+    Managed applications disable shell overrides: their Daemon may have started
+    with a different environment from the terminal running the configuration UI.
+    """
+    root = root.resolve()
+    override = os.environ.get("WATCHER_VOICE_CREDENTIALS_DIR") if use_environment else None
+    if override:
+        return (root / Path(override).expanduser()).resolve()
+    directory = default_credential_directory(root, app_id, installed=installed)
+    source = directory / ".source.toml"
+    if directory.is_symlink() or source.is_symlink():
+        raise ConfigurationError("凭据来源目录或文件不能是符号链接。")
+    if source.exists():
+        data = read_toml(source)
+        _unknown(data, {"directory"}, "凭据来源配置")
+        value = data.get("directory")
+        if not isinstance(value, str) or not value.strip() or not Path(value).is_absolute():
+            raise ConfigurationError("凭据来源配置 directory 必须是绝对路径。")
+        return Path(value)
+    return directory
 
 
 def load_configuration(root: Path, *, credentials_dir: Path | None = None) -> VoiceConfiguration:

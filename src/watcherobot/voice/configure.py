@@ -15,6 +15,7 @@ from .configuration import (
     _load_model_configuration,
     credential_directory,
     credential_keys,
+    default_credential_directory,
     read_toml,
 )
 
@@ -26,14 +27,33 @@ def configure_voice(
     root = root.resolve()
     manifest = ApplicationManifest.load(root)
     directory = credential_directory(root, manifest.app_id)
+    # Only the conventional credentials tree is unconditionally excluded from
+    # publication. A shell override must not silently put secrets in source.
+    try:
+        relative = directory.resolve().relative_to(root)
+    except ValueError:
+        pass  # External per-user or explicitly selected storage is supported.
+    else:
+        if not relative.parts or relative.parts[0] != "credentials":
+            raise ConfigurationError("项目内的凭据必须保存在 credentials/ 下；也可选择项目外的目录。")
+    source = default_credential_directory(root, manifest.app_id) / ".source.toml"
+    save_source = bool(os.environ.get("WATCHER_VOICE_CREDENTIALS_DIR"))
+    if save_source and (source.parent.is_symlink() or source.is_symlink()):
+        raise ConfigurationError("凭据来源目录或文件不能是符号链接。")
     if service is not None and service not in ("asr", "llm", "tts"):
         raise ConfigurationError("不支持的语音服务。")
+    if service is not None and save_source:
+        current = credential_directory(root, manifest.app_id, use_environment=False)
+        if directory.resolve() != current.resolve():
+            raise ConfigurationError("切换凭据目录请不带 --service 完整配置三项服务，避免改变其他服务的凭据来源。")
     kinds = (service,) if service is not None else ("asr", "llm", "tts")
     paths = {kind: directory / f"{kind}.toml" for kind in kinds}
     if directory.is_symlink() or any(path.is_symlink() for path in paths.values()):
         raise ConfigurationError("凭据目录或文件不能是符号链接；请直接编辑目标文件。")
     drafts: dict[Path, dict[str, str]] = {}
     original: dict[Path, bytes | None] = {}
+    if save_source:
+        original[source] = source.read_bytes() if source.exists() else None
     fields: dict[str, tuple[str, ...]] = {}
     providers: dict[str, str] = {}
     optional: set[str] = set()
@@ -86,7 +106,15 @@ def configure_voice(
         text = ''.join(f'{json.dumps(key, ensure_ascii=False)} = {json.dumps(value, ensure_ascii=False)}\n'
                        for key, value in values.items())
         changed[path] = text.encode("utf-8")
+    if save_source:
+        # Publish the source last; a failed save rolls back credentials and source.
+        content = f'directory = {json.dumps(str(directory), ensure_ascii=False)}\n'.encode("utf-8")
+        if content != original[source]:
+            changed[source] = content
     _save_credentials(changed, original)
+    if any(value.startswith("${env:") for values in drafts.values() for value in values.values()):
+        output("环境变量引用需要在 Daemon 启动前设置；新终端中的变量不会传给已运行的 Daemon。"
+               "本次校验仅使用当前终端环境，未验证应用运行环境。")
     if service is None:
         output("凭据配置已保存，本地配置校验通过；尚未验证云服务权限。修改后重启应用生效。")
     else:
