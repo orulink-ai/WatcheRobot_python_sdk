@@ -19,6 +19,11 @@ Application does not stop the Runtime or rebuild the device connection.
 
 Available examples include:
 
+- `codex_voice_app`: bridge the robot's native full-duplex RTC audio to the
+  Codex voice frontend, with permission-gated robot tools, a local fixed-voice
+  playback test, and audio diagnostics. See its [README](codex_voice_app/README.md)
+  for setup and known limitations; intermittent playback gaps, adaptive device
+  buffer feedback, and the web pairing-code entry remain unresolved.
 - `expression_lab`: launch a loopback-only animation workbench that previews
   and tunes the device-side procedural Watcher expression runtime.
 - `dshtts_speaker`: expose a loopback TTS bridge that converts DSH assistant
