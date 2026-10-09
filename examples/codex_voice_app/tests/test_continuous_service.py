@@ -27,10 +27,10 @@ class DevicePeer:
         self.track = DeviceAudioTrack()
     async def start(self):
         pass
-    async def append_audio(self, pcm, *, sample_rate=24000):
+    async def append_audio(self, pcm, *, sample_rate=24000, received_at=None):
         self.output.append(pcm)
         self.rates.append(sample_rate)
-        self.track.push(pcm, sample_rate=sample_rate)
+        self.track.push(pcm, sample_rate=sample_rate, received_at=received_at)
     async def close(self):
         self.closed = True
         self.track.stop()
@@ -97,11 +97,139 @@ def test_realtime_playback_compensates_quiet_source_before_device_encoding():
                       dict(voiceEpoch=1, audio={'data': base64.b64encode(pcm).decode(),
                            'sampleRate': 48000, 'numChannels': 1, 'samplesPerChannel': 960}))
         output = svc.device_peer.output[0]
-        assert 1000 < max(struct.unpack('<960h', output)) < 4000
+        assert 4000 < max(struct.unpack('<960h', output)) < 7000
         assert svc.device_peer.rates == [48000]
         assert svc.snapshot()['playbackGain']['inputPeak'] == 1000
-        assert svc.snapshot()['playbackGain']['profile'] == 'clear-speech-v3'
+        assert svc.snapshot()['playbackGain']['profile'] == 'clear-speech-v4'
+        assert svc.device_peer.track.playout_diagnostics()['prefillMs'] == 80
         await svc.stop()
+    asyncio.run(run())
+
+
+def test_stale_output_is_rejected_before_gain_changes_or_audio_admission():
+    async def run():
+        import time
+        svc, _, agent = service()
+        await svc.start()
+        peer = svc.device_peer
+        before = svc.playback_gain.diagnostics()
+        await deliver(svc, agent, 'thread/realtime/outputAudio/delta',
+            dict(voiceEpoch=1, receivedAtPerf=time.perf_counter() - .7,
+                 audio=dict(data=base64.b64encode(b'\xe8\x03' * 960).decode(),
+                            sampleRate=48000, numChannels=1, samplesPerChannel=960)))
+        assert svc.playback_gain.diagnostics() == before
+        assert not peer.output and not peer.track.buffer
+        assert svc.state['error'] and not svc.state['connected']
+        await svc.stop()
+    asyncio.run(run())
+
+
+def test_startup_stale_idle_advances_dsp_without_failing_the_new_conversation():
+    async def run():
+        import time
+        svc, _, agent = service()
+        await svc.start()
+        await deliver(svc, agent, 'thread/realtime/outputAudio/delta',
+            dict(voiceEpoch=1, receivedAtPerf=time.perf_counter() - 2,
+                 audio=dict(data=base64.b64encode(bytes(1920)).decode(),
+                            sampleRate=48000, numChannels=1, samplesPerChannel=960)))
+        assert svc.state['connected'] and not svc.state['error']
+        assert svc.playback_gain.samples == 960
+        assert not svc.device_peer.track.buffer and not svc.device_peer.output
+        assert svc.media_forwarding['staleIdleSkippedMs'] == 20
+        await svc.stop()
+    asyncio.run(run())
+
+
+def test_exact_idle_cannot_fail_when_age_crosses_deadline_between_clock_reads(monkeypatch):
+    import continuous_service as module
+    async def run():
+        svc, _, agent = service()
+        await svc.start()
+        # First reads are below 600ms; later validation would cross it.
+        calls = [0]
+        def boundary_clock():
+            calls[0] += 1
+            return 100.599 if calls[0] < 3 else 100.601
+        with monkeypatch.context() as patch:
+            patch.setattr(module.time, 'perf_counter', boundary_clock)
+            svc.device_peer.track.playout.clock = boundary_clock
+            await deliver(svc, agent, 'thread/realtime/outputAudio/delta',
+                dict(voiceEpoch=1, receivedAtPerf=100.0,
+                    audio=dict(data=base64.b64encode(bytes(1920)).decode(),
+                               sampleRate=48000, numChannels=1, samplesPerChannel=960)))
+        assert svc.state['connected'] and not svc.state['error']
+        assert not svc.device_peer.track.buffer
+        assert svc.playback_gain.samples == 960
+        await svc.stop()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('barrier', ['queued', 'failed'])
+def test_zero_pcm_cannot_bypass_age_when_program_is_queued_or_playout_failed(barrier):
+    import time
+    async def run():
+        svc, _, agent = service()
+        await svc.start()
+        peer = svc.device_peer
+        before = svc.playback_gain.diagnostics()
+        if barrier == 'queued':
+            peer.track.push(b'\xe8\x03' * 960, sample_rate=48000)
+        else:
+            peer.track.playout.failed = True
+        await deliver(svc, agent, 'thread/realtime/outputAudio/delta',
+            dict(voiceEpoch=1, receivedAtPerf=time.perf_counter() - .7,
+                 audio=dict(data=base64.b64encode(bytes(1920)).decode(),
+                            sampleRate=48000, numChannels=1, samplesPerChannel=960)))
+        assert not svc.state['connected'] and svc.state['error']
+        assert svc.playback_gain.diagnostics() == before
+        assert not peer.output
+        await svc.stop()
+    asyncio.run(run())
+
+
+def test_stale_idle_exception_does_not_discard_pending_dsp_speech_tail():
+    async def run():
+        import time
+        svc, _, agent = service()
+        await svc.start()
+        svc.playback_gain.process(b'\xe8\x03' * 17)
+        assert svc.playback_gain.has_pending_audio()
+        before = svc.playback_gain.diagnostics()
+        peer = svc.device_peer
+        await deliver(svc, agent, 'thread/realtime/outputAudio/delta',
+            dict(voiceEpoch=1, receivedAtPerf=time.perf_counter() - 2,
+                 audio=dict(data=base64.b64encode(bytes(1920)).decode(),
+                            sampleRate=48000, numChannels=1, samplesPerChannel=960)))
+        assert svc.state['error'] and not svc.state['connected']
+        assert svc.playback_gain.diagnostics() == before
+        assert not peer.output
+        await svc.stop()
+    asyncio.run(run())
+
+
+def test_stop_fences_local_playout_before_slow_physical_release():
+    async def run():
+        svc, _, _ = service()
+        await svc.start()
+        peer = svc.device_peer
+        peer.track.push(b'\xe8\x03' * 960, sample_rate=48000)
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = svc._physical_stop
+        async def slow_stop():
+            entered.set()
+            await release.wait()
+            return await original()
+        svc._physical_stop = slow_stop
+        stopping = asyncio.create_task(svc.stop())
+        await asyncio.wait_for(entered.wait(), 1)
+        try:
+            assert peer.track.readyState == 'ended'
+            assert not peer.track.buffer
+        finally:
+            release.set()
+            await stopping
+        assert svc.state['stopStatus'] == 'confirmed'
     asyncio.run(run())
 
 
@@ -216,7 +344,7 @@ def test_native_idle_pcm_advances_dsp_without_indicating_a_reply():
             dict(voiceEpoch=1, audio=dict(data=base64.b64encode(bytes(1920)).decode(),
                 sampleRate=48000, numChannels=1, samplesPerChannel=960)))
         assert svc.playback_gain.samples == 960
-        assert svc.device_peer.rates == [48000]
+        assert svc.device_peer.rates == []  # Paced track already supplies idle zeros.
         assert not svc.device_peer.track.buffer
         assert not svc.state['speaking'] and not svc.state['outputBytes']
         await svc.stop()

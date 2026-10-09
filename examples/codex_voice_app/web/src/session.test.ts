@@ -1,7 +1,7 @@
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
-import { initialSession, reduceEvent, isUnsafeStop, canRunDeviceDiagnostic, endedSessionNotice, sessionStatus, isListening, evidenceTitle, motionRangeSummary, taskKind, taskSummary, canSendText, voiceInputStatus, duplexSummary, bodyFeedbackSummary } from "./session"
+import { initialSession, reduceEvent, isUnsafeStop, canRunDeviceDiagnostic, endedSessionNotice, sessionStatus, isListening, evidenceTitle, motionRangeSummary, taskKind, taskSummary, canSendText, voiceInputStatus, duplexSummary, bodyFeedbackSummary, speakerTestSummary } from "./session"
 import type { Evidence, Session } from "./session"
 import App from "./App"
 
@@ -27,6 +27,38 @@ const duplex = {
   transport: "webrtc", deviceTransport: "webrtc", microphoneConcurrent: true,
   echoCancellation: "unverified", expressionsEnabled: false,
 }
+describe("fixed speaker comparison", () => {
+  it("shows acknowledged temporary volume and restores it after reconnect", () => {
+    const state = realtime({ playbackVolume: .5 })
+    expect(state.playbackVolume).toBe(.5)
+    expect(renderApp({ ...state, connected: false })).toContain("临时播放音量 · 50%")
+    expect(renderApp({ ...state, connected: false })).toContain("恢复 100%")
+    for (const invalid of [undefined, true, "0.5", -1, 1.1, NaN, Infinity]) {
+      expect(realtime({ playbackVolume: invalid }).playbackVolume).toBeNull()
+    }
+    expect(renderApp({ voiceMode: "realtime" })).toContain("播放音量待确认")
+  })
+  it("shows the source, robot play control and local preview", () => {
+    const markup = renderApp({ connected: false, voiceMode: "realtime" })
+    expect(markup).toContain("机器人播放测试语音")
+    expect(markup).toContain("不是 Codex 声线")
+    expect(markup).toContain('/api/speaker-reference.wav')
+    expect(markup).not.toContain("录音并回放 3 秒")
+  })
+  it("validates bounded progress and never claims completion after disconnect", () => {
+    const state = realtime({ speakerTest: { status: "finished", sentMs: 1000, totalMs: 1000 } })
+    expect(state.speakerTest?.status).toBe("finished")
+    expect(speakerTestSummary(state, true)).toContain("释放已确认")
+    expect(speakerTestSummary(state, false)).toContain("未知")
+    expect(realtime({ speakerTest: { status: "finished", sentMs: -1, totalMs: 1000 } }).speakerTest).toBeNull()
+    expect(realtime({ speakerTest: { status: "finished", sentMs: 2000, totalMs: 1000 } }).speakerTest).toBeNull()
+    expect(sessionStatus({ ...state, connected: false, busy: true, interactionPhase: "" }, true)).toContain("正在连接RTC语音")
+    const recovered = realtime({ stopStatus: "confirmed", speakerTest: { status: "unconfirmed", sentMs: 500, totalMs: 1000 } })
+    expect(speakerTestSummary(recovered, true)).not.toContain("重试停止")
+    expect(speakerTestSummary(recovered, true)).toContain("未完成")
+    expect(speakerTestSummary(recovered, true)).toContain("释放已确认")
+  })
+})
 function realtime(values: Record<string, unknown> = {}) {
   return reduceEvent(initialSession, {
     type: "snapshot", connected: true, deviceOnline: true, microphone: true,

@@ -235,6 +235,28 @@ def test_downlink_is_paced_resampled_bounded_and_underflow_is_zero(module):
     asyncio.run(run())
 
 
+def test_live_overload_fences_track_and_notifies_service_before_teardown(module):
+    async def run():
+        events = asyncio.Queue()
+        peer = module.DeviceRtcPeer(FakeRtc(), events)
+        peer.track.configure_playout(prefill_ms=80, max_buffer_ms=600)
+        await peer.start()
+        await peer.append_audio(b'\xe8\x03' * 28800, sample_rate=48000)
+        with pytest.raises(RuntimeError, match='backlog'):
+            await peer.append_audio(b'\xe8\x03' * 960, sample_rate=48000)
+        assert peer.track.readyState == 'ended' and not peer.track.buffer
+        assert peer.diagnostics()['failed']
+        assert peer.track.playout_diagnostics()['discardedOnFailureMs'] == 600
+        event = events.get_nowait()
+        assert event['method'] == 'local/error' and 'backlog' in event['params']['message']
+        with pytest.raises(RuntimeError):
+            await peer.append_audio(b'\xe8\x03' * 960, sample_rate=48000)
+        assert events.empty(), 'Failure must emit only once'
+        await peer.close()
+        assert peer.diagnostics()['deviceStoppedReceipt']
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('run_length', [2, 3, 4])
 def test_downlink_gain_then_resample_normalizes_transients_before_s16_packing(module, run_length):
     from playback_gain import PlaybackGain

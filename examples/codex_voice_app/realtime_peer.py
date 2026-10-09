@@ -16,6 +16,7 @@ import av
 from aiortc import MediaStreamTrack, RTCConfiguration, RTCPeerConnection, RTCSessionDescription
 from protocol import VOICE_INSTRUCTIONS, REALTIME_INSTRUCTIONS
 from errors import error_message
+from media_pacing import ArrivalCadence
 
 
 def normalize_data_event(event: dict) -> dict | None:
@@ -152,6 +153,7 @@ class RealtimePeer:
             outputDisabledFrames=0, admittedBytes=0, peak=0,
             sourceSampleRate=0, outputSampleRate=48000 if realtime else 24000,
             sampleRateConversions=0)
+        self.downlink_cadence = ArrivalCadence()
 
         @self.channel.on('open')
         def channel_opened():
@@ -210,7 +212,8 @@ class RealtimePeer:
 
     def diagnostics(self):
         """Bounded metadata only: no transcript, PCM, image, SDP or credentials."""
-        return {**copy.deepcopy(self._diagnostics), 'upstream': self.track.diagnostics()}
+        return {**copy.deepcopy(self._diagnostics), 'upstream': self.track.diagnostics(),
+                'downlinkArrival': self.downlink_cadence.diagnostics()}
 
     async def offer(self) -> str:
         await self.pc.setLocalDescription(await self.pc.createOffer())
@@ -285,6 +288,9 @@ class RealtimePeer:
         try:
             while True:
                 source = await track.recv()
+                received_at = time.perf_counter()
+                self.downlink_cadence.note(received_at,
+                    float(source.pts * source.time_base) if source.pts is not None and source.time_base else None)
                 self._diagnostics['sourceSampleRate'] = source.sample_rate
                 self._diagnostics['sampleRateConversions'] += source.sample_rate != rate
                 if self.realtime:
@@ -346,8 +352,12 @@ class RealtimePeer:
                     else:
                         self._diagnostics['outputDisabledFrames'] += 1
                     self._emit({'method': 'thread/realtime/outputAudio/delta', 'params': {
+                        'receivedAtPerf': received_at,
                         'audio': {'data': base64.b64encode(pcm).decode(), 'sampleRate': rate,
                                   'numChannels': 1, 'samplesPerChannel': frame.samples}}})
+                # aiortc recv() returns immediately for an already-decoded
+                # burst. Explicit fairness lets media/control consumers run.
+                await asyncio.sleep(0)
         except asyncio.CancelledError:
             raise
         except Exception as error:

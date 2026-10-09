@@ -12,7 +12,7 @@ import struct
 
 
 class PlaybackGain:
-    PROFILE = 'clear-speech-v3'
+    PROFILE = 'clear-speech-v4'
     TARGET_RMS = 12000
     MAX_GAIN = 16.0
     PEAK_LIMIT = 29000
@@ -27,9 +27,9 @@ class PlaybackGain:
         self.gain = self.limiter_gain = 1.0
         self.energy = None
         self.energy_alpha = -math.expm1(-1 / sample_rate / .04)
-        self.rise_alpha = -math.expm1(-1 / sample_rate / .08)
+        self.rise_alpha = -math.expm1(-1 / sample_rate / .025)
         self.fall_alpha = -math.expm1(-1 / sample_rate / .04)
-        self.release_alpha = -math.expm1(-1 / sample_rate / .08)
+        self.release_alpha = -math.expm1(-1 / sample_rate / .04)
         self.delay, self.ceilings = deque(), deque()
         self.index = 0
         self.flushed = False
@@ -105,6 +105,10 @@ class PlaybackGain:
         self.flushed = True
         return tail
 
+    def has_pending_audio(self) -> bool:
+        """An exact nonzero delayed tail must not be treated as idle silence."""
+        return any(value for value, _ in self.delay)
+
     def diagnostics(self):
         return dict(profile=self.PROFILE, sampleRate=self.sample_rate,
                     gainDb=round(20 * math.log10(self.gain), 2),
@@ -119,6 +123,7 @@ class PlaybackGain:
                     minLimiterGainDb=round(20 * math.log10(max(1e-12, self.min_limiter_gain)), 2),
                     limiterGainDb=round(20 * math.log10(max(1e-12, self.limiter_gain)), 2),
                     lookaheadSamples=self.lookahead, lookaheadMs=self.LOOKAHEAD_SECONDS * 1000,
+                    gainRiseMs=25, limiterReleaseMs=40,
                     speechSamples=self.speech_samples,
                     speechInputRms=round(math.sqrt(self.speech_input_squares / max(1, self.speech_samples)), 1),
                     speechOutputRms=round(math.sqrt(self.speech_output_squares / max(1, self.speech_samples)), 1))

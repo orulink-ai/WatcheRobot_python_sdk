@@ -24,6 +24,9 @@ from aiortc.mediastreams import MediaStreamError
 from aiortc.sdp import candidate_from_sdp
 
 from async_utils import drain_owned
+from media_pacing import MediaPacer
+from playout_buffer import PlayoutBuffer
+from playback_volume import PlaybackVolume
 
 
 SIGNAL_POLL_SECONDS = .05
@@ -33,7 +36,6 @@ PEER_CLOSE_TIMEOUT_SECONDS = 5.0
 STOP_CONFIRM_TIMEOUT_SECONDS = 5.0
 SOURCE_STALL_SECONDS = 3.0
 SOURCE_WATCH_INTERVAL_SECONDS = .1
-MAX_AUDIO_BACKLOG_SECONDS = 2
 MAX_PENDING_CANDIDATES = 32
 MAX_EVENT_BACKLOG = 256
 MAX_DIAGNOSTIC_INTEGER = 9_007_199_254_740_991
@@ -103,24 +105,33 @@ class DeviceAudioTrack(MediaStreamTrack):
 
     kind = 'audio'
 
-    def __init__(self):
+    def __init__(self, *, clock=time.perf_counter, sleep=None, on_failure=None):
         super().__init__()
-        self.buffer = bytearray()
+        self.pacing = MediaPacer(clock=clock, sleep=sleep)
+        self.playout = PlayoutBuffer(clock, on_failure)
+        self.buffer = self.playout.buffer
         # Integer resampling can saturate before any later limiter sees the
         # intersample overshoot. Keep packed float until frame-wide attenuation.
         self.resampler = av.AudioResampler(format='flt', layout='mono', rate=48000)
         self.input_samples = self.samples = 0
         self.input_sample_rate = None
-        self.started_at = None
         self.underflow_frames = 0
+        self.partial_underflow_frames = self.empty_underflow_frames = 0
         self.input_energy, self.output_energy = PcmEnergy(), PcmEnergy()
+        self.playback_volume = PlaybackVolume()
         self.peak_limiter = dict(peakLimit=TX_PEAK_LIMIT, resampledFrames=0,
                                 passthroughFrames=0, inputSampleRate=None,
                                 idleSkippedFrames=0, idleSkippedSamples=0,
                                 limitedFrames=0, preLimitPeak=0.0, preLimitPeakMax=0.0,
                                 lastScale=1.0, minScale=1.0)
 
-    def push(self, pcm: bytes, *, sample_rate=24000) -> None:
+    def configure_playout(self, *, prefill_ms, max_buffer_ms):
+        self.playout.configure(prefill_ms=prefill_ms, max_buffer_ms=max_buffer_ms)
+
+    def playout_diagnostics(self):
+        return self.playout.diagnostics()
+
+    def push(self, pcm: bytes, *, sample_rate=24000, received_at=None) -> None:
         if self.readyState != 'live':
             raise RuntimeError('Device RTC audio track is stopped')
         if not isinstance(pcm, bytes) or not pcm or len(pcm) % 2:
@@ -129,16 +140,15 @@ class DeviceAudioTrack(MediaStreamTrack):
             raise ValueError('Expected 24 or 48 kHz input')
         if self.input_sample_rate is not None and sample_rate != self.input_sample_rate:
             raise ValueError('Input sample rate cannot change during a media session')
-        limit = 48000 * 2 * MAX_AUDIO_BACKLOG_SECONDS
+        self.playout.validate_age(received_at)
         # Check before allocation/resampler mutation; include its small delayed tail.
         predicted = len(pcm) * (48000 // sample_rate) + (128 if sample_rate != 48000 else 0)
-        if len(self.buffer) + predicted > limit:
-            raise RuntimeError('Device RTC audio backlog exceeds two seconds')
+        self.playout.validate_growth(predicted)
         self.input_sample_rate = sample_rate
         self.peak_limiter['inputSampleRate'] = sample_rate
         if sample_rate == 48000:
             values = [item[0] for item in struct.iter_unpack('<h', pcm)]
-            self._queue_samples(values, passthrough=True)
+            self._queue_samples(values, passthrough=True, received_at=received_at)
             self.input_samples += len(values)
             self.input_energy.add(pcm)
             return
@@ -157,10 +167,10 @@ class DeviceAudioTrack(MediaStreamTrack):
                 '=f', bytes(output.planes[0])[:output.samples * 4])]
             if not all(math.isfinite(value) for value in values):
                 raise ValueError('Non-finite device RTC resampled audio')
-            self._queue_samples(values)
+            self._queue_samples(values, received_at=received_at)
         self.input_energy.add(pcm)
 
-    def _queue_samples(self, values, *, passthrough=False):
+    def _queue_samples(self, values, *, passthrough=False, received_at=None):
         peak = max(map(abs, values))
         limiter = self.peak_limiter
         limiter['passthroughFrames' if passthrough else 'resampledFrames'] += 1
@@ -174,7 +184,8 @@ class DeviceAudioTrack(MediaStreamTrack):
         scale = min(1.0, TX_PEAK_LIMIT / peak) if peak else 1.0
         # Last-resort protection. Native DSP already bounds peaks: scale must
         # stay unity there, so this is not a competing dynamic gain stage.
-        self.buffer.extend(struct.pack(f'<{len(values)}h', *(round(value * scale) for value in values)))
+        self.playout.append(struct.pack(f'<{len(values)}h', *(round(value * scale) for value in values)),
+                            received_at=received_at)
         limiter['limitedFrames'] += scale < 1.0
         limiter.update(preLimitPeak=peak,
                        preLimitPeakMax=max(limiter['preLimitPeakMax'], peak),
@@ -183,17 +194,19 @@ class DeviceAudioTrack(MediaStreamTrack):
     async def recv(self):
         if self.readyState != 'live':
             raise MediaStreamError
-        loop = asyncio.get_running_loop()
-        if self.started_at is None:
-            self.started_at = loop.time()
-        await asyncio.sleep(max(0, self.started_at + self.samples / 48000 - loop.time()))
+        await self.pacing.wait()
         if self.readyState != 'live':
             raise MediaStreamError
-        pcm = bytes(self.buffer[:1920])
-        del self.buffer[:1920]
+        pcm = self.playout.take(1920)
         if len(pcm) < 1920:
-            self.underflow_frames += 1
+            if not self.playout.waiting:
+                self.underflow_frames += 1
+                self.partial_underflow_frames += bool(pcm)
+                self.empty_underflow_frames += not pcm
             pcm += bytes(1920 - len(pcm))
+        # Last stage, including queued audio and tails. AGC cannot undo a
+        # quieter debug level, and changing it adds no second media queue.
+        pcm = self.playback_volume.process(pcm)
         self.output_energy.add(pcm)
         frame = av.AudioFrame(format='s16', layout='mono', samples=960)
         frame.sample_rate = 48000
@@ -204,7 +217,7 @@ class DeviceAudioTrack(MediaStreamTrack):
         return frame
 
     def stop(self):
-        self.buffer.clear()
+        self.playout.clear()
         super().stop()
 
 
@@ -212,7 +225,7 @@ class DeviceRtcPeer:
     def __init__(self, rtc, events: asyncio.Queue):
         self.rtc, self.events = rtc, events
         self.pc = None
-        self.track = DeviceAudioTrack()
+        self.track = DeviceAudioTrack(on_failure=self._fail)
         self._connected = None
         self._start_task = self._close_task = None
         self._workers: set[asyncio.Task] = set()
@@ -511,11 +524,11 @@ class DeviceRtcPeer:
                     'data': encoded, 'sampleRate': 16000,
                     'numChannels': 1, 'samplesPerChannel': frame.samples}, 'timing': timing}})
 
-    async def append_audio(self, pcm: bytes, *, sample_rate=24000):
+    async def append_audio(self, pcm: bytes, *, sample_rate=24000, received_at=None):
         if (self._closing or self._failed or self.pc is None
                 or self.pc.connectionState != 'connected'):
             raise RuntimeError('Device RTC media is not connected')
-        self.track.push(pcm, sample_rate=sample_rate)
+        self.track.push(pcm, sample_rate=sample_rate, received_at=received_at)
         self._queued_bytes += len(pcm)
 
     async def close(self):
@@ -589,6 +602,11 @@ class DeviceRtcPeer:
             receivedFrames=self._received_frames, receivedBytes=self._received_bytes,
             queuedInputBytes=self._queued_bytes, bufferedBytes=len(self.track.buffer),
             underflowFrames=self.track.underflow_frames,
+            downlinkPacing=self.track.pacing.diagnostics(),
+            downlinkPlayout=self.track.playout_diagnostics(),
+            downlinkVolume=self.track.playback_volume.diagnostics(),
+            partialUnderflowFrames=self.track.partial_underflow_frames,
+            emptyUnderflowFrames=self.track.empty_underflow_frames,
             eventTypes=list(self._event_types), aec=self._stats, media=self._media_stats,
             deviceStatsAgeMs=max(0, (now - self._stats_at) * 1000) if self._stats_at is not None else None,
             receivedAudioEnergy=self._received_energy.snapshot(),
