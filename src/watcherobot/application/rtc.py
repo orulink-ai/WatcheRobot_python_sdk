@@ -39,7 +39,7 @@ class ApplicationRtc:
         transport: DaemonApplicationTransport,
         *,
         id_factory: Callable[[], str] | None = None,
-        send_timeout: float = 2.0,
+        send_timeout: float = 10.0,
     ) -> None:
         self._transport = transport
         self._id_factory = id_factory or (lambda: uuid.uuid4().hex)
@@ -333,7 +333,11 @@ class ApplicationRtc:
             data = message.get("data")
             if not isinstance(data, dict):
                 data = {}
-            if message_type == "evt.rtc.state":
+            # Device-confirmed release is terminal for this session. Queued
+            # feedback NACKs or state events can arrive after ``stopped``;
+            # retain them in the history without reviving ownership or failure.
+            terminal = not self._active and self._state == "stopped"
+            if message_type == "evt.rtc.state" and not terminal:
                 state = data.get("state")
                 if isinstance(state, str):
                     self._state = state
@@ -353,8 +357,12 @@ class ApplicationRtc:
                     self._start_condition.notify_all()
                 elif message.get("command_id") == self._stop_command_id:
                     self._stop_reply = {"accepted": True}
+                    # The stop ACK also confirms Device teardown. Publish
+                    # its terminal state before the next queued frame arrives.
+                    self._active = False
+                    self._state = "stopped"
                     self._stop_condition.notify_all()
-            elif message_type == "sys.nack":
+            elif message_type == "sys.nack" and not terminal:
                 error = data.get("error") or data.get("reason") or "rtc_rejected"
                 if self._last_error is None:
                     self._last_error = str(error)

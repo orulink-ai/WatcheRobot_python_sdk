@@ -3,10 +3,40 @@ import test from "node:test";
 
 import {
   evaluateResourceLifecycle,
+  readAnimationResidency,
   selectLifecycleBaseline,
   selectLatestReleaseSnapshot,
   selectFeatureResourceSnapshots,
 } from "../../examples/sdk_media_lab/web/resource-health.mjs";
+
+test("older firmware without animation allocation telemetry remains unknown", () => {
+  const result = readAnimationResidency({ animation: { frame_buffer_bytes: 339488 } });
+  assert.equal(result.state, "unknown");
+  assert.equal(result.proceduralFrameBytes, null);
+  assert.equal(result.sdFramePoolBytes, null);
+});
+
+test("confirmed zero allocations and stopped workers report released", () => {
+  const snapshot = { animation: { procedural_frame_bytes: 0, procedural_active: false,
+    sd_resources: { frame_pool_bytes: 0, payload_cache_bytes: 0, worker_stack_bytes: 0,
+      direct_lcd_dma_bytes: 0, worker_running: false, release_failed: false } } };
+  const result = readAnimationResidency(snapshot);
+  assert.equal(result.state, "released");
+  assert.equal(result.sdPayloadCacheBytes, 0);
+  assert.equal(result.proceduralFrameBytes, 0);
+  assert.equal(readAnimationResidency(snapshot, false).state, "unknown");
+  assert.equal(readAnimationResidency(snapshot, false).sdFramePoolBytes, null);
+});
+
+test("a running procedural framebuffer is normal resident memory", () => {
+  const snapshot = { animation: { procedural_frame_bytes: 339488, procedural_active: true,
+    sd_resources: { frame_pool_bytes: 0, payload_cache_bytes: 0, worker_stack_bytes: 0,
+      direct_lcd_dma_bytes: 3296, worker_running: false, release_failed: false } } };
+  assert.equal(readAnimationResidency(snapshot).state, "resident");
+  assert.equal(readAnimationResidency(snapshot).proceduralFrameBytes, 339488);
+  snapshot.animation.sd_resources.release_failed = true;
+  assert.equal(readAnimationResidency(snapshot).state, "failed");
+});
 
 test("feature table keeps start, failure and completion edges, excluding polling", () => {
   const stages = ["baseline", "before:ctrl.camera.capture:0", "after:ctrl.camera.capture:-3",
@@ -52,6 +82,19 @@ function snapshot(stage, freeBytes, largestFreeBlockBytes) {
 
 test("resource lifecycle waits for both current and baseline snapshots", () => {
   assert.equal(evaluateResourceLifecycle(null, baseline).state, "waiting");
+});
+
+test("missing and invalid heap measurements cannot masquerade as zero-byte evidence", () => {
+  const current = snapshot("rtc_running", 40000, 20000);
+  current.memory.internal.free_bytes = null;
+  current.memory.internal.largest_free_block_bytes = "";
+  current.memory.dma.free_bytes = false;
+  current.memory.psram.largest_free_block_bytes = -1;
+  const health = evaluateResourceLifecycle(current, baseline);
+  assert.equal(health.deltas.internalFreeBytes, null);
+  assert.equal(health.deltas.internalLargestBytes, null);
+  assert.equal(health.deltas.dmaFreeBytes, null);
+  assert.equal(health.deltas.psramLargestBytes, null);
 });
 
 test("release within baseline tolerance is recovered", () => {

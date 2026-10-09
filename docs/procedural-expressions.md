@@ -1,5 +1,44 @@
 # Device-side procedural expressions
 
+## RTC playback mouth follow
+
+Firmware advertising `expression.audio_follow.v1` can render its radial mouth
+from RTC PCM that has actually been written to the speaker. Use the managed
+Application's public SDK domain:
+
+```python
+try:
+    await asyncio.to_thread(app.robot.expression_runtime.set_audio_follow, True)
+    # Negotiate the existing full-duplex audio RTC session separately.
+    # Plain still capture leaves that session and procedural display running.
+    image = await asyncio.to_thread(app.robot.camera.capture)
+finally:
+    await asyncio.to_thread(app.robot.expression_runtime.set_audio_follow, False)
+```
+
+This mode selects radial design 9 and requires no SD animation resource. It
+does not use the browser microphone meter to drive the mouth. Silent playback
+and RTC teardown close the mouth; microphone uplink remains independent.
+`set_audio_follow()` requires a boolean and checks the negotiated capability
+before sending. Once enable is attempted it retains cleanup ownership until a
+disable is acknowledged, so a lost enable acknowledgement still triggers cleanup
+before `robot.close()` closes the transport. A failed disable is retried once
+during close.
+Keep the enable attempt inside the cleanup scope as above: an acknowledgement
+timeout does not prove the device remained disabled. Capability/type validation
+fails before sending; the finally block is needed for an outcome-unknown enable.
+
+The wire command is `ctrl.expression.audio_follow` with `{ "enabled": true }`;
+the existing command transport supplies its command ID. Resource snapshots
+include `animation.audio_follow`, `mouth_level_milli` (0–1000), `pcm_frames`,
+`source: "rtc_playback"`, and `design_id: 9`. Missing telemetry remains
+unavailable, rather than being interpreted as a closed mouth or zero activity.
+`robot.resource_snapshot_received_at` supplies the host monotonic receipt time
+of the latest resource event; a reconnect does not update it. This timestamp
+can distinguish new events from cached data even when the device payload repeats.
+
+This additive capability is independent of the parameter renderer below.
+
 `app.robot.expression_runtime` controls the negotiated
 `expression.runtime.v3` capability. The Application sends compact parameters;
 the ESP32 generates RGB565 frames locally and keeps the Daemon content-agnostic.

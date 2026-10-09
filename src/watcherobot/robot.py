@@ -197,16 +197,59 @@ class ExpressionRuntimeDomain(_Domain):
         super().__init__(robot)
         self._lock = threading.RLock()
         self._owns_display = False
+        self._audio_follow_enabled = False
+        self._audio_follow_device_id: object = None
 
     def _close(self) -> None:
         with self._lock:
+            cleanup_error: Exception | None = None
+            if self._audio_follow_enabled:
+                try:
+                    self.set_audio_follow(False)
+                except Exception:
+                    try:
+                        self.set_audio_follow(False)
+                    except Exception as error:
+                        cleanup_error = error
             if self._owns_display:
                 try:
                     self.stop()
                 except Exception:
                     # A transient command failure should not make the only
                     # cleanup attempt impossible before the transport closes.
-                    self.stop()
+                    try:
+                        self.stop()
+                    except Exception as error:
+                        cleanup_error = cleanup_error or error
+            if cleanup_error is not None:
+                raise cleanup_error
+
+    def set_audio_follow(self, enabled: bool) -> None:
+        """Draw the device's procedural mouth from successfully played RTC PCM.
+
+        Requires ``expression.audio_follow.v1``. Firmware owns the audio clock
+        and mouth calculation; no browser microphone levels are transmitted.
+        Enabling selects the radial design without SD animation reads. Disabling
+        closes the mouth and returns display ownership to the built-in state.
+        """
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled must be a bool")
+        self._robot._require_capability("expression.audio_follow.v1")
+        with self._lock:
+            if enabled and (self._robot._closed or self._robot._closing):
+                raise WatcheRobotError("robot is closing or closed")
+            device_id = self._robot.device_info.get("device_id")
+            if self._audio_follow_enabled and self._audio_follow_device_id is not None and self._audio_follow_device_id != device_id:
+                raise WatcheRobotError("Reconnect the original device before audio-follow cleanup")
+            # The device may apply enable even if its ACK is lost. Keep cleanup
+            # ownership until disable is acknowledged, including uncertain start.
+            if enabled:
+                self._audio_follow_enabled = True
+                self._audio_follow_device_id = device_id
+            self._robot._command("ctrl.expression.audio_follow", {"enabled": enabled})
+            self._audio_follow_enabled = enabled
+            if not enabled:
+                self._audio_follow_device_id = None
 
     def _mark_display_released(self) -> None:
         """Forget local cleanup ownership after firmware takes the display back."""
@@ -934,10 +977,36 @@ class WatcheRobot:
         return dict(self._transport.device_info)
 
     @property
+    def resource_evidence(self) -> dict[str, Any]:
+        """Return resources with their matching receipt, device, and generation."""
+        evidence = getattr(self._transport, "resource_evidence", None)
+        if isinstance(evidence, dict):
+            return evidence
+        # Test/custom transports may not implement the event lock. Validate
+        # their identity before/after copying rather than inventing freshness.
+        from copy import deepcopy
+
+        before = (self.resource_snapshot_received_at, self.device_info.get("device_id"))
+        snapshot = deepcopy(self.resource_snapshot)
+        after = (self.resource_snapshot_received_at, self.device_info.get("device_id"))
+        return {"snapshot": snapshot, "received_at": before[0], "device_id": before[1],
+                "generation": None, "consistent": before == after}
+
+    @property
     def resource_snapshot(self) -> dict[str, Any]:
         """Return the latest device-wide resource snapshot."""
 
         return dict(getattr(self._transport, "resource_snapshot", {}))
+
+    @property
+    def resource_snapshot_received_at(self) -> float | None:
+        """Host monotonic receipt time for the latest device resource event.
+
+        This is not a device timestamp. ``None`` means no receipt evidence;
+        reconnecting alone does not make a cached snapshot fresh.
+        """
+        received = getattr(self._transport, "resource_snapshot_received_at", None)
+        return float(received) if isinstance(received, (int, float)) else None
 
     @property
     def resource_baseline(self) -> dict[str, Any]:

@@ -6,9 +6,11 @@ import asyncio
 import json
 import re
 import threading
+import time
 import uuid
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future
+from copy import deepcopy
 from typing import Any
 
 from watcherobot._internal.audio_credit import AudioInFlightWindow
@@ -70,7 +72,13 @@ class DaemonApplicationTransport:
         self.resource_baseline: dict[str, Any] = {}
         self.resource_rtc_baseline: dict[str, Any] = {}
         self.resource_snapshot: dict[str, Any] = {}
+        self.resource_snapshot_received_at: float | None = None
         self.resource_history: list[dict[str, Any]] = []
+        self._resource_lock = threading.Lock()
+        self._resource_generation = 0
+        self._snapshot_generation = 0
+        self._baseline_generation: int | None = None
+        self._baseline_device_id: object = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._communicators: ApplicationCommunicators | None = None
@@ -90,6 +98,20 @@ class DaemonApplicationTransport:
         self._audio_inflight = AudioInFlightWindow()
         self._audio_slots_per_packet = 1
         self._audio_flow_error: str | None = None
+
+    @property
+    def resource_evidence(self) -> dict[str, Any]:
+        """Copy event data and its identity under the same short update lock."""
+        with self._resource_lock:
+            return {
+                "snapshot": deepcopy(self.resource_snapshot),
+                "received_at": self.resource_snapshot_received_at,
+                "device_id": self.device_info.get("device_id"),
+                "generation": self._resource_generation,
+                "consistent": self._snapshot_generation == self._resource_generation,
+                "baseline_generation": self._baseline_generation,
+                "baseline_device_id": self._baseline_device_id,
+            }
 
     def set_callbacks(
         self,
@@ -489,17 +511,24 @@ class DaemonApplicationTransport:
             self.animation_ids = _normalize_animation_ids(data.get("animations"))
             device_info = dict(data)
             device_info["animations"] = list(self.animation_ids)
-            self.device_info.update(device_info)
+            with self._resource_lock:
+                self._resource_generation += 1
+                self.device_info.update(device_info)
         if message_type == "evt.sdk.resource_snapshot":
             snapshot = dict(data)
-            if snapshot.get("stage") == "baseline":
-                self.resource_baseline = snapshot
-                self.resource_rtc_baseline = {}
-                self.resource_history = []
-            elif snapshot.get("stage") == "rtc_pre_start":
-                self.resource_rtc_baseline = snapshot
-            self.resource_snapshot = snapshot
-            self.resource_history = [*self.resource_history[-63:], snapshot]
+            with self._resource_lock:
+                if snapshot.get("stage") == "baseline":
+                    self.resource_baseline = snapshot
+                    self._baseline_generation = self._resource_generation
+                    self._baseline_device_id = self.device_info.get("device_id")
+                    self.resource_rtc_baseline = {}
+                    self.resource_history = []
+                elif snapshot.get("stage") == "rtc_pre_start":
+                    self.resource_rtc_baseline = snapshot
+                self.resource_snapshot = snapshot
+                self.resource_snapshot_received_at = time.monotonic()
+                self._snapshot_generation = self._resource_generation
+                self.resource_history = [*self.resource_history[-63:], snapshot]
         if message_type in {"sys.ack", "sys.nack"}:
             command_id = data.get("command_id")
             future = self._pending.get(command_id)

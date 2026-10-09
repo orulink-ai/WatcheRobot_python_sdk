@@ -54,6 +54,34 @@ class FakeTransport:
             listener(message)
 
 
+def test_default_stop_waits_for_a_device_release_ack_after_two_seconds() -> None:
+    class SlowReleaseTransport(FakeTransport):
+        def send_device(self, frame):
+            message = json.loads(frame)
+            if message["type"] != "ctrl.rtc.session.stop":
+                return super().send_device(frame)
+            self.sent.append(frame)
+            future = Future()
+            future.set_result(None)
+            self.timer = Timer(2.1, lambda: self.emit({
+                "type": "sys.ack", "code": 0, "protocol": message["protocol"],
+                "client_id": message["client_id"], "session_id": message["session_id"],
+                "command_id": message["command_id"], "data": {"type": message["type"]},
+            }))
+            self.timer.start()
+            return future
+
+    transport = SlowReleaseTransport()
+    rtc = ApplicationRtc(transport)  # type: ignore[arg-type]
+    rtc.start(mode="audio")
+    try:
+        assert rtc.stop() is True
+        assert rtc.snapshot()["active"] is False
+        assert len([frame for frame in transport.sent if json.loads(frame)["type"] == "ctrl.rtc.session.stop"]) == 1
+    finally:
+        transport.timer.cancel()
+
+
 def test_rtc_builds_exact_watcher_rtc_session_and_signal_envelopes() -> None:
     transport = FakeTransport()
     rtc = ApplicationRtc(
@@ -349,6 +377,52 @@ def test_rtc_failed_event_does_not_claim_device_resources_are_released() -> None
     assert rtc.snapshot()["active"] is True
     assert rtc.snapshot()["mode"] == "video"
     assert rtc.snapshot()["last_error"] == "mjpeg_data_channel_closed"
+
+
+@pytest.mark.parametrize("late_type", ["sys.nack", "evt.rtc.state"])
+@pytest.mark.parametrize("release_type", ["evt.rtc.state", "sys.ack"])
+def test_rtc_stopped_state_survives_late_session_messages(
+    late_type: str, release_type: str,
+) -> None:
+    class StopBurstTransport(FakeTransport):
+        def send_device(self, frame: str | bytes) -> Future[None]:
+            message = json.loads(frame)
+            if message["type"] != "ctrl.rtc.session.stop":
+                return super().send_device(frame)
+            self.sent.append(frame)
+            identity = {
+                key: message[key] for key in ("protocol", "client_id", "session_id")
+            }
+            self.emit({
+                **identity,
+                "type": release_type,
+                "command_id": message["command_id"],
+                "data": {"state": "stopped"}
+                if release_type == "evt.rtc.state" else {"type": message["type"]},
+            })
+            self.emit({
+                **identity,
+                "type": late_type,
+                "command_id": "old-feedback-command",
+                "data": {"type": "ctrl.rtc.feedback", "error": "old_session"}
+                if late_type == "sys.nack" else {"state": "connected"},
+            })
+            # Either release confirmation is sufficient without the other.
+            future: Future[None] = Future()
+            future.set_result(None)
+            return future
+
+    rtc = ApplicationRtc(StopBurstTransport(), send_timeout=0.01)  # type: ignore[arg-type]
+    rtc.start(mode="av")
+
+    assert rtc.stop() is True
+    assert rtc.snapshot()["state"] == "stopped"
+    assert rtc.snapshot()["active"] is False
+    assert rtc.snapshot()["last_error"] is None
+    assert rtc.events()[-1]["message"]["type"] == late_type
+    assert rtc.stop() is False
+    # Terminal protection must not affect the next session.
+    assert rtc.start(mode="audio")["state"] == "starting"
 
 
 def test_rtc_stop_can_retry_after_transport_send_failure() -> None:

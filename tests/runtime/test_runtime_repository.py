@@ -25,7 +25,9 @@ def test_unreadable_subtree_cannot_produce_a_verification_receipt(tmp_path, monk
     original = os.scandir
 
     def restricted_scandir(path):
-        if Path(path) == nested:
+        # Windows bundle hashing uses an extended path prefix. Match the
+        # actual directory so fault injection also reaches that spelling.
+        if Path(path).samefile(nested):
             raise PermissionError("dependency tree unavailable")
         return original(path)
 
