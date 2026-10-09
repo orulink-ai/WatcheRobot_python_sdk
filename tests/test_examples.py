@@ -7,45 +7,27 @@ from watcherobot.distribution.source_files import collect_application_source_fil
 
 ROOT = Path(__file__).parents[1]
 EXAMPLE_IDS = {
-    "hello_robot": "example.hello_robot",
-    "quickstart": "example.quickstart",
-    "play_audio_file": "example.play_audio_file",
-    "capture_photo": "example.capture_photo",
-    "record_microphone": "example.record_microphone",
     "sdk_media_lab": "example.sdk_media_lab",
+    "codex_voice_app": "example.codex_voice",
+    "expression_lab": "com.orulink.expression_lab",
 }
 
 
 def test_every_example_is_a_complete_managed_application() -> None:
+    example_directories = {
+        path.parent.name for path in (ROOT / "examples").glob("*/app.json")
+    }
+    assert example_directories == set(EXAMPLE_IDS)
     for directory_name, app_id in EXAMPLE_IDS.items():
         root = ROOT / "examples" / directory_name
-        manifest = json.loads(root.joinpath("app.json").read_text())
+        manifest = json.loads(root.joinpath("app.json").read_text(encoding="utf-8"))
         source = root.joinpath("app.py").read_text(encoding="utf-8")
 
         assert manifest["id"] == app_id
-        assert manifest["requires_watcherobot"]
+        assert manifest.get("requires_watcherobot") or manifest.get("requires_sdk")
         assert "ApplicationContext.from_environment()" in source
         assert "WatcheRobot.connect" not in source
         assert "WATCHEROBOT_PAIRING_CODE" not in source
-
-
-def test_quickstart_demonstrates_domain_apis_through_context_robot() -> None:
-    source = (
-        ROOT / "examples" / "quickstart" / "app.py"
-    ).read_text(encoding="utf-8")
-
-    assert "app.robot.behavior.play" in source
-    assert "app.robot.lights.set_color" in source
-    assert "app.robot.motion.move_to" in source
-
-
-def test_microphone_example_records_decoded_pcm() -> None:
-    source = (
-        ROOT / "examples" / "record_microphone" / "app.py"
-    ).read_text(encoding="utf-8")
-
-    assert "app.robot.microphone.record_pcm" in source
-    assert "app.robot.microphone.record," not in source
 
 
 def test_media_lab_is_a_local_managed_web_application() -> None:
@@ -138,7 +120,7 @@ def test_runtime_artifacts_are_ignored(tmp_path: Path) -> None:
         check=True,
     )
     result = subprocess.run(
-        ["git", "check-ignore", "examples/capture_photo/artifacts/camera.jpg"],
+        ["git", "check-ignore", "examples/sdk_media_lab/artifacts/camera.jpg"],
         cwd=repository,
         capture_output=True,
         check=False,

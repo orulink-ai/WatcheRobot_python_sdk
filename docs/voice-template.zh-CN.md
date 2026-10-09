@@ -344,7 +344,7 @@ SDK 维护者在 SDK 源码仓库执行协议与运行测试，以及完整 pyte
 - [Cartesia TTS](https://docs.cartesia.ai/api-reference/tts/bytes)
 - [ElevenLabs TTS](https://elevenlabs.io/docs/api-reference/text-to-speech/stream)
 - [MiniMax TTS](https://platform.minimax.cn/docs/api-reference/speech-t2a-http)
-- 火山 ASR/TTS 实现同时参考仓库已有 `first_meeting` 协议，并通过默认组合真实调用校验。
+- 火山 ASR/TTS 实现已通过默认组合真实调用校验。
 
 ## 应用开发闭环
 
