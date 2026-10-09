@@ -92,6 +92,12 @@ The SDK exposes `robot.resource_evidence`: a detached event snapshot with its
 matching receipt time, device identity and connection generation. Telemetry age,
 mouth fields and memory aggregation reuse that evidence. A new device-ready
 generation cannot make an older snapshot available before a fresh resource event.
+Collection checks Daemon connection identity before and after copying SDK evidence;
+if it changes, that collection is unavailable rather than combining two sessions.
+Samples include `resource_generation`. A recording that crosses device or connection
+generations sets `summary.mixed_sources: true` and `baseline_comparable: false`, and
+clears global memory minima. Individual samples remain available for separate analysis;
+do not compare their mixed sources against the recording's initial idle baseline.
 Each recording has a generation; an in-flight sample from an older recording is
 discarded if that recording was stopped and replaced before collection completed.
 One-second samples do not alone prove every camera allocation peak; firmware

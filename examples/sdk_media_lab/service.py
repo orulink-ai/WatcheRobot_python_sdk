@@ -390,6 +390,7 @@ class MediaLabService:
         self._recording_device: dict[str, object] = {}
         self._recording_capabilities: list[str] = []
         self._recording_baseline: dict[str, object] = {}
+        self._recording_memory_context: tuple[object, ...] | None = None
         self._append_event("system", "SDK Test Bench ready", "ok")
 
     def status(self) -> dict[str, object]:
@@ -409,8 +410,7 @@ class MediaLabService:
                     "updated_at": path.stat().st_mtime,
                     "url": f"/artifacts/{filename}?v={path.stat().st_mtime_ns}",
                 }
-        connection = self._device_status()
-        evidence = self._capture_resource_evidence()
+        connection, evidence = self._capture_connected_evidence()
         rtc = self._rtc.snapshot()
         return {
             "connected": connection.get("online") is True,
@@ -580,7 +580,8 @@ class MediaLabService:
 
     def procedural_status(self, *, connection: Mapping[str, object] | None = None, evidence: Mapping[str, Any] | None = None) -> dict[str, object]:
         """Expose device mouth evidence without substituting browser activity."""
-        evidence = self._capture_resource_evidence() if evidence is None else evidence
+        if evidence is None:
+            connection, evidence = self._capture_connected_evidence(connection=connection)
         animation = evidence["snapshot"].get("animation", {})
         if not isinstance(animation, Mapping):
             animation = {}
@@ -671,11 +672,13 @@ class MediaLabService:
             self._recording = {
                 "active": True, "label": label.strip(), "started_at": time.time(),
                 "stopped_at": None, "sample_count": 0, "dropped_samples": 0,
-                "max_samples": _SCENARIO_MAX_SAMPLES, "summary": {"memory": {}},
+                "max_samples": _SCENARIO_MAX_SAMPLES,
+                "summary": {"memory": {}, "mixed_sources": False, "baseline_comparable": True},
             }
             self._recording_samples = deque(maxlen=_SCENARIO_MAX_SAMPLES)
             self._recording_started_monotonic = time.monotonic()
             self._recording_last_sample_at = None
+            self._recording_memory_context = None
             self._recording_device = deepcopy(self._robot.device_info)
             self._recording_capabilities = list(self._robot.capabilities)
             self._recording_baseline = deepcopy(self._robot.resource_baseline)
@@ -722,8 +725,10 @@ class MediaLabService:
 
     def resource_telemetry_status(self, *, connection: Mapping[str, object] | None = None, evidence: Mapping[str, Any] | None = None) -> dict[str, object]:
         """Age actual device events; a new connection does not refresh cached data."""
-        connection = self._device_status() if connection is None else connection
-        evidence = self._capture_resource_evidence() if evidence is None else evidence
+        if evidence is None:
+            connection, evidence = self._capture_connected_evidence(connection=connection)
+        elif connection is None:
+            connection = self._device_status()
         snapshot = evidence["snapshot"]
         received = evidence["received_at"]
         now = time.monotonic()
@@ -750,6 +755,16 @@ class MediaLabService:
             )
             return {"status": state, "age_seconds": age}
 
+    def _capture_connected_evidence(self, *, connection: Mapping[str, object] | None = None) -> tuple[dict[str, object], dict[str, Any]]:
+        """Reject a resource copy that straddles a Daemon connection change."""
+        before = deepcopy(dict(connection)) if connection is not None else self._device_status()
+        evidence = self._capture_resource_evidence()
+        after = self._device_status()
+        identity_fields = ("online", "request_id", "connection_id", "device_id")
+        if any(before.get(key) != after.get(key) for key in identity_fields):
+            evidence.update(snapshot={}, consistent=False)
+        return after, evidence
+
     def _sample_scenario(self, *, connection: Mapping[str, object] | None = None) -> None:
         with self._recording_lock:
             if self._recording.get("active") is not True:
@@ -758,8 +773,7 @@ class MediaLabService:
             now = time.monotonic()
             if self._recording_last_sample_at is not None and now - self._recording_last_sample_at < _SCENARIO_SAMPLE_INTERVAL_SECONDS:
                 return
-        connection = self._device_status() if connection is None else connection
-        evidence = self._capture_resource_evidence()
+        connection, evidence = self._capture_connected_evidence(connection=connection)
         snapshot = evidence["snapshot"]
         rtc = deepcopy(self._rtc.snapshot())
         procedural = self.procedural_status(connection=connection, evidence=evidence)
@@ -778,6 +792,7 @@ class MediaLabService:
                 "timestamp": time.time(), "elapsed_seconds": round(now - self._recording_started_monotonic, 3),
                 "connected": connection.get("online") is True, "resource_owners": owners,
                 "device_id": evidence["device_id"],
+                "resource_generation": evidence.get("generation"),
                 "connection": {key: connection.get(key) for key in ("request_id", "connection_id")},
                 "telemetry": telemetry,
                 "resources": snapshot, "rtc": rtc, "procedural": procedural,
@@ -787,8 +802,20 @@ class MediaLabService:
                 self._recording["dropped_samples"] += 1
             self._recording_samples.append(sample)
             self._recording["sample_count"] += 1
+            source = (evidence["device_id"], connection.get("request_id"),
+                      connection.get("connection_id"), evidence.get("generation"))
+            recording_summary = self._recording["summary"]
+            if evidence.get("consistent") is True:
+                if self._recording_memory_context is None:
+                    self._recording_memory_context = source
+                    if evidence["device_id"] != self._recording_device.get("device_id"):
+                        recording_summary["mixed_sources"] = True
+                elif source != self._recording_memory_context:
+                    recording_summary["mixed_sources"] = True
+            if recording_summary["mixed_sources"]:
+                recording_summary.update(memory={}, baseline_comparable=False)
             memory = snapshot.get("memory", {})
-            if telemetry["status"] == "available" and isinstance(memory, Mapping):
+            if not recording_summary["mixed_sources"] and telemetry["status"] == "available" and isinstance(memory, Mapping):
                 summary = self._recording["summary"]["memory"]
                 for domain in ("internal", "dma", "psram"):
                     metrics = memory.get(domain)

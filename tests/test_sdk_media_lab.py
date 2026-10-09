@@ -860,7 +860,7 @@ def test_inactive_scenario_sampler_does_not_collect_or_poll(tmp_path):
     service._sample_scenario()
 
 
-def test_scenario_sampler_reuses_supplied_connection(tmp_path):
+def test_scenario_sampler_verifies_supplied_connection_once(tmp_path):
     module = _load_service_module()
     robot = _procedural_robot()
     robot.resource_snapshot["animation"] = {
@@ -871,12 +871,67 @@ def test_scenario_sampler_reuses_supplied_connection(tmp_path):
     service.start_scenario_recording()
     service._recording_last_sample_at = None
 
-    def unexpected_poll():
-        pytest.fail("sampler already has a connection snapshot")
-
-    service._device_status_provider = unexpected_poll
+    polls = []
+    service._device_status_provider = lambda: polls.append(True) or {"online": True}
     service._sample_scenario(connection={"online": True})
     assert service.scenario_recording_status()["sample_count"] == 2
+    assert len(polls) == 1
+
+
+@pytest.mark.parametrize("collect_status", [False, True])
+def test_connection_change_during_evidence_copy_invalidates_telemetry(tmp_path, collect_status):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    connection = {"online": True, "request_id": "first", "connection_id": "old"}
+    service._device_status_provider = lambda: connection
+    capture = service._capture_resource_evidence
+
+    def capture_then_reconnect():
+        evidence = capture()
+        connection.update(request_id="second", connection_id="new")
+        return evidence
+
+    service._capture_resource_evidence = capture_then_reconnect
+    if collect_status:
+        status = service.status()
+        assert status["connection"]["connection_id"] == "new"
+        assert status["resources"]["telemetry"]["status"] == "unavailable"
+        assert status["resources"]["current"] == {}
+    else:
+        service.start_scenario_recording()
+        report = service.scenario_report()
+        assert report["samples"][0]["connection"]["connection_id"] == "new"
+        assert report["samples"][0]["telemetry"]["status"] == "unavailable"
+        assert report["summary"]["memory"] == {}
+
+
+@pytest.mark.parametrize("change_device", [False, True])
+def test_recording_disables_global_memory_summary_after_source_change(tmp_path, monkeypatch, change_device):
+    module = _load_service_module()
+    robot = _robot()
+    clock = [100.0]
+    monkeypatch.setattr(module.time, "monotonic", lambda: clock[0])
+    robot.resource_snapshot_received_at = clock[0]
+    robot.resource_snapshot = {"sequence": 1, "memory": {"internal": {"free_bytes": 100}}}
+    connection = {"online": True, "request_id": "first", "connection_id": "old"}
+    service = _service(module, tmp_path, robot)
+    service._device_status_provider = lambda: connection
+    service.start_scenario_recording()
+    assert service.scenario_report()["summary"]["memory"]["internal"]["free_bytes_min"] == 100
+    clock[0] += 1.1
+    connection.update(request_id="second", connection_id="new")
+    if change_device:
+        robot.device_info = {"device_id": "other-device"}
+    robot.resource_snapshot_received_at = clock[0]
+    robot.resource_snapshot = {"sequence": 2, "memory": {"internal": {"free_bytes": 20}}}
+    service.sample_scenario()
+    report = service.scenario_report()
+    assert report["samples"][-1]["telemetry"]["status"] == "available"
+    assert report["samples"][-1]["resources"]["memory"]["internal"]["free_bytes"] == 20
+    assert report["summary"]["mixed_sources"] is True
+    assert report["summary"]["baseline_comparable"] is False
+    assert report["summary"]["memory"] == {}
 
 
 def test_procedural_status_uses_only_device_mouth_telemetry(tmp_path):
