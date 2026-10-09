@@ -98,6 +98,8 @@ Samples include `resource_generation`. A recording that crosses device or connec
 generations sets `summary.mixed_sources: true` and `baseline_comparable: false`, and
 clears global memory minima. Individual samples remain available for separate analysis;
 do not compare their mixed sources against the recording's initial idle baseline.
+The browser chart also starts a new window on a device, connection or resource
+generation change, including when the resource sequence happens to repeat.
 Each recording has a generation; an in-flight sample from an older recording is
 discarded if that recording was stopped and replaced before collection completed.
 One-second samples do not alone prove every camera allocation peak; firmware
@@ -117,6 +119,9 @@ business routing unchanged. See the [audio-follow API](../../docs/procedural-exp
 Procedural start/stop accept an optional `{ "request_id": "..." }`. A mismatched
 scoped stop returns `matched: false` without stopping anything; unscoped stop is
 reserved for explicit global control or Application shutdown.
+During an in-flight photo, a matched scoped stop retains a pending stop intent:
+maintenance completes it after the photo without relying on the page to retry.
+An unscoped manual stop remains busy and requires another explicit request.
 
 Browser RTC starts attach a unique `request_id` to the local HTTP request and
 use the same ID for stop, failure cleanup, and page-exit cleanup. The Application

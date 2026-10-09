@@ -7,8 +7,8 @@ from RTC PCM that has actually been written to the speaker. Use the managed
 Application's public SDK domain:
 
 ```python
-await asyncio.to_thread(app.robot.expression_runtime.set_audio_follow, True)
 try:
+    await asyncio.to_thread(app.robot.expression_runtime.set_audio_follow, True)
     # Negotiate the existing full-duplex audio RTC session separately.
     # Plain still capture leaves that session and procedural display running.
     image = await asyncio.to_thread(app.robot.camera.capture)
@@ -24,6 +24,9 @@ before sending. Once enable is attempted it retains cleanup ownership until a
 disable is acknowledged, so a lost enable acknowledgement still triggers cleanup
 before `robot.close()` closes the transport. A failed disable is retried once
 during close.
+Keep the enable attempt inside the cleanup scope as above: an acknowledgement
+timeout does not prove the device remained disabled. Capability/type validation
+fails before sending; the finally block is needed for an outcome-unknown enable.
 
 The wire command is `ctrl.expression.audio_follow` with `{ "enabled": true }`;
 the existing command transport supplies its command ID. Resource snapshots

@@ -206,6 +206,9 @@ export function createSceneSample(status, { nowMs = Date.now(), rtcMode = null }
   const fps = proceduralFrames && animation.sample_valid === true ? measurement(animation.measured_fps_x100) : null;
   return {
     deviceId: status.device?.device_id || "unknown",
+    requestId: status.connection?.request_id ?? null,
+    connectionId: status.connection?.connection_id ?? null,
+    resourceGeneration: status.resources?.generation ?? null,
     sequence: snapshot.sequence,
     capturedAtMs: measurement(snapshot.captured_at_ms),
     timestampMs: nowMs,
@@ -231,6 +234,8 @@ export function appendSceneSample(samples, sample, limit = SCENE_HISTORY_LIMIT) 
   if (!sample) return samples;
   const previous = samples.at(-1);
   if (previous && (previous.deviceId !== sample.deviceId
+    || previous.requestId !== sample.requestId || previous.connectionId !== sample.connectionId
+    || previous.resourceGeneration !== sample.resourceGeneration
     || (sample.capturedAtMs !== null && previous.capturedAtMs !== null && sample.capturedAtMs < previous.capturedAtMs))) {
     return [sample];
   }

@@ -427,6 +427,7 @@ class MediaLabService:
                 "baseline": dict(self._robot.resource_baseline),
                 "rtc_baseline": dict(self._robot.resource_rtc_baseline),
                 "current": evidence["snapshot"],
+                "generation": evidence.get("generation"),
                 "history": list(self._robot.resource_history),
                 "telemetry": self.resource_telemetry_status(connection=connection, evidence=evidence),
             },
@@ -493,7 +494,7 @@ class MediaLabService:
                 if self._procedural_lease is not None:
                     if connection.get("online") is not True:
                         self._set_procedural_state("stop_required")
-                    elif self._procedural_state == "stop_required":
+                    elif self._procedural_state == "stop_required" and not self._procedural_captures:
                         self.stop_procedural()
             finally:
                 self._procedural_lock.release()
@@ -645,6 +646,10 @@ class MediaLabService:
             if self._procedural_lease is None:
                 return self.procedural_status()
             if self._procedural_captures:
+                # A departing page cannot retry. Retain its matched scoped
+                # intent for maintenance, while manual global stops stay busy.
+                if request_id is not None:
+                    self._set_procedural_state("stop_required")
                 raise MediaLabBusyError("Wait for the in-flight photo before stopping procedural mode")
             self._set_procedural_state("stop_required")
             self._ensure_device_online()

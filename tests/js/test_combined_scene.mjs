@@ -113,6 +113,24 @@ test("device reboot starts a new chart instead of mixing samples from two boots"
   assert.deepEqual(history, [after]);
 });
 
+for (const changed of ["request_id", "connection_id", "generation"]) {
+  test(`same device ${changed} change starts a separate resource window`, () => {
+    const initial = { ...status, connection: { request_id: "first", connection_id: "old" },
+      resources: { ...status.resources, generation: 1 } };
+    const before = createSceneSample(initial, { nowMs: 1000 });
+    const next = structuredClone(initial);
+    if (changed === "generation") next.resources.generation = 2;
+    else next.connection[changed] = "new";
+    next.resources.current.memory.internal.free_bytes = 50000;
+    // A repeated sequence must still establish a new source window.
+    const after = createSceneSample(next, { nowMs: 2000 });
+    const history = appendSceneSample([before], after);
+    assert.deepEqual(history, [after]);
+    assert.equal(summarizeSceneSamples(history).durationMs, 0);
+    assert.equal(summarizeSceneSamples(history).internalFreeLow, 50000);
+  });
+}
+
 test("an empty recording label has a valid default and long labels stay bounded", () => {
   assert.equal(sceneRecordingLabel("  "), "combined-scene");
   assert.equal(sceneRecordingLabel("  animation + RTC  "), "animation + RTC");

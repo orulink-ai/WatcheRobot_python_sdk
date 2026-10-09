@@ -436,6 +436,7 @@ def test_status_exposes_device_resource_snapshot_outside_rtc(tmp_path: Path) -> 
         "baseline": service._robot.resource_baseline,
         "rtc_baseline": service._robot.resource_rtc_baseline,
         "current": service._robot.resource_snapshot,
+        "generation": None,
         "history": service._robot.resource_history,
         "telemetry": {"status": "available", "age_seconds": pytest.approx(0.0, abs=0.1)},
     }
@@ -804,11 +805,12 @@ def test_procedural_camera_io_does_not_block_status_and_recording(tmp_path):
     assert not photo_thread.is_alive()
 
 
-def test_inflight_procedural_photo_prevents_display_replacement_until_completion(tmp_path):
+@pytest.mark.parametrize("scoped_cleanup", [False, True])
+def test_inflight_procedural_photo_prevents_display_replacement_until_completion(tmp_path, scoped_cleanup):
     module = _load_service_module()
     robot = _procedural_robot()
     service = _service(module, tmp_path, robot)
-    service.start_procedural()
+    service.start_procedural(request_id="photo-page-owner")
     entered, release = threading.Event(), threading.Event()
     original = robot.camera.capture
     errors = []
@@ -830,14 +832,21 @@ def test_inflight_procedural_photo_prevents_display_replacement_until_completion
     assert entered.wait(timeout=1.0)
     try:
         with pytest.raises(module.MediaLabBusyError, match="photo"):
-            service.stop_procedural()
-        assert service.status()["procedural"]["state"] == "running"
+            service.stop_procedural(request_id="photo-page-owner" if scoped_cleanup else None)
+        assert service.status()["procedural"]["state"] == ("stop_required" if scoped_cleanup else "running")
+        service.maintain()
         assert robot.expression_runtime.calls == [True]
     finally:
         release.set()
         thread.join(timeout=3.0)
     assert not thread.is_alive() and not errors
-    assert service.stop_procedural()["state"] == "idle"
+    if scoped_cleanup:
+        service.maintain()
+        assert service.procedural_status()["state"] == "idle"
+        assert service.status()["resource_owners"] == {}
+    else:
+        assert service.procedural_status()["state"] == "running"
+        assert service.stop_procedural()["state"] == "idle"
 
 
 def test_procedural_start_reports_whether_it_acquired_the_display(tmp_path):
