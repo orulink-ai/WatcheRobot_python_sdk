@@ -494,7 +494,7 @@ class MediaLabService:
         if self._procedural_lock.acquire(blocking=False):
             try:
                 if self._procedural_lease is not None:
-                    if connection.get("online") is not True:
+                    if connection.get("online") is not True or self._procedural_device_id != self._robot.device_info.get("device_id"):
                         self._set_procedural_state("stop_required")
                     elif self._procedural_state == "stop_required" and not self._procedural_captures:
                         self.stop_procedural()
@@ -503,7 +503,7 @@ class MediaLabService:
         if self._sd_baseline_lock.acquire(blocking=False):
             try:
                 if self._sd_baseline_lease is not None:
-                    if connection.get("online") is not True:
+                    if connection.get("online") is not True or self._sd_baseline_device_id != self._robot.device_info.get("device_id"):
                         self._set_sd_baseline_state("stop_required")
                     elif self._sd_baseline_state == "stop_required":
                         self.stop_sd_baseline()
@@ -548,6 +548,11 @@ class MediaLabService:
                 raise ValueError("Fixed SD baseline requires the advertised standby animation")
             if self._sd_baseline_lease is not None:
                 if self._sd_baseline_state == "running":
+                    try:
+                        self._ensure_cleanup_device(self._sd_baseline_device_id)
+                    except Exception:
+                        self._set_sd_baseline_state("stop_required")
+                        raise
                     return self.sd_baseline_status()
                 raise MediaLabBusyError("Confirm SD baseline stop before starting again")
             lease = self._operation("sd_baseline", resource="animation")
@@ -628,6 +633,11 @@ class MediaLabService:
             self._ensure_capability(_PROCEDURAL_CAPABILITY)
             if self._procedural_lease is not None:
                 if self._procedural_state == "running":
+                    try:
+                        self._ensure_cleanup_device(self._procedural_device_id)
+                    except Exception:
+                        self._set_procedural_state("stop_required")
+                        raise
                     return {**self.procedural_status(), "started": False}
                 raise MediaLabBusyError("Confirm procedural stop before starting again")
             lease = self._operation("procedural", resource="animation")
@@ -728,12 +738,16 @@ class MediaLabService:
         with self._recording_lock:
             generation = self._recording_generation
         try:
-            self._sample_scenario()
+            final_status = self._sample_scenario()
+            with self._recording_lock:
+                if generation == self._recording_generation:
+                    self._recording["final_sample_status"] = final_status or "not_collected"
         except Exception:
             _LOGGER.exception("Final recording sample unavailable; stopping remains effective")
             with self._recording_lock:
                 if generation == self._recording_generation:
                     self._recording["final_sample_error"] = "unavailable"
+                    self._recording["final_sample_status"] = "unavailable"
         finally:
             with self._recording_lock:
                 if generation == self._recording_generation and self._recording.get("active") is True:
@@ -830,14 +844,14 @@ class MediaLabService:
             evidence.update(snapshot={}, consistent=False)
         return after, evidence
 
-    def _sample_scenario(self, *, connection: Mapping[str, object] | None = None) -> None:
+    def _sample_scenario(self, *, connection: Mapping[str, object] | None = None) -> str:
         with self._recording_lock:
             if self._recording.get("active") is not True:
-                return
+                return "not_recording"
             generation = self._recording_generation
             now = time.monotonic()
             if self._recording_last_sample_at is not None and now - self._recording_last_sample_at < _SCENARIO_SAMPLE_INTERVAL_SECONDS:
-                return
+                return "skipped_rate_limit"
         connection, evidence = self._capture_connected_evidence(connection=connection)
         snapshot = evidence["snapshot"]
         rtc = deepcopy(self._rtc.snapshot())
@@ -849,9 +863,9 @@ class MediaLabService:
         now = time.monotonic()
         with self._recording_lock:
             if generation != self._recording_generation or self._recording.get("active") is not True:
-                return
+                return "stale_recording"
             if self._recording_last_sample_at is not None and now - self._recording_last_sample_at < _SCENARIO_SAMPLE_INTERVAL_SECONDS:
-                return
+                return "skipped_rate_limit"
             self._recording_last_sample_at = now
             sample = {
                 "timestamp": time.time(), "elapsed_seconds": round(now - self._recording_started_monotonic, 3),
@@ -892,6 +906,7 @@ class MediaLabService:
                             minima = summary.setdefault(domain, {})
                             key = f"{metric}_min"
                             minima[key] = min(minima.get(key, value), value)
+        return "sampled"
 
     def vision_models(self) -> dict[str, object]:
         self._ensure_device_online()

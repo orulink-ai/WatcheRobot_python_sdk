@@ -140,6 +140,11 @@ so a previous sample cannot be mistaken for evidence at the moment of stopping.
 Both failure markers stay scoped to their recording generation. A newly paired
 connection must confirm its device information refresh before cached SDK telemetry
 can become available; refresh failure keeps that collection unavailable.
+`final_sample_status` distinguishes `sampled`, `skipped_rate_limit`, `unavailable`
+and other non-collection outcomes. `sampled` means a sample was written; its separate
+telemetry status still determines whether resource values are available. Reusing a
+running display lease also checks the original device; an online device switch is
+marked pending cleanup even if maintenance did not observe an intervening disconnect.
 
 Browser RTC starts attach a unique `request_id` to the local HTTP request and
 use the same ID for stop, failure cleanup, and page-exit cleanup. The Application
