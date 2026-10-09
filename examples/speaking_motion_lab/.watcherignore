@@ -1,0 +1,6 @@
+tests/
+.web-build-*/
+__pycache__/
+.pytest_cache/
+*.pyc
+.gitignore
