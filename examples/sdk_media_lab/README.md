@@ -135,6 +135,11 @@ Recording metadata is prepared before replacing the previous report. If preparat
 fails, the previous finished recording remains intact. An unavailable first sample
 is a successful recording start with `initial_sample_error: "unavailable"`; later
 sampling and an explicit stop remain usable.
+An unavailable final sample is exported as `final_sample_error: "unavailable"`,
+so a previous sample cannot be mistaken for evidence at the moment of stopping.
+Both failure markers stay scoped to their recording generation. A newly paired
+connection must confirm its device information refresh before cached SDK telemetry
+can become available; refresh failure keeps that collection unavailable.
 
 Browser RTC starts attach a unique `request_id` to the local HTTP request and
 use the same ID for stop, failure cleanup, and page-exit cleanup. The Application

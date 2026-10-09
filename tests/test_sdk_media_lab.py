@@ -367,6 +367,7 @@ class FakeRtc:
 
 def _robot(*, playback: FakePlayback | None = None) -> SimpleNamespace:
     return SimpleNamespace(
+        refresh_device_info=lambda **kwargs: {},
         capabilities=(
             "motion",
             "light",
@@ -1011,6 +1012,54 @@ def test_stopping_recording_survives_final_sample_failure(tmp_path, failing_read
         service._rtc.snapshot = fail
     assert service.stop_scenario_recording()["active"] is False
     assert service.scenario_report()["samples"] == initial
+    assert service.scenario_report()["final_sample_error"] == "unavailable"
+
+
+def test_late_final_sample_error_cannot_annotate_new_recording(tmp_path):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    service.start_scenario_recording(label="old")
+    service._recording_last_sample_at = None
+    entered, release = threading.Event(), threading.Event()
+    snapshot = service._rtc.snapshot
+
+    def fail_old_snapshot():
+        if threading.current_thread().name == "old-stopper":
+            entered.set()
+            assert release.wait(timeout=3.0)
+            raise RuntimeError("old final sample failed")
+        return snapshot()
+
+    service._rtc.snapshot = fail_old_snapshot
+    worker = threading.Thread(target=service.stop_scenario_recording, name="old-stopper")
+    worker.start()
+    assert entered.wait(timeout=1.0)
+    try:
+        service.stop_scenario_recording()
+        service.start_scenario_recording(label="new")
+    finally:
+        release.set()
+        worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    report = service.scenario_report()
+    assert report["active"] is True and report["label"] == "new"
+    assert "final_sample_error" not in report
+
+
+def test_stable_new_connection_cannot_refresh_old_sdk_evidence_when_identity_refresh_fails(tmp_path):
+    module = _load_service_module()
+    robot = _robot()
+    service = _service(module, tmp_path, robot)
+    service._refreshed_connection_token = "old-connection"
+    service._device_status_provider = lambda: {"online": True, "request_id": "new-connection"}
+
+    def fail(**kwargs):
+        raise RuntimeError("new device has not replied")
+
+    robot.refresh_device_info = fail
+    status = service.status()
+    assert status["resources"]["telemetry"]["status"] == "unavailable"
+    assert status["resources"]["current"] == {}
 
 
 def test_recording_metadata_failure_preserves_previous_finished_report(tmp_path, monkeypatch):

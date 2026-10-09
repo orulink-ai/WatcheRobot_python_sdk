@@ -731,6 +731,9 @@ class MediaLabService:
             self._sample_scenario()
         except Exception:
             _LOGGER.exception("Final recording sample unavailable; stopping remains effective")
+            with self._recording_lock:
+                if generation == self._recording_generation:
+                    self._recording["final_sample_error"] = "unavailable"
         finally:
             with self._recording_lock:
                 if generation == self._recording_generation and self._recording.get("active") is True:
@@ -816,9 +819,14 @@ class MediaLabService:
     def _capture_connected_evidence(self, *, connection: Mapping[str, object] | None = None) -> tuple[dict[str, object], dict[str, Any]]:
         """Reject a resource copy that straddles a Daemon connection change."""
         before = deepcopy(dict(connection)) if connection is not None else self._device_status()
+        request_id = before.get("request_id")
+        if request_id is not None:
+            self._refresh_device_snapshot(before)
         evidence = self._capture_resource_evidence()
         after = self._device_status()
-        if self._connection_identity(before) != self._connection_identity(after):
+        if (self._connection_identity(before) != self._connection_identity(after)
+                or (request_id is not None and self._refreshed_connection_token != str(request_id))
+                or (after.get("device_id") is not None and after["device_id"] != evidence["device_id"])):
             evidence.update(snapshot={}, consistent=False)
         return after, evidence
 
