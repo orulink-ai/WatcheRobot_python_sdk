@@ -147,6 +147,9 @@ recording's rate-limit clock; their response retains the original label with
 Both failure markers stay scoped to their recording generation. A newly paired
 connection must confirm its device information refresh before cached SDK telemetry
 can become available; refresh failure keeps that collection unavailable.
+Initial baseline comparability also requires an online, confirmed connection and
+agreement between any provided Daemon device ID and SDK source identity before
+and after metadata copying. Identity uncertainty never enables baseline comparison.
 `final_sample_status` distinguishes `sampled`, `skipped_rate_limit`, `unavailable`
 and other non-collection outcomes. `sampled` means a sample was written; its separate
 telemetry status still determines whether resource values are available. Reusing a

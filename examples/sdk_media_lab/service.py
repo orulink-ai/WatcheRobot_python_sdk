@@ -717,6 +717,13 @@ class MediaLabService:
                 or self._connection_identity(initial_connection) != self._connection_identity(final_connection)
                 or device.get("device_id") != initial_source[0]
             )
+            source_confirmed = all(
+                connection.get("online") is True
+                and (connection.get("device_id") is None or connection.get("device_id") == source[0])
+                and (connection.get("request_id") is None
+                     or self._refreshed_connection_token == str(connection["request_id"]))
+                for connection, source in ((initial_connection, initial_source), (final_connection, final_source))
+            )
             self._recording_generation += 1
             generation = self._recording_generation
             self._recording = {
@@ -724,7 +731,7 @@ class MediaLabService:
                 "stopped_at": None, "sample_count": 0, "dropped_samples": 0,
                 "max_samples": _SCENARIO_MAX_SAMPLES,
                 "summary": {"memory": {}, "mixed_sources": source_changed,
-                            "baseline_comparable": not source_changed and initial_source[2] and final_source[2]},
+                            "baseline_comparable": source_confirmed and not source_changed and initial_source[2] and final_source[2]},
             }
             self._recording_samples = deque(maxlen=_SCENARIO_MAX_SAMPLES)
             self._recording_started_monotonic = time.monotonic()

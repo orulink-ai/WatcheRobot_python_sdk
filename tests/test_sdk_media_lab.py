@@ -995,6 +995,21 @@ def test_recording_only_compares_baseline_from_current_sdk_generation(tmp_path, 
     assert service.scenario_report()["summary"]["baseline_comparable"] is (baseline_generation == 2)
 
 
+@pytest.mark.parametrize("daemon_device", ["watcher-test", "different-device"])
+def test_recording_baseline_requires_daemon_and_sdk_identity_agreement(tmp_path, daemon_device):
+    module = _load_service_module()
+    robot = _robot()
+    robot.resource_evidence = {
+        "snapshot": robot.resource_snapshot, "received_at": None,
+        "device_id": "watcher-test", "generation": 2, "consistent": True,
+        "baseline_generation": 2, "baseline_device_id": "watcher-test",
+    }
+    service = _service(module, tmp_path, robot)
+    service._device_status_provider = lambda: {"online": True, "device_id": daemon_device}
+    service.start_scenario_recording()
+    assert service.scenario_report()["summary"]["baseline_comparable"] is (daemon_device == "watcher-test")
+
+
 @pytest.mark.parametrize("failing_reader", ["resource", "rtc"])
 def test_stopping_recording_survives_final_sample_failure(tmp_path, failing_reader):
     module = _load_service_module()
