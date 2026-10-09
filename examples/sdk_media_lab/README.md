@@ -131,6 +131,10 @@ different device. Reconnect the original device to confirm cleanup; switching
 devices does not silently discard its lease. SDK audio-follow cleanup has the same
 device identity guard. Stopping a recording remains effective even if its final
 diagnostic sample fails, and does not end a concurrently created recording generation.
+Recording metadata is prepared before replacing the previous report. If preparation
+fails, the previous finished recording remains intact. An unavailable first sample
+is a successful recording start with `initial_sample_error: "unavailable"`; later
+sampling and an explicit stop remain usable.
 
 Browser RTC starts attach a unique `request_id` to the local HTTP request and
 use the same ID for stop, failure cleanup, and page-exit cleanup. The Application

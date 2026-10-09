@@ -685,12 +685,24 @@ class MediaLabService:
                 raise MediaLabBusyError("Stop the current scenario recording first")
             initial_connection = self._device_status()
             initial_source = self._resource_source_identity()
+            device = deepcopy(self._robot.device_info)
+            capabilities = list(self._robot.capabilities)
+            baseline = deepcopy(self._robot.resource_baseline)
+            final_source = self._resource_source_identity()
+            final_connection = self._device_status()
+            source_changed = (
+                initial_source[:2] != final_source[:2]
+                or self._connection_identity(initial_connection) != self._connection_identity(final_connection)
+                or device.get("device_id") != initial_source[0]
+            )
             self._recording_generation += 1
+            generation = self._recording_generation
             self._recording = {
                 "active": True, "label": label.strip(), "started_at": time.time(),
                 "stopped_at": None, "sample_count": 0, "dropped_samples": 0,
                 "max_samples": _SCENARIO_MAX_SAMPLES,
-                "summary": {"memory": {}, "mixed_sources": False, "baseline_comparable": True},
+                "summary": {"memory": {}, "mixed_sources": source_changed,
+                            "baseline_comparable": not source_changed and initial_source[2] and final_source[2]},
             }
             self._recording_samples = deque(maxlen=_SCENARIO_MAX_SAMPLES)
             self._recording_started_monotonic = time.monotonic()
@@ -699,21 +711,16 @@ class MediaLabService:
                 initial_source[0], initial_connection.get("request_id"),
                 initial_connection.get("connection_id"), initial_source[1],
             )
-            self._recording_device = deepcopy(self._robot.device_info)
-            self._recording_capabilities = list(self._robot.capabilities)
-            self._recording_baseline = deepcopy(self._robot.resource_baseline)
-            final_source = self._resource_source_identity()
-            final_connection = self._device_status()
-            source_changed = (
-                initial_source[:2] != final_source[:2]
-                or self._connection_identity(initial_connection) != self._connection_identity(final_connection)
-                or self._recording_device.get("device_id") != initial_source[0]
-            )
-            self._recording["summary"].update(
-                mixed_sources=source_changed,
-                baseline_comparable=not source_changed and initial_source[2] and final_source[2],
-            )
-        self._sample_scenario()
+            self._recording_device = device
+            self._recording_capabilities = capabilities
+            self._recording_baseline = baseline
+        try:
+            self._sample_scenario()
+        except Exception:
+            _LOGGER.exception("Initial sample unavailable; recording continues")
+            with self._recording_lock:
+                if generation == self._recording_generation:
+                    self._recording["initial_sample_error"] = "unavailable"
         self._append_event("scenario_recording", f"Recording started: {label.strip()}", "running")
         return self.scenario_recording_status()
 

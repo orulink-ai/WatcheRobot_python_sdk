@@ -1013,6 +1013,43 @@ def test_stopping_recording_survives_final_sample_failure(tmp_path, failing_read
     assert service.scenario_report()["samples"] == initial
 
 
+def test_recording_metadata_failure_preserves_previous_finished_report(tmp_path, monkeypatch):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    service.start_scenario_recording(label="previous")
+    service.stop_scenario_recording()
+    before = service.scenario_report()
+    copy = module.deepcopy
+
+    def fail_baseline(value):
+        if value is service._robot.resource_baseline:
+            raise RuntimeError("baseline unavailable")
+        return copy(value)
+
+    monkeypatch.setattr(module, "deepcopy", fail_baseline)
+    with pytest.raises(RuntimeError, match="baseline unavailable"):
+        service.start_scenario_recording(label="failed")
+    after = service.scenario_report()
+    assert after["active"] is False
+    for field in ("label", "samples", "device", "baseline"):
+        assert after[field] == before[field]
+
+
+def test_recording_first_sample_failure_is_explicit_successful_degradation(tmp_path):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+
+    def fail(**kwargs):
+        raise RuntimeError("initial sample unavailable")
+
+    service._sample_scenario = fail
+    started = service.start_scenario_recording()
+    assert started["active"] is True
+    assert started["sample_count"] == 0
+    assert started["initial_sample_error"] == "unavailable"
+    assert service.stop_scenario_recording()["active"] is False
+
+
 @pytest.mark.parametrize("sd_baseline", [False, True])
 def test_pending_display_cleanup_cannot_stop_a_different_device(tmp_path, sd_baseline):
     module = _load_service_module()
