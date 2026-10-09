@@ -17,14 +17,9 @@ commits from the selected Hugging Face or Gitee Application Store.
 Pairing and device ownership remain in the long-lived Runtime. Stopping an
 Application does not stop the Runtime or rebuild the device connection.
 
-The repository contains three examples with browser interfaces. Headless examples
+The repository contains two examples with browser interfaces. Headless examples
 have been removed; SDK device APIs and Application templates remain available.
 
-- `codex_voice_app`: bridge the robot's native full-duplex RTC audio to the
-  Codex voice frontend, with permission-gated robot tools, a local fixed-voice
-  playback test, and audio diagnostics. See its [README](codex_voice_app/README.md)
-  for setup and known limitations; intermittent playback gaps, adaptive device
-  buffer feedback, and the web pairing-code entry remain unresolved.
 - `expression_lab`: launch a loopback-only animation workbench that previews
   and tunes the device-side procedural Watcher expression runtime.
 - `sdk_media_lab`: launch a standalone loopback browser dashboard for speaker
