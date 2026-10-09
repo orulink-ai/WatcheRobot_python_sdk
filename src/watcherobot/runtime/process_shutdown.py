@@ -22,9 +22,13 @@ def capture_runtime(pid: int, control_port: int) -> list[psutil.Process]:
     frozen = Path(executable).name.lower() in {"watcher-runtime.exe", "watcher-runtime"}
     if not (module or frozen):
         raise RuntimeError("Runtime process identity cannot be verified")
+    # psutil 6 renamed Process.connections; keep the declared 5.9 support.
+    inspect_connections = getattr(process, "net_connections", None)
+    if inspect_connections is None:
+        inspect_connections = process.connections
     if not any(
         item.status == psutil.CONN_LISTEN and item.laddr and item.laddr.port == control_port
-        for item in process.net_connections(kind="tcp")
+        for item in inspect_connections(kind="tcp")
     ):
         raise RuntimeError("Runtime PID does not own the control listener")
     processes = [*reversed(process.children(recursive=True)), process]
