@@ -970,6 +970,22 @@ class WatcheRobot:
         return dict(self._transport.device_info)
 
     @property
+    def resource_evidence(self) -> dict[str, Any]:
+        """Return resources with their matching receipt, device, and generation."""
+        evidence = getattr(self._transport, "resource_evidence", None)
+        if isinstance(evidence, dict):
+            return evidence
+        # Test/custom transports may not implement the event lock. Validate
+        # their identity before/after copying rather than inventing freshness.
+        from copy import deepcopy
+
+        before = (self.resource_snapshot_received_at, self.device_info.get("device_id"))
+        snapshot = deepcopy(self.resource_snapshot)
+        after = (self.resource_snapshot_received_at, self.device_info.get("device_id"))
+        return {"snapshot": snapshot, "received_at": before[0], "device_id": before[1],
+                "generation": None, "consistent": before == after}
+
+    @property
     def resource_snapshot(self) -> dict[str, Any]:
         """Return the latest device-wide resource snapshot."""
 

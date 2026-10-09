@@ -3,12 +3,80 @@ from __future__ import annotations
 import asyncio
 import json
 import struct
+import threading
 
 import pytest
 
 from watcherobot.application.transport import DaemonApplicationTransport
 from watcherobot.protocol import FRAME_VIDEO
 from watcherobot.runtime.daemon.application.session import ApplicationChannel
+
+
+def test_resource_evidence_pairs_payload_receipt_and_device_generation(monkeypatch):
+    from watcherobot.robot import WatcheRobot
+    import watcherobot.application.transport as transport_module
+    transport = DaemonApplicationTransport()
+    clock = [100.0]
+    monkeypatch.setattr(transport_module.time, "monotonic", lambda: clock[0])
+
+    def receive(kind, data):
+        asyncio.run(transport._on_frame(ApplicationChannel.DEVICE,
+                    json.dumps({"type": kind, "code": 0, "data": data})))
+
+    receive("evt.sdk.ready", {"device_id": "first", "capabilities": []})
+    receive("evt.sdk.resource_snapshot", {"sequence": 1, "memory": {"free": 10}})
+    robot = WatcheRobot._from_transport(transport)
+    evidence = robot.resource_evidence
+    assert evidence["device_id"] == "first" and evidence["received_at"] == 100.0
+    assert evidence["consistent"] is True
+    evidence["snapshot"]["memory"]["free"] = 999
+    assert transport.resource_snapshot["memory"]["free"] == 10
+    receive("evt.sdk.ready", {"device_id": "second", "capabilities": []})
+    assert robot.resource_evidence["consistent"] is False
+    clock[0] = 101.0
+    receive("evt.sdk.resource_snapshot", {"sequence": 2})
+    assert robot.resource_evidence["consistent"] is True
+    assert robot.resource_evidence["received_at"] == 101.0
+
+
+def test_resource_evidence_read_holds_event_updates_until_copy_finishes(monkeypatch):
+    import watcherobot.application.transport as transport_module
+    transport = DaemonApplicationTransport()
+    old = {"sequence": 1}
+    transport.resource_snapshot = old
+    transport.resource_snapshot_received_at = 100.0
+    entered, release, updated = threading.Event(), threading.Event(), threading.Event()
+    original = transport_module.deepcopy
+    result = []
+
+    def delayed_copy(value):
+        if value is old:
+            entered.set()
+            assert release.wait(timeout=3.0)
+        return original(value)
+
+    monkeypatch.setattr(transport_module, "deepcopy", delayed_copy)
+    reader = threading.Thread(target=lambda: result.append(transport.resource_evidence))
+    reader.start()
+    assert entered.wait(timeout=1.0)
+
+    def update():
+        asyncio.run(transport._on_frame(ApplicationChannel.DEVICE,
+                    json.dumps({"type": "evt.sdk.resource_snapshot", "code": 0, "data": {"sequence": 2}})))
+        updated.set()
+
+    writer = threading.Thread(target=update)
+    writer.start()
+    try:
+        assert not updated.wait(timeout=0.1)
+    finally:
+        release.set()
+        reader.join(timeout=3.0)
+        writer.join(timeout=3.0)
+    assert updated.is_set() and not reader.is_alive()
+    assert result[0]["snapshot"]["sequence"] == 1
+    assert result[0]["received_at"] == 100.0
+    assert transport.resource_evidence["snapshot"]["sequence"] == 2
 
 
 def test_connected_application_requests_current_device_capabilities() -> None:

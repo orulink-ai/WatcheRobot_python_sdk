@@ -83,6 +83,10 @@ cached data unavailable until a new event arrives; mouth and frame-rate readings
 follow the same rule. Reports retain the recording's initial device identity and
 baseline, and identify the device and connection on each sample when a run crosses
 a reconnect or device change.
+The SDK exposes `robot.resource_evidence`: a detached event snapshot with its
+matching receipt time, device identity and connection generation. Telemetry age,
+mouth fields and memory aggregation reuse that evidence. A new device-ready
+generation cannot make an older snapshot available before a fresh resource event.
 Each recording has a generation; an in-flight sample from an older recording is
 discarded if that recording was stopped and replaced before collection completed.
 One-second samples do not alone prove every camera allocation peak; firmware
@@ -523,8 +527,10 @@ CSP 仅新增 WebAssembly 编译许可 `wasm-unsafe-eval`，未开放 JavaScript
 上限 2 MiB，报告上限 64 KiB；仅允许校验后的 UUID 与固定通道组合，不能写任意路径。
 每轮使用独立文件，三路音频与同编号报告齐全后才原子发布清单和“最近一次”指针；
 部分失败或并行录制不会混用轮次，也不覆盖上一轮完整结果。网页下载链接固定指向本轮，
-后续录制不会覆盖这些文件。同一编号的重复通道上传被拒绝。WebM 上传只检查 EBML
-签名，不宣称完整容器或音频轨道校验；服务不会解码这些上传文件。
+后续录制不会覆盖这些文件。同一编号的重复音频通道上传被拒绝。
+报告内容完全一致时允许重试未完成的清单发布；不同内容仍拒绝覆盖。单文件发布失败
+保留上一轮完整结果，重试不会需要重新录制音频。
+WebM 上传只检查 EBML 签名，不宣称完整容器或音频轨道校验；服务不会解码这些上传文件。
 停止通话会结束并保存已录制片段，不停止非本模块拥有的轨道。
 
 MediaRecorder 启动为近同步而非样本级同步；录音编码及浏览器处理有额外延迟，

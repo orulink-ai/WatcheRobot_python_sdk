@@ -405,6 +405,7 @@ class MediaLabService:
                     "url": f"/artifacts/{filename}?v={path.stat().st_mtime_ns}",
                 }
         connection = self._device_status()
+        evidence = self._capture_resource_evidence()
         rtc = self._rtc.snapshot()
         return {
             "connected": connection.get("online") is True,
@@ -420,12 +421,12 @@ class MediaLabService:
             "resources": {
                 "baseline": dict(self._robot.resource_baseline),
                 "rtc_baseline": dict(self._robot.resource_rtc_baseline),
-                "current": dict(self._robot.resource_snapshot),
+                "current": evidence["snapshot"],
                 "history": list(self._robot.resource_history),
-                "telemetry": self.resource_telemetry_status(connection=connection),
+                "telemetry": self.resource_telemetry_status(connection=connection, evidence=evidence),
             },
             "rtc": rtc,
-            "procedural": self.procedural_status(connection=connection),
+            "procedural": self.procedural_status(connection=connection, evidence=evidence),
             "sd_baseline": self.sd_baseline_status(),
             "scenario_recording": self.scenario_recording_status(),
             "inference": {"state": self._inference_state,
@@ -568,9 +569,10 @@ class MediaLabService:
             self._set_sd_baseline_state("idle")
             return self.sd_baseline_status()
 
-    def procedural_status(self, *, connection: Mapping[str, object] | None = None) -> dict[str, object]:
+    def procedural_status(self, *, connection: Mapping[str, object] | None = None, evidence: Mapping[str, Any] | None = None) -> dict[str, object]:
         """Expose device mouth evidence without substituting browser activity."""
-        animation = self._robot.resource_snapshot.get("animation", {})
+        evidence = self._capture_resource_evidence() if evidence is None else evidence
+        animation = evidence["snapshot"].get("animation", {})
         if not isinstance(animation, Mapping):
             animation = {}
         with self._state_lock:
@@ -580,7 +582,7 @@ class MediaLabService:
             and isinstance(animation.get("mouth_level_milli"), int)
             and isinstance(animation.get("pcm_frames"), int)
             and animation.get("source") == "rtc_playback"
-            and self.resource_telemetry_status(connection=connection)["status"] == "available"
+            and self.resource_telemetry_status(connection=connection, evidence=evidence)["status"] == "available"
         )
         return {
             "supported": _PROCEDURAL_CAPABILITY in self._robot.capabilities,
@@ -687,17 +689,32 @@ class MediaLabService:
         )
         return report
 
-    def resource_telemetry_status(self, *, connection: Mapping[str, object] | None = None) -> dict[str, object]:
+    def _capture_resource_evidence(self) -> dict[str, Any]:
+        evidence = getattr(self._robot, "resource_evidence", None)
+        if isinstance(evidence, Mapping):
+            return deepcopy(dict(evidence))
+        # Fakes/custom adapters lack the SDK event lock; reject a changed
+        # receipt/device during the copy rather than labeling old data fresh.
+        before = (getattr(self._robot, "resource_snapshot_received_at", None),
+                  self._robot.device_info.get("device_id"))
+        snapshot = deepcopy(self._robot.resource_snapshot)
+        after = (getattr(self._robot, "resource_snapshot_received_at", None),
+                 self._robot.device_info.get("device_id"))
+        return {"snapshot": snapshot, "received_at": before[0], "device_id": before[1],
+                "generation": None, "consistent": before == after}
+
+    def resource_telemetry_status(self, *, connection: Mapping[str, object] | None = None, evidence: Mapping[str, Any] | None = None) -> dict[str, object]:
         """Age actual device events; a new connection does not refresh cached data."""
         connection = self._device_status() if connection is None else connection
-        snapshot = self._robot.resource_snapshot
-        received = getattr(self._robot, "resource_snapshot_received_at", None)
+        evidence = self._capture_resource_evidence() if evidence is None else evidence
+        snapshot = evidence["snapshot"]
+        received = evidence["received_at"]
         now = time.monotonic()
         has_receipt = isinstance(received, (int, float)) and not isinstance(received, bool) and math.isfinite(received)
         marker = ("received", received) if has_receipt else ("snapshot", snapshot.get("sequence"), snapshot.get("captured_at_ms"))
-        if not snapshot or (not has_receipt and all(value is None for value in marker[1:])):
+        if evidence.get("consistent") is not True or not snapshot or (not has_receipt and all(value is None for value in marker[1:])):
             marker = None
-        context = (self._robot.device_info.get("device_id"), connection.get("request_id"), connection.get("connection_id"))
+        context = (evidence["device_id"], connection.get("request_id"), connection.get("connection_id"), evidence.get("generation"))
         online = connection.get("online") is True
         with self._telemetry_lock:
             if not online or (self._telemetry_context is not None and self._telemetry_context != context):
@@ -725,11 +742,12 @@ class MediaLabService:
             if self._recording_last_sample_at is not None and now - self._recording_last_sample_at < _SCENARIO_SAMPLE_INTERVAL_SECONDS:
                 return
         connection = self._device_status() if connection is None else connection
-        snapshot = deepcopy(self._robot.resource_snapshot)
+        evidence = self._capture_resource_evidence()
+        snapshot = evidence["snapshot"]
         rtc = deepcopy(self._rtc.snapshot())
-        procedural = self.procedural_status(connection=connection)
+        procedural = self.procedural_status(connection=connection, evidence=evidence)
         sd_baseline = self.sd_baseline_status()
-        telemetry = self.resource_telemetry_status(connection=connection)
+        telemetry = self.resource_telemetry_status(connection=connection, evidence=evidence)
         with self._state_lock:
             owners = dict(self._active_actions)
         now = time.monotonic()
@@ -742,7 +760,7 @@ class MediaLabService:
             sample = {
                 "timestamp": time.time(), "elapsed_seconds": round(now - self._recording_started_monotonic, 3),
                 "connected": connection.get("online") is True, "resource_owners": owners,
-                "device_id": self._robot.device_info.get("device_id"),
+                "device_id": evidence["device_id"],
                 "connection": {key: connection.get(key) for key in ("request_id", "connection_id")},
                 "telemetry": telemetry,
                 "resources": snapshot, "rtc": rtc, "procedural": procedural,
@@ -1509,11 +1527,13 @@ class MediaLabService:
         with self._diagnostic_lock:
             self._artifacts_dir.mkdir(parents=True, exist_ok=True)
             path = self._artifacts_dir / files[channel]
-            if path.exists():
+            already_saved = path.exists()
+            if already_saved and (channel != "report" or path.read_bytes() != data):
                 raise HTTPException(status_code=409, detail="Diagnostic channel is already saved")
             if channel == "report" and any(not (self._artifacts_dir / files[name]).is_file() for name in channels[:-1]):
                 raise HTTPException(status_code=409, detail="Diagnostic audio batch is incomplete")
-            self._write_diagnostic_atomic(path, data)
+            if not already_saved:
+                self._write_diagnostic_atomic(path, data)
             urls = {name: f"/artifacts/{filename}" for name, filename in files.items()}
             result: dict[str, object] = {"saved": True, "complete": channel == "report", "recording_id": recording_id,
                                          "bytes": len(data), "url": urls[channel]}

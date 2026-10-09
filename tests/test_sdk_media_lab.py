@@ -2433,6 +2433,70 @@ def test_partial_and_parallel_diagnostic_batches_do_not_mix_or_replace_complete_
                        headers={"X-Recording-Id": "../invalid"}).status_code == 400
 
 
+@pytest.mark.parametrize("failed_suffix", ["-manifest.json", "-latest.json"])
+def test_diagnostic_publish_can_retry_identical_report_after_io_failure(tmp_path, failed_suffix):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    first, second = "00000000-0000-4000-8000-000000000005", "00000000-0000-4000-8000-000000000006"
+
+    def audio(batch):
+        for channel in ("computer", "robot-raw", "robot-clean"):
+            service.save_rtc_audio_diagnostic(channel, batch, b"\x1a\x45\xdf\xa3fixture")
+
+    def report(batch):
+        return json.dumps({"recordingId": batch, "samples": []}).encode()
+
+    audio(first)
+    service.save_rtc_audio_diagnostic("report", first, report(first))
+    latest = service.artifact_path("rtc-diagnostic-latest.json").read_bytes()
+    audio(second)
+    original = service._write_diagnostic_atomic
+
+    def fail_publish(path, data):
+        if path.name.endswith(failed_suffix):
+            raise OSError("simulated publication failure")
+        original(path, data)
+
+    service._write_diagnostic_atomic = fail_publish
+    with pytest.raises(OSError, match="publication failure"):
+        service.save_rtc_audio_diagnostic("report", second, report(second))
+    assert service.artifact_path("rtc-diagnostic-latest.json").read_bytes() == latest
+    service._write_diagnostic_atomic = original
+    assert service.save_rtc_audio_diagnostic("report", second, report(second))["complete"] is True
+    assert json.loads(service.artifact_path("rtc-diagnostic-latest.json").read_bytes())["recording_id"] == second
+    with pytest.raises(module.HTTPException) as rejected:
+        service.save_rtc_audio_diagnostic("report", second, report(second).replace(b"[]", b"[1]"))
+    assert rejected.value.status_code == 409
+
+
+@pytest.mark.parametrize("change_device", [False, True])
+def test_scenario_discards_inconsistent_resource_evidence(tmp_path, monkeypatch, change_device):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    robot.resource_snapshot_received_at = 100.0
+    service = _service(module, tmp_path, robot)
+    original = module.deepcopy
+    captured = False
+
+    def copy_then_update(value):
+        nonlocal captured
+        copied = original(value)
+        if value is robot.resource_snapshot and not captured:
+            captured = True
+            robot.resource_snapshot_received_at = 101.0
+            robot.resource_snapshot = {"sequence": 8, "captured_at_ms": 1235}
+            if change_device:
+                robot.device_info = {"device_id": "other-device"}
+        return copied
+
+    monkeypatch.setattr(module, "deepcopy", copy_then_update)
+    service.start_scenario_recording()
+    sample = service.scenario_report()["samples"][0]
+    assert sample["telemetry"]["status"] == "unavailable"
+    assert sample["procedural"]["telemetry_available"] is False
+    assert service.scenario_report()["summary"]["memory"] == {}
+
+
 @pytest.mark.parametrize("domain,stopping", [("procedural", False), ("procedural", True), ("sd_baseline", False), ("sd_baseline", True)])
 def test_expression_transition_ack_does_not_block_status_or_recording(tmp_path, domain, stopping):
     module = _load_service_module()
