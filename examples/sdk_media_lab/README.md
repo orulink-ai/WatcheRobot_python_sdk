@@ -1,5 +1,9 @@
 # SDK Test Bench
 
+网页将两种屏幕能力分别命名为“SD 动画播放”和“实时程序表情”。组合通话入口显示
+“默认通话表情”，复用 JoyInside RADIAL 09 的本地绘制规则，不启动 JoyInside 云端对话。
+这些是界面名称；`animation.play`、`expression_runtime.set_audio_follow` 及设备协议保持兼容。
+
 SDK Test Bench is a standalone managed Application for whole-robot hardware
 acceptance. It serves a loopback-only browser dashboard, exercises only public
 Python SDK domains, and never opens a device connection of its own. The

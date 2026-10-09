@@ -369,7 +369,7 @@ const actionLabels = {
   light_off: "Lights Off",
   animation_play: "Animation Playback",
   animation_stop: "Animation Stop",
-  procedural: "Procedural Animation",
+  procedural: "Live Procedural Expression",
   rtc_av: "Audio/video Call",
   system: "System",
 };
@@ -648,7 +648,7 @@ function updateCombinedScene(status) {
     || !(controls.stopAudio || scene.starting || scene.active || scene.ownsProcedural);
   elements.captureScenePhotoButton.disabled = !controls.snapshot;
   const proceduralLabels = {
-    idle: "Animation Idle", starting: "Starting Animation", running: "Procedural Animation Running",
+    idle: "Animation Idle", starting: "Starting Animation", running: "Live Procedural Expression Running",
     stopping: "Stopping Animation", stop_required: "Animation stop unconfirmed; retry stop",
     warming: "Waiting for Rendered Frames", waiting_data: "Waiting for Device Snapshot",
     failed: "Procedural Display Updates Failed", degraded: "Animation Running with Update Errors",
@@ -753,7 +753,7 @@ async function proceduralAction(action) {
   const request = () => runAction({
     path: `/api/controls/procedural/${action}`,
     result: elements.sceneResult, resource: "animation",
-    pending: action === "start" ? "Starting procedural animation…" : "Stopping procedural animation…",
+    pending: action === "start" ? "Starting live procedural expression…" : "Stopping live procedural expression…",
     complete: () => action === "start" ? "Procedural animation requested; speak during the call to test the mouth"
       : "Procedural animation stopped",
     interrupt: action === "stop",
@@ -773,7 +773,7 @@ async function startCombinedScene() {
   if (elements.startSceneAudioButton.disabled) return;
   const operation = ++state.scene.operationGeneration;
   state.scene.audioResultActive = false;
-  setResult(elements.sceneResult, "Starting JoyInside RADIAL 09 animation and call…", "running");
+  setResult(elements.sceneResult, "Starting the live expression and call…", "running");
   try {
     const started = await combinedScene.start();
     if (operation !== state.scene.operationGeneration) return;

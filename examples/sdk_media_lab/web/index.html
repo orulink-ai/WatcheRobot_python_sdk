@@ -100,27 +100,27 @@
         <div class="scene-heading">
           <div>
             <p class="section-index">00.7 / Combined Scene</p>
-            <h2 id="sceneTitle">Talk, Animate, Take a Photo</h2>
-            <p><strong>JoyInside Default Procedural Expression · RADIAL 09</strong></p>
-            <p>Start the scene to enable JoyInside RADIAL 09 before the full-duplex call. The robot mouth follows audio actually played by its speaker.</p>
+            <h2 id="sceneTitle">Call, Live Expression, Take a Photo</h2>
+            <p><strong>Default Call Expression</strong></p>
+            <p>Start the scene to enable the default live expression before the full-duplex call. The robot mouth follows audio actually played by its speaker.</p>
           </div>
           <span class="scene-capability" id="sceneCapability">Waiting for device capabilities</span>
         </div>
         <div class="scene-grid">
           <div class="scene-controls">
             <div class="button-row scene-actions">
-              <button class="station-action" id="startProceduralButton" type="button" disabled>Enable Procedural Animation</button>
+              <button class="station-action" id="startProceduralButton" type="button" disabled>Enable Live Procedural Expression</button>
               <button class="quiet-action" id="stopProceduralButton" type="button" disabled>Disable Animation</button>
             </div>
             <div class="button-row scene-actions">
-              <button class="station-action" id="startSceneAudioButton" type="button" disabled>Start JoyInside Animation + Call</button>
+              <button class="station-action" id="startSceneAudioButton" type="button" disabled>Start Call + Live Expression</button>
               <button class="quiet-action" id="stopSceneAudioButton" type="button" disabled>End Scene</button>
               <button class="station-action" id="captureScenePhotoButton" type="button" disabled>Take Photo During Call</button>
             </div>
             <output class="station-result" id="sceneResult" aria-live="polite">Start the scene, then speak into the computer microphone</output>
             <p class="scene-note">End Scene stops the call and animation started by this scene. An independently enabled animation stays on; leaving the page stops both.</p>
             <dl class="scene-live-metrics">
-              <div><dt>Procedural Animation</dt><dd id="sceneAnimationState">Waiting for Telemetry</dd></div>
+              <div><dt>Live Procedural Expression</dt><dd id="sceneAnimationState">Waiting for Telemetry</dd></div>
               <div><dt>Actual / Target FPS</dt><dd id="sceneAnimationFps">—</dd></div>
               <div><dt>Audio-driven Mouth Target</dt><dd id="sceneMouth">—</dd></div>
               <div><dt>Audio Path</dt><dd id="sceneAudioState">IDLE</dd></div>
@@ -245,8 +245,8 @@
             <p class="section-index">02.5 / Screen Animation</p>
             <span class="capability-state">Detecting</span>
           </div>
-          <h2>SD Asset Animation Test</h2>
-          <p>This separate test plays animation assets from the SD card. Use the Combined Scene above for the JoyInside default RADIAL 09 procedural expression.</p>
+          <h2>SD Animation Playback</h2>
+          <p>This test plays animation assets from the SD card. Use the Combined Scene above for the default live procedural expression.</p>
           <p>The device reports the complete animation catalog available on its SD card. You can switch animations manually or use randomized playback during an audio/video session.</p>
           <div class="control-fields">
             <label>Animation ID
