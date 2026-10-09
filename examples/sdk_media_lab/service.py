@@ -744,22 +744,24 @@ class MediaLabService:
 
     def stop_scenario_recording(self) -> dict[str, object]:
         with self._recording_lock:
+            if self._recording.get("active") is not True:
+                return self.scenario_recording_status()
             generation = self._recording_generation
             target_status = self.scenario_recording_status()
+        final_status = "not_collected"
+        final_error = False
         try:
-            final_status = self._sample_scenario(expected_generation=generation)
-            with self._recording_lock:
-                if generation == self._recording_generation:
-                    self._recording["final_sample_status"] = final_status or "not_collected"
+            final_status = self._sample_scenario(expected_generation=generation) or "not_collected"
         except Exception:
             _LOGGER.exception("Final recording sample unavailable; stopping remains effective")
-            with self._recording_lock:
-                if generation == self._recording_generation:
-                    self._recording["final_sample_error"] = "unavailable"
-                    self._recording["final_sample_status"] = "unavailable"
+            final_error = True
+            final_status = "unavailable"
         finally:
             with self._recording_lock:
                 if generation == self._recording_generation and self._recording.get("active") is True:
+                    self._recording["final_sample_status"] = final_status
+                    if final_error:
+                        self._recording["final_sample_error"] = "unavailable"
                     self._recording["active"] = False
                     self._recording["stopped_at"] = time.time()
         with self._recording_lock:
@@ -1905,47 +1907,48 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
 
     web_root = Path(web_root)
 
-    async def maintain_service() -> None:
-        while True:
+    async def maintain_service(stopping: asyncio.Event) -> None:
+        while not stopping.is_set():
             try:
                 await asyncio.to_thread(service.maintain)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 _LOGGER.exception("SDK Test Bench maintenance failed")
-            await asyncio.sleep(_MAINTENANCE_INTERVAL_SECONDS)
+            try:
+                await asyncio.wait_for(stopping.wait(), _MAINTENANCE_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                pass
 
-    async def sample_service() -> None:
-        while True:
+    async def sample_service(stopping: asyncio.Event) -> None:
+        while not stopping.is_set():
             try:
                 await asyncio.to_thread(service.sample_scenario)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 _LOGGER.exception("SDK Test Bench scenario sampling failed")
-            await asyncio.sleep(_MAINTENANCE_INTERVAL_SECONDS)
+            try:
+                await asyncio.wait_for(stopping.wait(), _MAINTENANCE_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                pass
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        stopping = asyncio.Event()
         maintenance_task = asyncio.create_task(
-            maintain_service(),
+            maintain_service(stopping),
             name="sdk-media-lab-maintenance",
         )
-        sampling_task = asyncio.create_task(sample_service(), name="sdk-media-lab-sampling")
+        sampling_task = asyncio.create_task(sample_service(stopping), name="sdk-media-lab-sampling")
         try:
             yield
         finally:
             service.request_shutdown()
-            maintenance_task.cancel()
-            sampling_task.cancel()
-            try:
-                await maintenance_task
-            except asyncio.CancelledError:
-                pass
-            try:
-                await sampling_task
-            except asyncio.CancelledError:
-                pass
+            # Cancelling to_thread only cancels its awaiter. Drain both workers
+            # before closing media domains and the ApplicationContext transport.
+            stopping.set()
+            await asyncio.gather(maintenance_task, sampling_task)
             try:
                 if service._rtc.snapshot().get("active") is True:
                     await asyncio.to_thread(service.stop_live_video)

@@ -150,7 +150,11 @@ telemetry status still determines whether resource values are available. Reusing
 running display lease also checks the original device; an online device switch is
 marked pending cleanup even if maintenance did not observe an intervening disconnect.
 The supported Application entry point awaits Uvicorn's HTTP request drain before
-lifespan cleanup and exits ApplicationContext afterwards. A real loopback HTTP
+lifespan cleanup and exits ApplicationContext afterwards. Lifespan signals the
+maintenance and sampling loops to stop, then awaits their current synchronous
+work before domain cleanup. Cancelling a `to_thread` awaiter is not treated as
+thread completion. Repeated or concurrent recording stops preserve the first
+completed final-sample result. A real loopback HTTP
 regression blocks a photo across shutdown and verifies photo completion, confirmed
 procedural stop, lease release, then context/transport closure order. Forced process
 termination cannot provide this graceful cleanup guarantee. Display activation and

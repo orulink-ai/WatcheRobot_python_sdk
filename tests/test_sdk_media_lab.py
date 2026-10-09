@@ -1085,6 +1085,39 @@ def test_recording_control_binds_generation_before_entering_sampler(tmp_path, st
     assert responses[0]["replaced"] is True
 
 
+@pytest.mark.parametrize("failing", [False, True])
+def test_completed_recording_stop_preserves_first_final_result(tmp_path, failing):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    service.start_scenario_recording()
+    service._recording_last_sample_at = None
+    entered, release = threading.Event(), threading.Event()
+    original = service._rtc.snapshot
+
+    def snapshot():
+        if threading.current_thread().name == "late-stop":
+            entered.set()
+            assert release.wait(timeout=3.0)
+            raise RuntimeError("late sample unavailable")
+        if failing:
+            raise RuntimeError("first sample unavailable")
+        return original()
+
+    service._rtc.snapshot = snapshot
+    worker = threading.Thread(target=service.stop_scenario_recording, name="late-stop")
+    worker.start()
+    assert entered.wait(timeout=1.0)
+    try:
+        completed = service.stop_scenario_recording()
+        assert completed["final_sample_status"] == ("unavailable" if failing else "sampled")
+        assert service.stop_scenario_recording() == completed
+    finally:
+        release.set()
+        worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert service.scenario_recording_status() == completed
+
+
 def test_stable_new_connection_cannot_refresh_old_sdk_evidence_when_identity_refresh_fails(tmp_path):
     module = _load_service_module()
     robot = _robot()

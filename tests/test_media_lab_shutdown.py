@@ -1,7 +1,48 @@
 import asyncio
+import threading
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
+import pytest
+
+
+@pytest.mark.parametrize("callback", ["sample_scenario", "maintain"])
+def test_lifespan_drains_background_threads_before_returning(tmp_path, callback):
+    from tests.test_sdk_media_lab import _load_service_module, _service
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+    def blocked():
+        entered.set()
+        assert release.wait(timeout=3.0)
+        finished.set()
+
+    setattr(service, callback, blocked)
+    app = module.create_web_app(service, web_root=Path(__file__).parents[1] / "examples/sdk_media_lab/web")
+
+    async def scenario():
+        exit_requested = asyncio.Event()
+
+        async def run():
+            async with app.router.lifespan_context(app):
+                await exit_requested.wait()
+
+        running = asyncio.create_task(run())
+        try:
+            assert await asyncio.to_thread(entered.wait, 1)
+            exit_requested.set()
+            await asyncio.sleep(.1)
+            assert not running.done(), "SDK context could close while the worker still runs"
+            release.set()
+            await asyncio.wait_for(asyncio.shield(running), 2)
+            assert finished.is_set()
+        finally:
+            release.set()
+            exit_requested.set()
+            await running
+
+    asyncio.run(scenario())
 
 
 def test_daemon_shutdown_stops_http_server(monkeypatch):
