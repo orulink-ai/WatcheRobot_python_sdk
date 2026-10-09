@@ -1255,6 +1255,20 @@ def test_maintenance_marks_cached_display_pending_for_daemon_device_switch(tmp_p
     assert status()["state"] == "idle"
 
 
+def test_same_procedural_start_identity_recovers_ownership_after_lost_response(tmp_path):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    # The first HTTP response is lost; retry the same request identity.
+    service.start_procedural(request_id="original-page")
+    assert service.start_procedural(request_id="original-page")["started"] is True
+    assert service.start_procedural(request_id="another-page")["started"] is False
+    assert robot.expression_runtime.calls == [True]
+    assert service.stop_procedural(request_id="another-page")["matched"] is False
+    assert service.stop_procedural(request_id="original-page")["state"] == "idle"
+    assert robot.expression_runtime.calls == [True, False]
+
+
 @pytest.mark.parametrize("sd_baseline", [False, True])
 def test_display_start_refuses_stale_sdk_identity_from_another_device(tmp_path, sd_baseline):
     module = _load_service_module()

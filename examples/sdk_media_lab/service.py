@@ -646,7 +646,10 @@ class MediaLabService:
                     except Exception:
                         self._set_procedural_state("stop_required")
                         raise
-                    return {**self.procedural_status(), "started": False}
+                    # A same-identity retry confirms ownership without enabling
+                    # the device again; other clients only borrow this instance.
+                    owned = request_id is not None and request_id == self._procedural_request_id
+                    return {**self.procedural_status(), "started": owned}
                 raise MediaLabBusyError("Confirm procedural stop before starting again")
             self._ensure_cleanup_device(self._robot.device_info.get("device_id"))
             lease = self._operation("procedural", resource="animation")

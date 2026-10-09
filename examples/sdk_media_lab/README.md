@@ -43,8 +43,11 @@ acoustic loop.
 **End Scene** cancels a pending start or stops the call and the procedural
 expression newly started by that scene. An expression enabled independently
 before the scene remains running after End Scene or a failed call startup.
-The start response includes `started`: `false` means that a concurrent client
-already owns the running expression. The scene waits for this acknowledgement
+The start response includes `started`, an ownership acknowledgement: `true`
+confirms this request owns the instance, including a same-identity retry after
+a lost HTTP response; it does not count new device activations. `false` means
+another client owns the running expression. A request without an identity cannot
+recover ownership. The scene waits for this acknowledgement
 before releasing a cancelled start, and preserves reused expressions.
 Unconfirmed releases remain available for retry. Closing the page retains the
 cleanup policy and stops its owned procedural expression and RTC session,
