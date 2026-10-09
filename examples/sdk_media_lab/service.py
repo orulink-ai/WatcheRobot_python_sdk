@@ -494,7 +494,7 @@ class MediaLabService:
         if self._procedural_lock.acquire(blocking=False):
             try:
                 if self._procedural_lease is not None:
-                    if connection.get("online") is not True or self._procedural_device_id != self._robot.device_info.get("device_id"):
+                    if not self._display_device_matches(connection, self._procedural_device_id):
                         self._set_procedural_state("stop_required")
                     elif self._procedural_state == "stop_required" and not self._procedural_captures:
                         self.stop_procedural()
@@ -503,13 +503,18 @@ class MediaLabService:
         if self._sd_baseline_lock.acquire(blocking=False):
             try:
                 if self._sd_baseline_lease is not None:
-                    if connection.get("online") is not True or self._sd_baseline_device_id != self._robot.device_info.get("device_id"):
+                    if not self._display_device_matches(connection, self._sd_baseline_device_id):
                         self._set_sd_baseline_state("stop_required")
                     elif self._sd_baseline_state == "stop_required":
                         self.stop_sd_baseline()
             finally:
                 self._sd_baseline_lock.release()
         self._sample_scenario(connection=connection)
+
+    def _display_device_matches(self, connection: Mapping[str, object], device_id: object) -> bool:
+        return (connection.get("online") is True
+                and device_id == self._robot.device_info.get("device_id")
+                and (connection.get("device_id") is None or connection.get("device_id") == device_id))
 
     def _set_procedural_state(self, state: str, *, request_id: str | None = None) -> None:
         with self._state_lock:

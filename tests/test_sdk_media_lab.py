@@ -1234,6 +1234,28 @@ def test_daemon_device_identity_blocks_cleanup_even_if_sdk_identity_is_cached(tm
 
 
 @pytest.mark.parametrize("sd_baseline", [False, True])
+def test_maintenance_marks_cached_display_pending_for_daemon_device_switch(tmp_path, sd_baseline):
+    module = _load_service_module()
+    robot = _sd_baseline_robot() if sd_baseline else _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    (service.start_sd_baseline if sd_baseline else service.start_procedural)()
+    status = service.sd_baseline_status if sd_baseline else service.procedural_status
+    service._device_status_provider = lambda: {"online": True, "device_id": "different-device"}
+    service.maintain()
+    assert status()["state"] == "stop_required"
+    assert status()["cleanup_device_id"] == "watcher-test"
+    assert robot.device_info["device_id"] == "watcher-test"
+    service.maintain()
+    if sd_baseline:
+        assert robot.behavior.stop_calls == 0
+    else:
+        assert robot.expression_runtime.calls == [True]
+    service._device_status_provider = lambda: {"online": True, "device_id": "watcher-test"}
+    service.maintain()
+    assert status()["state"] == "idle"
+
+
+@pytest.mark.parametrize("sd_baseline", [False, True])
 def test_display_start_refuses_stale_sdk_identity_from_another_device(tmp_path, sd_baseline):
     module = _load_service_module()
     robot = _sd_baseline_robot() if sd_baseline else _procedural_robot()

@@ -149,6 +149,11 @@ and other non-collection outcomes. `sampled` means a sample was written; its sep
 telemetry status still determines whether resource values are available. Reusing a
 running display lease also checks the original device; an online device switch is
 marked pending cleanup even if maintenance did not observe an intervening disconnect.
+Maintenance also checks a provided Daemon device ID when no request ID is present,
+so an old SDK cache cannot keep a previous display lease marked running.
+This diagnostic lab is validated with one connected device. Identity preflight is
+not an atomic binding of the command to a Daemon connection: do not hot-switch
+devices during an action or cleanup. Stop the workload and confirm cleanup first.
 The supported Application entry point awaits Uvicorn's HTTP request drain before
 lifespan cleanup and exits ApplicationContext afterwards. Lifespan signals the
 maintenance and sampling loops to stop, then awaits their current synchronous
