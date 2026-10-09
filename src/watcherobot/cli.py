@@ -1609,11 +1609,17 @@ def run_demo(name: str) -> int:
     except (OSError, ValueError) as exc:
         raise CliError(f"Cannot prepare bundled demo: {exc}") from exc
     state, _reused = ensure_runtime()
+    status = _request_json(state.control_url, "/daemon/status")
+    if "selection_id" not in status.get("application", {}):
+        raise CliError(
+            "This Daemon cannot safely switch demos. Upgrade it or run "
+            "'watcherobot daemon activate' to reload this SDK before retrying."
+        )
     _request_json(
         state.control_url, "/daemon/application/stop", method="POST",
         timeout=APPLICATION_STOP_TIMEOUT_SECONDS,
     )
-    _request_json(
+    selected = _request_json(
         state.control_url, "/daemon/application/select", method="POST",
         payload={
             "application_dir": str(application),
@@ -1623,10 +1629,20 @@ def run_demo(name: str) -> int:
             },
         },
     )
+    selection_id = selected.get("application", {}).get("selection_id")
+    expected_app_id = ApplicationManifest.load(application).app_id
+    if not isinstance(selection_id, str) or not selection_id:
+        raise CliError("Daemon did not return an Application selection ID")
     result = _request_json(
-        state.control_url, "/daemon/application/start", method="POST",
+        state.control_url, "/daemon/application/start-selected", method="POST",
+        payload={"selection_id": selection_id},
         timeout=APPLICATION_START_TIMEOUT_SECONDS,
     )
+    actual = result.get("application", {})
+    if (actual.get("current_app") != expected_app_id
+            or actual.get("selection_id") != selection_id
+            or actual.get("state") != "running"):
+        raise CliError("Application changed during startup; retry the requested demo")
     _print_application_runtime_result(f"Bundled demo started: {name}", result)
     print(f"Application files and artifacts: {application}")
     print("Stop: watcherobot app stop")

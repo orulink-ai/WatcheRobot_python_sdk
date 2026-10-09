@@ -72,17 +72,19 @@ def test_demo_switch_uses_only_daemon_management(name, monkeypatch, tmp_path):
 
     def request(url, path, **kwargs):
         requests.append((path, kwargs))
-        return {'application': {'state': 'running'}}
+        app_id = 'example.sdk_media_lab' if name == 'sdk-test-bench' else 'com.orulink.expression_lab'
+        return {'application': {'state': 'running', 'selection_id': 'selection-1', 'current_app': app_id}}
 
     monkeypatch.setattr(cli, '_request_json', request)
     assert cli.main(['demo', name]) == 0
     assert [path for path, _ in requests] == [
-        '/daemon/application/stop', '/daemon/application/select', '/daemon/application/start',
+        '/daemon/status', '/daemon/application/stop', '/daemon/application/select', '/daemon/application/start-selected',
     ]
-    selected = Path(requests[1][1]['payload']['application_dir'])
+    selected = Path(requests[2][1]['payload']['application_dir'])
     assert selected.is_relative_to(tmp_path)
     assert (selected / 'web/index.html').is_file()
-    assert requests[0][1]['timeout'] == cli.APPLICATION_STOP_TIMEOUT_SECONDS
+    assert requests[1][1]['timeout'] == cli.APPLICATION_STOP_TIMEOUT_SECONDS
+    assert requests[3][1]['payload'] == {'selection_id': 'selection-1'}
 
 
 def test_demo_does_not_start_when_stop_fails(monkeypatch, tmp_path):
@@ -91,12 +93,43 @@ def test_demo_does_not_start_when_stop_fails(monkeypatch, tmp_path):
     calls = []
 
     def fail(url, path, **kwargs):
+        if path == '/daemon/status':
+            return {'application': {'selection_id': 'old-selection'}}
         calls.append(path)
         raise cli.CliError('stop failed')
 
     monkeypatch.setattr(cli, '_request_json', fail)
     assert cli.main(['demo', 'sdk-test-bench']) == 2
     assert calls == ['/daemon/application/stop']
+
+
+def test_old_daemon_is_rejected_before_stopping_any_app(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, 'default_runtime_state_root', lambda: tmp_path)
+    monkeypatch.setattr(cli, 'ensure_runtime', lambda: (SimpleNamespace(control_url='http://daemon'), True))
+    requests = []
+    def request(url, path, **kwargs):
+        requests.append(path)
+        return {'application': {'current_app': 'user.app'}}
+    monkeypatch.setattr(cli, '_request_json', request)
+    assert cli.main(['demo', 'sdk-test-bench']) == 2
+    assert requests == ['/daemon/status']
+
+
+@pytest.mark.parametrize('actual', [
+    {'current_app': 'com.orulink.expression_lab', 'selection_id': 'selected', 'state': 'running'},
+    {'current_app': 'example.sdk_media_lab', 'selection_id': 'reselected', 'state': 'running'},
+    {'current_app': 'example.sdk_media_lab', 'selection_id': 'selected', 'state': 'ended'},
+])
+def test_demo_never_reports_success_for_wrong_start_result(monkeypatch, tmp_path, capsys, actual):
+    monkeypatch.setattr(cli, 'default_runtime_state_root', lambda: tmp_path)
+    monkeypatch.setattr(cli, 'ensure_runtime', lambda: (SimpleNamespace(control_url='http://daemon'), True))
+    def request(url, path, **kwargs):
+        if path == '/daemon/application/start-selected':
+            return {'application': actual}
+        return {'application': {'selection_id': 'selected'}}
+    monkeypatch.setattr(cli, '_request_json', request)
+    assert cli.main(['demo', 'sdk-test-bench']) == 2
+    assert 'Bundled demo started' not in capsys.readouterr().out
 
 
 def test_preparation_preserves_artifacts_and_omits_developer_files(tmp_path):

@@ -257,13 +257,13 @@ class DaemonRuntime:
         await self.pairing_udp.stop()
         await self.external_server.stop()
 
-    async def start_application(self) -> ApplicationRun:
+    async def start_application(self, *, expected_selection_id: str | None = None) -> ApplicationRun:
         self.logs.record(
             "Application start requested "
             f"(app_id={self.application.registry.current_app})"
         )
         try:
-            run = await self.application.start()
+            run = await self.application.start(expected_selection_id=expected_selection_id)
         except Exception as exc:
             self.logs.record(f"Application start failed ({exc})")
             raise
@@ -547,6 +547,7 @@ class DaemonRuntime:
         return {
             "selected": self.application.registry.current_app is not None,
             "current_app": self.application.registry.current_app,
+            "selection_id": self.application.selection_id,
             "state": state.value,
             "process_id": self.application.process_id,
             "last_exit_code": self.application.last_exit_code,

@@ -23,6 +23,12 @@ Each selection stops the current Application through the existing Daemon, starts
 the selected demo, and opens its browser UI. A compatible Daemon and its existing
 device connection remain available. Use `watcherobot app stop` to
 stop the active demo. Pair through the demo UI when no robot is connected.
+Concurrent changes to the selected app are rejected rather than starting a
+different app: retry the desired command. The demo CLI requires a Daemon that
+supports selection-bound starts. If an older Daemon with the same SDK version
+is already running (for example during source development), it fails before
+stopping the current app; explicitly reload with `watcherobot daemon activate`
+before retrying. Reloading stops the current Application and restarts Daemon.
 Both examples currently declare Windows support; macOS/Linux hardware operation
 has not been accepted. The CLI entrypoint itself is platform-independent.
 

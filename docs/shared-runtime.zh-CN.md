@@ -26,6 +26,23 @@ SDK 应用运行入口 ensure_runtime 也委托共享管理器，删除独立的
 
 ## 启动、联调、切换
 
+### 绑定应用选择的启动
+
+Application 状态新增可空的 `selection_id`：每次成功选择应用都生成新值，即使应用 ID
+相同也会更新；取消选择后为 `null`。该值只用于管理操作的并发校验，不是业务帧或连接凭据。
+
+`POST /daemon/application/start-selected` 接收 `{"selection_id":"本次 select 返回的值"}`。
+Daemon 获得应用生命周期锁后再比较该值，选择已经变化时返回 HTTP 409 和
+`application_selection_changed`，不会启动被其他调用方选中的应用。旧的无请求体
+`POST /daemon/application/start` 保持兼容，仍表示启动当时选中的应用。
+
+`watcherobot demo` 使用绑定选择的接口，并校验启动结果的应用 ID、选择标识和运行状态。
+旧 Daemon 未提供选择标识时，在执行停止操作之前拒绝切换；同版本源码联调需显式
+`watcherobot daemon activate` 重载，该命令会停止应用并重启 Daemon。此变更仅涉及管理 REST，
+不改变 Desktop/Device 业务通道及其透明路由。
+
+### Runtime 版本切换
+
 - SDK 与桌面任意先后启动，显式启动时同 SDK 版本直接复用，不同版本停止当前应用和旧 Daemon，切换到请求方提供的版本（允许降级）。同版本即使路径、提交不同也不重启。生命周期操作使用 operation.lock，Daemon 自身持有实例锁；多个启动请求不会得到多个健康实例。
 - 首次启动成功保存 current-launcher.json。普通 app run、SDK daemon start 和桌面首次启动选择请求方候选。同版本复用不更新启动记录。
 - SDK 项目仍用自己的 Python 环境开发应用。CLI 将应用目录和解释器注册给共享 Daemon，由它创建、停止 Application 进程。

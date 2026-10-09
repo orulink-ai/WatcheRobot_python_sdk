@@ -82,6 +82,10 @@ watcherobot demo
 自动化脚本仍可指定应用名：`watcherobot demo sdk-test-bench` 或
 `watcherobot demo expression-lab`，执行一次后返回终端。
 
+同时切换导致应用选择被其他终端改动时，命令会拒绝旧的启动请求，请重新执行目标命令。
+若同版本旧 Daemon 不支持选择校验，会在停止当前应用前提示升级；源码开发时可显式执行
+`watcherobot daemon activate` 重载后再试，该操作会停止当前应用并重启 Daemon。
+
 使用 `watcherobot app stop` 停止当前示例。这两个示例目前声明支持 Windows，
 macOS/Linux 真机运行尚未验收。照片等运行数据写入用户状态目录的
 `bundled-demos` 子目录，不写入 Python 安装目录；再次启动相同版本会保留数据。

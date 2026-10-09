@@ -39,6 +39,7 @@ def test_idle_unselect_clears_launch_spec_and_is_idempotent(tmp_path: Path) -> N
         assert response.status_code == 200
         assert response.json()['application'] == {
             'selected': False, 'current_app': None, 'state': 'not_selected',
+            'selection_id': None,
             'process_id': None, 'last_exit_code': None,
         }
     assert runtime.application.launch_spec is None
