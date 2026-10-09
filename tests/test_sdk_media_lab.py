@@ -1144,6 +1144,38 @@ def test_hot_device_switch_never_reuses_original_display_instance(tmp_path, sd_b
         assert robot.expression_runtime.calls == [True]
 
 
+@pytest.mark.parametrize("sd_baseline", [False, True])
+def test_daemon_device_identity_blocks_cleanup_even_if_sdk_identity_is_cached(tmp_path, sd_baseline):
+    module = _load_service_module()
+    robot = _sd_baseline_robot() if sd_baseline else _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    (service.start_sd_baseline if sd_baseline else service.start_procedural)()
+    service._device_status_provider = lambda: {"online": True, "device_id": "different-device"}
+    with pytest.raises(module.MediaLabBusyError, match="original device"):
+        (service.stop_sd_baseline if sd_baseline else service.stop_procedural)()
+    if sd_baseline:
+        assert robot.behavior.stop_calls == 0
+    else:
+        assert robot.expression_runtime.calls == [True]
+    service._device_status_provider = lambda: {"online": True, "device_id": "watcher-test"}
+    assert (service.stop_sd_baseline if sd_baseline else service.stop_procedural)()["state"] == "idle"
+
+
+@pytest.mark.parametrize("sd_baseline", [False, True])
+def test_display_start_refuses_stale_sdk_identity_from_another_device(tmp_path, sd_baseline):
+    module = _load_service_module()
+    robot = _sd_baseline_robot() if sd_baseline else _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    service._device_status_provider = lambda: {"online": True, "device_id": "different-device"}
+    with pytest.raises(module.MediaLabBusyError, match="original device"):
+        (service.start_sd_baseline if sd_baseline else service.start_procedural)()
+    assert not service.status()["resource_owners"]
+    if sd_baseline:
+        assert not robot.behavior.played
+    else:
+        assert not robot.expression_runtime.calls
+
+
 @pytest.mark.parametrize("immediate", [False, True])
 def test_final_sample_report_distinguishes_collection_from_rate_limit(tmp_path, monkeypatch, immediate):
     module = _load_service_module()

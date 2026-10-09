@@ -542,6 +542,7 @@ class MediaLabService:
     def start_sd_baseline(self) -> dict[str, object]:
         with self._sd_baseline_lock:
             self._ensure_device_online()
+            self._refresh_device_snapshot(self._device_status())
             self._ensure_capability("behavior")
             self._ensure_capability("animation")
             if _SD_BASELINE_ANIMATION_ID not in self._robot.animation.available_ids:
@@ -555,6 +556,7 @@ class MediaLabService:
                         raise
                     return self.sd_baseline_status()
                 raise MediaLabBusyError("Confirm SD baseline stop before starting again")
+            self._ensure_cleanup_device(self._robot.device_info.get("device_id"))
             lease = self._operation("sd_baseline", resource="animation")
             lease.__enter__()
             self._sd_baseline_lease = lease
@@ -630,6 +632,7 @@ class MediaLabService:
             raise ValueError("Invalid procedural request ID")
         with self._procedural_lock:
             self._ensure_device_online()
+            self._refresh_device_snapshot(self._device_status())
             self._ensure_capability(_PROCEDURAL_CAPABILITY)
             if self._procedural_lease is not None:
                 if self._procedural_state == "running":
@@ -640,6 +643,7 @@ class MediaLabService:
                         raise
                     return {**self.procedural_status(), "started": False}
                 raise MediaLabBusyError("Confirm procedural stop before starting again")
+            self._ensure_cleanup_device(self._robot.device_info.get("device_id"))
             lease = self._operation("procedural", resource="animation")
             lease.__enter__()
             self._procedural_lease = lease
@@ -1702,6 +1706,8 @@ class MediaLabService:
 
     def _ensure_cleanup_device(self, device_id: object) -> None:
         connection = self._device_status()
+        if connection.get("device_id") is not None and connection["device_id"] != device_id:
+            raise MediaLabBusyError("Reconnect the original device before display cleanup")
         if connection.get("request_id") is not None:
             self._refresh_device_snapshot(connection)
             if self._refreshed_connection_token != str(connection["request_id"]):

@@ -145,6 +145,12 @@ and other non-collection outcomes. `sampled` means a sample was written; its sep
 telemetry status still determines whether resource values are available. Reusing a
 running display lease also checks the original device; an online device switch is
 marked pending cleanup even if maintenance did not observe an intervening disconnect.
+The supported Application entry point awaits Uvicorn's HTTP request drain before
+lifespan cleanup and exits ApplicationContext afterwards. A real loopback HTTP
+regression blocks a photo across shutdown and verifies photo completion, confirmed
+procedural stop, lease release, then context/transport closure order. Forced process
+termination cannot provide this graceful cleanup guarantee. Display activation and
+cleanup also compare a Daemon-provided device ID with SDK identity when present.
 
 Browser RTC starts attach a unique `request_id` to the local HTTP request and
 use the same ID for stop, failure cleanup, and page-exit cleanup. The Application
