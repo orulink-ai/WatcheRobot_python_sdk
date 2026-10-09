@@ -1046,6 +1046,45 @@ def test_late_final_sample_error_cannot_annotate_new_recording(tmp_path):
     assert "final_sample_error" not in report
 
 
+@pytest.mark.parametrize("starting", [False, True])
+def test_recording_control_binds_generation_before_entering_sampler(tmp_path, starting):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    if not starting:
+        service.start_scenario_recording(label="old")
+    entered, release = threading.Event(), threading.Event()
+    sample = service._sample_scenario
+    responses = []
+
+    def delayed_sample(**kwargs):
+        if threading.current_thread().name == "old-control":
+            entered.set()
+            assert release.wait(timeout=3.0)
+        return sample(**kwargs)
+
+    service._sample_scenario = delayed_sample
+    control = lambda: service.start_scenario_recording(label="old") if starting else service.stop_scenario_recording()
+    worker = threading.Thread(target=lambda: responses.append(control()), name="old-control")
+    worker.start()
+    assert entered.wait(timeout=1.0)
+    try:
+        service.stop_scenario_recording()
+        service.start_scenario_recording(label="new")
+        service._recording_last_sample_at = None
+        before = service.scenario_report()
+    finally:
+        release.set()
+        worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    after = service.scenario_report()
+    for field in ("active", "label", "samples", "sample_count", "summary", "events"):
+        assert after[field] == before[field]
+    assert service._recording_last_sample_at is None
+    assert responses[0]["label"] == "old"
+    assert responses[0]["active"] is False
+    assert responses[0]["replaced"] is True
+
+
 def test_stable_new_connection_cannot_refresh_old_sdk_evidence_when_identity_refresh_fails(tmp_path):
     module = _load_service_module()
     robot = _robot()

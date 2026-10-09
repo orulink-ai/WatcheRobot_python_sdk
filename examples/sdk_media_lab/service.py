@@ -728,21 +728,26 @@ class MediaLabService:
             self._recording_device = device
             self._recording_capabilities = capabilities
             self._recording_baseline = baseline
+            target_status = self.scenario_recording_status()
         try:
-            self._sample_scenario()
+            self._sample_scenario(expected_generation=generation)
         except Exception:
             _LOGGER.exception("Initial sample unavailable; recording continues")
             with self._recording_lock:
                 if generation == self._recording_generation:
                     self._recording["initial_sample_error"] = "unavailable"
-        self._append_event("scenario_recording", f"Recording started: {label.strip()}", "running")
-        return self.scenario_recording_status()
+        with self._recording_lock:
+            if generation != self._recording_generation:
+                return {**target_status, "active": False, "replaced": True}
+            self._append_event("scenario_recording", f"Recording started: {label.strip()}", "running")
+            return self.scenario_recording_status()
 
     def stop_scenario_recording(self) -> dict[str, object]:
         with self._recording_lock:
             generation = self._recording_generation
+            target_status = self.scenario_recording_status()
         try:
-            final_status = self._sample_scenario()
+            final_status = self._sample_scenario(expected_generation=generation)
             with self._recording_lock:
                 if generation == self._recording_generation:
                     self._recording["final_sample_status"] = final_status or "not_collected"
@@ -757,7 +762,10 @@ class MediaLabService:
                 if generation == self._recording_generation and self._recording.get("active") is True:
                     self._recording["active"] = False
                     self._recording["stopped_at"] = time.time()
-        return self.scenario_recording_status()
+        with self._recording_lock:
+            if generation != self._recording_generation:
+                return {**target_status, "active": False, "replaced": True}
+            return self.scenario_recording_status()
 
     def scenario_report(self) -> dict[str, object]:
         with self._recording_lock:
@@ -848,8 +856,11 @@ class MediaLabService:
             evidence.update(snapshot={}, consistent=False)
         return after, evidence
 
-    def _sample_scenario(self, *, connection: Mapping[str, object] | None = None) -> str:
+    def _sample_scenario(self, *, connection: Mapping[str, object] | None = None,
+                         expected_generation: int | None = None) -> str:
         with self._recording_lock:
+            if expected_generation is not None and expected_generation != self._recording_generation:
+                return "stale_recording"
             if self._recording.get("active") is not True:
                 return "not_recording"
             generation = self._recording_generation

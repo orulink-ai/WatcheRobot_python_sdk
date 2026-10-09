@@ -137,6 +137,10 @@ is a successful recording start with `initial_sample_error: "unavailable"`; late
 sampling and an explicit stop remain usable.
 An unavailable final sample is exported as `final_sample_error: "unavailable"`,
 so a previous sample cannot be mistaken for evidence at the moment of stopping.
+Recording control binds its initial/final sample to the generation before entering
+the sampler. Replaced requests neither collect new samples nor advance the newer
+recording's rate-limit clock; their response retains the original label with
+`active: false` and `replaced: true`, rather than returning the newer recording.
 Both failure markers stay scoped to their recording generation. A newly paired
 connection must confirm its device information refresh before cached SDK telemetry
 can become available; refresh failure keeps that collection unavailable.
