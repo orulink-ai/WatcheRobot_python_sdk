@@ -11,14 +11,18 @@ Run an example without the desktop:
 watcherobot app run .\examples\hello_robot
 ```
 
-`app run` accepts a source directory. Watcher Desktop installs reviewed Hugging
-Face fixed commits through its Application Store.
+`app run` accepts a source directory. Watcher Desktop installs reviewed fixed
+commits from the selected Hugging Face or Gitee Application Store.
 
 Pairing and device ownership remain in the long-lived Runtime. Stopping an
 Application does not stop the Runtime or rebuild the device connection.
 
 Available examples include:
 
+- `speaking_motion_lab`: preview synchronized speech, procedural expressions,
+  and two-axis head motion on the real robot model, with a shared semantic and
+  emotion behavior driver. See the [usage guide](speaking_motion_lab/README.md)
+  and [publication status](../docs/application-marketplace/speaking-motion-lab-release.zh-CN.md).
 - `expression_lab`: launch a loopback-only animation workbench that previews
   and tunes the device-side procedural Watcher expression runtime.
 - `dshtts_speaker`: expose a loopback TTS bridge that converts DSH assistant
