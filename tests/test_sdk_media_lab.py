@@ -943,6 +943,57 @@ def test_recording_disables_global_memory_summary_after_source_change(tmp_path, 
     assert report["summary"]["memory"] == {}
 
 
+@pytest.mark.parametrize("during_baseline_copy", [False, True])
+def test_recording_binds_initial_connection_before_first_sample(tmp_path, monkeypatch, during_baseline_copy):
+    module = _load_service_module()
+    robot = _robot()
+    connection = {"online": True, "request_id": "first", "connection_id": "old"}
+    service = _service(module, tmp_path, robot)
+    service._device_status_provider = lambda: connection
+
+    def reconnect():
+        connection.update(request_id="second", connection_id="new")
+        robot.resource_snapshot = {"sequence": 20, "memory": {"internal": {"free_bytes": 20}}}
+
+    if during_baseline_copy:
+        copy = module.deepcopy
+
+        def copy_then_reconnect(value):
+            result = copy(value)
+            if value is robot.resource_baseline:
+                reconnect()
+            return result
+
+        monkeypatch.setattr(module, "deepcopy", copy_then_reconnect)
+    else:
+        sample = service._sample_scenario
+
+        def reconnect_before_sample(**kwargs):
+            reconnect()
+            sample(**kwargs)
+
+        service._sample_scenario = reconnect_before_sample
+    service.start_scenario_recording()
+    report = service.scenario_report()
+    assert report["summary"]["mixed_sources"] is True
+    assert report["summary"]["baseline_comparable"] is False
+    assert report["summary"]["memory"] == {}
+
+
+@pytest.mark.parametrize("baseline_generation", [1, 2])
+def test_recording_only_compares_baseline_from_current_sdk_generation(tmp_path, baseline_generation):
+    module = _load_service_module()
+    robot = _robot()
+    robot.resource_evidence = {
+        "snapshot": robot.resource_snapshot, "received_at": None,
+        "device_id": "watcher-test", "generation": 2, "consistent": True,
+        "baseline_generation": baseline_generation, "baseline_device_id": "watcher-test",
+    }
+    service = _service(module, tmp_path, robot)
+    service.start_scenario_recording()
+    assert service.scenario_report()["summary"]["baseline_comparable"] is (baseline_generation == 2)
+
+
 def test_procedural_status_uses_only_device_mouth_telemetry(tmp_path):
     module = _load_service_module()
     robot = _procedural_robot()

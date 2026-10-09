@@ -92,6 +92,10 @@ The SDK exposes `robot.resource_evidence`: a detached event snapshot with its
 matching receipt time, device identity and connection generation. Telemetry age,
 mouth fields and memory aggregation reuse that evidence. A new device-ready
 generation cannot make an older snapshot available before a fresh resource event.
+Baseline events retain `baseline_generation` and `baseline_device_id`; recording
+initialization binds that source before its first sample and verifies identity
+around the baseline copy. An older baseline or an adapter without source metadata
+is conservatively marked `baseline_comparable: false`.
 Collection checks Daemon connection identity before and after copying SDK evidence;
 if it changes, that collection is unavailable rather than combining two sessions.
 Samples include `resource_generation`. A recording that crosses device or connection

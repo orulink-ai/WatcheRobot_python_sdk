@@ -77,6 +77,8 @@ class DaemonApplicationTransport:
         self._resource_lock = threading.Lock()
         self._resource_generation = 0
         self._snapshot_generation = 0
+        self._baseline_generation: int | None = None
+        self._baseline_device_id: object = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._communicators: ApplicationCommunicators | None = None
@@ -107,6 +109,8 @@ class DaemonApplicationTransport:
                 "device_id": self.device_info.get("device_id"),
                 "generation": self._resource_generation,
                 "consistent": self._snapshot_generation == self._resource_generation,
+                "baseline_generation": self._baseline_generation,
+                "baseline_device_id": self._baseline_device_id,
             }
 
     def set_callbacks(
@@ -515,6 +519,8 @@ class DaemonApplicationTransport:
             with self._resource_lock:
                 if snapshot.get("stage") == "baseline":
                     self.resource_baseline = snapshot
+                    self._baseline_generation = self._resource_generation
+                    self._baseline_device_id = self.device_info.get("device_id")
                     self.resource_rtc_baseline = {}
                     self.resource_history = []
                 elif snapshot.get("stage") == "rtc_pre_start":

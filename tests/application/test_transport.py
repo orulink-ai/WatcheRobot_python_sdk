@@ -39,6 +39,26 @@ def test_resource_evidence_pairs_payload_receipt_and_device_generation(monkeypat
     assert robot.resource_evidence["received_at"] == 101.0
 
 
+def test_resource_evidence_keeps_baseline_origin_across_reconnect():
+    transport = DaemonApplicationTransport()
+
+    async def send(kind, data):
+        await transport._on_frame(ApplicationChannel.DEVICE, json.dumps({"type": kind, "data": data}))
+
+    asyncio.run(send("evt.sdk.ready", {"device_id": "robot-a"}))
+    asyncio.run(send("evt.sdk.resource_snapshot", {"stage": "baseline", "sequence": 1}))
+    initial = transport.resource_evidence
+    assert initial["baseline_generation"] == initial["generation"]
+    assert initial["baseline_device_id"] == "robot-a"
+    asyncio.run(send("evt.sdk.ready", {"device_id": "robot-a"}))
+    asyncio.run(send("evt.sdk.resource_snapshot", {"stage": "rtc_running", "sequence": 2}))
+    current = transport.resource_evidence
+    assert current["consistent"] is True
+    assert current["baseline_generation"] != current["generation"]
+    asyncio.run(send("evt.sdk.resource_snapshot", {"stage": "baseline", "sequence": 3}))
+    assert transport.resource_evidence["baseline_generation"] == current["generation"]
+
+
 def test_resource_evidence_read_holds_event_updates_until_copy_finishes(monkeypatch):
     import watcherobot.application.transport as transport_module
     transport = DaemonApplicationTransport()

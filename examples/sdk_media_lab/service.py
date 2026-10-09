@@ -673,6 +673,8 @@ class MediaLabService:
         with self._recording_lock:
             if self._recording.get("active") is True:
                 raise MediaLabBusyError("Stop the current scenario recording first")
+            initial_connection = self._device_status()
+            initial_source = self._resource_source_identity()
             self._recording_generation += 1
             self._recording = {
                 "active": True, "label": label.strip(), "started_at": time.time(),
@@ -683,10 +685,24 @@ class MediaLabService:
             self._recording_samples = deque(maxlen=_SCENARIO_MAX_SAMPLES)
             self._recording_started_monotonic = time.monotonic()
             self._recording_last_sample_at = None
-            self._recording_memory_context = None
+            self._recording_memory_context = (
+                initial_source[0], initial_connection.get("request_id"),
+                initial_connection.get("connection_id"), initial_source[1],
+            )
             self._recording_device = deepcopy(self._robot.device_info)
             self._recording_capabilities = list(self._robot.capabilities)
             self._recording_baseline = deepcopy(self._robot.resource_baseline)
+            final_source = self._resource_source_identity()
+            final_connection = self._device_status()
+            source_changed = (
+                initial_source[:2] != final_source[:2]
+                or self._connection_identity(initial_connection) != self._connection_identity(final_connection)
+                or self._recording_device.get("device_id") != initial_source[0]
+            )
+            self._recording["summary"].update(
+                mixed_sources=source_changed,
+                baseline_comparable=not source_changed and initial_source[2] and final_source[2],
+            )
         self._sample_scenario()
         self._append_event("scenario_recording", f"Recording started: {label.strip()}", "running")
         return self.scenario_recording_status()
@@ -760,13 +776,28 @@ class MediaLabService:
             )
             return {"status": state, "age_seconds": age}
 
+    @staticmethod
+    def _connection_identity(connection: Mapping[str, object]) -> tuple[object, ...]:
+        return tuple(connection.get(key) for key in ("online", "request_id", "connection_id", "device_id"))
+
+    def _resource_source_identity(self) -> tuple[object, object, bool]:
+        evidence = getattr(self._robot, "resource_evidence", None)
+        if isinstance(evidence, Mapping):
+            return (evidence.get("device_id"), evidence.get("generation"),
+                    evidence.get("generation") is not None
+                    and evidence.get("baseline_generation") == evidence.get("generation")
+                    and evidence.get("baseline_device_id") == evidence.get("device_id")
+                    and evidence.get("consistent") is True)
+        # A custom adapter has no baseline generation metadata. Keep its samples
+        # usable, but never claim its initial baseline is source-comparable.
+        return self._robot.device_info.get("device_id"), None, False
+
     def _capture_connected_evidence(self, *, connection: Mapping[str, object] | None = None) -> tuple[dict[str, object], dict[str, Any]]:
         """Reject a resource copy that straddles a Daemon connection change."""
         before = deepcopy(dict(connection)) if connection is not None else self._device_status()
         evidence = self._capture_resource_evidence()
         after = self._device_status()
-        identity_fields = ("online", "request_id", "connection_id", "device_id")
-        if any(before.get(key) != after.get(key) for key in identity_fields):
+        if self._connection_identity(before) != self._connection_identity(after):
             evidence.update(snapshot={}, consistent=False)
         return after, evidence
 
