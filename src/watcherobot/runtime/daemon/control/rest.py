@@ -70,6 +70,12 @@ class UnselectApplicationRequest(BaseModel):
     application_id: str = Field(min_length=1)
 
 
+class StartSelectedApplicationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    selection_id: str = Field(min_length=1)
+
+
 class CancelUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -131,7 +137,7 @@ class ApplicationController(Protocol):
     def application_status(self) -> dict[str, Any]:
         """Return a serializable snapshot of the current Application."""
 
-    async def start_application(self) -> Any:
+    async def start_application(self, *, expected_selection_id: str | None = None) -> Any:
         """Start the selected Application."""
 
     async def stop_application(self) -> None:
@@ -305,13 +311,19 @@ class DaemonControlAPI:
         async def get_logs(after_id: int = 0) -> dict[str, Any]:
             return {"logs": self._controller.daemon_logs(after_id)}
 
-        @app.post("/daemon/application/start")
-        async def start_application() -> Any:
+        async def start_application_impl(expected_selection_id: str | None = None) -> Any:
             if self._draining:
                 return JSONResponse(status_code=409, content={"error": "runtime_draining"})
             self._starting_requests += 1
             try:
-                await self._controller.start_application()
+                if expected_selection_id is None:
+                    await self._controller.start_application()
+                else:
+                    await self._controller.start_application(expected_selection_id=expected_selection_id)
+            except ApplicationSelectionChangedError as exc:
+                return JSONResponse(status_code=409, content={
+                    "error": "application_selection_changed", "message": str(exc),
+                })
             except ApplicationNotSelectedError as exc:
                 return JSONResponse(
                     status_code=409,
@@ -339,6 +351,14 @@ class DaemonControlAPI:
             finally:
                 self._starting_requests -= 1
             return self._status_response()
+
+        @app.post("/daemon/application/start")
+        async def start_application() -> Any:
+            return await start_application_impl()
+
+        @app.post("/daemon/application/start-selected")
+        async def start_selected_application(request: StartSelectedApplicationRequest) -> Any:
+            return await start_application_impl(request.selection_id)
 
         @app.post("/daemon/application/stop")
         async def stop_application() -> dict[str, Any]:

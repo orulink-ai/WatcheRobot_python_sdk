@@ -69,6 +69,22 @@ python -m pip show watcherobot
 For PEP 668, PATH, `python3`, source-checkout, and TestPyPI troubleshooting,
 see the [installation guide](docs/installation.md).
 
+### Bundled browser demos
+
+The next release containing this feature includes two browser applications:
+
+```text
+watcherobot demo
+```
+
+Choose `1` for SDK Test Bench or `2` for Expression Lab. The menu stays open;
+choose again to switch and open the selected interface without another command.
+Choose `0` to stop the Application or `q` to leave the menu while it keeps running.
+Scripts can still pass `sdk-test-bench` or `expression-lab` after `demo` for a
+single launch. No repository checkout or Node.js installation is needed. Stop with
+`watcherobot app stop`. The demos currently declare Windows support; see
+[the examples guide](examples/README.md) for data storage and platform limits.
+
 ### 2. Set up your first robot
 
 `watcherobot robot setup` is an interactive guide that provisions Wi-Fi,

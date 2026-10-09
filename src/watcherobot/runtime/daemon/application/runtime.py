@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 import psutil
@@ -28,6 +29,7 @@ from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 from watcherobot.runtime.daemon.application.session import (
     ApplicationChannel,
     ApplicationNotSelectedError,
+    ApplicationSelectionChangedError,
     ApplicationRun,
     ApplicationSessionRegistry,
     ApplicationState,
@@ -98,6 +100,7 @@ class ApplicationRuntimeManager:
         self._process: asyncio.subprocess.Process | None = None
         self._monitor_task: asyncio.Task[None] | None = None
         self._operation_lock = asyncio.Lock()
+        self.selection_id: str | None = uuid.uuid4().hex if current_app is not None else None
         self._closing = False
         self._log_tasks: list[asyncio.Task[None]] = []
         self._device_status_url: str | None = None
@@ -180,6 +183,7 @@ class ApplicationRuntimeManager:
         self.registry.set_current_app(manifest.app_id)
         self._application_dir = selected_dir
         self._launch_spec = launch_spec
+        self.selection_id = uuid.uuid4().hex
         self.last_state = ApplicationState.NOT_RUNNING
         self.last_exit_code = None
         return manifest
@@ -199,11 +203,16 @@ class ApplicationRuntimeManager:
         self.registry.clear_current_app(expected_app_id)
         self._application_dir = None
         self._launch_spec = None
+        self.selection_id = None
         self.last_state = ApplicationState.NOT_SELECTED
         self.last_exit_code = None
 
-    async def start(self) -> ApplicationRun:
+    async def start(self, *, expected_selection_id: str | None = None) -> ApplicationRun:
         async with self._operation_lock:
+            if expected_selection_id is not None and expected_selection_id != self.selection_id:
+                raise ApplicationSelectionChangedError(
+                    "Application selection changed; retry the requested demo"
+                )
             if self._process is not None or self.registry.active_run is not None:
                 raise SessionOccupiedError("an Application process already exists")
 

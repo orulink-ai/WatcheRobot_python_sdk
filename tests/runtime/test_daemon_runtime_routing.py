@@ -373,6 +373,7 @@ def test_daemon_starts_without_a_selected_application(tmp_path: Path) -> None:
             assert runtime.application_status() == {
                 "selected": False,
                 "current_app": None,
+                "selection_id": None,
                 "state": "not_selected",
                 "process_id": None,
                 "last_exit_code": None,

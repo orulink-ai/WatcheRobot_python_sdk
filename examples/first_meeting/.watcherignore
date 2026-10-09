@@ -1,3 +1,0 @@
-# Local runtime state. These files may contain cloud credentials, user photos,
-# names, logs, launcher paths, and the temporary dashboard URL.
-artifacts/

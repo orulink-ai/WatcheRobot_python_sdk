@@ -20,24 +20,16 @@ The CLI selects the `python_sdk` target mode for SDK testing and waits until
 the Runtime reports a connected device. The Daemon validates connection modes
 but does not route business frames by message content.
 
-After the device state reaches `connected`, run managed Applications that
-exercise the required capabilities:
+After the device state reaches `connected`, run the managed SDK Test Bench:
 
 ```powershell
-watcherobot app run .\examples\quickstart
-watcherobot app run .\examples\capture_photo
-watcherobot app run .\examples\record_microphone
+watcherobot app run ./examples/sdk_media_lab
 ```
 
-For on-device face-tracking preview, run the managed preview example:
-
-```powershell
-watcherobot app run .\examples\face_tracking_preview
-```
-
-It uses the Runtime-injected Application Device channel, logs sequence-matched
-face telemetry, and saves the latest JPEG after collecting 150 frames. It has
-no browser dashboard. See [Device vision diagnostics](vision-diagnostics.md)
+Use its browser panels for speaker playback, JPEG capture and microphone recording.
+For face tracking, choose **Start with Preview** in the face-tracking panel to
+view frames with matching face boxes. These operations use the Runtime-injected
+Application Device channel. See [Device vision diagnostics](vision-diagnostics.md)
 for backend health and capability checks before opening preview.
 
 PTL firmware can validate the JPEG path but cannot provide face inference.
@@ -53,13 +45,7 @@ inference. Keep high-bandwidth preview on the managed Application path and use
 the UART for low-level maintenance or low-volume logs so display animation,
 preview transport, and verbose serial output do not compete unnecessarily.
 
-For an operator-facing media bench, run the standalone SDK Media Lab:
-
-```powershell
-watcherobot app run .\examples\sdk_media_lab
-```
-
-It binds a temporary dashboard to `127.0.0.1`, opens the default browser, and
+The Test Bench binds a temporary dashboard to `127.0.0.1`, opens the default browser, and
 keeps every hardware operation inside the managed Application Device channel.
 The dashboard tests the bundled speaker stream, one-shot JPEG capture, decoded
 microphone recording, capability discovery, artifacts, diagnostic events,

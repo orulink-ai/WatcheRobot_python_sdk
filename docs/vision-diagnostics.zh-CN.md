@@ -79,31 +79,32 @@ with app.robot.face_tracking.open_preview() as preview:
 
 JPEG 与人脸框同帧配对合同见[人脸跟踪预览 API](face-tracking-preview.md)。
 
-## 使用托管预览示例
+## 使用托管预览界面
 
-`examples/face_tracking_preview` 通过托管 Application Device channel
-接收同帧配对的预览图像和人脸遥测：
+SDK 测试台通过托管 Application Device channel
+显示同帧配对的预览图像和人脸框：
 
 ```powershell
-watcherobot app run .\examples\face_tracking_preview
+watcherobot app run ./examples/sdk_media_lab
 ```
 
-它会记录人脸遥测日志，并在收集 150 帧后保存最后一帧 JPEG，不提供浏览器界面。
-在自己的 Application 中，可使用本文介绍的 SDK API 查询视觉后端健康状态与能力。
+在人脸跟踪面板选择 **Start with Preview**。独立的无界面预览示例已删除。
+在自己的 Application 中，仍可使用本文介绍的 SDK API 查询视觉后端健康状态、
+能力，以及自行接收预览帧。
 
 ## Vision Debug Lab 下线与迁移
 
 `examples/vision_debug_lab` 因应用过时，已按维护者明确要求下线。
 这是示例启动入口的有意删除，不是删除 SDK 的拍照或视觉 API。
-`face_tracking_preview` 是更小的 API 示例，**不具备旧工具的全部能力**。
+SDK 测试台不具备旧工具的全部诊断流程。
 
 | 原有流程 | 当前入口与限制 |
 | --- | --- |
 | 浏览器同帧人脸框预览 | `sdk_media_lab` 提供人脸预览，但不是原视觉诊断台。 |
-| 同帧 JPEG 与遥测接收 | `face_tracking_preview` 演示 SDK API，收集 150 帧后仅保存最后一张 JPEG。 |
+| 同帧 JPEG 与遥测接收 | 在托管 Application 中使用 `robot.face_tracking.open_preview()`，见上文 API 示例。 |
 | JPEG + JSONL 数据集录制 | 当前没有等价录制工具，需要 Application 通过预览 API 自行实现。 |
 | 视觉专用延迟、丢帧报告及导出 | 当前没有等价报告导出；依赖该流程时应保留旧工具。 |
-| 最后一个浏览器断开后自动 HOLD | 命令行预览示例不保证此行为，Application 必须显式管理跟踪停止。 |
+| 最后一个浏览器断开后自动 HOLD | Application 必须显式管理跟踪停止，见[生命周期合同](face-tracking-lifecycle.md)。 |
 
 仍依赖旧工具完整流程时，可在隔离 checkout 中保留删除提交 `2e60466` 的父版本源码。
 这只是旧版源码定位方式，不代表旧工具已通过当前固件验证。切换版本前，应单独保留已有数据集。

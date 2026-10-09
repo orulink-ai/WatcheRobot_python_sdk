@@ -27,6 +27,7 @@ from colorama import just_fix_windows_console  # type: ignore[import-untyped]
 from websockets.asyncio.client import connect
 
 from watcherobot import __version__
+from watcherobot.bundled_apps import DEMO_NAMES, prepare_demo
 from watcherobot.application.templates import BUILTIN_TEMPLATES, DEFAULT_TEMPLATE, get_template
 from watcherobot.application.project import (
     ApplicationProjectDefaults,
@@ -126,6 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {__version__}",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+
+    demo = commands.add_parser(
+        "demo", help="Open the bundled demo switcher",
+        description="Choose and switch demos in an interactive menu. Optionally provide a demo name to launch once and return. Switching stops the current Application through Daemon.",
+    )
+    demo.add_argument("name", choices=DEMO_NAMES, nargs="?", help="Omit to keep the interactive switcher open")
 
     daemon = commands.add_parser(
         "daemon",
@@ -363,6 +370,8 @@ def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(arguments)
     try:
+        if args.command == "demo":
+            return run_demo(args.name) if args.name else run_demo_menu()
         if args.command == "daemon":
             if args.daemon_command in ("start", "activate"):
                 from watcherobot.runtime.manager import ensure_command
@@ -1552,6 +1561,92 @@ def stop_runtime(state_root: Path | None = None) -> bool:
             return True
         time.sleep(0.05)
     return False
+
+
+def run_demo_menu() -> int:
+    """Keep one terminal open for switching managed demos without new commands."""
+    if not _is_interactive_terminal():
+        raise CliError(
+            "Open 'watcherobot demo' in an interactive terminal, or provide "
+            "a demo name: sdk-test-bench / expression-lab"
+        )
+    print("\nWatcheRobot 示例应用")
+    print("选择应用会停止当前应用并打开所选网页。退出菜单后，应用继续运行。")
+    while True:
+        print("\n  1  SDK 测试台\n  2  表情实验台\n  0  停止当前应用\n  q  退出菜单")
+        try:
+            choice = input("请选择 [1/2/0/q]：").strip().lower()
+            if choice == "q":
+                return 0
+            if choice in {"1", "2"}:
+                run_demo(DEMO_NAMES[int(choice) - 1])
+            elif choice == "0":
+                state = _live_runtime_state()
+                if state is None:
+                    print("当前没有运行中的 Daemon。")
+                else:
+                    result = _request_json(
+                        state.control_url, "/daemon/application/stop", method="POST",
+                        timeout=APPLICATION_STOP_TIMEOUT_SECONDS,
+                    )
+                    _print_application_runtime_result("Application stopped", result)
+            else:
+                print("请输入 1、2、0 或 q。")
+        except CliError as exc:
+            print(f"操作失败：{exc}", file=sys.stderr)
+        except EOFError:
+            print("\n菜单已关闭；已启动的应用继续运行。")
+            return 0
+        except KeyboardInterrupt:
+            print("\n菜单已关闭；可用 watcherobot app stop 停止应用。")
+            return 130
+
+
+def run_demo(name: str) -> int:
+    """Switch managed Applications without changing device or business routing."""
+    try:
+        application = prepare_demo(name, default_runtime_state_root())
+    except (OSError, ValueError) as exc:
+        raise CliError(f"Cannot prepare bundled demo: {exc}") from exc
+    state, _reused = ensure_runtime()
+    status = _request_json(state.control_url, "/daemon/status")
+    if "selection_id" not in status.get("application", {}):
+        raise CliError(
+            "This Daemon cannot safely switch demos. Upgrade it or run "
+            "'watcherobot daemon activate' to reload this SDK before retrying."
+        )
+    _request_json(
+        state.control_url, "/daemon/application/stop", method="POST",
+        timeout=APPLICATION_STOP_TIMEOUT_SECONDS,
+    )
+    selected = _request_json(
+        state.control_url, "/daemon/application/select", method="POST",
+        payload={
+            "application_dir": str(application),
+            "launcher": {
+                "kind": "python",
+                "executable": str(_canonical_launcher_path(Path(sys.executable))),
+            },
+        },
+    )
+    selection_id = selected.get("application", {}).get("selection_id")
+    expected_app_id = ApplicationManifest.load(application).app_id
+    if not isinstance(selection_id, str) or not selection_id:
+        raise CliError("Daemon did not return an Application selection ID")
+    result = _request_json(
+        state.control_url, "/daemon/application/start-selected", method="POST",
+        payload={"selection_id": selection_id},
+        timeout=APPLICATION_START_TIMEOUT_SECONDS,
+    )
+    actual = result.get("application", {})
+    if (actual.get("current_app") != expected_app_id
+            or actual.get("selection_id") != selection_id
+            or actual.get("state") != "running"):
+        raise CliError("Application changed during startup; retry the requested demo")
+    _print_application_runtime_result(f"Bundled demo started: {name}", result)
+    print(f"Application files and artifacts: {application}")
+    print("Stop: watcherobot app stop")
+    return 0
 
 
 def run_application(application: Path) -> int:

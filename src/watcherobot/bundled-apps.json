@@ -1,0 +1,62 @@
+{
+  "sdk-test-bench": {
+    "directory": "sdk_media_lab",
+    "app_id": "example.sdk_media_lab",
+    "files": [
+      "README.md",
+      "app.json",
+      "app.py",
+      "assets/sample_speech.wav",
+      "icon.svg",
+      "service.py",
+      "web/RNNOISE-LICENSE.txt",
+      "web/RNNOISE-NOTICE.md",
+      "web/RNNOISE-UPSTREAM-LICENSE.txt",
+      "web/animation-confirmation.mjs",
+      "web/animation-random.mjs",
+      "web/app.js",
+      "web/combined-scene.mjs",
+      "web/display-audit.mjs",
+      "web/i18n.mjs",
+      "web/index.html",
+      "web/media-resource-policy.mjs",
+      "web/mjpeg-chunk-reassembly.mjs",
+      "web/mjpeg-transport.mjs",
+      "web/model-preview.mjs",
+      "web/resource-health.mjs",
+      "web/rnnoise-vendor.mjs",
+      "web/rtc-audio-capture.mjs",
+      "web/rtc-audio-diagnostic.mjs",
+      "web/rtc-audio-health.mjs",
+      "web/rtc-audio-latency.mjs",
+      "web/rtc-echo-probe.mjs",
+      "web/rtc-noise-core.mjs",
+      "web/rtc-noise-playback.mjs",
+      "web/rtc-noise-worklet.mjs",
+      "web/rtc-test-speech.mjs",
+      "web/styles.css",
+      "web/video-feedback.mjs",
+      "web/video-frame-queue.mjs"
+    ]
+  },
+  "expression-lab": {
+    "directory": "expression_lab",
+    "app_id": "com.orulink.expression_lab",
+    "files": [
+      "KUROBLOB_AI_LICENSE.txt",
+      "README.md",
+      "app.json",
+      "app.py",
+      "firmware/Watcher-Expression-Lab-Firmware-v0.1.1-esp32s3.zip",
+      "firmware/firmware-package.json",
+      "icon.svg",
+      "service.py",
+      "web/app.js",
+      "web/index.html",
+      "web/styles.css",
+      "web/vector-editor-v2.js",
+      "web/vector-path.js",
+      "web/web-runtime.js"
+    ]
+  }
+}

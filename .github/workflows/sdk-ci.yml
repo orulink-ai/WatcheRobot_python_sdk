@@ -66,6 +66,7 @@ jobs:
         run: |
           python -m pip check
           python -m pytest
+          python -m pytest examples/expression_lab/tests
           python -m mypy src/watcherobot
 
       - uses: actions/setup-node@v4
@@ -93,6 +94,8 @@ jobs:
           .venv-wheel-check/bin/python -m pip check
           .venv-wheel-check/bin/python -c "import watcherobot; print(watcherobot.__version__)"
           .venv-wheel-check/bin/watcherobot --help
+          .venv-wheel-check/bin/watcherobot demo --help
+          .venv-wheel-check/bin/python -I -c "import tempfile; from pathlib import Path; from watcherobot.bundled_apps import DEMO_NAMES, prepare_demo; t = tempfile.TemporaryDirectory(); [prepare_demo(name, Path(t.name)) for name in DEMO_NAMES]; t.cleanup()"
 
   python-compatibility:
     name: Python ${{ matrix.python-version }} compatibility
@@ -140,6 +143,7 @@ jobs:
           .venv/bin/python -m pip install -e ".[test]"
           .venv/bin/python -m pip check
           .venv/bin/python -m pytest
+          .venv/bin/python -m pytest examples/expression_lab/tests
 
   release-compatibility:
     name: Python ${{ matrix.python-version }} / ${{ matrix.dependency-profile }}
@@ -223,6 +227,7 @@ jobs:
         run: |
           python -m pip check
           python -m pytest
+          python -m pytest examples/expression_lab/tests
           python -m mypy src/watcherobot
 
       - name: Build and install release candidate distributions once
@@ -235,3 +240,5 @@ jobs:
           .venv-wheel-check/bin/python -m pip install --force-reinstall dist/*.whl
           .venv-wheel-check/bin/python -m pip check
           .venv-wheel-check/bin/watcherobot --help
+          .venv-wheel-check/bin/watcherobot demo --help
+          .venv-wheel-check/bin/python -I -c "import tempfile; from pathlib import Path; from watcherobot.bundled_apps import DEMO_NAMES, prepare_demo; t = tempfile.TemporaryDirectory(); [prepare_demo(name, Path(t.name)) for name in DEMO_NAMES]; t.cleanup()"

@@ -61,6 +61,9 @@ test = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/watcherobot"]
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.version]
 path = "src/watcherobot/__init__.py"
 

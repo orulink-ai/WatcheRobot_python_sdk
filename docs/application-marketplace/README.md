@@ -11,6 +11,5 @@
 - [实施进度](implementation-progress.md)：每个阶段已经完成的工程事实、测试证据和历史基线。
 - [Hugging Face OAuth](hugging-face-oauth.md)：Public OAuth App、Device Flow、scope 与真实联调记录。
 - [Hugging Face / Gitee 双平台分发](gitee.md)：平台独立登录、发布、投稿、收录与固定版本下载。
-- [说话动作实验室发布记录](speaking-motion-lab-release.zh-CN.md)：0.1.0 固定快照、两平台状态、合并版本与远端包验收。
 
 查“现在调用方应当依赖什么”时以分发合同和源码为准；查“为什么形成当前实现”时再进入实施进度与 OAuth 记录。
