@@ -15,7 +15,7 @@ export function createScenePageLifecycle() {
       pendingStarts++;
       try {
         const result = await start();
-        if (result && startedGeneration !== generation) await stopLateStart();
+        if (result && result.started !== false && startedGeneration !== generation) await stopLateStart();
         return result;
       } finally { pendingStarts--; }
     },
@@ -50,8 +50,8 @@ export function createCombinedSceneLifecycle({
     if (pendingProcedural.has(owner)) return;
     if (releasePromise) return releasePromise;
     releasePromise = (async () => {
-      const acknowledgement = await stopProcedural();
-      if (acknowledgement?.state !== "idle") throw new Error("Procedural stop is unconfirmed");
+      const acknowledgement = await stopProcedural(owner);
+      if (acknowledgement?.state !== "idle" && acknowledgement?.matched !== false) throw new Error("Procedural stop is unconfirmed");
       if (proceduralOwner === owner) proceduralOwner = null;
     })();
     try { await releasePromise; }
@@ -79,7 +79,7 @@ export function createCombinedSceneLifecycle({
           proceduralOwner = token;
           pendingProcedural.add(token);
           let acknowledgement;
-          try { acknowledgement = await startProcedural(); }
+          try { acknowledgement = await startProcedural(token); }
           finally { pendingProcedural.delete(token); }
           if (acknowledgement?.started === false && proceduralOwner === token) {
             proceduralOwner = null;

@@ -69,6 +69,18 @@ test("cancellation before a borrowed expression acknowledgement never releases i
   assert.equal(calls.includes("animation:stop"), false);
 });
 
+test("combined cleanup forwards the acquired generation and accepts a replaced server owner", async () => {
+  const starts = [], stops = [];
+  const { lifecycle } = fixture({
+    startProcedural: async owner => { starts.push(owner); return { state: "running", started: true }; },
+    stopProcedural: async owner => { stops.push(owner); return { state: "running", matched: false }; },
+  });
+  await lifecycle.start();
+  await lifecycle.end();
+  assert.deepEqual(stops, starts);
+  assert.equal(lifecycle.snapshot().ownsProcedural, false);
+});
+
 test("a missing animation acknowledgement prevents audio startup", async () => {
   for (const reply of [null, { state: "idle" }]) {
     const { calls, lifecycle } = fixture({ startProcedural: async () => reply });

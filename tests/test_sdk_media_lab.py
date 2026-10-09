@@ -2497,6 +2497,54 @@ def test_scenario_discards_inconsistent_resource_evidence(tmp_path, monkeypatch,
     assert service.scenario_report()["summary"]["memory"] == {}
 
 
+def test_late_procedural_cleanup_preserves_a_new_client_owner(tmp_path):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    client = TestClient(module.create_web_app(service, web_root=LAB_ROOT / "web"))
+    first, second = "procedural-client-a", "procedural-client-b"
+    assert client.post("/api/controls/procedural/start", json={"request_id": first}).json()["started"] is True
+    assert client.post("/api/controls/procedural/stop").json()["state"] == "idle"
+    assert client.post("/api/controls/procedural/start", json={"request_id": second}).json()["started"] is True
+    before = list(robot.expression_runtime.calls)
+    stale = client.post("/api/controls/procedural/stop", json={"request_id": first})
+    assert stale.status_code == 200 and stale.json()["matched"] is False
+    assert robot.expression_runtime.calls == before
+    assert service.status()["procedural"]["state"] == "running"
+    assert client.post("/api/controls/procedural/stop", json={"request_id": second}).json()["state"] == "idle"
+
+
+def test_background_sampler_continues_while_maintenance_waits_for_its_own_stop_ack(tmp_path, monkeypatch):
+    import time
+    module = _load_service_module()
+    robot = _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    service.start_procedural()
+    service.start_scenario_recording()
+    service._set_procedural_state("stop_required")
+    entered, release = threading.Event(), threading.Event()
+    original = robot.expression_runtime.set_audio_follow
+
+    def delayed(enabled):
+        if not enabled:
+            entered.set()
+            assert release.wait(timeout=4.0)
+        return original(enabled)
+
+    robot.expression_runtime.set_audio_follow = delayed
+    monkeypatch.setattr(module, "_SCENARIO_SAMPLE_INTERVAL_SECONDS", 0.05)
+    monkeypatch.setattr(module, "_MAINTENANCE_INTERVAL_SECONDS", 0.02)
+    with TestClient(module.create_web_app(service, web_root=LAB_ROOT / "web")):
+        try:
+            assert entered.wait(timeout=1.0)
+            deadline = time.monotonic() + 1.0
+            while service.scenario_recording_status()["sample_count"] < 3 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert service.scenario_recording_status()["sample_count"] >= 3
+        finally:
+            release.set()
+
+
 @pytest.mark.parametrize("domain,stopping", [("procedural", False), ("procedural", True), ("sd_baseline", False), ("sd_baseline", True)])
 def test_expression_transition_ack_does_not_block_status_or_recording(tmp_path, domain, stopping):
     module = _load_service_module()

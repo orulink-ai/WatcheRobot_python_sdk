@@ -271,6 +271,10 @@ class RtcSessionStopRequest(BaseModel):
     request_id: str | None = Field(default=None, min_length=8, max_length=63, pattern=r"^[A-Za-z0-9._:-]+$")
 
 
+class ProceduralControlRequest(BaseModel):
+    request_id: str | None = Field(default=None, min_length=8, max_length=63, pattern=r"^[A-Za-z0-9._:-]+$")
+
+
 class ScenarioRecordingStartRequest(BaseModel):
     label: str = Field(default="combined-scene", min_length=1, max_length=120)
 
@@ -366,6 +370,7 @@ class MediaLabService:
         self._procedural_lease: Any = None
         self._procedural_state = "idle"
         self._procedural_captures = 0
+        self._procedural_request_id: str | None = None
         self._sd_baseline_lock = threading.RLock()
         self._sd_baseline_lease: Any = None
         self._sd_baseline_state = "idle"
@@ -503,9 +508,13 @@ class MediaLabService:
                 self._sd_baseline_lock.release()
         self._sample_scenario(connection=connection)
 
-    def _set_procedural_state(self, state: str) -> None:
+    def _set_procedural_state(self, state: str, *, request_id: str | None = None) -> None:
         with self._state_lock:
             self._procedural_state = state
+            if state == "idle":
+                self._procedural_request_id = None
+            elif request_id is not None:
+                self._procedural_request_id = request_id
 
     def _set_sd_baseline_state(self, state: str) -> None:
         with self._state_lock:
@@ -602,7 +611,9 @@ class MediaLabService:
             raise HTTPException(status_code=404, detail="RTC speech fixture not found")
         return self._sample_audio
 
-    def start_procedural(self) -> dict[str, object]:
+    def start_procedural(self, *, request_id: str | None = None) -> dict[str, object]:
+        if request_id is not None and re.fullmatch(r"[A-Za-z0-9._:-]{8,63}", request_id) is None:
+            raise ValueError("Invalid procedural request ID")
         with self._procedural_lock:
             self._ensure_device_online()
             self._ensure_capability(_PROCEDURAL_CAPABILITY)
@@ -613,7 +624,7 @@ class MediaLabService:
             lease = self._operation("procedural", resource="animation")
             lease.__enter__()
             self._procedural_lease = lease
-            self._set_procedural_state("starting")
+            self._set_procedural_state("starting", request_id=request_id or uuid.uuid4().hex)
             try:
                 self._robot.expression_runtime.set_audio_follow(True)
             except Exception:
@@ -626,8 +637,10 @@ class MediaLabService:
             self._set_procedural_state("running")
             return {**self.procedural_status(), "started": True}
 
-    def stop_procedural(self) -> dict[str, object]:
+    def stop_procedural(self, *, request_id: str | None = None) -> dict[str, object]:
         with self._procedural_lock:
+            if request_id is not None and request_id != self._procedural_request_id:
+                return {**self.procedural_status(), "matched": False}
             if self._procedural_lease is None:
                 return self.procedural_status()
             if self._procedural_captures:
@@ -643,6 +656,10 @@ class MediaLabService:
     def scenario_recording_status(self) -> dict[str, object]:
         with self._recording_lock:
             return {key: value for key, value in self._recording.items() if key != "summary"}
+
+    def sample_scenario(self) -> None:
+        """Collect recording evidence independently of blocking maintenance IO."""
+        self._sample_scenario()
 
     def start_scenario_recording(self, *, label: str = "combined-scene") -> dict[str, object]:
         if not isinstance(label, str) or not 1 <= len(label.strip()) <= 120:
@@ -1765,19 +1782,35 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
                 _LOGGER.exception("SDK Test Bench maintenance failed")
             await asyncio.sleep(_MAINTENANCE_INTERVAL_SECONDS)
 
+    async def sample_service() -> None:
+        while True:
+            try:
+                await asyncio.to_thread(service.sample_scenario)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.exception("SDK Test Bench scenario sampling failed")
+            await asyncio.sleep(_MAINTENANCE_INTERVAL_SECONDS)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         maintenance_task = asyncio.create_task(
             maintain_service(),
             name="sdk-media-lab-maintenance",
         )
+        sampling_task = asyncio.create_task(sample_service(), name="sdk-media-lab-sampling")
         try:
             yield
         finally:
             service.request_shutdown()
             maintenance_task.cancel()
+            sampling_task.cancel()
             try:
                 await maintenance_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await sampling_task
             except asyncio.CancelledError:
                 pass
             try:
@@ -2054,12 +2087,12 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
         return await _run_action(service.stop_animation)
 
     @app.post("/api/controls/procedural/start")
-    async def start_procedural() -> dict[str, object]:
-        return await _run_action(service.start_procedural)
+    async def start_procedural(request: ProceduralControlRequest | None = None) -> dict[str, object]:
+        return await _run_action(service.start_procedural, request_id=request.request_id if request else None)
 
     @app.post("/api/controls/procedural/stop")
-    async def stop_procedural() -> dict[str, object]:
-        return await _run_action(service.stop_procedural)
+    async def stop_procedural(request: ProceduralControlRequest | None = None) -> dict[str, object]:
+        return await _run_action(service.stop_procedural, request_id=request.request_id if request else None)
 
     @app.post("/api/controls/sd-baseline/start")
     async def start_sd_baseline() -> dict[str, object]:

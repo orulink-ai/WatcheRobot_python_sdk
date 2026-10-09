@@ -85,7 +85,7 @@ const state = {
   localResources: new Set(),
   pairingBusy: false,
   hiddenEventIds: new Set(),
-  scene: { samples: [], recordingPending: false, reportPending: false, audioResultActive: false, operationGeneration: 0 },
+  scene: { samples: [], recordingPending: false, reportPending: false, audioResultActive: false, operationGeneration: 0, proceduralRequestId: null },
   animation: {
     requestedId: null,
     requestedAtMs: 0,
@@ -339,8 +339,8 @@ const sceneRtcRequestPrefix = crypto.randomUUID();
 const sceneRtcRequestId = owner => owner == null ? null : `${sceneRtcRequestPrefix}:${owner}`;
 const combinedScene = createCombinedSceneLifecycle({
   isProceduralRunning: () => state.status?.procedural?.state === "running",
-  startProcedural: () => proceduralAction("start"),
-  stopProcedural: () => proceduralAction("stop"),
+  startProcedural: owner => proceduralAction("start", sceneRtcRequestId(owner)),
+  stopProcedural: owner => proceduralAction("stop", sceneRtcRequestId(owner)),
   startAudio: async (owner) => {
     state.scene.audioResultActive = true;
     const started = await startRtcAudio(sceneRtcRequestId(owner));
@@ -748,25 +748,36 @@ function updateSceneRecordingControls(status = state.status) {
     : "No measurement recorded";
 }
 
-async function proceduralAction(action) {
+async function proceduralAction(action, requestId = action === "start" ? crypto.randomUUID() : state.scene.proceduralRequestId) {
   state.scene.audioResultActive = false;
   stopRandomAnimation({ quiet: true });
+  const previousRequestId = state.scene.proceduralRequestId;
+  if (action === "start") state.scene.proceduralRequestId = requestId;
   const request = () => runAction({
     path: `/api/controls/procedural/${action}`,
     result: elements.sceneResult, resource: "animation",
+    body: requestId ? { request_id: requestId } : undefined,
     pending: action === "start" ? "Starting live procedural expression…" : "Stopping live procedural expression…",
     complete: () => action === "start" ? "Procedural animation requested; speak during the call to test the mouth"
       : "Procedural animation stopped",
     interrupt: action === "stop",
   });
   if (action === "start") {
-    return scenePageLifecycle.startProcedural(request, () => fetch("/api/controls/procedural/stop", {
-      method: "POST", keepalive: true,
+    const result = await scenePageLifecycle.startProcedural(request, () => fetch("/api/controls/procedural/stop", {
+      method: "POST", keepalive: true, headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ request_id: requestId }),
     }));
+    if ((!result || result.started === false) && state.scene.proceduralRequestId === requestId) {
+      state.scene.proceduralRequestId = result ? null : previousRequestId;
+    }
+    return result;
   }
   const result = await request();
-  if (result?.state !== "idle") throw new Error("Procedural stop is unconfirmed");
-  combinedScene.proceduralStopped();
+  if (result?.state !== "idle" && result?.matched !== false) throw new Error("Procedural stop is unconfirmed");
+  if (requestId === null || state.scene.proceduralRequestId === requestId) {
+    state.scene.proceduralRequestId = null;
+    combinedScene.proceduralStopped();
+  }
   return result;
 }
 
@@ -2667,7 +2678,7 @@ elements.rtcNoiseEnabled.addEventListener("change", updateRtcNoiseOptions);
 elements.recordRtcDiagnostic.addEventListener("click", recordRtcDiagnostic);
 elements.rtcNoiseStrength.addEventListener("input", updateRtcNoiseOptions);
 elements.rtcRemoteAudio.addEventListener("play", () => { state.rtc.noisePlayback?.resume().catch(() => {}); });
-elements.stopProceduralButton.addEventListener("click", () => { proceduralAction("stop").catch(() => {}); });
+elements.stopProceduralButton.addEventListener("click", () => { proceduralAction("stop", null).catch(() => {}); });
 elements.startSceneAudioButton.addEventListener("click", startCombinedScene);
 elements.stopSceneAudioButton.addEventListener("click", endCombinedScene);
 elements.captureScenePhotoButton.addEventListener("click", () => { capturePhoto({ scene: true }).catch(() => {}); });
@@ -2836,8 +2847,10 @@ window.addEventListener("pagehide", () => {
   combinedScene.cancelForPageExit();
   stopRandomAnimation({ quiet: true });
   window.clearTimeout(state.animation.prefetchDebounceTimer);
-  if (scenePageLifecycle.close(state.status?.procedural?.state)) {
-    navigator.sendBeacon("/api/controls/procedural/stop");
+  if (scenePageLifecycle.close(state.status?.procedural?.state) && state.scene.proceduralRequestId) {
+    navigator.sendBeacon("/api/controls/procedural/stop", new Blob([
+      JSON.stringify({ request_id: state.scene.proceduralRequestId }),
+    ], { type: "application/json" }));
   }
   const mode = resolveRtcMode(
     state.rtc.mode,
@@ -2856,6 +2869,7 @@ window.addEventListener("pageshow", (event) => {
 
 async function restoreRtcPageSession() {
   scenePageLifecycle.reopen();
+  if (state.scene.proceduralRequestId) await proceduralAction("stop", state.scene.proceduralRequestId);
   // A beacon is best effort. Retry with its original identity; the backend's
   // identity guard preserves a newer session and clears ours only on an ACK.
   if (state.rtc.requestId) await stopRtcSession(state.rtc.requestId);

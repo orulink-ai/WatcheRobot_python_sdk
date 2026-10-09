@@ -72,6 +72,24 @@ test("BFCache restore retries the retained RTC release identity before allowing 
   }
 });
 
+test("a stale procedural cleanup preserves a newer local expression identity", async () => {
+  const { state, context } = fixture();
+  state.scene.proceduralRequestId = "new-expression-owner";
+  const requests = [];
+  let cleared = 0;
+  context.stopRandomAnimation = () => {};
+  context.combinedScene = { proceduralStopped: () => { cleared++; } };
+  context.runAction = async options => {
+    requests.push(options.body.request_id);
+    return { state: "running", matched: false };
+  };
+  const action = productionFunction("proceduralAction", "async function startCombinedScene", context);
+  await action("stop", "old-expression-owner");
+  assert.deepEqual(requests, ["old-expression-owner"]);
+  assert.equal(state.scene.proceduralRequestId, "new-expression-owner");
+  assert.equal(cleared, 0);
+});
+
 for (const [reported, label] of [[true, "active"], [false, "inactive"], [undefined, "unreported"]]) {
   test(`capture status uses actual browser gain settings: ${label}`, async () => {
     const { state, elements, context } = fixture();

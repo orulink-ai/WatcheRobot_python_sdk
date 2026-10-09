@@ -47,8 +47,11 @@ The start response includes `started`: `false` means that a concurrent client
 already owns the running expression. The scene waits for this acknowledgement
 before releasing a cancelled start, and preserves reused expressions.
 Unconfirmed releases remain available for retry. Closing the page retains the
-existing cleanup policy and stops its procedural expression and RTC session,
-including independently enabled expressions. Opening the page does not start
+cleanup policy and stops its owned procedural expression and RTC session,
+including expressions enabled with this page's independent button. Automatic
+page/scene cleanup carries the procedural start identity and cannot stop a newer
+client's expression; the explicit manual stop button remains a global control.
+Opening the page does not start
 hardware features automatically. The independent procedural and RTC buttons
 remain available for isolated measurements. **SD Animation Playback** is a
 separate SD-file playback test; it does not start the JoyInside procedural face.
@@ -67,6 +70,8 @@ stops owned procedural mode; the page also sends a cleanup request on exit.
 Display state snapshots use a short state lock separate from command serialization.
 Maintenance skips a lifecycle lock already held by a pending command, allowing
 status and sampling to continue while its device acknowledgement is delayed.
+Scenario sampling also runs in a separate background task, so maintenance's own
+cleanup command can wait for an ACK without delaying the recording cadence.
 
 Start a recording before changing the load. The backend records at most one
 sample per second and retains the latest 3600 samples; `sample_count` includes
@@ -103,6 +108,9 @@ Local HTTP controls are `POST /api/controls/procedural/start`, `/stop`,
 `POST /api/scenario/recording/stop`, and `GET /api/scenario/report`. These wrap
 public SDK APIs through the current Application Device channel and leave Daemon
 business routing unchanged. See the [audio-follow API](../../docs/procedural-expressions.md).
+Procedural start/stop accept an optional `{ "request_id": "..." }`. A mismatched
+scoped stop returns `matched: false` without stopping anything; unscoped stop is
+reserved for explicit global control or Application shutdown.
 
 Browser RTC starts attach a unique `request_id` to the local HTTP request and
 use the same ID for stop, failure cleanup, and page-exit cleanup. The Application
@@ -532,6 +540,7 @@ CSP 仅新增 WebAssembly 编译许可 `wasm-unsafe-eval`，未开放 JavaScript
 保留上一轮完整结果，重试不会需要重新录制音频。
 WebM 上传只检查 EBML 签名，不宣称完整容器或音频轨道校验；服务不会解码这些上传文件。
 停止通话会结束并保存已录制片段，不停止非本模块拥有的轨道。
+历史批次目前不自动删除；需要释放本机空间时，在停止应用后归档本机 `artifacts/` 目录。
 
 MediaRecorder 启动为近同步而非样本级同步；录音编码及浏览器处理有额外延迟，
 不能把两个录音的相关峰差直接当成 RNNoise 算法延迟。对比应在同一固件、音量、
