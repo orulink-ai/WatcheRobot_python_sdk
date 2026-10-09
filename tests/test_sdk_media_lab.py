@@ -994,6 +994,48 @@ def test_recording_only_compares_baseline_from_current_sdk_generation(tmp_path, 
     assert service.scenario_report()["summary"]["baseline_comparable"] is (baseline_generation == 2)
 
 
+@pytest.mark.parametrize("failing_reader", ["resource", "rtc"])
+def test_stopping_recording_survives_final_sample_failure(tmp_path, failing_reader):
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    service.start_scenario_recording()
+    initial = service.scenario_report()["samples"]
+    service._recording_last_sample_at = None
+
+    def fail():
+        raise RuntimeError("diagnostic reader unavailable")
+
+    if failing_reader == "resource":
+        service._capture_resource_evidence = fail
+    else:
+        service._rtc.snapshot = fail
+    assert service.stop_scenario_recording()["active"] is False
+    assert service.scenario_report()["samples"] == initial
+
+
+@pytest.mark.parametrize("sd_baseline", [False, True])
+def test_pending_display_cleanup_cannot_stop_a_different_device(tmp_path, sd_baseline):
+    module = _load_service_module()
+    robot = _sd_baseline_robot() if sd_baseline else _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    start = service.start_sd_baseline if sd_baseline else service.start_procedural
+    status = service.sd_baseline_status if sd_baseline else service.procedural_status
+    start()
+    service._device_status_provider = lambda: {"online": False}
+    service.maintain()
+    robot.device_info = {"device_id": "different-device"}
+    service._device_status_provider = lambda: {"online": True}
+    before = robot.behavior.stop_calls if sd_baseline else list(robot.expression_runtime.calls)
+    with pytest.raises(module.MediaLabBusyError, match="original device"):
+        service.maintain()
+    assert status()["state"] == "stop_required"
+    assert status()["cleanup_device_id"] == "watcher-test"
+    assert (robot.behavior.stop_calls if sd_baseline else robot.expression_runtime.calls) == before
+    robot.device_info = {"device_id": "watcher-test"}
+    service.maintain()
+    assert status()["state"] == "idle"
+
+
 def test_procedural_status_uses_only_device_mouth_telemetry(tmp_path):
     module = _load_service_module()
     robot = _procedural_robot()

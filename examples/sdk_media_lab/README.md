@@ -126,6 +126,11 @@ reserved for explicit global control or Application shutdown.
 During an in-flight photo, a matched scoped stop retains a pending stop intent:
 maintenance completes it after the photo without relying on the page to retry.
 An unscoped manual stop remains busy and requires another explicit request.
+Pending display cleanup retains `cleanup_device_id` and refuses to send stop to a
+different device. Reconnect the original device to confirm cleanup; switching
+devices does not silently discard its lease. SDK audio-follow cleanup has the same
+device identity guard. Stopping a recording remains effective even if its final
+diagnostic sample fails, and does not end a concurrently created recording generation.
 
 Browser RTC starts attach a unique `request_id` to the local HTTP request and
 use the same ID for stop, failure cleanup, and page-exit cleanup. The Application

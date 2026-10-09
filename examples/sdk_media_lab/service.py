@@ -371,10 +371,12 @@ class MediaLabService:
         self._procedural_state = "idle"
         self._procedural_captures = 0
         self._procedural_request_id: str | None = None
+        self._procedural_device_id: object = None
         self._sd_baseline_lock = threading.RLock()
         self._sd_baseline_lease: Any = None
         self._sd_baseline_state = "idle"
         self._sd_baseline_operation_id: int | None = None
+        self._sd_baseline_device_id: object = None
         self._recording_lock = threading.RLock()
         self._recording_generation = 0
         self._diagnostic_lock = threading.Lock()
@@ -534,6 +536,7 @@ class MediaLabService:
                 "behavior_id": _SD_BASELINE_BEHAVIOR_ID,
                 "animation_id": _SD_BASELINE_ANIMATION_ID,
                 "operation_id": self._sd_baseline_operation_id,
+                **({"cleanup_device_id": self._sd_baseline_device_id} if self._sd_baseline_state == "stop_required" else {}),
             }
 
     def start_sd_baseline(self) -> dict[str, object]:
@@ -550,6 +553,7 @@ class MediaLabService:
             lease = self._operation("sd_baseline", resource="animation")
             lease.__enter__()
             self._sd_baseline_lease = lease
+            self._sd_baseline_device_id = self._robot.device_info.get("device_id")
             self._set_sd_baseline_state("starting")
             try:
                 # The firmware catalog defines a fixed standby loop with no
@@ -572,10 +576,12 @@ class MediaLabService:
                 return self.sd_baseline_status()
             self._set_sd_baseline_state("stop_required")
             self._ensure_device_online()
+            self._ensure_cleanup_device(self._sd_baseline_device_id)
             self._robot.behavior.stop()
             self._sd_baseline_lease.__exit__(None, None, None)
             self._sd_baseline_lease = None
             self._sd_baseline_operation_id = None
+            self._sd_baseline_device_id = None
             self._set_sd_baseline_state("idle")
             return self.sd_baseline_status()
 
@@ -605,6 +611,7 @@ class MediaLabService:
             "mouth_level_milli": animation.get("mouth_level_milli") if available else None,
             "pcm_frames": animation.get("pcm_frames") if available else None,
             "design_id": animation.get("design_id") if available else None,
+            **({"cleanup_device_id": self._procedural_device_id} if state == "stop_required" else {}),
         }
 
     def diagnostic_speech_path(self) -> Path:
@@ -626,6 +633,7 @@ class MediaLabService:
             lease = self._operation("procedural", resource="animation")
             lease.__enter__()
             self._procedural_lease = lease
+            self._procedural_device_id = self._robot.device_info.get("device_id")
             self._set_procedural_state("starting", request_id=request_id or uuid.uuid4().hex)
             try:
                 self._robot.expression_runtime.set_audio_follow(True)
@@ -653,9 +661,11 @@ class MediaLabService:
                 raise MediaLabBusyError("Wait for the in-flight photo before stopping procedural mode")
             self._set_procedural_state("stop_required")
             self._ensure_device_online()
+            self._ensure_cleanup_device(self._procedural_device_id)
             self._robot.expression_runtime.set_audio_follow(False)
             self._procedural_lease.__exit__(None, None, None)
             self._procedural_lease = None
+            self._procedural_device_id = None
             self._set_procedural_state("idle")
             return self.procedural_status()
 
@@ -710,11 +720,15 @@ class MediaLabService:
     def stop_scenario_recording(self) -> dict[str, object]:
         with self._recording_lock:
             generation = self._recording_generation
-        self._sample_scenario()
-        with self._recording_lock:
-            if generation == self._recording_generation and self._recording.get("active") is True:
-                self._recording["active"] = False
-                self._recording["stopped_at"] = time.time()
+        try:
+            self._sample_scenario()
+        except Exception:
+            _LOGGER.exception("Final recording sample unavailable; stopping remains effective")
+        finally:
+            with self._recording_lock:
+                if generation == self._recording_generation and self._recording.get("active") is True:
+                    self._recording["active"] = False
+                    self._recording["stopped_at"] = time.time()
         return self.scenario_recording_status()
 
     def scenario_report(self) -> dict[str, object]:
@@ -1655,6 +1669,15 @@ class MediaLabService:
     def _ensure_device_online(self) -> None:
         if self._device_status().get("online") is not True:
             raise MediaLabDeviceOfflineError("Watcher device is offline")
+
+    def _ensure_cleanup_device(self, device_id: object) -> None:
+        connection = self._device_status()
+        if connection.get("request_id") is not None:
+            self._refresh_device_snapshot(connection)
+            if self._refreshed_connection_token != str(connection["request_id"]):
+                raise MediaLabBusyError("Reconnect the original device before display cleanup")
+        if device_id is None or self._robot.device_info.get("device_id") != device_id:
+            raise MediaLabBusyError("Reconnect the original device before display cleanup")
 
     def _ensure_capability(self, capability: str) -> None:
         if capability not in self._robot.capabilities:

@@ -162,6 +162,20 @@ def test_expression_audio_follow_uses_device_playback_and_cleans_up_on_close():
     assert transport.closed
 
 
+def test_audio_follow_cleanup_retains_original_device_ownership():
+    transport = FakeTransport()
+    transport.capabilities += ("expression.audio_follow.v1",)
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.set_audio_follow(True)
+    transport.device_info = {"device_id": "another-device"}
+    with pytest.raises(WatcheRobotError, match="original device"):
+        robot.expression_runtime._close()
+    assert transport.commands == [("ctrl.expression.audio_follow", {"enabled": True})]
+    transport.device_info = {"device_id": "watcher-test"}
+    robot.expression_runtime._close()
+    assert transport.commands[-1] == ("ctrl.expression.audio_follow", {"enabled": False})
+
+
 def test_expression_audio_follow_retries_failed_disable_before_close():
     transport = FakeTransport()
     transport.capabilities += ("expression.audio_follow.v1",)

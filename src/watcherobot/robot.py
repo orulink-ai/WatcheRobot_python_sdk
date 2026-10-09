@@ -198,6 +198,7 @@ class ExpressionRuntimeDomain(_Domain):
         self._lock = threading.RLock()
         self._owns_display = False
         self._audio_follow_enabled = False
+        self._audio_follow_device_id: object = None
 
     def _close(self) -> None:
         with self._lock:
@@ -237,12 +238,18 @@ class ExpressionRuntimeDomain(_Domain):
         with self._lock:
             if enabled and (self._robot._closed or self._robot._closing):
                 raise WatcheRobotError("robot is closing or closed")
+            device_id = self._robot.device_info.get("device_id")
+            if self._audio_follow_enabled and self._audio_follow_device_id is not None and self._audio_follow_device_id != device_id:
+                raise WatcheRobotError("Reconnect the original device before audio-follow cleanup")
             # The device may apply enable even if its ACK is lost. Keep cleanup
             # ownership until disable is acknowledged, including uncertain start.
             if enabled:
                 self._audio_follow_enabled = True
+                self._audio_follow_device_id = device_id
             self._robot._command("ctrl.expression.audio_follow", {"enabled": enabled})
             self._audio_follow_enabled = enabled
+            if not enabled:
+                self._audio_follow_device_id = None
 
     def _mark_display_released(self) -> None:
         """Forget local cleanup ownership after firmware takes the display back."""
