@@ -208,6 +208,28 @@ def test_expression_audio_follow_lost_enable_ack_still_disables_on_close():
     assert transport.closed
 
 
+def test_audio_follow_cleanup_failure_does_not_skip_owned_display_cleanup():
+    transport = FakeTransport()
+    transport.capabilities += ("expression.audio_follow.v1",)
+    robot = WatcheRobot._from_transport(transport)
+    robot.expression_runtime.start("standby")
+    robot.expression_runtime.set_audio_follow(True)
+    original = transport.send_command
+    attempts = []
+
+    def fail_audio_cleanup(message_type, data, timeout=None):
+        attempts.append(message_type)
+        assert not transport.closed
+        if message_type == "ctrl.expression.audio_follow" and not data["enabled"]:
+            raise TimeoutError("audio cleanup unconfirmed")
+        return original(message_type, data, timeout)
+
+    transport.send_command = fail_audio_cleanup
+    robot.close()
+    assert attempts == ["ctrl.expression.audio_follow"] * 2 + ["ctrl.expression.runtime.stop"]
+    assert transport.closed
+
+
 def test_custom_display_failed_start_does_not_claim_cleanup_ownership():
     transport = FakeTransport()
     robot = WatcheRobot._from_transport(transport)

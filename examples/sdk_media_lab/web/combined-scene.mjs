@@ -45,6 +45,9 @@ export function createCombinedSceneLifecycle({
 
   async function releaseAnimation(owner = proceduralOwner) {
     if (owner === null || owner !== proceduralOwner) return;
+    // Ownership is provisional until the start reply distinguishes acquisition
+    // from reuse. A stale status poll must never release another tab's display.
+    if (pendingProcedural.has(owner)) return;
     if (releasePromise) return releasePromise;
     releasePromise = (async () => {
       const acknowledgement = await stopProcedural();
@@ -78,8 +81,12 @@ export function createCombinedSceneLifecycle({
           let acknowledgement;
           try { acknowledgement = await startProcedural(); }
           finally { pendingProcedural.delete(token); }
+          if (acknowledgement?.started === false && proceduralOwner === token) {
+            proceduralOwner = null;
+            attemptedProcedural = false;
+          }
           if (acknowledgement?.state !== "running") throw new Error("Procedural animation did not start");
-          if (proceduralOwner === null && token !== generation) proceduralOwner = token;
+          if (acknowledgement?.started !== false && proceduralOwner === null && token !== generation) proceduralOwner = token;
         }
         if (token !== generation) { await releaseAnimation(token); return false; }
         attemptedAudio = true;

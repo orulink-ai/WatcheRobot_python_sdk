@@ -2847,7 +2847,17 @@ window.addEventListener("pagehide", () => {
   navigator.sendBeacon(rtcEndpoint("stop", mode), new Blob([JSON.stringify({ request_id: requestId })], { type: "application/json" }));
   cleanupRtcSession();
 });
-window.addEventListener("pageshow", (event) => { if (event.persisted) scenePageLifecycle.reopen(); });
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) restoreRtcPageSession().catch(error => notify(error.message, "error"));
+});
+
+async function restoreRtcPageSession() {
+  scenePageLifecycle.reopen();
+  // A beacon is best effort. Retry with its original identity; the backend's
+  // identity guard preserves a newer session and clears ours only on an ACK.
+  if (state.rtc.requestId) await stopRtcSession(state.rtc.requestId);
+  else await refreshStatus();
+}
 setInterval(refreshStatus, 1000);
 refreshStatus({ quiet: false });
 drawEmptyWaveform();

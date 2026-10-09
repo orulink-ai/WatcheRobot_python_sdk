@@ -364,6 +364,7 @@ class MediaLabService:
         self._procedural_lock = threading.RLock()
         self._procedural_lease: Any = None
         self._procedural_state = "idle"
+        self._procedural_captures = 0
         self._sd_baseline_lock = threading.RLock()
         self._sd_baseline_lease: Any = None
         self._sd_baseline_state = "idle"
@@ -421,7 +422,7 @@ class MediaLabService:
                 "telemetry": self.resource_telemetry_status(connection=connection),
             },
             "rtc": rtc,
-            "procedural": self.procedural_status(),
+            "procedural": self.procedural_status(connection=connection),
             "sd_baseline": self.sd_baseline_status(),
             "scenario_recording": self.scenario_recording_status(),
             "inference": {"state": self._inference_state,
@@ -548,7 +549,7 @@ class MediaLabService:
             self._sd_baseline_state = "idle"
             return self.sd_baseline_status()
 
-    def procedural_status(self) -> dict[str, object]:
+    def procedural_status(self, *, connection: Mapping[str, object] | None = None) -> dict[str, object]:
         """Expose device mouth evidence without substituting browser activity."""
         animation = self._robot.resource_snapshot.get("animation", {})
         if not isinstance(animation, Mapping):
@@ -560,7 +561,7 @@ class MediaLabService:
             and isinstance(animation.get("mouth_level_milli"), int)
             and isinstance(animation.get("pcm_frames"), int)
             and animation.get("source") == "rtc_playback"
-            and self.resource_telemetry_status()["status"] == "available"
+            and self.resource_telemetry_status(connection=connection)["status"] == "available"
         )
         return {
             "supported": _PROCEDURAL_CAPABILITY in self._robot.capabilities,
@@ -586,7 +587,7 @@ class MediaLabService:
             self._ensure_capability(_PROCEDURAL_CAPABILITY)
             if self._procedural_lease is not None:
                 if self._procedural_state == "running":
-                    return self.procedural_status()
+                    return {**self.procedural_status(), "started": False}
                 raise MediaLabBusyError("Confirm procedural stop before starting again")
             lease = self._operation("procedural", resource="animation")
             lease.__enter__()
@@ -602,12 +603,14 @@ class MediaLabService:
                     _LOGGER.exception("Procedural startup cleanup remains unconfirmed")
                 raise
             self._procedural_state = "running"
-            return self.procedural_status()
+            return {**self.procedural_status(), "started": True}
 
     def stop_procedural(self) -> dict[str, object]:
         with self._procedural_lock:
             if self._procedural_lease is None:
                 return self.procedural_status()
+            if self._procedural_captures:
+                raise MediaLabBusyError("Wait for the in-flight photo before stopping procedural mode")
             self._procedural_state = "stop_required"
             self._ensure_device_online()
             self._robot.expression_runtime.set_audio_follow(False)
@@ -692,10 +695,16 @@ class MediaLabService:
             return {"status": state, "age_seconds": age}
 
     def _sample_scenario(self, *, connection: Mapping[str, object] | None = None) -> None:
+        with self._recording_lock:
+            if self._recording.get("active") is not True:
+                return
+            now = time.monotonic()
+            if self._recording_last_sample_at is not None and now - self._recording_last_sample_at < _SCENARIO_SAMPLE_INTERVAL_SECONDS:
+                return
         connection = self._device_status() if connection is None else connection
         snapshot = deepcopy(self._robot.resource_snapshot)
         rtc = deepcopy(self._rtc.snapshot())
-        procedural = self.procedural_status()
+        procedural = self.procedural_status(connection=connection)
         sd_baseline = self.sd_baseline_status()
         telemetry = self.resource_telemetry_status(connection=connection)
         with self._state_lock:
@@ -1277,13 +1286,21 @@ class MediaLabService:
             # lock during camera IO: status and resource recording must continue.
             lease = self._operation("capture_photo", resources=resources)
             lease.__enter__()
+            preserves_procedural = self._procedural_state == "running"
+            if preserves_procedural:
+                self._procedural_captures += 1
         try:
             result = self._capture_photo()
         except Exception as error:
             lease.__exit__(type(error), error, error.__traceback__)
             raise
-        lease.__exit__(None, None, None)
-        return result
+        else:
+            lease.__exit__(None, None, None)
+            return result
+        finally:
+            if preserves_procedural:
+                with self._procedural_lock:
+                    self._procedural_captures -= 1
 
     def capture_photo_with_feedback(self) -> dict[str, object]:
         self._ensure_capability("camera.capture.feedback.v1")

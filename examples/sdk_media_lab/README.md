@@ -43,6 +43,9 @@ acoustic loop.
 **End Scene** cancels a pending start or stops the call and the procedural
 expression newly started by that scene. An expression enabled independently
 before the scene remains running after End Scene or a failed call startup.
+The start response includes `started`: `false` means that a concurrent client
+already owns the running expression. The scene waits for this acknowledgement
+before releasing a cancelled start, and preserves reused expressions.
 Unconfirmed releases remain available for retry. Closing the page retains the
 existing cleanup policy and stops its procedural expression and RTC session,
 including independently enabled expressions. Opening the page does not start
@@ -57,7 +60,9 @@ Video or combined AV RTC still owns the camera and rejects a simultaneous still.
 The plain SDK camera capture is used; capture feedback that takes over the display
 is excluded. Ordinary SD animation switching is blocked while procedural mode owns
 the display. Stop failures keep that lease reserved for retry, and disconnects
-require cleanup on reconnection rather than automatic restart. Application shutdown
+require cleanup on reconnection rather than automatic restart. An in-flight plain
+photo pins the display lease. A stop during capture returns busy; retry after
+capture finishes. Status and recording stay responsive. Application shutdown
 stops owned procedural mode; the page also sends a cleanup request on exit.
 
 Start a recording before changing the load. The backend records at most one
@@ -95,8 +100,10 @@ use the same ID for stop, failure cleanup, and page-exit cleanup. The Applicatio
 matches it under the RTC lifecycle lock before stopping anything. A stale ID
 returns `{ "stopped": false, "matched": false }` without affecting a later
 session, including one started by an external diagnostic client. An unconfirmed
-stop retains ownership for retry. This ID stays in the Application; it does not
-change the Device wire protocol. Diagnostic clients may continue to omit the
+stop retains ownership for retry. On a back-forward cache restore, the page retries
+the scoped stop and clears its retained ID only after acknowledgement, preserving
+a newer client's call. This ID stays in the Application and does not change the
+Device wire protocol. Diagnostic clients may continue to omit the
 ID and use the existing unscoped start/stop controls.
 
 ### Fixed SD loop for resource comparisons

@@ -46,6 +46,29 @@ test("an independently enabled animation is reused and preserved on combined end
   assert.equal(failed.calls.includes("animation:stop"), false);
 });
 
+test("a concurrent expression acquisition is borrowed even with a stale page snapshot", async () => {
+  for (const audioSucceeds of [true, false]) {
+    const { calls, lifecycle } = fixture({
+      startProcedural: async () => ({ state: "running", started: false }),
+      startAudio: async () => audioSucceeds,
+    });
+    if (audioSucceeds) { await lifecycle.start(); await lifecycle.end(); }
+    else await assert.rejects(lifecycle.start(), /call did not start/);
+    assert.equal(lifecycle.snapshot().ownsProcedural, false);
+    assert.equal(calls.includes("animation:stop"), false);
+  }
+});
+
+test("cancellation before a borrowed expression acknowledgement never releases its owner", async () => {
+  const animation = deferred();
+  const { calls, lifecycle } = fixture({ startProcedural: () => animation.promise });
+  const started = lifecycle.start();
+  await lifecycle.end();
+  animation.resolve({ state: "running", started: false });
+  assert.equal(await started, false);
+  assert.equal(calls.includes("animation:stop"), false);
+});
+
 test("a missing animation acknowledgement prevents audio startup", async () => {
   for (const reply of [null, { state: "idle" }]) {
     const { calls, lifecycle } = fixture({ startProcedural: async () => reply });
@@ -69,8 +92,8 @@ test("cancellation during a pending animation acknowledgement releases its late 
   await lifecycle.end();
   animation.resolve({ state: "running" });
   assert.equal(await started, false);
-  // A late successful start may follow the first stop on the server; confirm stop again.
-  assert.deepEqual(calls, ["audio:stop", "animation:stop", "animation:stop"]);
+  // Wait for acquisition evidence before releasing a pending display.
+  assert.deepEqual(calls, ["audio:stop", "animation:stop"]);
 });
 
 test("late audio startup after cancellation cannot leave audio or animation running", async () => {

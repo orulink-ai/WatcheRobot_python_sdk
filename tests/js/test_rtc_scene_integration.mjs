@@ -53,6 +53,25 @@ function fixture() {
   return { state, elements, context };
 }
 
+test("BFCache restore retries the retained RTC release identity before allowing a new call", async () => {
+  for (const confirmed of [true, false]) {
+    const { state, context } = fixture();
+    state.rtc.requestId = "browser-request-0001";
+    const requests = [];
+    context.api = async (_path, options) => {
+      requests.push(JSON.parse(options.body).request_id);
+      if (!confirmed) throw new Error("release timeout");
+      return {};
+    };
+    context.scenePageLifecycle = { reopen() {} };
+    context.stopRtcSession = productionFunction("stopRtcSession", "async function failRtcSession", context);
+    const restore = productionFunction("restoreRtcPageSession", "setInterval(refreshStatus", context);
+    await restore();
+    assert.deepEqual(requests, ["browser-request-0001"]);
+    assert.equal(state.rtc.requestId, confirmed ? null : "browser-request-0001");
+  }
+});
+
 for (const [reported, label] of [[true, "active"], [false, "inactive"], [undefined, "unreported"]]) {
   test(`capture status uses actual browser gain settings: ${label}`, async () => {
     const { state, elements, context } = fixture();

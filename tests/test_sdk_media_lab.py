@@ -804,6 +804,81 @@ def test_procedural_camera_io_does_not_block_status_and_recording(tmp_path):
     assert not photo_thread.is_alive()
 
 
+def test_inflight_procedural_photo_prevents_display_replacement_until_completion(tmp_path):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    service.start_procedural()
+    entered, release = threading.Event(), threading.Event()
+    original = robot.camera.capture
+    errors = []
+
+    def blocked_capture(**kwargs):
+        entered.set()
+        assert release.wait(timeout=3.0)
+        return original(**kwargs)
+
+    def capture():
+        try:
+            service.capture_photo()
+        except Exception as error:
+            errors.append(error)
+
+    robot.camera.capture = blocked_capture
+    thread = threading.Thread(target=capture)
+    thread.start()
+    assert entered.wait(timeout=1.0)
+    try:
+        with pytest.raises(module.MediaLabBusyError, match="photo"):
+            service.stop_procedural()
+        assert service.status()["procedural"]["state"] == "running"
+        assert robot.expression_runtime.calls == [True]
+    finally:
+        release.set()
+        thread.join(timeout=3.0)
+    assert not thread.is_alive() and not errors
+    assert service.stop_procedural()["state"] == "idle"
+
+
+def test_procedural_start_reports_whether_it_acquired_the_display(tmp_path):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    service = _service(module, tmp_path, robot)
+    assert service.start_procedural()["started"] is True
+    assert service.start_procedural()["started"] is False
+    assert robot.expression_runtime.calls == [True]
+
+
+def test_inactive_scenario_sampler_does_not_collect_or_poll(tmp_path):
+    module = _load_service_module()
+    service = _service(module, tmp_path, _procedural_robot())
+
+    def unexpected_poll():
+        pytest.fail("inactive recording must not poll the daemon")
+
+    service._device_status_provider = unexpected_poll
+    service._sample_scenario()
+
+
+def test_scenario_sampler_reuses_supplied_connection(tmp_path):
+    module = _load_service_module()
+    robot = _procedural_robot()
+    robot.resource_snapshot["animation"] = {
+        "audio_follow": True, "mouth_level_milli": 123, "pcm_frames": 1,
+        "source": "rtc_playback",
+    }
+    service = _service(module, tmp_path, robot)
+    service.start_scenario_recording()
+    service._recording_last_sample_at = None
+
+    def unexpected_poll():
+        pytest.fail("sampler already has a connection snapshot")
+
+    service._device_status_provider = unexpected_poll
+    service._sample_scenario(connection={"online": True})
+    assert service.scenario_recording_status()["sample_count"] == 2
+
+
 def test_procedural_status_uses_only_device_mouth_telemetry(tmp_path):
     module = _load_service_module()
     robot = _procedural_robot()

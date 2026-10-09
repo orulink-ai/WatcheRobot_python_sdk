@@ -201,18 +201,27 @@ class ExpressionRuntimeDomain(_Domain):
 
     def _close(self) -> None:
         with self._lock:
+            cleanup_error: Exception | None = None
             if self._audio_follow_enabled:
                 try:
                     self.set_audio_follow(False)
                 except Exception:
-                    self.set_audio_follow(False)
+                    try:
+                        self.set_audio_follow(False)
+                    except Exception as error:
+                        cleanup_error = error
             if self._owns_display:
                 try:
                     self.stop()
                 except Exception:
                     # A transient command failure should not make the only
                     # cleanup attempt impossible before the transport closes.
-                    self.stop()
+                    try:
+                        self.stop()
+                    except Exception as error:
+                        cleanup_error = cleanup_error or error
+            if cleanup_error is not None:
+                raise cleanup_error
 
     def set_audio_follow(self, enabled: bool) -> None:
         """Draw the device's procedural mouth from successfully played RTC PCM.
