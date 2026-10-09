@@ -3,6 +3,8 @@ import { useVoiceSession } from "./useVoiceSession"
 import type { Permissions, RobotTask } from "./session"
 import { isUnsafeStop, canRunDeviceDiagnostic, endedSessionNotice, sessionStatus, isListening, evidenceTitle, motionRangeSummary, taskKind, taskSummary, isRealtimeVoice, canSendText, voiceModeLabel, voiceModeNotice, voiceInputStatus, duplexSummary, bodyFeedbackSummary } from "./session"
 import { useState } from "react"
+import { SpeakerTestPanel } from "./SpeakerTestPanel"
+import { isSpeakerTestActive } from "./session"
 
 const stages: Record<string, string> = { authorizing: "检查权限", moving: "正在转头", capturing: "正在拍照", attaching: "等待发送照片", analyzing: "正在看图", answering: "正在回答", completed: "已完成", failed: "未完成", cancelled: "已取消" }
 const permissionCopy: [keyof Permissions, string, string][] = [
@@ -55,7 +57,7 @@ export default function App() {
       <header className="topbar">
         <div className="identity"><span className="wordmark">WATCHE</span><span className="divider">/</span><h1>Codex，来到桌边。</h1></div>
         <div className="controls">
-          <button className="primary" disabled={!backendConnected || unsafeStop || (!session.connected && (!session.deviceOnline || session.busy))} onClick={() => command({ type: session.connected ? "stop" : "start" })}>{session.connected ? "结束对话" : session.busy ? "正在连接…" : "开始对话"}</button>
+          <button className="primary" disabled={!backendConnected || unsafeStop || (!session.connected && (!session.deviceOnline || session.busy))} onClick={() => command({ type: session.connected ? "stop" : "start" })}>{session.connected ? "结束对话" : isSpeakerTestActive(session) ? "设备测试中…" : session.busy ? "正在连接…" : "开始对话"}</button>
           <button disabled={!backendConnected || !session.connected || unsafeStop} title={realtime ? "逻辑静音仅使上行零输入，不停止RTC媒体或下行播报" : undefined} onClick={() => command({ type: "mute", muted: !session.muted })}>{realtime ? session.muted ? "恢复上行" : "静音上行" : session.muted ? "恢复聆听" : "静音"}</button>
           <button className="danger" disabled={!backendConnected} onClick={() => command({ type: "cancel" })}>{session.stopStatus === "unconfirmed" ? "重试停止" : "停止动作与播放"}</button>
         </div>
@@ -67,6 +69,7 @@ export default function App() {
       {session.error && <div className="error" role="alert">{session.error}</div>}
       {session.notice && <p className="hint" role="status">{session.notice}</p>}
       {endedSessionNotice(session) && <p className="hint" role="status">{endedSessionNotice(session)}</p>}
+      {realtime && <SpeakerTestPanel session={session} backendConnected={backendConnected} command={command} />}
       <div className="content-layout">
         <main>
           <ThreadPrimitive.Root className="thread"><ThreadPrimitive.Viewport className="viewport">
@@ -82,7 +85,14 @@ export default function App() {
           <p className="safety-note">{realtime ? "语音打断与喊停可靠性仍待实测，请用顶部停止按钮；停止后重新开始对话。静音上行是逻辑静音，不关闭RTC媒体或下行播报。" : "播放时听不到喊停，请用顶部停止按钮；停止后重新开始对话。长回答节选播报，对话最多显示16000字，超出会提示截断。"}暂不支持唤醒词与底盘行走。</p>
           </ThreadPrimitive.Root>
           {permissionHint && <p className="permission-hint" role="status">{permissionHint}</p>}
-          <details className="settings" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}><summary>权限与设备设置 <span>仅本次会话有效</span></summary><div className="permissions">{permissionCopy.map(([key, label, description]) => <label key={key}><input type="checkbox" checked={session.permissions[key]} disabled={!backendConnected || unsafeStop} onChange={(event) => command({ type: "permissions", permissions: { [key]: event.target.checked } })} /><span>{label}<small>{description}</small></span></label>)}</div><details><summary>辅助说明：RTC链路、静音与显示</summary><p className="hint">{duplexSummary(session)}</p><p className="hint">{bodyFeedbackSummary(session)}</p>{realtime && <p className="hint">静音上行仅发送零输入，不关闭RTC媒体与硬件麦克风，也不静音下行播报。需要结束媒体和设备动作时，请使用停止按钮。</p>}</details><details><summary>高级：转头配置与限制</summary><p className="hint">{motionRangeSummary(session.motionRange)}</p></details><p className="hint">应用侧原图保存在本地内存，最多6张、15分钟自动过期；结束会话会撤销权限。已发送给 Codex 的内容不能通过清除本地照片撤回。</p><button disabled={!canRunDeviceDiagnostic(session, backendConnected)} onClick={() => command({ type: "deviceTest" })}>设备诊断：录音并回放 3 秒</button>{session.deviceTest?.playbackCompleted && <p className="hint">设备录音回放已完成，收到 {session.deviceTest.frames} 帧。</p>}</details>
+          <details className="settings" open={settingsOpen} onToggle={(event) => setSettingsOpen(event.currentTarget.open)}>
+            <summary>权限与设备设置 <span>仅本次会话有效</span></summary>
+            <div className="permissions">{permissionCopy.map(([key, label, description]) => <label key={key}><input type="checkbox" checked={session.permissions[key]} disabled={!backendConnected || unsafeStop} onChange={(event) => command({ type: "permissions", permissions: { [key]: event.target.checked } })} /><span>{label}<small>{description}</small></span></label>)}</div>
+            <details><summary>辅助说明：RTC链路、静音与显示</summary><p className="hint">{duplexSummary(session)}</p><p className="hint">{bodyFeedbackSummary(session)}</p>{realtime && <p className="hint">静音上行仅发送零输入，不关闭RTC媒体与硬件麦克风，也不静音下行播报。需要结束媒体和设备动作时，请使用停止按钮。</p>}</details>
+            <details><summary>高级：转头配置与限制</summary><p className="hint">{motionRangeSummary(session.motionRange)}</p></details>
+            <p className="hint">应用侧原图保存在本地内存，最多6张、15分钟自动过期；结束会话会撤销权限。已发送给 Codex 的内容不能通过清除本地照片撤回。</p>
+            {!realtime && <><button disabled={!canRunDeviceDiagnostic(session, backendConnected)} onClick={() => command({ type: "deviceTest" })}>设备诊断：录音并回放 3 秒</button>{session.deviceTest?.playbackCompleted && <p className="hint">设备录音回放已完成，收到 {session.deviceTest.frames} 帧。</p>}</>}
+          </details>
         </main>
         <aside className="evidence-panel">
           <div className="panel-heading"><h2>动作与视觉证据</h2><span className="eyebrow">任务回执与真实照片</span></div>

@@ -20,7 +20,7 @@ def values(data):
 def test_quiet_speech_is_boosted_with_bounded_smooth_gain():
     gain = PlaybackGain()
     first = gain.process(pcm(1000))
-    assert 1000 < max(values(first)) < 4000
+    assert 4000 < max(values(first)) < 7000  # 25ms rise helps brief replies.
     for _ in range(100):
         output = gain.process(pcm(1000))
     assert 11500 <= max(values(output)) <= 12500
@@ -73,7 +73,7 @@ def test_maximum_speech_profile_reaches_useful_loudness_not_old_fourfold_cap():
     for _ in range(100):
         output = values(gain.process(pcm(1000)))
     assert 11500 <= max(output) <= 12500
-    assert gain.diagnostics()['profile'] == 'clear-speech-v3'
+    assert gain.diagnostics()['profile'] == 'clear-speech-v4'
     assert gain.diagnostics()['maxGainDb'] >= 24
 
 

@@ -1,5 +1,6 @@
 export type Message = { id: string; role: "user" | "assistant"; content: string }
 export type DeviceTest = { frames: number; inputBytes: number; rms: number; playbackCompleted: boolean }
+export type SpeakerTest = { status: string; sentMs: number; totalMs: number }
 export type Duplex = {
   transport: string; deviceTransport: string; microphoneConcurrent: boolean
   echoCancellation: string; expressionsEnabled: boolean
@@ -35,6 +36,8 @@ export type Session = {
   connected: boolean; microphone: boolean; speaking: boolean; busy: boolean; deviceOnline: boolean
   error: string; notice: string; messages: Message[]; micFrames: number; outputBytes: number
   deviceTest?: DeviceTest | null; permissions: Permissions; tasks: RobotTask[]; evidence: Evidence[]
+  speakerTest: SpeakerTest | null
+  playbackVolume: number | null
   muted: boolean; agentWorking: boolean; stopStatus: string; stopReason: string; cameraStatus: string; speechStatus: string
   motionRange: MotionRange | null; interactionPhase: InteractionPhase | ""; interactionDetail: string
   voiceMode: "realtime" | "task" | ""; duplex: Duplex | null; bodyFeedback: "suppressed" | ""
@@ -46,6 +49,8 @@ export const initialSession: Session = {
   muted: false, agentWorking: false, stopStatus: "idle", stopReason: "", cameraStatus: "unknown", speechStatus: "idle",
   motionRange: null, interactionPhase: "", interactionDetail: "",
   voiceMode: "", duplex: null, bodyFeedback: "",
+  speakerTest: null,
+  playbackVolume: null,
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -53,6 +58,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 function isFiniteNumber(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value) }
 function isPace(value: unknown): value is Pace { return value === "gentle" || value === "natural" }
+function parseSpeakerTest(value: unknown): SpeakerTest | null {
+  if (!isRecord(value) || typeof value.status !== "string"
+    || !["idle", "connecting", "playing", "draining", "sent", "finished", "cancelled", "failed", "unconfirmed"].includes(value.status)
+    || !isFiniteNumber(value.sentMs) || !isFiniteNumber(value.totalMs)
+    || value.sentMs < 0 || value.sentMs > value.totalMs || value.totalMs > 15000) return null
+  return { status: value.status, sentMs: value.sentMs, totalMs: value.totalMs }
+}
+export function speakerTestSummary(session: Session, backendConnected: boolean) {
+  if (!backendConnected) return "页面连接已断开，测试与设备停止状态未知。"
+  if (session.stopStatus === "unconfirmed") return "设备停止未确认，请重试停止并检查设备。"
+  if (session.stopStatus === "stopping") return "正在停止测试，等待设备释放确认。"
+  const test = session.speakerTest
+  const labels: Record<string, string> = {
+    connecting: "正在连接机器人测试通道…",
+    playing: `正在发送固定语音：${((test?.sentMs ?? 0) / 1000).toFixed(1)} / ${((test?.totalMs ?? 0) / 1000).toFixed(1)} 秒（发送进度，非实测播出）`,
+    draining: "发送结束，等待媒体尾段与设备释放…",
+    sent: "发送结束，正在释放设备…",
+    finished: "测试发送结束，RTC释放已确认。是否清晰、连续，请以实际听感为准。",
+    cancelled: "测试已取消；RTC释放已确认。",
+    failed: "测试未完成；设备释放已确认后，可重新测试。",
+    unconfirmed: session.stopStatus === "confirmed"
+      ? "上次测试未完成；本次设备释放已确认，可重新测试。"
+      : "设备停止未确认，请重试停止并检查设备。",
+  }
+  if (test && test.status !== "idle") return labels[test.status] ?? "测试状态未确认。"
+  return session.connected ? "先结束对话，再播放固定语音；不会混入当前通话。" : "约10秒，声音从机器人喇叭播放。"
+}
+export function isSpeakerTestActive(session: Session) {
+  return session.busy && !!session.speakerTest && ["connecting", "playing", "draining", "sent"].includes(session.speakerTest.status)
+}
 function isInteractionPhase(value: unknown): value is InteractionPhase {
   return typeof value === "string" && Object.hasOwn(interactionLabels, value)
 }
@@ -175,6 +210,7 @@ export function sessionStatus(session: Session, backendConnected: boolean) {
   if (!backendConnected) return "连接 Application 中…"
   if (session.stopStatus === "stopping") return "正在停止动作与播放"
   if (session.stopStatus === "unconfirmed") return "停止未确认，请重试停止并检查设备"
+  if (isSpeakerTestActive(session)) return speakerTestSummary(session, backendConnected)
   const phase = session.interactionPhase
   if (isInteractionPhase(phase) && (session.connected || session.busy || phase === "connecting" || phase === "error")
     && (phase !== "listening" || isListening(session, backendConnected))) {
@@ -215,6 +251,8 @@ export function reduceEvent(state: Session, event: Record<string, unknown>): Ses
       micFrames: typeof event.micFrames === "number" ? event.micFrames : 0,
       outputBytes: typeof event.outputBytes === "number" ? event.outputBytes : 0,
       deviceTest: event.deviceTest as DeviceTest | null | undefined,
+      speakerTest: parseSpeakerTest(event.speakerTest),
+      playbackVolume: isFiniteNumber(event.playbackVolume) && event.playbackVolume >= 0 && event.playbackVolume <= 1 ? event.playbackVolume : null,
       permissions: Object.fromEntries(Object.keys(initialSession.permissions).map((key) => [key, (event.permissions as Record<string, unknown> | undefined)?.[key] === true])) as Permissions,
       tasks: Array.isArray(event.tasks) ? event.tasks.map(parseTask).filter((task): task is RobotTask => task !== null).slice(-20) : [],
       evidence: Array.isArray(event.evidence) ? event.evidence.map(parseEvidence).filter((photo): photo is Evidence => photo !== null).slice(-6) : [],

@@ -28,7 +28,7 @@ def test_gain_reduction_is_continuous_not_a_packet_boundary_jump():
     second = unpack(gain.process(pack([1000] * 480 + [2000] * 480)))
     delay = gain.diagnostics()['lookaheadSamples']
     assert abs(second[delay] - first[-1]) < 100
-    assert gain.diagnostics()['profile'] == 'clear-speech-v3'
+    assert gain.diagnostics()['profile'] == 'clear-speech-v4'
 
 
 def test_lookahead_peak_control_preserves_wave_shape_at_constant_gain():
@@ -126,7 +126,7 @@ def test_flush_is_terminal_idempotent_and_preserves_short_tail():
     beginning = gain.process(source)
     tail = gain.flush()
     assert len(beginning + tail) == len(source) + gain.lookahead * 2
-    assert unpack(beginning + tail)[gain.lookahead:] == [1003, -1006]
+    assert unpack(beginning + tail)[gain.lookahead:] == [1009, -1018]
     before = gain.diagnostics()
     assert gain.flush() == b''
     assert gain.diagnostics() == before

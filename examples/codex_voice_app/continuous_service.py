@@ -9,6 +9,7 @@ import asyncio
 import base64
 import math
 import struct
+import time
 from contextlib import asynccontextmanager
 import uuid
 
@@ -17,6 +18,9 @@ from audio_bridge import OutputBuffer
 from body_feedback import SuppressedBodyFeedback
 from codex_agent import CodexAgent
 from playback_gain import PlaybackGain
+from playback_volume import PlaybackVolume
+from speaker_test import load_test_audio, send_test_audio
+from errors import BusyRequest
 from service import VoiceService
 from turn_deadline import TurnDeadline
 
@@ -34,11 +38,13 @@ class ContinuousVoiceService(VoiceService):
         self.handoffs = set()
         self.last_progress_detail = None
         self.playback_gain = PlaybackGain(sample_rate=48000)
+        self.playback_volume = PlaybackVolume()
         self.result_handoff_task = self.progress_task = None
         self.result_handoff_turn = None
         self.maintenance_at = 0.0
         self.media_forwarding = dict(eventResidenceMs=0.0, eventResidenceMaxMs=0.0)
         self.state.update(voiceMode='realtime', speechStatus='idle')
+        self.state['speakerTest'] = dict(status='idle', sentMs=0, totalMs=0)
 
     def snapshot(self):
         snapshot = super().snapshot()
@@ -46,8 +52,15 @@ class ContinuousVoiceService(VoiceService):
             microphoneConcurrent=True, echoCancellation='unverified', expressionsEnabled=False)
         snapshot['deviceRtc'] = self.device_peer.diagnostics() if self.device_peer else self.state.get('deviceRtc', {})
         snapshot['playbackGain'] = self.playback_gain.diagnostics()
+        snapshot['playbackVolume'] = self.playback_volume.level
         snapshot['mediaForwarding'] = dict(self.media_forwarding)
         return snapshot
+
+    async def set_playback_volume(self, level):
+        # Shared by fixed and live tracks. Only this Application lifetime;
+        # never write hardware/NVS or the computer's default output volume.
+        self.playback_volume.set_level(level)
+        self.publish()
 
     async def _open_microphone(self):
         if not self.robot.supports('rtc.audio.full_duplex.v1'):
@@ -67,6 +80,10 @@ class ContinuousVoiceService(VoiceService):
         else:
             factory = self.device_peer_factory
         peer = self.device_peer = factory(self.rtc, self.agent.events)
+        peer.track.playback_volume = self.playback_volume
+        # A small live reservoir masks ordinary arrival jitter without waiting
+        # for an entire answer. Gross overload is explicit, never an old FIFO.
+        peer.track.configure_playout(prefill_ms=80, max_buffer_ms=600)
         task = asyncio.create_task(peer.start())
         try:
             await asyncio.shield(task)
@@ -80,6 +97,79 @@ class ContinuousVoiceService(VoiceService):
         except BaseException:
             await peer.close()
             raise
+
+    async def test_speaker(self):
+        """Exclusive local-source test on the normal, managed native RTC peer."""
+        epoch = self.lifecycle_epoch
+        if self.state['connected'] or self.state['busy']:
+            raise BusyRequest('请先结束当前对话，再播放固定测试语音')
+        async with self.lock:
+            if epoch != self.lifecycle_epoch or self.stopping and self.state['stopStatus'] == 'stopping':
+                raise asyncio.CancelledError()
+            if self.state['connected'] or self.state['busy']:
+                raise BusyRequest('请先结束当前对话，再播放固定测试语音')
+            if self.state['stopStatus'] == 'unconfirmed' or self.robot_tools.faulted:
+                raise RuntimeError('上次停止未确认，请先重试停止并检查设备')
+            owner = self.lifecycle_task = asyncio.current_task()
+            self.stopping = self.cancel_latched = False
+            self.cleanup_task = self.physical_stop_task = None
+            self.shutdown_failures.clear()
+            self.state.update(busy=True, error='', notice='', stopStatus='idle', stopReason='')
+            test = self.state['speakerTest'] = dict(status='connecting', sentMs=0, totalMs=0)
+            self.publish()
+            try:
+                await self.refresh_device()
+                if not self.state['deviceOnline']:
+                    raise RuntimeError('机器人未连接')
+                if not self.robot.supports('rtc.audio.full_duplex.v1'):
+                    raise RuntimeError('设备不支持原生 RTC 音频测试')
+                pcm = await asyncio.to_thread(load_test_audio)
+                from device_rtc_peer import DeviceRtcPeer
+                events = asyncio.Queue(maxsize=256)
+                peer = self.device_peer = (self.device_peer_factory or DeviceRtcPeer)(self.rtc, events)
+                peer.track.playback_volume = self.playback_volume
+                async def discard_capture():
+                    while True:
+                        event = await events.get()
+                        if event.get('method') == 'local/error':
+                            raise RuntimeError(event['params']['message'])
+                self._spawn(discard_capture)  # Drain only; never record/forward mic.
+                await peer.start()
+                gain = self.playback_gain = PlaybackGain(sample_rate=48000)
+                test.update(status='playing', totalMs=round(len(pcm) / 96))
+                self.publish()
+                def progress(status, sent_ms):
+                    if self.stopping or epoch != self.lifecycle_epoch:
+                        raise asyncio.CancelledError()
+                    test.update(status=status, sentMs=sent_ms)
+                    self.publish()
+                # A dead sender must not leave a diagnostic busy indefinitely.
+                await asyncio.wait_for(send_test_audio(peer, gain, pcm, progress), len(pcm) / 96000 + 10)
+                test['status'] = 'sent'
+            except asyncio.CancelledError:
+                test['status'] = 'cancelled'
+                raise
+            except Exception as error:
+                test['status'] = 'failed'
+                self.record_failure(error)
+                raise
+            finally:
+                try:
+                    await self._cleanup()
+                finally:
+                    # A second cancel can make _cleanup rethrow after draining.
+                    # Never leave a dead owner blocking a fresh physical retry.
+                    if self.lifecycle_task is owner:
+                        self.lifecycle_task = None
+                    # Keep test outcome separate from release confirmation.
+                    # A failed release must not erase cancelled/failed, or a
+                    # successful retry would leave a stale unsafe test badge.
+                    if test['status'] == 'sent':
+                        test['status'] = 'finished' if self.state['stopStatus'] == 'confirmed' else 'failed'
+                    self.publish()
+
+    async def test_device(self, duration=3):
+        raise ValueError('实时RTC应用不使用legacy录音回放，请使用固定语音测试')
 
     async def _microphone(self):
         # DeviceRtcPeer receives/paces native media. Do not open a second lease.
@@ -101,6 +191,13 @@ class ContinuousVoiceService(VoiceService):
         if not failures:
             self.mic = None
         return failures
+
+    async def stop(self, *, reason='user-stop'):
+        # No await before the local fence. The SDK release receipt still comes
+        # through the original physical lifecycle; this is not acoustic proof.
+        if self.device_peer:
+            self.device_peer.track.stop()
+        await super().stop(reason=reason)
 
     async def _cleanup_impl(self, owner):
         # Base cleanup drains every owner before the late-start compensation.
@@ -259,6 +356,11 @@ class ContinuousVoiceService(VoiceService):
                     if self.state['micFrames'] % 25 == 0:
                         self.publish()
             elif method == 'thread/realtime/outputAudio/delta':
+                received_at = params.get('receivedAtPerf')
+                if type(received_at) in (int, float) and math.isfinite(received_at):
+                    residence = max(0, (time.perf_counter() - received_at) * 1000)
+                    self.media_forwarding.update(outputEventResidenceMs=round(residence, 2),
+                        outputEventResidenceMaxMs=round(max(self.media_forwarding.get('outputEventResidenceMaxMs', 0), residence), 2))
                 if type(params.get('voiceEpoch')) is not int:
                     raise ValueError('Native RTC output requires a voice epoch')
                 if type(params['audio'].get('samplesPerChannel')) is not int:
@@ -269,12 +371,35 @@ class ContinuousVoiceService(VoiceService):
                     raise ValueError('Native RTC requires 48 kHz mono output PCM')
                 pcm = audio.take(sample_rate=48000)
                 peer, gain, epoch = self.device_peer, self.playback_gain, self.lifecycle_epoch
+                # Exact idle has no program media age: recv supplies paced zeros
+                # already. Do not check its age twice near the 600ms boundary.
+                # Real speech, queued pauses, DSP tails and failure still use
+                # the original age budget with no re-timestamp or trimming.
+                idle_output = (not any(pcm) and not peer.track.buffer and not peer.track.playout.failed
+                    and not gain.has_pending_audio())
+                stale_idle = (idle_output and type(received_at) in (int, float)
+                    and math.isfinite(received_at)
+                    and (time.perf_counter() - received_at) * 1000 > peer.track.playout.max_buffer_ms)
+                if not idle_output:
+                    peer.track.playout.validate_age(received_at)
                 # A bounded large event must not monopolize the audio/control
                 # loop. Stop can intervene between 20 ms processing slices.
                 for offset in range(0, len(pcm), 1920):
                     if self.stopping or self.lifecycle_epoch != epoch or self.device_peer is not peer:
                         break
-                    await peer.append_audio(gain.process(pcm[offset:offset + 1920]), sample_rate=48000)
+                    if idle_output:
+                        chunk = pcm[offset:offset + 1920]
+                        gain.process(chunk)
+                        if stale_idle:
+                            self.media_forwarding['staleIdleSkippedMs'] = round(
+                                self.media_forwarding.get('staleIdleSkippedMs', 0) + len(chunk) / 96, 3)
+                        await asyncio.sleep(0)
+                        continue
+                    peer.track.playout.validate_age(received_at)
+                    options = dict(sample_rate=48000)
+                    if received_at is not None:
+                        options['received_at'] = received_at
+                    await peer.append_audio(gain.process(pcm[offset:offset + 1920]), **options)
                     await asyncio.sleep(0)
                 else:
                     if self.stopping or self.lifecycle_epoch != epoch or self.device_peer is not peer:

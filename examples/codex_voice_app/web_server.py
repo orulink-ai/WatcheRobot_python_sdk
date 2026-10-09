@@ -15,6 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from service import VoiceService
 from errors import BusyRequest, error_message
+from speaker_test import TEST_AUDIO_PATH
 
 
 class DeviceStatus:
@@ -72,6 +73,13 @@ def create_web_app(service: VoiceService, web_root: Path) -> FastAPI:
             'Cache-Control': 'no-store', 'Cross-Origin-Resource-Policy': 'same-origin',
             'X-Content-Type-Options': 'nosniff'})
 
+    @app.get('/api/speaker-reference.wav')
+    async def speaker_reference(request: Request):
+        if request.headers.get('sec-fetch-site', 'none') not in {'same-origin', 'none'}:
+            raise HTTPException(403, 'Reference audio is same-origin only')
+        return FileResponse(TEST_AUDIO_PATH, media_type='audio/wav', headers={
+            'Cross-Origin-Resource-Policy': 'same-origin', 'X-Content-Type-Options': 'nosniff'})
+
     @app.websocket('/api/session')
     async def session(ws: WebSocket):
         if ws.headers.get('origin') != f"http://{ws.headers.get('host')}":
@@ -99,6 +107,10 @@ def create_web_app(service: VoiceService, web_root: Path) -> FastAPI:
                     await service.text(command.get('text', ''))
                 elif kind == 'deviceTest':
                     await service.test_device()
+                elif kind == 'speakerTest':
+                    await service.test_speaker()
+                elif kind == 'playbackVolume':
+                    await service.set_playback_volume(command.get('level'))
                 elif kind == 'permissions':
                     await service.permissions(command.get('permissions'))
                 elif kind == 'cancel':
@@ -128,7 +140,7 @@ def create_web_app(service: VoiceService, web_root: Path) -> FastAPI:
                 command = json.loads(raw)
                 if not isinstance(command, dict):
                     raise ValueError('Expected an object command')
-                if command.get('type') in {'permissions', 'clearPhotos'}:
+                if command.get('type') in {'permissions', 'clearPhotos', 'playbackVolume'}:
                     if len(controls) >= 16:
                         service.state['error'] = '设置请求过多，请稍后重试'
                         service.publish()
