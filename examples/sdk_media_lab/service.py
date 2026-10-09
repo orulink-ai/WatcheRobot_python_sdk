@@ -50,6 +50,10 @@ _MDNS_HOST_CANDIDATE = re.compile(
 _MAINTENANCE_INTERVAL_SECONDS = 0.25
 _SCENARIO_MAX_SAMPLES = 3600
 _SCENARIO_SAMPLE_INTERVAL_SECONDS = 1.0
+_DIAGNOSTIC_ID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+_DIAGNOSTIC_ARTIFACT = re.compile(
+    rf"rtc-diagnostic-{_DIAGNOSTIC_ID}-(?:(?:computer|robot-raw|robot-clean)\.webm|(?:report|manifest)\.json)"
+)
 _TELEMETRY_STALE_SECONDS = 5.0
 _PROCEDURAL_CAPABILITY = "expression.audio_follow.v1"
 _SD_BASELINE_BEHAVIOR_ID = "desktop_expression_panel"
@@ -301,10 +305,7 @@ class MediaLabService:
         "camera.jpg": "image/jpeg",
         "camera-feedback.jpg": "image/jpeg",
         "microphone.wav": "audio/wav",
-        "rtc-diagnostic-computer.webm": "audio/webm",
-        "rtc-diagnostic-robot-raw.webm": "audio/webm",
-        "rtc-diagnostic-robot-clean.webm": "audio/webm",
-        "rtc-diagnostic-report.json": "application/json",
+        "rtc-diagnostic-latest.json": "application/json",
     }
 
     def __init__(
@@ -370,6 +371,8 @@ class MediaLabService:
         self._sd_baseline_state = "idle"
         self._sd_baseline_operation_id: int | None = None
         self._recording_lock = threading.RLock()
+        self._recording_generation = 0
+        self._diagnostic_lock = threading.Lock()
         self._recording: dict[str, Any] = {"active": False, "sample_count": 0}
         self._recording_samples: deque[dict[str, object]] = deque(maxlen=_SCENARIO_MAX_SAMPLES)
         self._recording_last_sample_at: float | None = None
@@ -477,23 +480,39 @@ class MediaLabService:
                     self._set_face_state("stop_required")
                 elif self._face_state == "stop_required":
                     self.stop_face_tracking()
-        with self._procedural_lock:
-            if self._procedural_lease is not None:
-                if connection.get("online") is not True:
-                    self._procedural_state = "stop_required"
-                elif self._procedural_state == "stop_required":
-                    self.stop_procedural()
-        with self._sd_baseline_lock:
-            if self._sd_baseline_lease is not None:
-                if connection.get("online") is not True:
-                    self._sd_baseline_state = "stop_required"
-                elif self._sd_baseline_state == "stop_required":
-                    self.stop_sd_baseline()
+        # A command thread may be waiting for an ACK. Do not queue maintenance
+        # behind it: status uses short state locks and sampling must continue.
+        if self._procedural_lock.acquire(blocking=False):
+            try:
+                if self._procedural_lease is not None:
+                    if connection.get("online") is not True:
+                        self._set_procedural_state("stop_required")
+                    elif self._procedural_state == "stop_required":
+                        self.stop_procedural()
+            finally:
+                self._procedural_lock.release()
+        if self._sd_baseline_lock.acquire(blocking=False):
+            try:
+                if self._sd_baseline_lease is not None:
+                    if connection.get("online") is not True:
+                        self._set_sd_baseline_state("stop_required")
+                    elif self._sd_baseline_state == "stop_required":
+                        self.stop_sd_baseline()
+            finally:
+                self._sd_baseline_lock.release()
         self._sample_scenario(connection=connection)
+
+    def _set_procedural_state(self, state: str) -> None:
+        with self._state_lock:
+            self._procedural_state = state
+
+    def _set_sd_baseline_state(self, state: str) -> None:
+        with self._state_lock:
+            self._sd_baseline_state = state
 
     def sd_baseline_status(self) -> dict[str, object]:
         """Identify the fixed, silent SD loop used for comparison recordings."""
-        with self._sd_baseline_lock:
+        with self._state_lock:
             return {
                 "supported": (
                     "behavior" in self._robot.capabilities
@@ -520,33 +539,33 @@ class MediaLabService:
             lease = self._operation("sd_baseline", resource="animation")
             lease.__enter__()
             self._sd_baseline_lease = lease
-            self._sd_baseline_state = "starting"
+            self._set_sd_baseline_state("starting")
             try:
                 # The firmware catalog defines a fixed standby loop with no
                 # motion or sound. AnimationDomain.play is a one-shot contract.
                 job = self._robot.behavior.play(_SD_BASELINE_BEHAVIOR_ID)
             except Exception:
-                self._sd_baseline_state = "stop_required"
+                self._set_sd_baseline_state("stop_required")
                 try:
                     self.stop_sd_baseline()
                 except Exception:
                     _LOGGER.exception("SD baseline startup cleanup remains unconfirmed")
                 raise
             self._sd_baseline_operation_id = job.id
-            self._sd_baseline_state = "running"
+            self._set_sd_baseline_state("running")
             return self.sd_baseline_status()
 
     def stop_sd_baseline(self) -> dict[str, object]:
         with self._sd_baseline_lock:
             if self._sd_baseline_lease is None:
                 return self.sd_baseline_status()
-            self._sd_baseline_state = "stop_required"
+            self._set_sd_baseline_state("stop_required")
             self._ensure_device_online()
             self._robot.behavior.stop()
             self._sd_baseline_lease.__exit__(None, None, None)
             self._sd_baseline_lease = None
             self._sd_baseline_operation_id = None
-            self._sd_baseline_state = "idle"
+            self._set_sd_baseline_state("idle")
             return self.sd_baseline_status()
 
     def procedural_status(self, *, connection: Mapping[str, object] | None = None) -> dict[str, object]:
@@ -554,7 +573,7 @@ class MediaLabService:
         animation = self._robot.resource_snapshot.get("animation", {})
         if not isinstance(animation, Mapping):
             animation = {}
-        with self._procedural_lock:
+        with self._state_lock:
             state = self._procedural_state
         available = (
             isinstance(animation.get("audio_follow"), bool)
@@ -592,17 +611,17 @@ class MediaLabService:
             lease = self._operation("procedural", resource="animation")
             lease.__enter__()
             self._procedural_lease = lease
-            self._procedural_state = "starting"
+            self._set_procedural_state("starting")
             try:
                 self._robot.expression_runtime.set_audio_follow(True)
             except Exception:
-                self._procedural_state = "stop_required"
+                self._set_procedural_state("stop_required")
                 try:
                     self.stop_procedural()
                 except Exception:
                     _LOGGER.exception("Procedural startup cleanup remains unconfirmed")
                 raise
-            self._procedural_state = "running"
+            self._set_procedural_state("running")
             return {**self.procedural_status(), "started": True}
 
     def stop_procedural(self) -> dict[str, object]:
@@ -611,12 +630,12 @@ class MediaLabService:
                 return self.procedural_status()
             if self._procedural_captures:
                 raise MediaLabBusyError("Wait for the in-flight photo before stopping procedural mode")
-            self._procedural_state = "stop_required"
+            self._set_procedural_state("stop_required")
             self._ensure_device_online()
             self._robot.expression_runtime.set_audio_follow(False)
             self._procedural_lease.__exit__(None, None, None)
             self._procedural_lease = None
-            self._procedural_state = "idle"
+            self._set_procedural_state("idle")
             return self.procedural_status()
 
     def scenario_recording_status(self) -> dict[str, object]:
@@ -629,6 +648,7 @@ class MediaLabService:
         with self._recording_lock:
             if self._recording.get("active") is True:
                 raise MediaLabBusyError("Stop the current scenario recording first")
+            self._recording_generation += 1
             self._recording = {
                 "active": True, "label": label.strip(), "started_at": time.time(),
                 "stopped_at": None, "sample_count": 0, "dropped_samples": 0,
@@ -645,9 +665,11 @@ class MediaLabService:
         return self.scenario_recording_status()
 
     def stop_scenario_recording(self) -> dict[str, object]:
+        with self._recording_lock:
+            generation = self._recording_generation
         self._sample_scenario()
         with self._recording_lock:
-            if self._recording.get("active") is True:
+            if generation == self._recording_generation and self._recording.get("active") is True:
                 self._recording["active"] = False
                 self._recording["stopped_at"] = time.time()
         return self.scenario_recording_status()
@@ -698,6 +720,7 @@ class MediaLabService:
         with self._recording_lock:
             if self._recording.get("active") is not True:
                 return
+            generation = self._recording_generation
             now = time.monotonic()
             if self._recording_last_sample_at is not None and now - self._recording_last_sample_at < _SCENARIO_SAMPLE_INTERVAL_SECONDS:
                 return
@@ -711,7 +734,7 @@ class MediaLabService:
             owners = dict(self._active_actions)
         now = time.monotonic()
         with self._recording_lock:
-            if self._recording.get("active") is not True:
+            if generation != self._recording_generation or self._recording.get("active") is not True:
                 return
             if self._recording_last_sample_at is not None and now - self._recording_last_sample_at < _SCENARIO_SAMPLE_INTERVAL_SECONDS:
                 return
@@ -1453,7 +1476,7 @@ class MediaLabService:
         return self._rtc.events(after=max(0, after))
 
     def artifact_path(self, filename: str) -> Path | None:
-        if filename not in self._ARTIFACT_TYPES and not re.fullmatch(
+        if filename not in self._ARTIFACT_TYPES and not _DIAGNOSTIC_ARTIFACT.fullmatch(filename) and not re.fullmatch(
             r"concurrency-[0-9a-f]{12}(?:-[0-9]{3,}\.jpg|\.json)", filename
         ):
             return None
@@ -1461,6 +1484,55 @@ class MediaLabService:
         if candidate.parent != self._artifacts_dir.resolve():
             return None
         return candidate if candidate.is_file() else None
+
+    def save_rtc_audio_diagnostic(self, channel: str, recording_id: str, data: bytes) -> dict[str, object]:
+        """Publish immutable files and a manifest only for a complete local batch."""
+        if not re.fullmatch(_DIAGNOSTIC_ID, recording_id):
+            raise HTTPException(status_code=400, detail="Invalid diagnostic recording ID")
+        channels = ("computer", "robot-raw", "robot-clean", "report")
+        if channel not in channels:
+            raise HTTPException(status_code=404, detail="Unknown diagnostic channel")
+        if len(data) > (65536 if channel == "report" else 2 * 1024 * 1024):
+            raise HTTPException(status_code=413, detail="Diagnostic upload too large")
+        if channel == "report":
+            try:
+                report = json.loads(data)
+                if not isinstance(report, dict) or not isinstance(report.get("samples"), list) or report.get("recordingId") != recording_id:
+                    raise ValueError("Invalid report")
+            except (ValueError, UnicodeDecodeError) as error:
+                raise HTTPException(status_code=400, detail="Invalid diagnostic report") from error
+        elif not data.startswith(b"\x1a\x45\xdf\xa3"):
+            # A bounded local diagnostic checks the EBML signature, not full
+            # container or codec validity. It never decodes caller uploads.
+            raise HTTPException(status_code=400, detail="Diagnostic audio must have a WebM signature")
+        files = {name: f"rtc-diagnostic-{recording_id}-{name}.{'json' if name == 'report' else 'webm'}" for name in channels}
+        with self._diagnostic_lock:
+            self._artifacts_dir.mkdir(parents=True, exist_ok=True)
+            path = self._artifacts_dir / files[channel]
+            if path.exists():
+                raise HTTPException(status_code=409, detail="Diagnostic channel is already saved")
+            if channel == "report" and any(not (self._artifacts_dir / files[name]).is_file() for name in channels[:-1]):
+                raise HTTPException(status_code=409, detail="Diagnostic audio batch is incomplete")
+            self._write_diagnostic_atomic(path, data)
+            urls = {name: f"/artifacts/{filename}" for name, filename in files.items()}
+            result: dict[str, object] = {"saved": True, "complete": channel == "report", "recording_id": recording_id,
+                                         "bytes": len(data), "url": urls[channel]}
+            if channel == "report":
+                manifest = {"recording_id": recording_id, "files": urls}
+                manifest_data = json.dumps(manifest).encode("utf-8")
+                self._write_diagnostic_atomic(self._artifacts_dir / f"rtc-diagnostic-{recording_id}-manifest.json", manifest_data)
+                self._write_diagnostic_atomic(self._artifacts_dir / "rtc-diagnostic-latest.json", manifest_data)
+                result["files"] = urls
+            return result
+
+    @staticmethod
+    def _write_diagnostic_atomic(path: Path, data: bytes) -> None:
+        temporary = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(data)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _artifact_output(self, filename: str) -> Path:
         if filename not in self._ARTIFACT_TYPES:
@@ -1795,20 +1867,8 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
             if len(data) + len(chunk) > limit:
                 raise HTTPException(status_code=413, detail="Diagnostic upload too large")
             data.extend(chunk)
-        if channel == "report":
-            try:
-                report = json.loads(data)
-                if not isinstance(report, dict) or not isinstance(report.get("samples"), list):
-                    raise ValueError("Invalid report")
-            except (ValueError, UnicodeDecodeError) as error:
-                raise HTTPException(status_code=400, detail="Invalid diagnostic report") from error
-        elif not data.startswith(b"\x1a\x45\xdf\xa3"):
-            raise HTTPException(status_code=400, detail="Diagnostic audio must be WebM")
-        suffix = "json" if channel == "report" else "webm"
-        filename = f"rtc-diagnostic-{channel}.{suffix}"
-        path = service._artifact_output(filename)
-        await asyncio.to_thread(path.write_bytes, bytes(data))
-        return {"saved": True, "bytes": len(data), "url": f"/artifacts/{filename}"}
+        return await _run_action(service.save_rtc_audio_diagnostic, channel=channel,
+                                 recording_id=request.headers.get("X-Recording-Id", ""), data=bytes(data))
 
     @app.get("/assets/app.js")
     async def javascript() -> FileResponse:
@@ -2062,7 +2122,7 @@ def create_web_app(service: MediaLabService, *, web_root: Path) -> FastAPI:
         if path is None:
             raise HTTPException(status_code=404, detail="artifact not found")
         return FileResponse(path, media_type=MediaLabService._ARTIFACT_TYPES.get(
-            filename, "application/json" if filename.endswith(".json") else "image/jpeg"
+            filename, "application/json" if filename.endswith(".json") else "audio/webm" if filename.endswith(".webm") else "image/jpeg"
         ))
 
     return app

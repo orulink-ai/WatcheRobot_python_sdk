@@ -21,13 +21,16 @@ export async function recordRtcAudioDiagnostic(streams, {
   durationMs = 20000, snapshot = () => ({}), signal, onState = () => {},
 } = {}, {
   createRecorder = stream => new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 96000 }),
-  upload = async (name, blob) => {
+  createRecordingId = () => crypto.randomUUID(),
+  upload = async (name, blob, recordingId) => {
     const response = await fetch(`/api/diagnostics/rtc-audio/${name}`, { method: 'POST',
-      headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob });
+      headers: { 'Content-Type': blob.type || 'audio/webm', 'X-Recording-Id': recordingId }, body: blob });
     if (!response.ok) throw new Error('Diagnostic recording could not be saved');
+    return response.json();
   },
 } = {}) {
   const recorders = [], recordings = [], channels = [], samples = [];
+  const recordingId = createRecordingId();
   const start = performance.now();
   let interval, timer, finish;
   const stop = () => { for (const recorder of recorders) if (recorder.state !== 'inactive') recorder.stop(); };
@@ -57,11 +60,13 @@ export async function recordRtcAudioDiagnostic(streams, {
     const blobs = await Promise.all(recordings);
     for (let i = 0; i < channels.length; i++) {
       if (!blobs[i].size || blobs[i].size > 2 * 1024 * 1024) throw new Error('Diagnostic audio size is invalid');
-      channels[i].bytes = blobs[i].size; await upload(channels[i].name, blobs[i]);
+      channels[i].bytes = blobs[i].size; await upload(channels[i].name, blobs[i], recordingId);
     }
-    const report = { durationMs: samples.at(-1).elapsedMs, cancelled: signal?.aborted === true,
+    const report = { recordingId, durationMs: samples.at(-1).elapsedMs, cancelled: signal?.aborted === true,
       channels, samples, synchronization: 'near-synchronous MediaRecorder starts; not sample-accurate' };
-    await upload('report', new Blob([JSON.stringify(report)], { type: 'application/json' }));
+    const saved = await upload('report', new Blob([JSON.stringify(report)], { type: 'application/json' }), recordingId);
+    if (saved?.complete !== true) throw new Error('Diagnostic batch is incomplete');
+    report.artifacts = saved.files;
     onState('saved'); return report;
   } finally {
     clearInterval(interval); clearTimeout(timer); signal?.removeEventListener('abort', cancelled); stop();

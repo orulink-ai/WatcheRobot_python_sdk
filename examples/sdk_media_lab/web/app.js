@@ -1902,7 +1902,7 @@ async function recordRtcDiagnostic() {
   elements.recordRtcDiagnostic.disabled = true;
   document.querySelector('#rtcDiagnosticFiles').hidden = true;
   try {
-    await recordRtcAudioDiagnostic({ computer: state.rtc.localStream, 'robot-raw': state.rtc.remoteStream,
+    const report = await recordRtcAudioDiagnostic({ computer: state.rtc.localStream, 'robot-raw': state.rtc.remoteStream,
       'robot-clean': state.rtc.noisePlayback?.stream || state.rtc.remoteStream }, {
       signal: abort.signal,
       onState: value => { elements.rtcDiagnosticState.textContent = value === "recording"
@@ -1914,6 +1914,9 @@ async function recordRtcDiagnostic() {
           receive: state.rtc.audioReceiveStats || {} },
         noise: state.rtc.noiseTelemetry || {} }),
     });
+    for (const link of document.querySelectorAll('#rtcDiagnosticFiles a')) {
+      link.href = report.artifacts[link.dataset.channel];
+    }
     document.querySelector('#rtcDiagnosticFiles').hidden = false;
   } catch (error) { elements.rtcDiagnosticState.textContent = error.message; }
   finally { state.rtc.diagnosticRecording = null; elements.recordRtcDiagnostic.disabled = false; }

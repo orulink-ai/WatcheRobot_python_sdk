@@ -415,10 +415,10 @@
             <button id="recordRtcDiagnostic" class="quiet-action" type="button">Record 20-second Audio Diagnostic</button>
             <output id="rtcDiagnosticState" role="status">Diagnostic audio stays on this computer</output>
             <div id="rtcDiagnosticFiles" hidden>
-              <a href="/artifacts/rtc-diagnostic-computer.webm" download>Computer Recording</a> ·
-              <a href="/artifacts/rtc-diagnostic-robot-raw.webm" download>Robot Original Recording</a> ·
-              <a href="/artifacts/rtc-diagnostic-robot-clean.webm" download>Robot Processed Recording</a> ·
-              <a href="/artifacts/rtc-diagnostic-report.json" download>Timing Report</a>
+              <a data-channel="computer" download>Computer Recording</a> ·
+              <a data-channel="robot-raw" download>Robot Original Recording</a> ·
+              <a data-channel="robot-clean" download>Robot Processed Recording</a> ·
+              <a data-channel="report" download>Timing Report</a>
             </div>
             <small>Processed locally on this computer. Toggle during a call to compare. Lower the strength if quiet speech sounds muffled. Echo cancellation remains separate.</small>
           </fieldset>

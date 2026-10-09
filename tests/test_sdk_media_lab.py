@@ -2374,18 +2374,144 @@ def test_media_lab_csp_allows_direct_device_websocket(tmp_path: Path) -> None:
     assert "'unsafe-eval'" not in response.headers["content-security-policy"]
 
 
-def test_local_rtc_diagnostic_upload_is_bounded_and_names_are_fixed(tmp_path: Path) -> None:
+def test_local_rtc_diagnostic_upload_is_bounded_and_names_are_scoped(tmp_path: Path) -> None:
     module = _load_service_module()
     service = _service(module, tmp_path)
     client = TestClient(module.create_web_app(service, web_root=LAB_ROOT / "web"))
+    recording_id = "00000000-0000-4000-8000-000000000001"
+    client.headers["X-Recording-Id"] = recording_id
     body = b"\x1a\x45\xdf\xa3" + b"fixture"
     assert client.post("/api/diagnostics/rtc-audio/robot-raw", content=body,
                        headers={"Content-Type": "audio/webm"}).status_code == 200
-    assert client.get("/artifacts/rtc-diagnostic-robot-raw.webm").content == body
+    assert client.get(f"/artifacts/rtc-diagnostic-{recording_id}-robot-raw.webm").content == body
     assert client.post("/api/diagnostics/rtc-audio/unknown", content=body).status_code == 404
     assert client.post("/api/diagnostics/rtc-audio/computer", content=b"invalid").status_code == 400
     assert client.post("/api/diagnostics/rtc-audio/computer", content=body + bytes(2 * 1024 * 1024)).status_code == 413
-    assert client.post("/api/diagnostics/rtc-audio/report", json={"samples": []}).status_code == 200
+    assert client.post("/api/diagnostics/rtc-audio/report", json={"recordingId": recording_id, "samples": []}).status_code == 409
+
+
+def test_partial_and_parallel_diagnostic_batches_do_not_mix_or_replace_complete_results(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    module = _load_service_module()
+    service = _service(module, tmp_path)
+    client = TestClient(module.create_web_app(service, web_root=LAB_ROOT / "web"))
+
+    def upload(batch, channel):
+        headers = {"X-Recording-Id": batch}
+        if channel == "report":
+            return client.post("/api/diagnostics/rtc-audio/report", headers=headers,
+                               json={"recordingId": batch, "samples": []})
+        return client.post(f"/api/diagnostics/rtc-audio/{channel}", headers=headers,
+                           content=b"\x1a\x45\xdf\xa3" + batch.encode())
+
+    def complete(batch):
+        for channel in ("computer", "robot-raw", "robot-clean"):
+            assert upload(batch, channel).status_code == 200
+        response = upload(batch, "report")
+        assert response.status_code == 200 and response.json()["complete"]
+        return response.json()
+
+    first, partial = "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000002"
+    complete(first)
+    latest = client.get("/artifacts/rtc-diagnostic-latest.json").json()
+    assert upload(partial, "computer").status_code == 200
+    assert upload(partial, "report").status_code == 409
+    assert client.get("/artifacts/rtc-diagnostic-latest.json").json() == latest
+    batches = ["00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(complete, batches))
+    for batch, result in zip(batches, results):
+        for channel, url in result["files"].items():
+            response = client.get(url)
+            if channel != "report":
+                assert response.content == b"\x1a\x45\xdf\xa3" + batch.encode()
+                assert response.headers["content-type"] == "audio/webm"
+            else:
+                assert response.json()["recordingId"] == batch
+        assert upload(batch, "computer").status_code == 409
+    assert client.post("/api/diagnostics/rtc-audio/computer", content=b"x",
+                       headers={"X-Recording-Id": "../invalid"}).status_code == 400
+
+
+@pytest.mark.parametrize("domain,stopping", [("procedural", False), ("procedural", True), ("sd_baseline", False), ("sd_baseline", True)])
+def test_expression_transition_ack_does_not_block_status_or_recording(tmp_path, domain, stopping):
+    module = _load_service_module()
+    robot = _sd_baseline_robot()
+    service = _service(module, tmp_path, robot)
+    if stopping:
+        getattr(service, f"start_{domain}")()
+    service.start_scenario_recording()
+    service._recording_last_sample_at = None
+    entered, release, ready = threading.Event(), threading.Event(), threading.Event()
+    errors = []
+    target, method = (robot.expression_runtime, "set_audio_follow") if domain == "procedural" else (robot.behavior, "stop" if stopping else "play")
+    original = getattr(target, method)
+
+    def blocked(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=3.0)
+        return original(*args, **kwargs)
+
+    setattr(target, method, blocked)
+
+    def transition():
+        try:
+            getattr(service, f"{'stop' if stopping else 'start'}_{domain}")()
+        except Exception as error:
+            errors.append(error)
+
+    def inspect():
+        try:
+            assert service.status()[domain]["state"] == ("stop_required" if stopping else "starting")
+            service.maintain()
+            assert service.scenario_recording_status()["sample_count"] == 2
+            ready.set()
+        except Exception as error:
+            errors.append(error)
+
+    worker = threading.Thread(target=transition)
+    worker.start()
+    assert entered.wait(timeout=1.0)
+    reader = threading.Thread(target=inspect)
+    reader.start()
+    try:
+        assert ready.wait(timeout=1.0)
+    finally:
+        release.set()
+        worker.join(timeout=3.0)
+        reader.join(timeout=3.0)
+    assert not errors and not worker.is_alive() and not reader.is_alive()
+
+
+@pytest.mark.parametrize("stopping", [False, True])
+def test_old_scenario_sample_cannot_enter_a_new_recording(tmp_path, stopping):
+    module = _load_service_module()
+    service = _service(module, tmp_path, _procedural_robot())
+    service.start_scenario_recording(label="old")
+    service._recording_last_sample_at = None
+    entered, release = threading.Event(), threading.Event()
+    original = service._rtc.snapshot
+
+    def snapshot():
+        if threading.current_thread().name == "old-sampler":
+            entered.set()
+            assert release.wait(timeout=3.0)
+        return original()
+
+    service._rtc.snapshot = snapshot
+    worker = threading.Thread(target=service.stop_scenario_recording if stopping else service._sample_scenario, name="old-sampler")
+    worker.start()
+    assert entered.wait(timeout=1.0)
+    try:
+        service.stop_scenario_recording()
+        service.start_scenario_recording(label="new")
+        service._recording_last_sample_at = None
+    finally:
+        release.set()
+        worker.join(timeout=3.0)
+    assert not worker.is_alive()
+    assert service.scenario_recording_status()["sample_count"] == 1
+    assert service.scenario_recording_status()["active"] is True
 
 
 def test_generic_inference_owns_only_camera_and_retries_stop(tmp_path):

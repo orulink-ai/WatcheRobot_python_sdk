@@ -64,6 +64,9 @@ require cleanup on reconnection rather than automatic restart. An in-flight plai
 photo pins the display lease. A stop during capture returns busy; retry after
 capture finishes. Status and recording stay responsive. Application shutdown
 stops owned procedural mode; the page also sends a cleanup request on exit.
+Display state snapshots use a short state lock separate from command serialization.
+Maintenance skips a lifecycle lock already held by a pending command, allowing
+status and sampling to continue while its device acknowledgement is delayed.
 
 Start a recording before changing the load. The backend records at most one
 sample per second and retains the latest 3600 samples; `sample_count` includes
@@ -80,6 +83,8 @@ cached data unavailable until a new event arrives; mouth and frame-rate readings
 follow the same rule. Reports retain the recording's initial device identity and
 baseline, and identify the device and connection on each sample when a run crosses
 a reconnect or device change.
+Each recording has a generation; an in-flight sample from an older recording is
+discarded if that recording was stopped and replaced before collection completed.
 One-second samples do not alone prove every camera allocation peak; firmware
 capture-stage/lifetime minima and audio error counters provide complementary evidence.
 
@@ -515,9 +520,12 @@ CSP 仅新增 WebAssembly 编译许可 `wasm-unsafe-eval`，未开放 JavaScript
 采集处理，机器人原声已经过固件处理；两者都不代表未经处理的物理麦克风 PCM。
 
 录音仅提交到本机 Application 的 loopback HTTP 服务保存，不传云端。单路
-上限 2 MiB，报告上限 64 KiB；仅允许固定诊断文件，不能写任意路径。成功后
-显示三个录音及报告的下载链接。下一次录制会替换本机最近一次诊断文件，
-需要对比时先下载留存。停止通话会结束并保存已录制片段，不停止非本模块拥有的轨道。
+上限 2 MiB，报告上限 64 KiB；仅允许校验后的 UUID 与固定通道组合，不能写任意路径。
+每轮使用独立文件，三路音频与同编号报告齐全后才原子发布清单和“最近一次”指针；
+部分失败或并行录制不会混用轮次，也不覆盖上一轮完整结果。网页下载链接固定指向本轮，
+后续录制不会覆盖这些文件。同一编号的重复通道上传被拒绝。WebM 上传只检查 EBML
+签名，不宣称完整容器或音频轨道校验；服务不会解码这些上传文件。
+停止通话会结束并保存已录制片段，不停止非本模块拥有的轨道。
 
 MediaRecorder 启动为近同步而非样本级同步；录音编码及浏览器处理有额外延迟，
 不能把两个录音的相关峰差直接当成 RNNoise 算法延迟。对比应在同一固件、音量、
