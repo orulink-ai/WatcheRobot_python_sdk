@@ -66,6 +66,27 @@ python -m pip show watcherobot
 PEP 668、PATH、`python3`、源码 checkout 和 TestPyPI 的处理方法见
 [安装指南](docs/installation.zh-CN.md)。
 
+### 一行启动内置示例
+
+包含此功能的下一版 SDK 安装后，可以直接运行：
+
+```text
+watcherobot demo
+```
+
+菜单中输入 `1` 启动 SDK 测试台，输入 `2` 启动表情实验台；启动后菜单继续保留，
+再次选择即可直接切换，无需重输命令。切换会通过 Daemon 停止当前 Application、
+启动所选示例并打开网页。输入 `0` 停止当前应用，输入 `q` 只退出菜单，应用继续运行。
+无需下载源码或安装 Node.js；已有兼容 Daemon 的设备连接会继续复用，未连接时可在网页里配对。
+
+自动化脚本仍可指定应用名：`watcherobot demo sdk-test-bench` 或
+`watcherobot demo expression-lab`，执行一次后返回终端。
+
+使用 `watcherobot app stop` 停止当前示例。这两个示例目前声明支持 Windows，
+macOS/Linux 真机运行尚未验收。照片等运行数据写入用户状态目录的
+`bundled-demos` 子目录，不写入 Python 安装目录；再次启动相同版本会保留数据。
+升级后若示例内容变化，会使用新的目录，旧照片不会自动删除。
+
 ### 2. 配置第一台机器人
 
 `watcherobot robot setup` 是交互式引导，会完成 Wi-Fi 配置、Runtime 配对和最终连接确认：

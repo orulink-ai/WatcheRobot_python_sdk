@@ -5,7 +5,37 @@ fixed `app.py` entrypoint. The program never opens device Discovery or a device
 WebSocket; `ApplicationContext` receives its authorized desktop and device
 channels from the SDK Runtime.
 
-Run an example without the desktop:
+After installing the SDK with pip, switch between the bundled browser demos
+without cloning this repository (these commands are included starting with the
+next SDK release containing this change):
+
+```text
+watcherobot demo
+```
+
+Choose `1` for SDK Test Bench or `2` for Expression Lab. The interactive menu
+stays open, so choosing another number switches directly. `0` stops the current
+Application; `q` leaves the menu with the Application still running. Explicit
+names (`watcherobot demo sdk-test-bench` / `watcherobot demo expression-lab`)
+remain available for scripts and return after one launch.
+
+Each selection stops the current Application through the existing Daemon, starts
+the selected demo, and opens its browser UI. A compatible Daemon and its existing
+device connection remain available. Use `watcherobot app stop` to
+stop the active demo. Pair through the demo UI when no robot is connected.
+Both examples currently declare Windows support; macOS/Linux hardware operation
+has not been accepted. The CLI entrypoint itself is platform-independent.
+
+The wheel contains the apps, web assets, sample audio, licenses, and Expression
+Lab's firmware download resource. It excludes tests, virtual environments,
+credentials, and captured artifacts. Runtime copies live below the SDK's user
+state directory in `bundled-demos/<name>/<content-hash>/`; repeated launches reuse
+the same copy and preserve its artifacts. An SDK update with changed resources
+creates a new copy without deleting previous captures. No SDK installation files
+are modified. Maintainers must add new demo resources to
+`src/watcherobot/bundled-apps.json` before building a release.
+
+For source development, run an example without the desktop:
 
 ```powershell
 watcherobot app run ./examples/sdk_media_lab
