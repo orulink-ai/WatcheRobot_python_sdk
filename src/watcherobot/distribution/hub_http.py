@@ -37,7 +37,7 @@ class JsonTransport(Protocol):
         url: str,
         headers: dict[str, str],
         *,
-        timeout: float,
+        timeout: float | None,
     ) -> JsonResponse: ...
 
 
@@ -49,7 +49,7 @@ class UrllibJsonTransport:
         url: str,
         headers: dict[str, str],
         *,
-        timeout: float,
+        timeout: float | None,
     ) -> JsonResponse:
         request = Request(url, headers=headers, method="GET")
         try:
@@ -60,7 +60,10 @@ class UrllibJsonTransport:
                 )
         except HTTPError as exc:
             try:
-                payload = _decode_payload(exc.read())
+                raw = exc.read(8192)
+                if exc.code == 429 or (exc.code == 403 and b"rate limit" in raw.lower()):
+                    return JsonResponse(status=exc.code, payload={"rate_limited": True})
+                payload = _decode_payload(raw)
             except HubInvalidResponse:
                 payload = {}
             return JsonResponse(status=exc.code, payload=payload)

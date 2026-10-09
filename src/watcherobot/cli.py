@@ -13,8 +13,9 @@ import subprocess
 import sys
 import time
 import uuid
+import warnings
 from contextlib import suppress
-from getpass import getpass
+from getpass import GetPassWarning, getpass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -26,6 +27,7 @@ from colorama import just_fix_windows_console  # type: ignore[import-untyped]
 from websockets.asyncio.client import connect
 
 from watcherobot import __version__
+from watcherobot.application.templates import BUILTIN_TEMPLATES, DEFAULT_TEMPLATE, get_template
 from watcherobot.application.project import (
     ApplicationProjectDefaults,
     ApplicationProjectInitError,
@@ -81,6 +83,8 @@ from watcherobot.robot_cli import (
 
 
 APPLICATION_START_TIMEOUT_SECONDS = 90.0
+# Allow the Daemon to drain and, when necessary, terminate its process tree.
+APPLICATION_STOP_TIMEOUT_SECONDS = 30.0
 ROBOT_PAIR_TIMEOUT_SECONDS = 25.0
 _SETUP_SCAN_TIMEOUT_SECONDS = 10.0
 _SETUP_SCAN_PROGRESS_INTERVAL_SECONDS = 1.0
@@ -145,8 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Typical workflow:\n"
-            "  watcherobot app init hello_robot\n"
-            "  cd hello_robot\n"
+            "  watcherobot app init my_app\n"
+            "  cd my_app\n"
             "  watcherobot app run\n"
             "  watcherobot app login\n"
             "  watcherobot app publish .\\my_app\n"
@@ -168,8 +172,8 @@ def build_parser() -> argparse.ArgumentParser:
         "init",
         help="Create a runnable Application project",
         description=(
-            "Create a runnable Application project that plays a Hello World "
-            "behavior. Metadata defaults from the project directory and can "
+            "Create a runnable Application project from a built-in template. "
+            "Metadata defaults from the project directory and can "
             "be overridden for publishing. When DIRECTORY is omitted, an "
             "interactive terminal prompts for it."
         ),
@@ -181,6 +185,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="New project directory; prompted when omitted",
     )
     init.add_argument("--id", dest="app_id", help="Unique Application ID")
+    init.add_argument(
+        "--template",
+        choices=tuple(template.name for template in BUILTIN_TEMPLATES),
+        default=DEFAULT_TEMPLATE,
+        help="; ".join(f"{template.name}: {template.description}" for template in BUILTIN_TEMPLATES)
+        + f" (default: {DEFAULT_TEMPLATE})",
+    )
     init.add_argument("--name", help="Application display name")
     init.add_argument("--author", help="Developer or organization name")
     init.add_argument("--description", help="Short marketplace description")
@@ -190,6 +201,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         choices=("windows", "macos"),
         help="Supported host platform; repeat for Windows and macOS",
+    )
+    configure = app_commands.add_parser(
+        "configure",
+        help="Interactively configure credentials for a supported Application template",
+        description="Configure credentials locally with hidden input. Does not start Runtime or call cloud services.",
+    )
+    configure.add_argument("application", type=Path, nargs="?", default=Path("."),
+                           help="Application source directory (default: current directory)")
+    configure.add_argument(
+        "--service",
+        choices=tuple(dict.fromkeys(service for template in BUILTIN_TEMPLATES
+                                    for service in template.configuration_services)),
+        help="Configure only this service; omitted: configure all services",
     )
     run = app_commands.add_parser(
         "run",
@@ -375,6 +399,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.command == "app" and args.app_command == "init":
             return _run_application_init(args)
+        if args.command == "app" and args.app_command == "configure":
+            return _run_application_configure(args.application, service=args.service)
         if is_distribution_command(args):
             return run_distribution_command(args)
         if args.command == "app":
@@ -396,6 +422,7 @@ def main(argv: list[str] | None = None) -> int:
                     state.control_url,
                     "/daemon/application/stop",
                     method="POST",
+                    timeout=APPLICATION_STOP_TIMEOUT_SECONDS,
                 )
                 _print_application_runtime_result(
                     "Application stopped",
@@ -631,6 +658,27 @@ def _desktop_loopback_url(external_url: str) -> str:
     return urlunsplit((parsed.scheme, f"127.0.0.1{port}", parsed.path, parsed.query, parsed.fragment))
 
 
+def _run_application_configure(root: Path, *, service: str | None = None) -> int:
+    from watcherobot.application.templates import configure_application
+
+    if not _is_interactive_terminal():
+        raise CliError("app configure 需要交互终端；也可直接编辑 credentials/*.toml。")
+    try:
+        # getpass must never fall back to echoing credentials in an unsuitable terminal.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", GetPassWarning)
+            configure_application(root.resolve(), getpass, print, service=service)
+    except (EOFError, KeyboardInterrupt):
+        raise CliError("配置已取消，未保存凭据。") from None
+    except GetPassWarning:
+        raise CliError("当前终端无法隐藏输入；请使用交互终端或手动编辑凭据文件。") from None
+    except ValueError as error:
+        raise CliError(str(error)) from None
+    except OSError:
+        raise CliError("无法读写凭据文件；请检查目录和文件权限。") from None
+    return 0
+
+
 def _run_application_init(args: argparse.Namespace) -> int:
     directory = _application_init_directory(args.directory)
     values = _application_init_metadata(args, directory)
@@ -642,8 +690,10 @@ def _run_application_init(args: argparse.Namespace) -> int:
         description=values["description"],
         supported_host_platforms=args.supported_host_platforms
         or ["windows", "macos"],
+        template=getattr(args, "template", DEFAULT_TEMPLATE),
     )
-    _print_application_init_result(result)
+    hint = get_template(getattr(args, "template", DEFAULT_TEMPLATE)).setup_hint
+    _print_application_init_result(result, setup_hint=hint)
     return 0
 
 
@@ -653,10 +703,10 @@ def _application_init_directory(directory: Path | None) -> Path:
     if not _is_interactive_terminal():
         raise CliError("Application project directory is required")
     try:
-        supplied = input("Project directory [hello_robot]: ").strip()
+        supplied = input("Project directory [my_app]: ").strip()
     except (EOFError, KeyboardInterrupt) as exc:
         raise CliError("Application initialization cancelled") from exc
-    return Path(supplied or "hello_robot")
+    return Path(supplied or "my_app")
 
 
 def _application_init_metadata(
@@ -726,6 +776,8 @@ def _parse_pairing_code(value: str) -> str:
 
 def _print_application_init_result(
     result: ApplicationProjectInitResult,
+    *,
+    setup_hint: str = "",
 ) -> None:
     print("Application project created")
     print()
@@ -741,8 +793,11 @@ def _print_application_init_result(
         print(f"{label + ':':<{label_width}}  {value}")
     print()
     print("Next:")
-    print("  watcherobot robot setup  # first robot only")
+    if not setup_hint:
+        print("  watcherobot robot setup  # first robot only")
     print(f'  cd "{result.directory}"')
+    if setup_hint:
+        print(f"  {setup_hint}")
     print("  watcherobot app run")
 
 
@@ -1420,7 +1475,10 @@ def ensure_runtime(
             )
         )
     try:
-        reused = ensure_command(command, state_root=resolved_state_root)
+        # An explicit SDK launch selects this SDK version, just as Desktop
+        # activation selects its bundled Runtime. Passive reconnection uses
+        # ensure_command without activation and must never switch versions.
+        reused = ensure_command(command, activate=True, state_root=resolved_state_root)
     except (OSError, RuntimeError, ValueError) as error:
         raise CliError(str(error)) from error
     state = _live_runtime_state(resolved_state_root)
@@ -1556,6 +1614,7 @@ def run_application(application: Path) -> int:
             state.control_url,
             "/daemon/application/stop",
             method="POST",
+            timeout=APPLICATION_STOP_TIMEOUT_SECONDS,
         )
         print("Application stopped by user.")
         return 130
@@ -1689,6 +1748,7 @@ def _wait_for_application_completion(control_url: str) -> int:
             control_url,
             "/daemon/application/stop",
             method="POST",
+            timeout=APPLICATION_STOP_TIMEOUT_SECONDS,
         )
         print("Application stopped by user.")
         return 130

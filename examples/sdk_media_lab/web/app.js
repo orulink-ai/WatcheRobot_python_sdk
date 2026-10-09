@@ -203,6 +203,7 @@ const elements = {
   playAudioButton: document.querySelector("#playAudioButton"),
   stopAudioButton: document.querySelector("#stopAudioButton"),
   capturePhotoButton: document.querySelector("#capturePhotoButton"),
+  capturePhotoWithFeedbackButton: document.querySelector("#capturePhotoWithFeedbackButton"),
   queryVisionButton: document.querySelector("#queryVisionButton"),
   startFaceTrackingButton: document.querySelector("#startFaceTrackingButton"),
   startFacePreviewButton: document.querySelector("#startFacePreviewButton"),
@@ -636,6 +637,8 @@ function renderStatus(status) {
   elements.playAudioButton.disabled = !availability.speaker || !hasCapability("audio.stream");
   elements.stopAudioButton.disabled = !status.connected || !hasCapability("audio.stream");
   elements.capturePhotoButton.disabled = !availability.camera || !hasCapability("camera.capture");
+  elements.capturePhotoWithFeedbackButton.disabled = !availability.cameraWithFeedback
+    || !hasCapability("camera.capture.feedback.v1");
   const inferenceState = status.inference?.state || "idle";
   const inferenceSupported = status.connected && hasCapability("vision.inference.v1");
   elements.queryModelsButton.disabled = inferenceRequestPending || !status.connected || !hasCapability("vision.models.v1");
@@ -697,6 +700,18 @@ function renderStatus(status) {
     "motion", "light", "audio.stream", "camera.capture", "microphone",
   ].every(hasCapability);
 
+  const testPending = document.querySelector("#concurrencyStation").dataset.requesting === "true";
+  document.querySelector("#concurrencyStart").disabled = testPending || status.busy || state.localResources.size > 0 || !status.connected || ![
+    "expression.runtime.v3", "audio.stream", "camera.capture",
+  ].every(hasCapability);
+  document.querySelector("#concurrencyStop").disabled = !testPending && status.active_action !== "concurrency_test";
+  const cleanupEntries = Object.entries(status.concurrency_cleanup || {});
+  const cleanupBusy = document.querySelector("#concurrencyStation").dataset.cleaning === "true";
+  document.querySelector("#concurrencyCleanup").disabled = cleanupBusy || testPending || !status.connected || cleanupEntries.length === 0;
+  document.querySelector("#concurrencyCleanupState").textContent = cleanupEntries.length
+    ? `Cleanup pending: ${cleanupEntries.map(([name, error]) => `${name}: ${error}`).join("; ")}`
+    : "No pending cleanup";
+
   elements.capabilityGrid.replaceChildren(...status.capabilities.map((capability) => {
     const chip = document.createElement("span");
     chip.className = "capability-chip";
@@ -735,6 +750,13 @@ function restoreArtifacts(artifacts) {
 async function refreshStatus({ quiet = true } = {}) {
   try {
     renderStatus(await api("/api/status"));
+    const report = await api("/api/concurrency/result").catch(() => null);
+    const details = document.querySelector("#concurrencyDetails");
+    if (report?.results && details.dataset.pendingRunId !== report.run_id
+      && (report.running || details.dataset.running === "true" || details.dataset.runId !== report.run_id)) {
+      renderConcurrencyResults(report);
+      setResult(document.querySelector("#concurrencyResult"), concurrencySummary(report), report.running ? "running" : report.passed ? "ok" : "error");
+    }
   } catch (error) {
     elements.connectionBadge.dataset.state = "offline";
     elements.connectionText.textContent = "Test Bench Offline";
@@ -1967,6 +1989,19 @@ async function capturePhoto() {
   return payload;
 }
 
+async function capturePhotoWithFeedback() {
+  const payload = await runAction({
+    path: "/api/actions/capture-photo-with-feedback",
+    result: elements.cameraResult,
+    pending: "Requesting JPEG frame with device feedback…",
+    complete: (value) => `Photo with feedback received · ${formatBytes(value.bytes)}`,
+    station: document.querySelector(".station-camera"),
+    resources: ["camera", "animation", "microphone", "speaker"],
+  });
+  if (payload) showPhoto(payload.artifact_url);
+  return payload;
+}
+
 async function recordMicrophone() {
   const duration = Number(elements.recordDuration.value);
   const payload = await runAction({
@@ -1998,6 +2033,156 @@ async function runAll() {
     notify("Basic check stopped at the first failed stage", "error");
   }
 }
+
+function concurrencySummary(report) {
+  const counts = `Photos: ${report.counts.camera}, audio: ${report.counts.speaker}, UI: ${report.counts.ui}`;
+  const verdict = report.running ? "Concurrent test running" : report.passed ? "SDK checks passed" : report.cancelled ? "Interrupted" : report.incomplete ? "Verification incomplete" : "Failed";
+  return `${verdict} · ${Math.round(report.elapsed_s || 0)} s / ${report.duration_requested} s · ${counts}`;
+}
+
+function renderConcurrencyResults(report) {
+  const container = document.querySelector("#concurrencyDetails");
+  const newRun = container.dataset.runId !== report.run_id;
+  container.dataset.runId = report.run_id;
+  container.dataset.running = String(report.running);
+  delete container.dataset.pendingRunId;
+  if (newRun) {
+    document.querySelector("#concurrencyUiObserved").checked = false;
+    document.querySelector("#concurrencyAudioObserved").checked = false;
+  }
+  container.replaceChildren();
+  const labels = { camera: "Continuous Photos", speaker: "Speaker Playback", ui: "Custom UI" };
+  const statuses = { incomplete: "Verification incomplete", running: "Running", passed: "SDK checks passed", failed: "Failed", not_started: "Not run", interrupted: "Interrupted", cleanup_failed: "Cleanup failed" };
+  const stages = document.querySelector("#concurrencyStages");
+  stages.replaceChildren();
+  ["ui", "camera", "speaker", "cleanup"].forEach((name, index) => {
+    const result = report.results[name];
+    const cleanupErrors = report.errors.filter((item) => item.worker.endsWith("_cleanup"));
+    const startupAborted = !report.running && report.started === false;
+    const status = result?.status || (report.running ? "running" : startupAborted ? "not_started" : cleanupErrors.length ? "cleanup_failed" : "passed");
+    const item = document.createElement("li");
+    item.dataset.state = status;
+    const number = document.createElement("span");
+    number.textContent = String(index + 1).padStart(2, "0");
+    const title = document.createElement("strong");
+    title.textContent = labels[name] || "Resource Recovery";
+    const detail = document.createElement("small");
+    detail.textContent = name === "cleanup"
+      ? (report.running ? "Waiting for operations to finish" : startupAborted ? "Workload did not start; no cleanup commands sent" : cleanupErrors.length ? cleanupErrors.map((entry) => entry.error).join("; ") : "Cleanup commands acknowledged")
+      : `${statuses[status]} · Succeeded: ${result.succeeded} / Failed: ${result.failed}${result.last_error ? ` · ${result.last_error}` : ""}`;
+    if (name === "ui") detail.textContent += ` · Dynamic updates: ${result.updates_succeeded}`;
+    item.append(number, title, detail);
+    stages.append(item);
+  });
+  const preview = document.querySelector("#concurrencyPhoto");
+  const photo = report.results.camera.last_image;
+  preview.hidden = !photo;
+  if (photo && preview.dataset.file !== photo.file) {
+    preview.src = `/artifacts/${encodeURIComponent(photo.file)}`;
+    preview.dataset.file = photo.file;
+  }
+  const link = document.querySelector("#concurrencyReportLink");
+  link.hidden = report.running || report.report_saved === false;
+  if (link.hidden) link.removeAttribute("href");
+  else link.href = `/artifacts/${encodeURIComponent(report.report)}`;
+  const saveState = document.querySelector("#concurrencyReportState");
+  saveState.hidden = !report.report_save_error;
+  saveState.textContent = report.report_save_error ? `Report save failed: ${report.report_save_error}` : "";
+  for (const name of ["camera", "speaker", "ui"]) {
+    const result = report.results[name];
+    const section = document.createElement("section");
+    const heading = document.createElement("h3");
+    heading.textContent = labels[name];
+    section.append(heading);
+    const lines = [
+      statuses[result.status],
+      `Attempted: ${result.attempted} / Succeeded: ${result.succeeded} / Failed: ${result.failed}`,
+      result.average_ms === null ? "No timing data" : `Average: ${result.average_ms} ms / Maximum: ${result.max_ms} ms`,
+      result.evidence,
+    ];
+    if (name === "camera" && result.last_image) {
+      const photo = result.last_image;
+      lines.push(`Last image: ${photo.width} x ${photo.height}, ${photo.bytes} bytes`, photo.file);
+    }
+    if (name === "speaker") lines.push("Actual sound: awaiting device confirmation");
+    if (name === "ui") lines.push("Screen appearance: awaiting device confirmation", "Command counts include UI startup and updates", `Dynamic updates: ${result.updates_succeeded}`);
+    if (result.last_error !== null) lines.push(`Failure reason: ${result.last_error || "No error detail returned"}`);
+    if (result.cleanup_error !== null) lines.push(`Cleanup error: ${result.cleanup_error || "No error detail returned"}`);
+    for (const line of lines) {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = line;
+      section.append(paragraph);
+    }
+    container.append(section);
+  }
+}
+
+document.querySelector("#concurrencyStart").addEventListener("click", async () => {
+  const start = document.querySelector("#concurrencyStart");
+  start.disabled = true;
+  let receivedReport = false;
+  const panel = document.querySelector("#concurrencyStation");
+  panel.dataset.requesting = "true";
+  const details = document.querySelector("#concurrencyDetails");
+  details.dataset.pendingRunId = details.dataset.runId || "";
+  document.querySelector("#concurrencyUiObserved").checked = false;
+  document.querySelector("#concurrencyAudioObserved").checked = false;
+  document.querySelector("#concurrencyReportLink").hidden = true;
+  document.querySelector("#concurrencyReportState").hidden = true;
+  document.querySelector("#concurrencyPhoto").hidden = true;
+  document.querySelector("#concurrencyStop").disabled = false;
+  document.querySelectorAll("#concurrencyStages li").forEach((item) => {
+    item.dataset.state = "running";
+    item.querySelector("small").textContent = "Running";
+  });
+  details.textContent = "Concurrent test running";
+  try {
+    await runAction({
+      path: "/api/concurrency/start",
+      body: { duration: Number(document.querySelector("#concurrencyDuration").value) },
+      result: document.querySelector("#concurrencyResult"),
+      station: document.querySelector("#concurrencyStation"),
+      resources: ["camera", "animation", "microphone", "speaker"],
+      pending: "Concurrent test running",
+      complete: (report) => {
+        renderConcurrencyResults(report);
+        receivedReport = true;
+        const counts = `Photos: ${report.counts.camera}, audio: ${report.counts.speaker}, UI: ${report.counts.ui}`;
+        if (!report.passed) throw new Error(`${counts}. ${report.errors.map((item) => `${item.worker}: ${item.error}`).join("; ") || (report.incomplete ? "Dynamic UI updates not verified" : "Test stopped")}`);
+        if (report.report_save_error) return `${counts}. SDK checks passed`;
+        return `${counts}. Report: ${report.report}`;
+      },
+    });
+  } catch (error) {
+    if (!receivedReport) document.querySelector("#concurrencyDetails").textContent = `No test report: ${error.message}`;
+  }
+  finally {
+    delete panel.dataset.requesting;
+    delete details.dataset.pendingRunId;
+    await refreshStatus();
+  }
+});
+document.querySelector("#concurrencyCleanup").addEventListener("click", async () => {
+  const panel = document.querySelector("#concurrencyStation");
+  panel.dataset.cleaning = "true";
+  document.querySelector("#concurrencyCleanup").disabled = true;
+  try {
+    const response = await api("/api/concurrency/cleanup", { method: "POST" });
+    if (Object.keys(response.pending).length) {
+      notify(`Cleanup pending: ${Object.values(response.pending).join("; ")}`, "error");
+    } else {
+      notify("Cleanup commands acknowledged", "ok");
+    }
+  } catch (error) {
+    notify(error.message, "error");
+  } finally {
+    delete panel.dataset.cleaning;
+    await refreshStatus();
+  }
+});
+document.querySelector("#concurrencyStop").addEventListener("click", () => {
+  api("/api/concurrency/stop", { method: "POST" }).catch((error) => notify(error.message, "error"));
+});
 
 elements.playAudioButton.addEventListener("click", () => { playAudio().catch(() => {}); });
 elements.panControl.addEventListener("input", updateMotionPreview);
@@ -2044,6 +2229,9 @@ elements.stopAudioButton.addEventListener("click", () => {
   }).catch(() => {});
 });
 elements.capturePhotoButton.addEventListener("click", () => { capturePhoto().catch(() => {}); });
+elements.capturePhotoWithFeedbackButton.addEventListener("click", () => {
+  capturePhotoWithFeedback().catch(() => {});
+});
 
 async function inferenceAction(action, preview = false) {
   if (inferenceRequestPending) return;

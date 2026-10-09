@@ -53,9 +53,12 @@ def runtime_identity() -> dict[str, str]:
     if getattr(sys, "frozen", False):
         # A published bundle is named by its complete verified content hash.
         root = Path(sys.executable).resolve().parent
-        from .repository import bundle_digest
+        from .repository import _published_path, bundle_digest
+        from .bundle_verification import verified_digest
+        from .daemon.instance import default_runtime_instance_root
 
-        build = "bundle:" + bundle_digest(root)
+        cache = _published_path(default_runtime_instance_root() / "bundles/.verification")
+        build = "bundle:" + verified_digest(_published_path(root), cache, bundle_digest)[0]
     else:
         build = "source:" + source_build_id(Path(__file__).resolve().parents[1])
     return {"sdk_version": __version__, "build_id": build}

@@ -106,11 +106,27 @@ def download_application_snapshot(
         isolated_target = temporary_directory / "snapshot"
         isolated_target.mkdir()
         try:
-            revision = hub.download_repository_snapshot(
-                repo_id=reference.repo_id,
-                commit=reference.commit,
-                target=isolated_target,
-            )
+            def report_bytes(downloaded: int, total: int | None, attempt: int) -> None:
+                sink.emit(ProgressEvent(
+                    stage="downloading_snapshot",
+                    message="Downloading immutable Application source",
+                    data={**details, "downloaded_bytes": downloaded,
+                          "total_bytes": total, "download_attempt": attempt},
+                ))
+
+            # Preserve adapters that implement the original stage-only port.
+            with_progress = getattr(hub, "download_repository_snapshot_with_progress", None)
+            if callable(with_progress):
+                revision = with_progress(
+                    repo_id=reference.repo_id, commit=reference.commit,
+                    target=isolated_target, on_progress=report_bytes,
+                )
+            else:
+                revision = hub.download_repository_snapshot(
+                    repo_id=reference.repo_id,
+                    commit=reference.commit,
+                    target=isolated_target,
+                )
         except HubError as exc:
             raise DownloadError(
                 ErrorCode.REMOTE_ERROR,

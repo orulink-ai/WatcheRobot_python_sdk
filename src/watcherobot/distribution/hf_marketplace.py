@@ -15,8 +15,11 @@ from huggingface_hub.errors import HfHubHTTPError
 
 from watcherobot import __version__
 
+from .byte_progress import snapshot_progress_bar
+
 from .ports import (
     CatalogDocument,
+    SnapshotProgress,
     HubFileNotFound,
     HubInvalidResponse,
     HubNetworkError,
@@ -97,12 +100,21 @@ class HuggingFaceMarketplaceHubClient:
         except Exception as exc:
             _raise_public_error(exc, not_found="file")
 
+    def download_repository_snapshot_with_progress(
+        self, *, repo_id: str, commit: str, target: Path,
+        on_progress: SnapshotProgress,
+    ) -> RepositoryRevision:
+        return self.download_repository_snapshot(
+            repo_id=repo_id, commit=commit, target=target, on_progress=on_progress,
+        )
+
     def download_repository_snapshot(
         self,
         *,
         repo_id: str,
         commit: str,
         target: Path,
+        on_progress: SnapshotProgress | None = None,
     ) -> RepositoryRevision:
         expected_commit = _full_commit(commit)
         destination = Path(target)
@@ -128,11 +140,26 @@ class HuggingFaceMarketplaceHubClient:
             commit=expected_commit,
         )
         try:
+            progress_options: dict[str, Any] = {}
+            if on_progress is not None:
+                # HF's live aggregate total grows as concurrent files start.
+                # Pin the denominator before any bytes are transferred instead.
+                planned = api.snapshot_download(
+                    repo_id=repo_id, repo_type="space", revision=expected_commit,
+                    local_dir=destination, dry_run=True,
+                    tqdm_class=snapshot_progress_bar(None, lambda *_: None),
+                )
+                sizes = [item.file_size for item in planned if item.will_download]
+                known_sizes = [size for size in sizes if type(size) is int and size >= 0]
+                total = sum(known_sizes) if len(known_sizes) == len(sizes) else None
+                on_progress(0, total, 0)
+                progress_options["tqdm_class"] = snapshot_progress_bar(total, on_progress)
             downloaded = api.snapshot_download(
                 repo_id=repo_id,
                 repo_type="space",
                 revision=expected_commit,
                 local_dir=destination,
+                **progress_options,
             )
         except Exception as exc:
             _raise_public_error(exc, not_found="revision")

@@ -1,0 +1,7 @@
+history_turns = 6
+silence_ms = 800
+max_utterance_seconds = 30
+speech_threshold = 550
+pre_roll_ms = 300
+segment_characters = 160
+max_reply_characters = 4000

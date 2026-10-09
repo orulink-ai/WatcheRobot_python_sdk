@@ -65,7 +65,7 @@ editable 安装，保证控制台入口与当前源码一致。
   --description "Verify the current SDK Application flow"
 ```
 
-目标路径必须不存在。初始化不会启动 Daemon，也不会访问 Hugging Face；默认 `app.py` 会播放一次 `happy` 行为并正常退出。生成内容为：
+目标路径必须不存在。初始化不会启动 Daemon，也不会访问 Hugging Face；默认 `app.py` 启动受管应用并等待停止，在其中添加自己的业务逻辑。生成内容为：
 
 ```text
 my_sdk_test/
@@ -113,6 +113,8 @@ SDK 自动计算。发布前应修改正式唯一 ID，并补齐应用广场信�
 最小 `app.py`：
 
 ```python
+"""Application 固定入口，由 watcherobot app run 启动。"""
+
 import asyncio
 
 from watcherobot.application import ApplicationContext
@@ -120,17 +122,14 @@ from watcherobot.application import ApplicationContext
 
 async def main() -> None:
     async with ApplicationContext.from_environment() as app:
-        app.logger.info("app_id=%s", app.app_id)
-        app.logger.info("device=%s", app.robot.device_info)
-        job = await asyncio.to_thread(
-            app.robot.behavior.play,
-            "happy",
-            repeat=1,
-        )
-        await asyncio.to_thread(job.wait, 20.0)
+        app.logger.info("Application started.")
+        # 在这里编写应用逻辑，使用 app.robot 和 app.desktop 与设备、桌面交互。
+        while not app.shutdown_requested:
+            await asyncio.sleep(0.1)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 常用入口：

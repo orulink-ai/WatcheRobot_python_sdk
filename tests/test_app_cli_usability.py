@@ -142,16 +142,12 @@ def test_app_init_creates_project_without_starting_daemon(
     assert "watcherobot app run" in captured.out
     assert target.joinpath("app.json").is_file()
     app_source = target.joinpath("app.py").read_text(encoding="utf-8")
-    assert app_source.index("Hello, WatcheRobot!") < app_source.index(
-        'app.robot.supports("behavior")'
-    )
-    assert "Run 'watcherobot robot setup'" in app_source
-    assert 'app.robot.behavior.play,\n            "happy"' in app_source
-    assert "job.wait, 20.0" in app_source
+    assert 'ApplicationContext.from_environment()' in app_source
+    assert 'behavior.play' not in app_source
     assert "watcherobot robot setup" in captured.out
     generated_readme = target.joinpath("README.md").read_text(encoding="utf-8")
     assert "watcherobot robot setup" in generated_readme
-    assert "always logs a Hello World success" in generated_readme
+    assert "Hello World" not in generated_readme
 
 
 def test_app_init_derives_metadata_without_prompts(
@@ -222,7 +218,7 @@ def test_app_init_prompts_only_for_directory_when_omitted(
     monkeypatch.setattr("builtins.input", answer)
 
     assert main(["app", "init"]) == 0
-    assert prompts == ["Project directory [hello_robot]: "]
+    assert prompts == ["Project directory [my_app]: "]
     assert json.loads(target.joinpath("app.json").read_text(encoding="utf-8"))[
         "name"
     ] == "Prompted App"
@@ -296,4 +292,4 @@ def test_app_runtime_actions_render_a_readable_summary(
     if command == "start":
         assert requests == [{"method": "POST", "timeout": 90.0}]
     else:
-        assert requests == [{"method": "POST"}]
+        assert requests == [{"method": "POST", "timeout": 30.0}]
