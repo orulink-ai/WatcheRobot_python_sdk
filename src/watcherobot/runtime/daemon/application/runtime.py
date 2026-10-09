@@ -184,6 +184,24 @@ class ApplicationRuntimeManager:
         self.last_exit_code = None
         return manifest
 
+    def unselect_application(self, expected_app_id: str) -> None:
+        """Clear an idle selection atomically on the Daemon event loop."""
+
+        if (
+            self._operation_lock.locked()
+            or self._closing
+            or self._process is not None
+            or self.registry.active_run is not None
+        ):
+            raise SessionOccupiedError(
+                "Application cannot be unselected during a lifecycle operation"
+            )
+        self.registry.clear_current_app(expected_app_id)
+        self._application_dir = None
+        self._launch_spec = None
+        self.last_state = ApplicationState.NOT_SELECTED
+        self.last_exit_code = None
+
     async def start(self) -> ApplicationRun:
         async with self._operation_lock:
             if self._process is not None or self.registry.active_run is not None:

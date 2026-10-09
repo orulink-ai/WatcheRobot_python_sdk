@@ -89,6 +89,47 @@
         </form>
       </section>
 
+      <section class="combined-test-panel" id="concurrencyStation" aria-labelledby="concurrencyTitle">
+        <div class="combined-test-copy">
+          <p class="section-index">00.6 / Concurrent Stress</p>
+          <h2 id="concurrencyTitle">Photo + Speaker + Custom UI</h2>
+          <p>Dynamic eyes, one-second pauses after each photo, and one audio sample. All three start together.</p>
+          <div class="duration-control">
+            <label for="concurrencyDuration">Duration (seconds)</label>
+            <input id="concurrencyDuration" type="number" min="1" max="120" value="30" aria-describedby="concurrencyDurationHint" />
+          </div>
+          <small id="concurrencyDurationHint">Duration limits new photo and UI requests. In-flight operations finish before cleanup; audio plays once.</small>
+          <div class="button-row">
+            <button class="station-action" id="concurrencyStart" type="button">Start Concurrent Test</button>
+            <button class="quiet-action" id="concurrencyStop" type="button" disabled>Stop Test</button>
+            <button class="quiet-action" id="concurrencyCleanup" type="button" disabled>Retry Cleanup</button>
+          </div>
+          <small>Stop interrupts audio playback; camera and UI calls finish before cleanup.</small>
+          <output id="concurrencyCleanupState" aria-live="polite">No pending cleanup</output>
+          <output class="station-result" id="concurrencyResult" aria-live="polite">Awaiting Test</output>
+          <output class="station-result" id="concurrencyReportState" data-tone="error" aria-live="polite" hidden></output>
+          <a id="concurrencyReportLink" hidden download>Download test report</a>
+        </div>
+        <div class="combined-test-report">
+          <ol class="combined-stage-list" id="concurrencyStages" aria-live="polite">
+            <li data-state="waiting"><span>01</span><strong>Dynamic Custom UI</strong><small>Waiting</small></li>
+            <li data-state="waiting"><span>02</span><strong>Repeated Camera Capture</strong><small>Waiting</small></li>
+            <li data-state="waiting"><span>03</span><strong>Audio Playback</strong><small>Waiting</small></li>
+            <li data-state="waiting"><span>04</span><strong>Resource Recovery</strong><small>Waiting</small></li>
+          </ol>
+          <div class="combined-observations">
+            <label><input id="concurrencyUiObserved" type="checkbox" /> Custom UI kept changing without abnormal flicker</label>
+            <label><input id="concurrencyAudioObserved" type="checkbox" /> Audio was audible from the robot speaker</label>
+            <small>Manual observations are separate from SDK results and reset for each run.</small>
+          </div>
+        </div>
+        <details class="concurrency-detail-panel">
+          <summary>Detailed results and latest photo</summary>
+          <img id="concurrencyPhoto" alt="Latest concurrent test photo" hidden />
+          <div id="concurrencyDetails" class="concurrency-results"><p>Not run</p></div>
+        </details>
+      </section>
+
       <section class="telemetry-strip" aria-label="Device Telemetry">
         <div><span>Device</span><strong id="deviceId">—</strong></div>
         <div><span>Firmware</span><strong id="firmwareVersion">—</strong></div>
@@ -443,7 +484,8 @@
             <span class="frame-corner bottom-left"></span><span class="frame-corner bottom-right"></span>
           </div>
           <div class="button-row">
-            <button class="station-action" id="capturePhotoButton" type="button">Capture JPEG</button>
+            <button class="station-action" id="capturePhotoButton" type="button">Atomic Capture</button>
+            <button class="quiet-action" id="capturePhotoWithFeedbackButton" type="button">Capture with Feedback</button>
             <a class="quiet-action link-action" id="downloadPhoto" href="#" download="camera.jpg" hidden>Download Photo</a>
           </div>
           <output class="station-result" id="cameraResult">Awaiting Test</output>

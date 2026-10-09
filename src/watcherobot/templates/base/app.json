@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "id": "local.my_app",
+  "name": "My App",
+  "version": "0.1.0",
+  "requires_watcherobot": ">=0.1.10,<0.2",
+  "dependencies": [],
+  "supported_host_platforms": [
+    "windows",
+    "macos"
+  ],
+  "description": "A WatcheRobot Application.",
+  "author": "Local Developer",
+  "icon": "icon.svg"
+}

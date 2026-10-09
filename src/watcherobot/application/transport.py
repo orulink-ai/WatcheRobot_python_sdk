@@ -12,6 +12,7 @@ from collections.abc import Callable, Coroutine
 from concurrent.futures import Future
 from typing import Any
 
+from watcherobot._internal.audio_credit import AudioInFlightWindow
 from watcherobot._internal.audio_status import (
     AudioStatusKind,
     classify_audio_status,
@@ -88,6 +89,7 @@ class DaemonApplicationTransport:
         self._audio_credit_condition: asyncio.Condition | None = None
         self._audio_flow_stream_id = 0
         self._audio_credits = 0
+        self._audio_inflight = AudioInFlightWindow()
         self._audio_slots_per_packet = 1
         self._audio_flow_error: str | None = None
 
@@ -332,6 +334,7 @@ class DaemonApplicationTransport:
                 // AUDIO_DEVICE_SLOT_BYTES,
             )
             self._audio_credits = 4
+            self._audio_inflight = AudioInFlightWindow()
             self._audio_flow_error = None
         sequence = 0
         try:
@@ -378,6 +381,7 @@ class DaemonApplicationTransport:
                         f"audio stream failed: {self._audio_flow_error}"
                     )
                 self._audio_credits -= 1
+                self._audio_inflight.reserve()
 
         try:
             await asyncio.wait_for(
@@ -401,6 +405,7 @@ class DaemonApplicationTransport:
             if classify_audio_status(reason) is AudioStatusKind.FAILED:
                 self._audio_flow_error = str(reason)
             else:
+                reported_credits = self._audio_credits
                 pending_frames = data.get("pending_frames")
                 free_frames = data.get("free_frames")
                 queue_depth = data.get("queue_depth")
@@ -426,7 +431,7 @@ class DaemonApplicationTransport:
                     available_packets = (
                         available_slots // self._audio_slots_per_packet
                     )
-                    self._audio_credits = min(
+                    reported_credits = min(
                         AUDIO_MAX_CREDIT_PACKETS,
                         available_packets,
                     )
@@ -434,10 +439,13 @@ class DaemonApplicationTransport:
                     free_packets = (
                         free_frames // self._audio_slots_per_packet
                     )
-                    self._audio_credits = min(
+                    reported_credits = min(
                         free_packets,
                         AUDIO_MAX_CREDIT_PACKETS,
                     )
+                credits = self._audio_inflight.available(data, reported_credits)
+                if credits is not None:
+                    self._audio_credits = credits
             condition.notify_all()
 
     async def _on_frame(

@@ -24,9 +24,6 @@ Available examples include:
 - `dshtts_speaker`: expose a loopback TTS bridge that converts DSH assistant
   replies with edge-tts and plays them through the robot speaker; includes
   matching Windows PowerShell and macOS/Linux shell clients.
-- `vision_debug_lab`: launch a loopback-only Himax vision workbench for
-  backend/model health, same-sequence face overlays, metrics, dataset
-  recording, HOLD/RECENTER safety, and diagnostic reports.
 - `scheduled_reminder`: a robot alarm clock app — set alarms (time, repeat
   rules, text) on its local web page (http://127.0.0.1:8766), and the robot
   speaks them from its speaker at the scheduled times, playing a happy
@@ -37,3 +34,7 @@ Available examples include:
 - `record_microphone`: record a short WAV file.
 - `face_tracking_preview`: consume typed, sequence-matched live preview frames
   without opening a device socket in Application code.
+
+`vision_debug_lab` has been retired. The examples above do not replace all of its
+dataset-recording and diagnostic-export workflows; see the
+[retirement and migration notes](../docs/vision-diagnostics.md#vision-debug-lab-retirement-and-migration).

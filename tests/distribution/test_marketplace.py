@@ -277,3 +277,25 @@ def test_public_hub_failure_has_stable_remote_error(failure: str) -> None:
 
     assert captured.value.code is ErrorCode.REMOTE_ERROR
     assert "network unavailable" not in str(captured.value)
+
+
+def test_catalog_rate_limit_keeps_a_distinct_error_code():
+    from watcherobot.distribution.ports import HubRateLimitError
+    class LimitedHub:
+        def read_public_catalog(self, **kwargs):
+            raise HubRateLimitError('private transport detail')
+    with pytest.raises(MarketplaceError) as captured:
+        load_official_marketplace(provider='gitee', hub=LimitedHub())
+    assert captured.value.code == ErrorCode.RATE_LIMITED
+    assert 'private' not in str(captured.value)
+
+
+def test_marketplace_preserves_http_status_without_remote_body():
+    from watcherobot.distribution.ports import HubRateLimitError
+    class LimitedHub:
+        def read_public_catalog(self, **kwargs):
+            raise HubRateLimitError('private remote body', http_status=403)
+    with pytest.raises(MarketplaceError) as caught:
+        load_official_marketplace(provider='gitee', hub=LimitedHub())
+    assert caught.value.details == {'http_status': 403, 'stage': 'fetching_catalog'}
+    assert 'private remote body' not in str(caught.value)

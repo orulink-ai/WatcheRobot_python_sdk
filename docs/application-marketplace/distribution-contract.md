@@ -71,6 +71,23 @@ stdout 每行必须是一个完整 JSON 对象，事件类型只允许 `progress
 - `progress.data`、`result.data` 和 `error.details` 是命令相关结构化字段；调用方必须按事件类型读取，不能解析 `message` 文案判断业务状态。
 - Desktop 取消任务时应先终止分发子进程树；若命令自行观察到取消，则返回 `operation_cancelled`。
 
+### 下载字节进度
+
+`downloading_snapshot` 的 `data` 可包含以下字段，均描述当前固定快照，不能按文件数或安装阶段推算百分比：
+
+```json
+{"type":"progress","stage":"downloading_snapshot","message":"Downloading immutable Application source","data":{"downloaded_bytes":4096,"total_bytes":16384,"download_attempt":0}}
+```
+
+- `downloaded_bytes`：当前尝试已取得的源码字节累计值，不是单块增量。Hugging Face 使用源码重建字节，不能与 Xet 压缩传输字节混算；Gitee 在实际读取并验证 blob 后累计其字节。
+- `total_bytes`：下载开始前确定的固定总量；无法确定时为 `null`。Hugging Face dry-run 排除完整缓存文件；续传保留的部分字节计入已取得字节，其完整文件大小仍计入总量。全部命中缓存时总量为零，保持不定进度直到进入校验阶段，不伪造百分比。
+- `download_attempt`：从零开始的重试代数。HTTP 续传被拒绝、已取得字节被丢弃时增加代数；新代数允许计数回退，同一代数内累计值不得回退。它不是应用安装 operation ID。
+- HF 中间字节回调最多每 100 毫秒上报一次，首次、显式重试和实际达到总量时立即上报；节流只减少事件数量，不插值、不推算字节。Desktop 在新代数显示“重试下载”提示。
+- 旧适配器可以仅发送阶段事件；缺少字节字段、总量未知或非正数时显示不定进度。校验和安装阶段始终使用独立不定进度，不继承下载百分比。
+- Desktop 应拒绝已结束或不匹配 operation 的事件及旧 sequence/attempt；同一 attempt 的分母异常变化应降级为不定进度，不能用历史最大百分比掩盖变化。
+
+Hugging Face 字节回调使用 `snapshot_download(dry_run=True)` 与 `tqdm_class`，依赖下限为 **huggingface-hub 1.32**（小于 2）。1.32.0 的真实下载器已通过 HTTP mock transport 验证分块、缓存、续传和续传拒绝后重试；不能依赖旧版只报告文件数的回调。新 SDK 源码需要通过源码开发运行时或重新构建的分发产物接入；旧的 Desktop SDK commit 锁与冻结程序不会自动获得此能力。
+
 ## 退出码
 
 | 名称 | 数值 | 含义 |
@@ -127,3 +144,13 @@ Daemon 管理接口的版本握手、兼容矩阵和日志安全边界见
 - 跨仓路由边界检查：`python C:\\Users\\Administrator\\.codex\\skills\\watcher-daemon-app-migration-guard\\scripts\\verify_migration_state.py --mode post`。
 
 实施阶段的详细 TDD 数量、真实 OAuth 和 Hugging Face 联调记录见 [实施进度](implementation-progress.md) 与 [OAuth 记录](hugging-face-oauth.md)。
+
+### 请求限流
+`rate_limited`（退出码 4）：公开应用源明确返回 429，或 403 响应包含限流标记。不得把所有 403 都推断为限流。SDK 不自动重试，不切换凭据；Desktop 只合并进行中的并发刷新；后续手动刷新重新请求，不再以60秒本地冷却返回上一次失败。持续显示可用缓存。
+
+
+### 广场请求截止与实际状态
+
+国内 `app marketplace --provider gitee` 创建 `GiteeApi(timeout=None)` 与 `GiteePublicRepository(timeout=None)`，包括目录、commit、tree 和 manifest 的读取，不设置 SDK 固定请求截止；Desktop 同时移除120秒进程截止。无响应时继续等待；操作系统连接错误仍为真实失败。其他命令保留原超时，不改变发布/安装/下载策略及 Hugging Face 库默认策略。
+
+收到 HTTP 错误时，`error.details.http_status` 为实际整数状态码，`stage` 为 `fetching_catalog` 或 `reading_manifest`；没有实际 HTTP 响应时不填虚构状态。Desktop 仅接受100–599的状态码，不传递原始响应正文。`rate_limited` 不等于一定能在某个固定时间恢复；移除超时不能解除远端403。

@@ -5,7 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import Callable, Protocol
+
+
+# Cumulative snapshot bytes, fixed total (or unknown), and explicit retry generation.
+SnapshotProgress = Callable[[int, int | None, int], None]
 
 
 _FULL_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -259,7 +263,11 @@ class MarketplaceHubClient(Protocol):
 
 
 class HubError(RuntimeError):
-    """Base failure raised by an authenticated Hub adapter."""
+    """Base failure with optional safe HTTP diagnostics, never response bodies."""
+
+    def __init__(self, message: str = "", *, http_status: int | None = None) -> None:
+        super().__init__(message)
+        self.http_status = http_status
 
 
 class HubAuthenticationError(HubError):
@@ -268,6 +276,10 @@ class HubAuthenticationError(HubError):
 
 class HubNetworkError(HubError):
     """The Hub could not be reached or returned a server failure."""
+
+
+class HubRateLimitError(HubNetworkError):
+    """The Hub rejected a request because its rate limit was exceeded."""
 
 
 class HubInvalidResponse(HubError):
@@ -280,6 +292,16 @@ class HubRepositoryConflict(HubError):
 
 class HubCatalogConflict(HubError):
     """The catalog changed before its pull request could be created."""
+
+
+class HubForkOutOfDate(HubError):
+    """The developer fork lacks the selected upstream catalog commit."""
+
+    def __init__(self, fork_id: str, upstream_repo_id: str, required_commit: str) -> None:
+        self.fork_id = fork_id
+        self.upstream_repo_id = upstream_repo_id
+        self.required_commit = required_commit
+        super().__init__("Developer fork must be synchronized before submission")
 
 
 class HubRepositoryNotFound(HubError):

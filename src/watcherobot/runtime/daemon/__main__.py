@@ -252,6 +252,11 @@ async def run_runtime(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from watcherobot.runtime.stdio import configure_runtime_stdio
+    from watcherobot.runtime.windows_paths import configure_frozen_native_paths
+
+    configure_runtime_stdio()
+    configure_frozen_native_paths()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.begin_installation or args.guard_installation:
@@ -300,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
         ensure_command(
             command + forwarded,
             activate=args.activate_shared,
-            force=args.activate_shared,
+            force=False,
             state_root=args.state_root,
         )
         return 0

@@ -375,3 +375,155 @@ def test_public_transport_error_is_sanitized() -> None:
         client.read_public_catalog(repo_id=CATALOG_REPO, path="app-list.json")
 
     assert "sensitive transport details" not in str(captured.value)
+
+
+def test_snapshot_byte_callback_uses_fixed_total_and_explicit_retry(tmp_path):
+    progress = []
+
+    class Api(FakePublicHfApi):
+        def snapshot_download(self, **kwargs):
+            if kwargs.get("dry_run"):
+                return [SimpleNamespace(file_size=10, will_download=True),
+                        SimpleNamespace(file_size=30, will_download=True)]
+            cls = kwargs["tqdm_class"]
+            with cls(total=0, unit="B", name="huggingface_hub.snapshot_download", disable=True) as bar:
+                bar.total = 10  # HF discovers individual file totals lazily.
+                bar.update(5)
+                bar.total = 40
+                bar.update(5)
+                bar.update(-10)  # HTTP server rejected resume: explicit new attempt.
+                bar.update(40)
+            with cls(total=40, unit="B", name="huggingface_hub.snapshot_download.transfer") as bar:
+                bar.update(40)  # Do not double-count network and reconstruction bars.
+            return str(kwargs["local_dir"])
+
+    client, _ = _client(Api())
+    client.download_repository_snapshot_with_progress(
+        repo_id=SPACE_ID, commit=COMMIT, target=tmp_path,
+        on_progress=lambda *values: progress.append(values),
+    )
+    assert progress == [(0, 40, 0), (5, 40, 0), (0, 40, 1), (40, 40, 1)]
+
+
+def test_byte_hook_is_called_by_real_hf_progress_factory_when_disabled():
+    from huggingface_hub.utils.tqdm import _create_progress_bar
+    from watcherobot.distribution.byte_progress import snapshot_progress_bar
+    updates = []
+    cls = snapshot_progress_bar(None, lambda *values: updates.append(values))
+    with _create_progress_bar(cls=cls, log_level=50,
+            name="huggingface_hub.snapshot_download", total=0, unit="B") as bar:
+        bar.update(7)
+    assert updates == [(7, None, 0)]
+
+
+@pytest.mark.parametrize("mode", ["fresh", "cached", "resume", "retry"])
+def test_real_hf_downloader_emits_chunk_bytes_with_mock_http(tmp_path, monkeypatch, mode):
+    import hashlib
+    import huggingface_hub
+    from huggingface_hub import constants
+    from huggingface_hub.utils import _http
+
+    files = {"a.bin": b"123456", "b.bin": b"abcdefghij"}
+    requests = []
+    failed_once = False
+
+    class InterruptedStream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b"12"
+            raise httpx.ReadTimeout("interrupted fixture")
+
+    def transport(request):
+        nonlocal failed_once
+        requests.append((request.method, request.url.path))
+        path = request.url.path
+        if "/tree/" in path:
+            return httpx.Response(200, json=[{"type": "file", "path": name,
+                "size": len(data), "oid": hashlib.sha1(data).hexdigest()} for name, data in files.items()])
+        if path.startswith("/api/spaces/"):
+            return httpx.Response(200, json={"id": SPACE_ID, "sha": COMMIT, "private": False,
+                "siblings": [{"rfilename": name} for name in files]})
+        if "/resolve/" in path:
+            data = files[path.rsplit("/", 1)[-1]]
+            headers = {"X-Repo-Commit": COMMIT, "ETag": hashlib.sha1(data).hexdigest(),
+                       "Content-Length": str(len(data))}
+            if request.method == "GET" and path.endswith("a.bin"):
+                if mode == "retry" and not failed_once:
+                    failed_once = True
+                    return httpx.Response(200, headers=headers, stream=InterruptedStream())
+                if mode == "resume" and "range" in request.headers:
+                    offset = int(request.headers["range"].split("=")[1].split("-")[0])
+                    headers["Content-Range"] = f"bytes {offset}-{len(data)-1}/{len(data)}"
+                    headers["Content-Length"] = str(len(data) - offset)
+                    return httpx.Response(206, headers=headers, content=data[offset:])
+            return httpx.Response(200, headers=headers, content=b"" if request.method == "HEAD" else data)
+        raise AssertionError((request.method, path))
+
+    previous_factory = _http._GLOBAL_CLIENT_FACTORY
+    huggingface_hub.set_client_factory(lambda: httpx.Client(transport=httpx.MockTransport(transport)))
+    monkeypatch.setattr(constants, "HF_HUB_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(constants, "DOWNLOAD_CHUNK_SIZE", 2)
+    from huggingface_hub import file_download
+    monkeypatch.setattr(file_download.time, "sleep", lambda _: None)
+    target = tmp_path / "snapshot"
+    target.mkdir()
+    if mode == "cached":
+        cached = tmp_path / "cache" / ("spaces--" + SPACE_ID.replace("/", "--")) / "snapshots" / COMMIT / "a.bin"
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(files["a.bin"])
+
+    class Api(huggingface_hub.HfApi):
+        def snapshot_download(self, *args, **kwargs):
+            if mode == "resume" and not kwargs.get("dry_run"):
+                from huggingface_hub._local_folder import get_local_download_paths
+                paths = get_local_download_paths(local_dir=target, filename="a.bin")
+                paths.incomplete_path(hashlib.sha1(files["a.bin"]).hexdigest()).write_bytes(b"12")
+            return super().snapshot_download(*args, **kwargs)
+
+    progress = []
+    try:
+        client = HuggingFaceMarketplaceHubClient(api_factory=lambda: Api(token=False))
+        client.download_repository_snapshot_with_progress(repo_id=SPACE_ID, commit=COMMIT,
+            target=target, on_progress=lambda *values: progress.append(values))
+    finally:
+        huggingface_hub.set_client_factory(previous_factory)
+    assert {name: (target / name).read_bytes() for name in files} == files
+    total = 10 if mode == "cached" else 16
+    attempt = 1 if mode == "retry" else 0
+    assert progress[0] == (0, total, 0)
+    assert progress[-1] == (total, total, attempt)
+    assert all(denominator == total for _, denominator, _ in progress)
+    assert any(0 < downloaded < 6 for downloaded, _, _ in progress)
+    for generation in range(attempt + 1):
+        counts = [count for count, _, value in progress if value == generation]
+        assert counts == sorted(counts)
+    expected_gets = 1 if mode == "cached" else 3 if mode == "retry" else 2
+    assert sum(method == "GET" and "/resolve/" in path for method, path in requests) == expected_gets
+
+
+def test_hf_dependency_floor_matches_the_verified_byte_callback_contract():
+    from packaging.requirements import Requirement
+    project = Path(__file__).parents[2] / "pyproject.toml"
+    dependency = next(line.strip().strip('",') for line in project.read_text().splitlines()
+                      if '"huggingface-hub' in line)
+    requirement = Requirement(dependency)
+    assert "1.32.0" in requirement.specifier
+    assert "1.31.0" not in requirement.specifier
+
+
+def test_byte_callback_throttles_chunks_but_never_delays_retry_or_completion(monkeypatch):
+    from watcherobot.distribution import byte_progress
+    clock = [0.0]
+    monkeypatch.setattr(byte_progress, "monotonic", lambda: clock[0], raising=False)
+    updates = []
+    cls = byte_progress.snapshot_progress_bar(10000, lambda *value: updates.append(value))
+    with cls(unit="B", name="huggingface_hub.snapshot_download") as bar:
+        for _ in range(1000):
+            bar.update(1)
+        assert updates == [(1, 10000, 0)]
+        clock[0] = 0.2
+        bar.update(1)
+        assert updates[-1] == (1001, 10000, 0)
+        bar.update(-1001)
+        assert updates[-1] == (0, 10000, 1)
+        bar.update(10000)
+        assert updates[-1] == (10000, 10000, 1)

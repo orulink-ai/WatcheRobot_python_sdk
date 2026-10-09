@@ -11,6 +11,7 @@ from typing import Any, Callable, Coroutine
 
 from websockets.asyncio.client import connect
 
+from ._internal.audio_credit import AudioInFlightWindow
 from ._internal.audio_status import AudioStatusKind, classify_audio_status
 from .errors import CommandError, WatcheRobotError
 from .protocol import (
@@ -61,6 +62,7 @@ class DesktopRobotSession:
         self._audio_condition: asyncio.Condition | None = None
         self._audio_stream_id = 0
         self._audio_credits = 0
+        self._audio_inflight = AudioInFlightWindow()
         self._audio_slots_per_packet = 1
         self._audio_error: str | None = None
 
@@ -240,6 +242,7 @@ class DesktopRobotSession:
             self._audio_stream_id = stream_id
             self._audio_slots_per_packet = max(1, (chunk_bytes + AUDIO_DEVICE_SLOT_BYTES - 1) // AUDIO_DEVICE_SLOT_BYTES)
             self._audio_credits = 4
+            self._audio_inflight = AudioInFlightWindow()
             self._audio_error = None
         try:
             for sequence, offset in enumerate(range(0, len(pcm), chunk_bytes)):
@@ -264,6 +267,7 @@ class DesktopRobotSession:
                 if self._audio_error:
                     raise WatcheRobotError(f"audio stream failed: {self._audio_error}")
                 self._audio_credits -= 1
+                self._audio_inflight.reserve()
         try:
             await asyncio.wait_for(wait(), self.command_timeout)
         except TimeoutError as error:
@@ -277,6 +281,7 @@ class DesktopRobotSession:
             if classify_audio_status(reason) is AudioStatusKind.FAILED:
                 self._audio_error = reason
             else:
+                reported_credits = self._audio_credits
                 free = data.get("free_frames")
                 pending = data.get("pending_frames")
                 depth = data.get("queue_depth")
@@ -286,5 +291,8 @@ class DesktopRobotSession:
                     slots = max(0, free)
                 else:
                     slots = 0
-                self._audio_credits = min(AUDIO_MAX_CREDIT_PACKETS, slots // self._audio_slots_per_packet)
+                reported_credits = min(AUDIO_MAX_CREDIT_PACKETS, slots // self._audio_slots_per_packet)
+                credits = self._audio_inflight.available(data, reported_credits)
+                if credits is not None:
+                    self._audio_credits = credits
             self._audio_condition.notify_all()

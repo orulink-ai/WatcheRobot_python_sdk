@@ -15,6 +15,127 @@ from watcherobot.runtime.repository import (
 from watcherobot.runtime.daemon.instance import RuntimeAlreadyRunningError
 
 
+def test_unreadable_subtree_cannot_produce_a_verification_receipt(tmp_path, monkeypatch):
+    from watcherobot.runtime import bundle_verification
+
+    source = tmp_path / "source"
+    nested = source / "dependencies"
+    nested.mkdir(parents=True)
+    (nested / "runtime.bin").write_bytes(b"runtime")
+    original = os.scandir
+
+    def restricted_scandir(path):
+        # Windows bundle hashing uses an extended path prefix. Match the
+        # actual directory so fault injection also reaches that spelling.
+        if Path(path).samefile(nested):
+            raise PermissionError("dependency tree unavailable")
+        return original(path)
+
+    monkeypatch.setattr(os, "scandir", restricted_scandir)
+    assert bundle_verification.tree_stamp(source) is None
+    with pytest.raises(PermissionError, match="dependency tree unavailable"):
+        bundle_digest(source)
+
+
+def test_unchanged_publication_does_not_reread_bundle_contents(tmp_path, monkeypatch):
+    from watcherobot.runtime import repository
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "runtime.exe").write_bytes(b"runtime")
+    target = prepare_bundle(source, tmp_path / "shared")
+    monkeypatch.setattr(repository, "bundle_digest", lambda _: pytest.fail("unchanged contents reread"))
+    assert prepare_bundle(source, tmp_path / "shared") == target
+
+
+@pytest.mark.parametrize("damage_target", [False, True])
+def test_same_size_rewrite_with_restored_mtime_invalidates_verification(tmp_path, damage_target):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "runtime.exe").write_bytes(b"good")
+    target = prepare_bundle(source, tmp_path / "shared")
+    changed = (target if damage_target else source) / "runtime.exe"
+    before = changed.stat()
+    changed.write_bytes(b"evil")
+    os.utime(changed, ns=(before.st_atime_ns, before.st_mtime_ns))
+    if damage_target:
+        with pytest.raises(ValueError, match="integrity"):
+            prepare_bundle(source, tmp_path / "shared")
+    else:
+        assert prepare_bundle(source, tmp_path / "shared") != target
+
+
+def test_verification_receipt_damage_falls_back_to_content_hash(tmp_path, monkeypatch):
+    from watcherobot.runtime import repository
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "runtime.exe").write_bytes(b"runtime")
+    target = prepare_bundle(source, tmp_path / "shared")
+    for receipt in (tmp_path / "shared/.verification").glob("*.json"):
+        receipt.write_text("not json", encoding="utf-8")
+    original = repository.bundle_digest
+    calls = []
+    monkeypatch.setattr(repository, "bundle_digest", lambda root: (calls.append(root), original(root))[1])
+    assert prepare_bundle(source, tmp_path / "shared") == target
+    assert len(calls) == 2
+
+
+def test_unavailable_change_metadata_never_skips_hashing(tmp_path, monkeypatch):
+    from watcherobot.runtime import bundle_verification, repository
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "runtime.exe").write_bytes(b"good")
+    target = prepare_bundle(source, tmp_path / "shared")
+    monkeypatch.setattr(bundle_verification, "tree_stamp", lambda root: None)
+    original = repository.bundle_digest
+    calls = []
+    monkeypatch.setattr(repository, "bundle_digest", lambda root: (calls.append(root), original(root))[1])
+    assert prepare_bundle(source, tmp_path / "shared") == target
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_windows_metadata_api_rejects_other_platforms(monkeypatch, platform):
+    from watcherobot.runtime import bundle_verification
+
+    monkeypatch.setattr(bundle_verification.sys, "platform", platform)
+    with pytest.raises(OSError, match="unavailable on this platform"):
+        bundle_verification._windows_api.__wrapped__()
+
+
+def test_change_during_verification_is_not_published(tmp_path, monkeypatch):
+    from watcherobot.runtime import repository
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "runtime.exe").write_bytes(b"good")
+    original = repository.bundle_digest
+
+    def changing_digest(root):
+        result = original(root)
+        (root / "runtime.exe").write_bytes(b"changed")
+        return result
+
+    monkeypatch.setattr(repository, "bundle_digest", changing_digest)
+    with pytest.raises(ValueError, match="changed during verification"):
+        prepare_bundle(source, tmp_path / "shared")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows MAX_PATH regression")
+def test_publish_with_repository_directory_beyond_max_path(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "runtime.exe").write_bytes(b"fixture")
+    root = tmp_path
+    while len(str(root)) < 280:
+        root /= "中文长目录" * 4
+    published = prepare_bundle(source, root)
+    assert (published / "runtime.exe").read_bytes() == b"fixture"
+    assert prepare_bundle(source, root) == published
+
+
 def test_bundle_versions_coexist_and_reuse_verified_content(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
@@ -112,7 +233,8 @@ def test_windows_bundle_copy_uses_extended_paths(tmp_path: Path, monkeypatch) ->
     extended_prefix = chr(92) * 2 + "?" + chr(92)
     assert str(captured[0][0]).startswith(extended_prefix)
     assert str(captured[0][1]).startswith(extended_prefix)
-    assert captured[1] == {"symlinks": True}
+    assert captured[1]["symlinks"] is True
+    assert callable(captured[1]["copy_function"])
 
 
 def test_windows_bundle_cleanup_uses_extended_path(tmp_path: Path, monkeypatch) -> None:

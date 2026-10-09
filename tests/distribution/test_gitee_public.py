@@ -103,3 +103,14 @@ def test_file_limits_and_type_are_enforced(changes):
         GiteePublicRepository(transport=Transport({'sha': SHA}, payload)).read_file(
             repo_id='owner/app', commit=SHA, path='app.json',
         )
+
+
+def test_public_read_can_wait_for_remote_response_without_local_deadline():
+    class WaitingTransport(Transport):
+        def get_json(self, url, headers, *, timeout):
+            assert timeout is None
+            return super().get_json(url, headers, timeout=timeout)
+    client = GiteePublicRepository(
+        transport=WaitingTransport({'commit': {'sha': SHA}}, file_payload()), timeout=None,
+    )
+    assert client.read_public_catalog().content == b'[]\n'
