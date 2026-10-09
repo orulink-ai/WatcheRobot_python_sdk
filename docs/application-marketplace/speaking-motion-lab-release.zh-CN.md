@@ -1,6 +1,6 @@
 # 说话动作实验室 0.1.0 发布记录
 
-截至 2026-10-09，Application 源码已发布到 Hugging Face，投稿已由平台侧合并，匿名回读确认正式目录已收录。Gitee 发布等待 SDK 凭据登录，不能把浏览器登录或国外上架作为国内上架完成的证据。
+截至 2026-10-09，Application 已分别发布到 Hugging Face 与 Gitee。HF 投稿已由平台侧合并，匿名回读确认正式目录已收录；Gitee 投稿已创建，等待官方维护者完成审查、测试与合并。两端状态独立核对，不能把上传或国外上架作为国内正式收录的证据。
 
 ## Application 与版本
 
@@ -16,7 +16,7 @@
 | 平台 | 源码发布 | 官方收录 |
 | --- | --- | --- |
 | Hugging Face | 已发布公开固定版本 | [投稿 #43](https://huggingface.co/datasets/Orulink/watcherobot-app-store/discussions/43)，状态 merged，正式目录回读确认已收录 |
-| Gitee | 未发布，SDK 未登录 | 未投稿、未收录 |
+| Gitee | 已发布公开固定版本 | [投稿 !10](https://gitee.com/orulink-sz/watcherobot-app-store/pulls/10)，状态 pending，审查与测试均待通过 |
 
 Hugging Face 应用仓库为 [yuzou1121/WatcherRobot-com.orulink.speaking_motion_lab](https://huggingface.co/spaces/yuzou1121/WatcherRobot-com.orulink.speaking_motion_lab)。固定源码 SHA 为 `8bf2a2aeb495fdbded8be1e33957932c0f29a4d7`，可查看[完整发布快照](https://huggingface.co/spaces/yuzou1121/WatcherRobot-com.orulink.speaking_motion_lab/tree/8bf2a2aeb495fdbded8be1e33957932c0f29a4d7)。
 
@@ -24,7 +24,11 @@ Hugging Face 应用仓库为 [yuzou1121/WatcherRobot-com.orulink.speaking_motion
 
 本轮标准 SDK OAuth 使用身份、应用仓库贡献和讨论权限，详见 [OAuth 合同](hugging-face-oauth.md)。组织管理员身份不等于发布凭据具有官方目录写权限；代理尝试主分支写入被平台拒绝，官方目录随后由平台侧合并投稿。后续维护者的 PR 合入流程仍应选择能保留两个 parent 的方式。
 
-Gitee 网页会话与 SDK 发布凭据独立。需要通过 `watcherobot app login --provider gitee` 隐藏输入具有仓库读写权限的 Access Token，保存到 Watcher 专用系统凭据条目后，再独立执行 `publish` 和 `submit`。不在聊天、源码或普通配置文件中保存 Token。当前外置 Chrome 自动化连接不可用，未取得或保存网页凭据。
+Gitee 应用仓库为 [KID_gitee/WatcherRobot-com.orulink.speaking_motion_lab](https://gitee.com/KID_gitee/WatcherRobot-com.orulink.speaking_motion_lab)。固定源码 SHA 为 `1e02d7f77f25d9b566581b566a4b7809340257a2`，可查看[完整发布快照](https://gitee.com/KID_gitee/WatcherRobot-com.orulink.speaking_motion_lab/tree/1e02d7f77f25d9b566581b566a4b7809340257a2)。国内官方目录当前为 `55d27e03cdd03e6036e362cd62f81bfbac7a810b`，匿名回读确认此次应用尚未收录。
+
+用户在侧边栏完成 Gitee 登录并生成 7 天有效期的发布令牌，权限为 `projects`、`pull_requests` 与平台强制的 `user_info`。令牌通过 SDK `app login --provider gitee --token-stdin --jsonl` 的标准输入校验并保存到 Watcher 专用系统凭据管理器；登录状态确认账号为 `KID_gitee`。明文仅在内存与标准输入中传递，未写入聊天、源码、普通配置或临时凭据文件。
+
+投稿 !10 仅向 `app-list.json` 增加应用与固定 SHA，4 行新增、0 行删除。官方页面显示审查与测试各需至少 1 人，目前均为 0/1，指派维护者 `tianguiti`，并明确提示“此 Pull Request 暂不能合并，一些审核尚未通过”。API 的 `mergeable=true` 表示无代码冲突，不能代替页面上的审核门禁。本轮未执行国内合并，也未改动审核配置。
 
 ## 验证证据
 
@@ -34,11 +38,13 @@ Gitee 网页会话与 SDK 发布凭据独立。需要通过 `watcherobot app log
 - 通过 SDK 匿名下载上述固定远端版本：21 个发布文件与上传输入逐字节一致，包含由 HF 发布器添加的 README 元数据；9 个 Web 文件的 SHA256 一致。
 - 从下载后的快照在隔离 SDK Daemon 中启动 Application：页面和 6 个资源文件成功返回且字节一致；“是的。不可以。”生成肯定与否定动作，末帧闭嘴；未知 Desktop 麦克风业务帧被安全忽略；受管停止释放进程与 HTTP 监听。
 - 匿名回读正式 HF 目录，确认固定应用引用存在，投稿状态为 merged；SDK `app marketplace --provider huggingface --jsonl` 返回该固定版本，SDK 与 Windows 主机兼容性均为 true。核对最终收录提交的 parent 数量并记录平台侧的单 parent 结果。
+- Gitee 通过 SDK 公开发布与固定版本匿名下载完成：21 个文件逐字节一致，9 个 Web 资源 SHA256 一致，总源码大小为 51,940,004 字节。发布器回读校验完整快照，下载器另行校验 Git tree/blob 摘要。
+- 国内官方投稿 !10 已创建；API 差异回读确认仅新增一个固定应用引用，官方目录匿名回读仍未包含该引用。浏览器确认实际审查与测试门禁，因此状态保持待审核。
 
 受管运行验收使用当前开发环境中的 SDK，未覆盖已安装桌面 Runtime，也未执行全新商店安装环境、macOS/Linux 或真机验收。
 
 ## 后续发布步骤
 
 1. HF 正式目录收录已完成；继续验收客户端商店展示与全新安装环境。后续更新仍需分别核对发布快照、目录回读和最终合并历史，不能将上传成功或 pending 当作已收录。
-2. 完成 Gitee SDK 登录，发布相同应用内容，记录该平台独立返回的完整 SHA，再向国内官方目录投稿。
+2. 国内维护者完成 Gitee 投稿 !10 的审查与测试后，采用保留两个 parent 的合并方式；随后核对最终 commit、匿名回读正式目录并查询 SDK marketplace。
 3. 两个平台各自完成正式目录回读和全新安装验收后，更新本记录。继续保持 Daemon 唯一实现与 Application 通道边界。
