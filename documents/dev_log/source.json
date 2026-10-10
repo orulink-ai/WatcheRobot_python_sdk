@@ -1,0 +1,31 @@
+{
+  "repository": "https://github.com/orulink-ai/agent-dev-journal",
+  "version": "1.0.0",
+  "ref": "v1.0.0",
+  "commit": "6f027da3d172785e99121e7a4fb1949fc393f68b",
+  "installed_at": "2026-10-08T15:32:49+08:00",
+  "paths": {
+    "templates/AGENTS.fragment.md": "AGENTS.md",
+    "templates/dev_log/README.md": "documents/dev_log/README.md",
+    "templates/dev_log/temp_log.md": "documents/dev_log/temp_log.md"
+  },
+  "profile": {
+    "path": "profiles/orulink.md",
+    "mode": "partial",
+    "adopted": [
+      "已有中文提交",
+      "已有TDD、代码规范与解耦",
+      "已有gh本机账号要求"
+    ],
+    "not_adopted": [
+      "新增PR合入策略"
+    ]
+  },
+  "adaptations": [
+    "复用 SDK 已有 documents/dev_log/，保留历史命名与正文。",
+    "创建 SDK 独立 AGENTS.md，不改变 Workspace 适用约束。",
+    "mAGENTS.md 按安装说明落实为 AGENTS.md。",
+    "为旧档案中缺少独立模板的记录追加双向关联。",
+    ".upstream 原文只用于版本比较。"
+  ]
+}

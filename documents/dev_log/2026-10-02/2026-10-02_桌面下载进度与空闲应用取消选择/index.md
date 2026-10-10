@@ -59,3 +59,7 @@
 
 ## 2026-10-03 提交准备｜orulink-wugui / Codex
 用户授权从最新origin/main创建codex/desktop-distribution-20261003，按空闲取消选择、分发进度与真实状态分批提交并推送，不创建PR。已核对main=7d9fc51；配套Desktop分支codex/desktop-scope-marketplace-20261003。密钥扫描命中均为AccessToken类型、运行时凭据读取表达式及测试占位值，人工复核无真实凭证。已有定向验证通过，正在执行完整SDK CI。
+
+## 后续变更
+
+- 2026-10-08T15:32:49+08:00｜orulink-wugui｜补充：[SDK 独立开发档案规范接入](../../2026-10-08/2026-10-08_153249_orulink-wugui_无Issue_SDK接入开发档案规范v1.0.0/index.md) 已建立本仓库规则、规范和模板；此前缺少模板是当时事实，原始实现与验证结论保持有效。
