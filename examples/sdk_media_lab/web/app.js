@@ -1,4 +1,5 @@
 import { evaluateRtcAudioHealth, formatRtcPlaybackLevel } from "./rtc-audio-health.mjs";
+import { createConnectionRecovery } from "./rtc-connection-recovery.mjs";
 import { createRtcNoisePlayback, microphoneProcessingStatus } from "./rtc-noise-playback.mjs";
 import { recordRtcAudioDiagnostic, selectDiagnosticDeviceStats } from "./rtc-audio-diagnostic.mjs";
 import { detectionLabel, testBenchModels, createPreviewLifecycle } from "./model-preview.mjs";
@@ -1934,6 +1935,10 @@ async function recordRtcDiagnostic() {
 }
 
 function bindRtcPeerEvents(peer, generation) {
+  state.rtc.connectionRecovery?.stop();
+  const recovery = state.rtc.connectionRecovery = createConnectionRecovery(reason => {
+    if (isCurrentRtcGeneration(state.rtc.generation, generation) && state.rtc.peer === peer) failRtcSession(reason);
+  });
   peer.addEventListener("connectionstatechange", () => {
     if (!isCurrentRtcGeneration(state.rtc.generation, generation) || state.rtc.peer !== peer) return;
     const connectionState = peer.connectionState;
@@ -1942,9 +1947,7 @@ function bindRtcPeerEvents(peer, generation) {
       state.rtc.audioHealthState = "connecting";
       setRtcAudioState("connecting", "Media connected; validating robot microphone uplink…");
     }
-    if (["failed", "disconnected", "closed"].includes(connectionState) && state.rtc.peer) {
-      failRtcSession(`WebRTC connection ${connectionState === "failed" ? "Failed" : "disconnected"}`);
-    }
+    recovery.update(connectionState);
   });
   peer.addEventListener("icecandidate", (event) => {
     if (
@@ -2279,6 +2282,8 @@ function cleanupRtcSession() {
   state.localResources.delete("media");
   window.clearTimeout(state.rtc.pollTimer);
   window.clearInterval(state.rtc.heartbeatTimer);
+  state.rtc.connectionRecovery?.stop();
+  state.rtc.connectionRecovery = null;
   window.clearInterval(state.rtc.feedbackTimer);
   state.rtc.pollTimer = null;
   state.rtc.heartbeatTimer = null;

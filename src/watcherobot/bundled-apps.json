@@ -29,6 +29,7 @@
       "web/rtc-audio-diagnostic.mjs",
       "web/rtc-audio-health.mjs",
       "web/rtc-audio-latency.mjs",
+      "web/rtc-connection-recovery.mjs",
       "web/rtc-echo-probe.mjs",
       "web/rtc-noise-core.mjs",
       "web/rtc-noise-playback.mjs",
