@@ -53,13 +53,19 @@ commits from the selected Hugging Face or Gitee Application Store.
 Pairing and device ownership remain in the long-lived Runtime. Stopping an
 Application does not stop the Runtime or rebuild the device connection.
 
-The repository contains two examples with browser interfaces. Headless examples
-have been removed; SDK device APIs and Application templates remain available.
+The repository contains two bundled browser demos and a separately distributable
+intercom Application. Headless examples have been removed; SDK device APIs and
+Application templates remain available.
 
 - `expression_lab`: launch a loopback-only animation workbench that previews
   and tunes the device-side procedural Watcher expression runtime.
 - `sdk_media_lab`: launch a standalone loopback browser dashboard for speaker
   streaming, JPEG capture, microphone recording, artifacts, and diagnostics.
+- [`robot_intercom`](robot_intercom/README.md): a standalone LAN intercom with
+  two-way original audio, playback-driven mouth animation, and button-triggered
+  JPEG capture. Run `watcherobot app run ./examples/robot_intercom` from this
+  checkout; it is published independently and is not added to the bundled demo
+  menu. See the [hardware and distribution record](../docs/robot-intercom-acceptance.zh-CN.md).
 
 `vision_debug_lab` has been retired. The examples above do not replace all of its
 dataset-recording and diagnostic-export workflows; see the
