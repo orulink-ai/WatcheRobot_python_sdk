@@ -66,12 +66,22 @@
           <div class="card-top">
             <span>它眼前的世界</span><span class="eyebrow">PHOTO / JPEG</span>
           </div>
-          <div class="photo-frame">
+          <div id="photoFrame" class="photo-frame" aria-busy="false">
             <img id="photo" alt="机器人拍摄的现场照片" hidden />
             <div id="emptyPhoto">
               <span class="viewfinder" aria-hidden="true">⌖</span>
               <h2>留住这一刻</h2>
               <p>通话中拍照，声音继续。</p>
+            </div>
+            <div id="photoProgress" class="photo-progress" hidden>
+              <p id="photoProgressTitle">正在拍照</p>
+              <span
+                id="photoCountdown"
+                class="photo-countdown"
+                aria-hidden="true"
+                >2</span
+              >
+              <p id="photoProgressDetail">预计还需 2 秒，通话继续。</p>
             </div>
           </div>
           <div class="photo-actions">
@@ -80,7 +90,8 @@
               <a id="download" hidden download>保存照片 ↓</a>
             </div>
             <button id="capture" class="camera-button" disabled>
-              <span aria-hidden="true">◎</span> 拍照
+              <span aria-hidden="true">◎</span
+              ><span id="captureLabel">拍照</span>
             </button>
           </div>
         </section>

@@ -3,32 +3,33 @@ from __future__ import annotations
 
 import asyncio
 import os
-import socket
 import webbrowser
 from pathlib import Path
 
 import uvicorn
 from watcherobot.application import ApplicationContext
 from service import DeviceStatus, IntercomService, create_web_app
+from local_http import open_listener
 
 ROOT = Path(__file__).resolve().parent
 
 
 async def main():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        listener.listen(128)
+    data_root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local" / "share")
+    app_data = data_root / "WatcheRobot" / "robot-intercom"
+    with open_listener(app_data / "http-port.json") as listener:
         port = listener.getsockname()[1]
         async with ApplicationContext.from_environment() as context:
             status_url = os.environ.get("WATCHER_APP_DEVICE_STATUS_URL", "").strip()
             if not status_url:
                 raise RuntimeError("Daemon did not inject the device management URL")
-            data_root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / ".local" / "share")
             service = IntercomService(robot=context.robot, rtc=context.rtc,
                                      device_status=DeviceStatus(status_url),
-                                     artifacts_dir=data_root / "WatcheRobot" / "robot-intercom" / "photos")
+                                     artifacts_dir=app_data / "photos",
+                                     logger=context.logger)
             server = uvicorn.Server(uvicorn.Config(create_web_app(service, web_root=ROOT / "web"),
-                                                  host="127.0.0.1", port=port, access_log=False))
+                                                  host="127.0.0.1", port=port, access_log=False,
+                                                  ws_ping_interval=5, ws_ping_timeout=10))
             task = asyncio.create_task(server.serve(sockets=[listener]))
             try:
                 while not server.started:

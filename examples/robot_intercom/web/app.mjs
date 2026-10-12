@@ -1,13 +1,16 @@
 import { createCallController } from "./call-controller.mjs";
 import { createRtcNoisePlayback } from "./rtc-noise-playback.mjs";
+import { connectCallPresence } from "./call-presence.mjs";
+import { createPhotoController } from "./photo-controller.mjs";
 
 const $ = (id) => document.getElementById(id);
 let status = null,
-  photoPending = false,
   listening = true,
   noise = null,
   noiseAbort = null,
   refreshTimer;
+let lastMediaReport = 0;
+let photoController = null;
 async function api(path, body, options = {}) {
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
@@ -45,7 +48,8 @@ function render() {
   $("mute").disabled = !["running", "connecting"].includes(call.state);
   $("mute").textContent = call.muted ? "麦克风已静音" : "麦克风开启";
   $("mute").setAttribute("aria-pressed", String(call.muted));
-  $("capture").disabled = call.state !== "running" || photoPending;
+  $("capture").disabled =
+    call.state !== "running" || photoController.snapshot().busy;
   $("callVisual").dataset.state = call.state;
   $("callTitle").textContent = titles[call.state];
   document.body.dataset.callState = call.state;
@@ -54,7 +58,7 @@ function render() {
   else if (
     !busy &&
     status?.connected &&
-    $("message").textContent.startsWith("请在桌面端")
+    $("message").textContent.trim().startsWith("请在桌面端")
   )
     $("message").textContent = "机器人已就绪，点击开始通话。";
 }
@@ -70,13 +74,36 @@ async function playRemote(stream) {
 }
 const controller = createCallController({
   api,
+  connectPresence: connectCallPresence,
+  report: (event) => {
+    const requestId = controller.snapshot().requestId;
+    if (requestId)
+      api("/api/call/diagnostic", {
+        request_id: requestId,
+        visibility: document.visibilityState,
+        ...event,
+      }).catch(() => {});
+  },
   onState: (call) => {
+    photoController?.updateCall(call);
     if (call.message) $("message").textContent = call.message;
     render();
   },
   onStats: (stats) => {
     document.body.dataset.audioSent = stats.sent;
     document.body.dataset.audioReceived = stats.received;
+    if (performance.now() - lastMediaReport > 5000) {
+      lastMediaReport = performance.now();
+      const requestId = controller.snapshot().requestId;
+      if (requestId)
+        api("/api/call/diagnostic", {
+          request_id: requestId,
+          kind: "media_sample",
+          sent: stats.sent,
+          received: stats.received,
+          lost: stats.lost,
+        }).catch(() => {});
+    }
   },
   onRemote: async (stream, isCurrent) => {
     noiseAbort?.abort();
@@ -138,18 +165,45 @@ $("resumeAudio").onclick = async () => {
   await noise?.resume();
   await playRemote($("remoteAudio").srcObject);
 };
-$("capture").onclick = async () => {
-  if (photoPending) return;
-  photoPending = true;
-  render();
-  $("photoStatus").textContent = "正在拍照…";
-  try {
-    const photo = await api("/api/photo", {
-      request_id: controller.snapshot().requestId,
-    });
+photoController = createPhotoController({
+  isCurrent: (requestId) => {
+    const call = controller.snapshot();
+    return call.requestId === requestId && call.state === "running";
+  },
+  capture: (requestId, signal) =>
+    api("/api/photo", { request_id: requestId }, { signal }),
+  load: async (photo, signal) => {
     const probe = new Image();
+    const cancelImage = () => {
+      probe.src = "";
+    };
+    signal.addEventListener("abort", cancelImage, { once: true });
     probe.src = photo.url;
-    await probe.decode();
+    try {
+      await probe.decode();
+      return probe;
+    } finally {
+      signal.removeEventListener("abort", cancelImage);
+    }
+  },
+  onProgress: ({ phase, remainingSeconds, elapsedSeconds }) => {
+    const loading = phase === "loading";
+    $("photoProgress").hidden = false;
+    $("photoFrame").setAttribute("aria-busy", "true");
+    $("captureLabel").textContent = "拍照中…";
+    $("photoProgressTitle").textContent = loading ? "正在显示照片" : "正在拍照";
+    $("photoCountdown").textContent =
+      loading || remainingSeconds === 0 ? "…" : remainingSeconds;
+    const message = loading
+      ? "照片已收到，正在显示…"
+      : remainingSeconds > 0
+        ? `预计还需 ${remainingSeconds} 秒，通话继续。`
+        : `照片仍在处理中，已等待 ${elapsedSeconds} 秒。`;
+    $("photoProgressDetail").textContent = message;
+    $("photoStatus").textContent = message;
+    render();
+  },
+  onPhoto: (photo, probe, elapsedMs) => {
     $("photo").src = photo.url;
     $("photo").hidden = false;
     $("emptyPhoto").hidden = true;
@@ -158,16 +212,36 @@ $("capture").onclick = async () => {
     $("download").hidden = false;
     $("photoStatus").textContent =
       `${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${probe.naturalWidth} × ${probe.naturalHeight}`;
-  } catch (error) {
+    document.body.dataset.photoElapsedMs = Math.round(elapsedMs);
+  },
+  onError: (error) => {
     $("photoStatus").textContent = error.message;
-  } finally {
-    photoPending = false;
+  },
+  onCancel: () => {
+    $("photoStatus").textContent = "已停止等待照片。通话中可重新拍照。";
+  },
+  onIdle: () => {
+    $("photoProgress").hidden = true;
+    $("photoFrame").setAttribute("aria-busy", "false");
+    $("captureLabel").textContent = "拍照";
     render();
-  }
-};
+  },
+});
+$("capture").onclick = () =>
+  photoController.take(controller.snapshot().requestId);
 window.addEventListener("pagehide", () => {
   clearTimeout(refreshTimer);
+  photoController.cancel();
   controller.leave();
+});
+document.addEventListener("visibilitychange", () => {
+  const requestId = controller.snapshot().requestId;
+  if (requestId)
+    api("/api/call/diagnostic", {
+      request_id: requestId,
+      kind: "visibility",
+      visibility: document.visibilityState,
+    }).catch(() => {});
 });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) {

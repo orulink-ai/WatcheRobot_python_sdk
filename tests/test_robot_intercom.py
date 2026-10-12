@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import asyncio
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -223,6 +224,227 @@ def test_browser_crash_expires_session(rig):
     assert rig.calls[-2:] == [("rtc", "stop"), ("follow", False)]
 
 
+def test_device_keepalive_survives_a_short_browser_timer_pause(rig):
+    rig.service.start("request-a")
+    rig.clock[0] = 4
+    rig.service.maintain()
+    assert any(call[0] == "ping" for call in rig.calls)
+    assert rig.service._last_seen == 0  # Device pings must not renew page ownership.
+    rig.clock[0] = 12
+    rig.service.maintain()
+    assert rig.service.status()["state"] == "idle"
+
+
+def test_device_keepalive_is_not_blocked_by_photo_or_sent_to_new_pairing(rig):
+    rig.connection["request_id"] = "pairing-a"
+    rig.service.start("request-a")
+    entered, release = threading.Event(), threading.Event()
+    def capture(**kwargs):
+        entered.set()
+        assert release.wait(3)
+        return SimpleNamespace(data=b"jpeg")
+    rig.robot.camera.capture = capture
+    photo = threading.Thread(target=lambda: rig.service.capture("request-a"))
+    photo.start()
+    assert entered.wait(1)
+    try:
+        rig.clock[0] = 4
+        rig.service.maintain()
+        assert any(call[0] == "ping" for call in rig.calls)
+        rig.connection["request_id"] = "pairing-b"
+        before = list(rig.calls)
+        rig.clock[0] = 6
+        rig.service.maintain()
+        assert rig.calls == before
+    finally:
+        release.set()
+        photo.join(3)
+
+
+def test_browser_presence_survives_timer_suspension_and_disconnect_releases(rig):
+    rig.service.start("request-a")
+    token = rig.service.attach_presence("request-a")
+    rig.clock[0] = 60
+    rig.service.maintain()
+    assert rig.service.status()["state"] == "running"
+    assert any(call[0] == "ping" for call in rig.calls)
+    rig.service.detach_presence("request-a", token)
+    assert rig.service.status()["state"] == "idle"
+    rig.service.start("request-b")
+    rig.service.detach_presence("request-a", token)
+    assert rig.service.status()["state"] == "running"
+
+
+def test_presence_rejects_stale_or_duplicate_connections(rig):
+    rig.service.start("request-a")
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.attach_presence("request-b")
+    token = rig.service.attach_presence("request-a")
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.attach_presence("request-a")
+    rig.service.detach_presence("request-a", token)
+
+
+@pytest.mark.parametrize("phase", ["registration", "registration_double_cancel", "handshake"])
+def test_cancelled_presence_registration_or_handshake_releases_robot(rig, phase):
+    from starlette.datastructures import URL
+
+    rig.service.start("request-a")
+    entered, release = threading.Event(), threading.Event()
+    original = rig.service.attach_presence
+    def attach(request_id):
+        token = original(request_id)
+        if phase.startswith("registration"):
+            entered.set()
+            assert release.wait(3)
+        return token
+    rig.service.attach_presence = attach
+    app = rig.module.create_web_app(rig.service, web_root=ROOT / "web")
+    endpoint = next(route.endpoint for route in app.routes if route.path == "/api/call/presence")
+
+    async def scenario():
+        accepting = asyncio.Event()
+        class Socket:
+            headers = {"origin": "http://127.0.0.1:12345"}
+            url = URL("ws://127.0.0.1:12345/api/call/presence?request_id=request-a")
+            query_params = {"request_id": "request-a"}
+            async def accept(self):
+                accepting.set()
+                await asyncio.Future()
+            async def close(self, **kwargs):
+                pass
+        task = asyncio.create_task(endpoint(Socket()))
+        if phase.startswith("registration"):
+            assert await asyncio.to_thread(entered.wait, 1)
+        else:
+            await asyncio.wait_for(accepting.wait(), 1)
+        task.cancel()
+        if phase == "registration_double_cancel":
+            await asyncio.sleep(0)
+            task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.gather(*getattr(app.state, "presence_cleanup_tasks", set()))
+        assert rig.service._presence is None
+        assert not rig.rtc.active
+        assert rig.calls[-1] == ("follow", False)
+        assert rig.service.status()["state"] == "idle"
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("call_state", ["connecting", "running"])
+@pytest.mark.parametrize("device_state", ["failed", "stopping", "stopped"])
+def test_device_terminal_releases_call_without_browser_requests(rig, call_state, device_state):
+    rig.rtc.state = "connecting" if call_state == "connecting" else "connected"
+    assert rig.service.start("request-a")["state"] == call_state
+    rig.service.attach_presence("request-a")
+    rig.clock[0] = 6  # Still before the negotiation deadline; a ping would be due.
+    reason = f"device-{device_state}"
+    rig.rtc.events = lambda **kwargs: [{"id": 1, "message": {
+        "type": "evt.rtc.state", "data": {"state": device_state, "reason": reason}}}]
+
+    rig.service.maintain()
+
+    status = rig.service.status()
+    assert status["state"] == "idle"
+    assert status["request_id"] is None
+    assert status["diagnostics"]["device_end_reason"] == reason
+    assert status["diagnostics"]["end_reason"] == "device_terminal"
+    assert not any(call[0] == "ping" for call in rig.calls)
+    assert rig.calls[-2:] == [("rtc", "stop"), ("follow", False)]
+
+
+@pytest.mark.parametrize("reason", ["user", "page_closed"])
+def test_cleanup_retry_preserves_first_exit_reason(rig, reason):
+    rig.service.start("request-a")
+    rig.rtc.fail_stop = True
+    with pytest.raises(TimeoutError):
+        rig.service.stop("request-a", reason=reason)
+    rig.rtc.fail_stop = False
+    rig.clock[0] = 2
+
+    rig.service.maintain()
+
+    status = rig.service.status()
+    assert status["state"] == "idle"
+    assert status["diagnostics"]["end_reason"] == reason
+    attempts = [event["reason"] for event in status["diagnostics"]["history"]
+                if event["kind"] == "stop_requested"]
+    assert attempts == [reason, "cleanup_retry"]
+    rig.service.start("request-b")
+    assert rig.service.status()["diagnostics"]["end_reason"] is None
+
+
+def test_diagnostics_retain_terminal_reason_and_never_record_signal_payload(rig):
+    rig.service.start("request-a")
+    rig.service.diagnostic("request-a", {"kind": "peer_state", "connection_state": "disconnected", "sdp": "private-signal"})
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.diagnostic("request-b", {"kind": "peer_state"})
+    rig.rtc.events = lambda **kwargs: [{"id": 1, "message": {
+        "type": "evt.rtc.state", "data": {"state": "stopped", "reason": "heartbeat_timeout"}}}]
+    rig.service.maintain()
+    rig.service.stop("request-a", reason="browser_failure")
+    diagnostic = rig.service.status()["diagnostics"]
+    assert diagnostic["device_end_reason"] == "heartbeat_timeout"
+    assert diagnostic["end_reason"] == "device_terminal"
+    assert any(e["kind"] == "peer_state" for e in diagnostic["history"])
+    import json
+    assert "private-signal" not in json.dumps(diagnostic)
+
+
+def test_presence_websocket_checks_origin_and_cleans_up_on_close(rig):
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
+        client.post("/api/call/start", json={"request_id": "request-a"})
+        from starlette.websockets import WebSocketDisconnect
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/api/call/presence?request_id=request-a", headers={"Origin": "https://evil.example"}):
+                pass
+        with client.websocket_connect("/api/call/presence?request_id=request-a", headers={"Origin": "http://testserver"}) as ws:
+            assert ws.receive_json() == {"ready": True}
+        assert rig.service.status()["state"] == "idle"
+
+
+def load_local_http():
+    spec = importlib.util.spec_from_file_location("intercom_local_http", ROOT / "local_http.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_local_origin_is_reused_after_restart(tmp_path):
+    module = load_local_http()
+    state = tmp_path / "http-port.json"
+    with module.open_listener(state) as listener:
+        original = listener.getsockname()
+        assert original[0] == "127.0.0.1"
+    with module.open_listener(state) as listener:
+        assert listener.getsockname() == original
+
+
+def test_busy_origin_uses_temporary_port_without_overwriting_preference(tmp_path):
+    module = load_local_http()
+    state = tmp_path / "http-port.json"
+    with module.open_listener(state) as first:
+        original = first.getsockname()
+        saved = state.read_bytes()
+        with module.open_listener(state) as second:
+            assert second.getsockname()[1] != original[1]
+        assert state.read_bytes() == saved
+    with module.open_listener(state) as listener:
+        assert listener.getsockname() == original
+
+
+def test_invalid_origin_preferences_are_replaced_safely(tmp_path):
+    module = load_local_http()
+    state = tmp_path / "http-port.json"
+    for data in ('broken', '{"port":true}', '{"port":1}', '{"port":70000}'):
+        state.write_text(data)
+        with module.open_listener(state) as listener:
+            assert listener.getsockname()[0] == "127.0.0.1"
+            assert listener.getsockname()[1] > 1023
+
+
 def test_stop_before_late_start_cannot_reallocate_hardware(rig):
     assert rig.service.stop("request-a")["state"] == "idle"
     with pytest.raises(rig.module.IntercomError):
@@ -262,6 +484,59 @@ def test_connected_call_switches_to_heartbeat_expiry(rig):
     assert rig.service.status()["state"] == "running"
     rig.clock[0] = 26
     rig.service.maintain()
+    assert not rig.rtc.active
+
+
+def test_presence_cannot_extend_the_negotiation_deadline(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.service.attach_presence("request-a")
+    rig.clock[0] = 30
+    rig.rtc.state = "connected"
+    rig.service.maintain()
+    assert not rig.rtc.active
+    assert rig.service.status()["state"] == "idle"
+
+
+def test_presence_keeps_a_timely_connected_call_alive_during_browser_pause(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.service.attach_presence("request-a")
+    rig.clock[0] = 29
+    rig.rtc.state = "connected"
+    rig.service.maintain()
+    assert rig.service.status()["state"] == "running"
+    rig.clock[0] = 54
+    rig.service.maintain()
+    assert rig.rtc.active
+    assert any(call[0] == "ping" for call in rig.calls)
+
+
+def test_presence_keeps_negotiating_device_alive_without_extending_deadline(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.service.attach_presence("request-a")
+    rig.clock[0] = 6
+    rig.service.maintain()
+    assert any(call[0] == "ping" for call in rig.calls)
+    assert rig.service.status()["state"] == "connecting"
+    rig.clock[0] = 30
+    rig.service.maintain()
+    assert not rig.rtc.active
+
+
+def test_backend_ping_rechecks_deadline_after_slow_device_status(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.service.attach_presence("request-a")
+    original = rig.service.device_status
+    def slow_status():
+        rig.clock[0] = 30
+        return original()
+    rig.service.device_status = slow_status
+    rig.clock[0] = 29
+    rig.service.maintain()
+    assert not any(call[0] == "ping" for call in rig.calls)
     assert not rig.rtc.active
 
 

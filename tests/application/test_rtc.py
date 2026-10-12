@@ -19,6 +19,26 @@ def test_rtc_capability_names_are_public_and_feature_specific() -> None:
     assert RTC_VIDEO_CAPABILITY == "rtc.video.mjpeg.v1"
 
 
+def test_rtc_restart_clears_terminal_history_and_ignores_old_session_events() -> None:
+    transport = FakeTransport()
+    rtc = ApplicationRtc(transport)  # type: ignore[arg-type]
+    old = rtc.start(mode="audio")
+    stopped = {
+        "type": "evt.rtc.state", "protocol": "watcher-rtc/1",
+        "client_id": old["client_id"], "session_id": old["session_id"],
+        "data": {"state": "stopped", "reason": "explicit_stop"},
+    }
+    transport.emit(stopped)
+    assert any(event["message"] == stopped for event in rtc.events())
+    current = rtc.start(mode="audio")
+    assert current["session_id"] != old["session_id"]
+    events = rtc.events()
+    assert all(event["message"]["session_id"] == current["session_id"] for event in events)
+    transport.emit(stopped)
+    assert rtc.events() == events
+    assert rtc.snapshot()["active"] is True
+
+
 class FakeTransport:
     def __init__(self) -> None:
         self.sent: list[str | bytes] = []

@@ -12,10 +12,11 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -57,11 +58,12 @@ def lan_address(connection):
 
 
 class IntercomService:
-    def __init__(self, *, robot, rtc, device_status, artifacts_dir, clock=time.monotonic):
+    def __init__(self, *, robot, rtc, device_status, artifacts_dir, clock=time.monotonic, logger=LOG):
         self.robot, self.rtc = robot, rtc
         self.device_status = device_status
         self.artifacts_dir = Path(artifacts_dir)
         self.clock = clock
+        self.logger = logger
         self._lifecycle = threading.RLock()
         self._state_lock = threading.RLock()
         self._signal_lock = threading.RLock()
@@ -78,6 +80,50 @@ class IntercomService:
         self._closing = False
         self._last_error = None
         self._released_requests = {}
+        self._presence = None
+        self._device_ping_at = 0.0
+        self._rtc_cursor = 0
+        self._device_end_reason = None
+        self._end_reason = None
+        self._history = deque(maxlen=128)
+
+    def _record(self, kind, **data):
+        with self._state_lock:
+            event = {"at_ms": round(self.clock() * 1000), "request_id": self._owner,
+                     "kind": kind, **data}
+            self._history.append(event)
+        self.logger.info("INTERCOM %s", json.dumps(event, ensure_ascii=False))
+
+    def diagnostic(self, request_id, data):
+        with self._signal_lock:
+            self._owned(request_id)
+            allowed = {"connection_state", "ice_state", "visibility", "sent", "received", "lost"}
+            self._record(data["kind"], **{key: value for key, value in data.items() if key in allowed})
+        return {"ok": True}
+
+    def attach_presence(self, request_id):
+        with self._signal_lock:
+            self._owned(request_id)
+            self._online()
+            if self._presence is not None:
+                raise IntercomError("当前页面已建立通话连接")
+            self._presence = uuid.uuid4().hex
+            self._record("presence_open")
+            return self._presence
+
+    def detach_presence(self, request_id, token):
+        with self._signal_lock:
+            if request_id != self._owner or token != self._presence:
+                return
+            self._presence = None
+            with self._state_lock:
+                self._state = "cleanup_required"
+            self._record("presence_closed")
+        try:
+            self.stop(request_id, reason="page_closed")
+        except Exception as error:
+            with self._state_lock:
+                self._last_error = str(error)
 
     def status(self):
         connection = self.device_status()
@@ -94,7 +140,12 @@ class IntercomService:
         elif connection.get("online") is not True:
             self._snapshot_connection = None
         with self._state_lock:
-            state = dict(request_id=self._owner, state=self._state, error=self._last_error)
+            state = dict(request_id=self._owner, state=self._state, error=self._last_error,
+                         diagnostics={"end_reason": self._end_reason,
+                                      "device_end_reason": self._device_end_reason,
+                                      "heartbeat_age_ms": round((self.clock() - self._last_seen) * 1000),
+                                      "presence_connected": self._presence is not None,
+                                      "history": list(self._history)})
         evidence = self.robot.resource_evidence
         received = evidence.get("received_at")
         fresh = (connection.get("online") is True and evidence.get("consistent") is not False
@@ -165,6 +216,12 @@ class IntercomService:
                 self._connect_due = self._last_seen + 30
                 self._address = lan_address(connection)
                 self._follow = True  # Enable may be applied even when its ACK is lost.
+                self._presence = None
+                self._device_ping_at = self.clock()
+                self._rtc_cursor = 0
+                self._device_end_reason = self._end_reason = None
+                self._history.clear()
+            self._record("call_start")
             try:
                 self._before_device_call(request_id)
                 self.robot.expression_runtime.set_audio_follow(True)
@@ -185,7 +242,7 @@ class IntercomService:
                     LOG.exception("Intercom startup cleanup remains pending")
                 raise
 
-    def stop(self, request_id=None):
+    def stop(self, request_id=None, *, reason="user"):
         with self._lifecycle, self._signal_lock:
             # Remember scoped cancellations even if their start request has
             # not reached the owner yet. Bounded replay history prevents a
@@ -201,6 +258,9 @@ class IntercomService:
                 return {"matched": False, "state": self._state}
             with self._state_lock:
                 self._state = "cleanup_required"
+                if self._end_reason is None:
+                    self._end_reason = reason
+            self._record("stop_requested", reason=reason)
             self._online()
             if self.rtc.snapshot().get("active"):
                 self.rtc.stop()
@@ -209,8 +269,10 @@ class IntercomService:
             if self._follow:
                 self.robot.expression_runtime.set_audio_follow(False)
                 self._follow = False
+            self._record("released", reason=reason)
             with self._state_lock:
                 self._owner = self._device_id = self._connection_id = None
+                self._presence = None
                 self._state, self._last_error = "idle", None
             return {"matched": True, "state": "idle"}
 
@@ -266,7 +328,43 @@ class IntercomService:
             self._owned(request_id)
             return {"ok": True}
 
+    def _maintain_signal(self):
+        # Independent of the photo/lifecycle lock and of browser JS timers.
+        if not self._signal_lock.acquire(blocking=False):
+            return
+        try:
+            with self._state_lock:
+                owner, state = self._owner, self._state
+                live = self._presence is not None or self.clock() - self._last_seen <= 10
+            if not owner:
+                return
+            for event in self.rtc.events(after=self._rtc_cursor):
+                self._rtc_cursor = max(self._rtc_cursor, event["id"])
+                message = event.get("message", {})
+                if message.get("type") == "evt.rtc.state":
+                    data = message.get("data", {})
+                    self._record("device_state", state=data.get("state"), reason=data.get("reason"))
+                    if (data.get("state") in {"failed", "stopping", "stopped"}
+                            and state in {"connecting", "running"}):
+                        self._device_end_reason = data.get("reason") or data["state"]
+            if (state in {"connecting", "running"} and live and self._device_end_reason is None
+                    and (state == "running" or self.clock() < self._connect_due)
+                    and self.clock() - self._device_ping_at >= 1):
+                self._before_device_call(owner)
+                self.rtc.clock_ping(time.time_ns() // 1000)
+                self._owned(owner)
+                self._device_ping_at = self.clock()
+        except Exception as error:
+            with self._state_lock:
+                changed = self._last_error != str(error)
+                self._last_error = str(error)
+            if changed:
+                self._record("keepalive_error", error=type(error).__name__)
+        finally:
+            self._signal_lock.release()
+
     def maintain(self):
+        self._maintain_signal()
         if not self._lifecycle.acquire(blocking=False):
             return
         try:
@@ -279,15 +377,18 @@ class IntercomService:
                     owner = self._owner
                     now = self.clock()
                     expired = (now >= self._connect_due if self._state == "connecting"
-                               else now - self._last_seen > 10)
+                               else self._presence is None and now - self._last_seen > 10)
                     if (self._state == "connecting" and not expired
                             and self.rtc.snapshot().get("state") == "connected"):
                         self._state = "running"
                         self._last_seen = now
                     pending = self._state == "cleanup_required"
-                if owner and (expired or pending or not self.device_status().get("online")):
+                    terminal = self._device_end_reason is not None
+                offline = owner and not self.device_status().get("online")
+                if owner and (expired or pending or terminal or offline):
                     try:
-                        self.stop(owner)
+                        reason = "device_terminal" if terminal else "page_expired" if expired else "device_offline" if offline else "cleanup_retry"
+                        self.stop(owner, reason=reason)
                     except Exception as error:
                         with self._state_lock:
                             self._last_error = str(error)
@@ -298,7 +399,7 @@ class IntercomService:
 
     def close(self):
         self.request_shutdown()
-        self.stop()
+        self.stop(reason="app_shutdown")
 
     def request_shutdown(self):
         self._closing = True
@@ -306,6 +407,20 @@ class IntercomService:
 
 class CallRequest(BaseModel):
     request_id: str = Field(min_length=8, max_length=63, pattern=r"^[A-Za-z0-9._:-]+$")
+
+
+class StopRequest(CallRequest):
+    reason: str = Field(default="user", max_length=40, pattern=r"^[a-z_]+$")
+
+
+class DiagnosticRequest(CallRequest):
+    kind: str = Field(pattern=r"^(peer_state|visibility|media_sample|browser_failure)$")
+    connection_state: str | None = Field(default=None, max_length=24, pattern=r"^[a-z]+$")
+    ice_state: str | None = Field(default=None, max_length=24, pattern=r"^[a-z]+$")
+    visibility: str | None = Field(default=None, pattern=r"^(visible|hidden)$")
+    sent: int | None = Field(default=None, ge=0, strict=True)
+    received: int | None = Field(default=None, ge=0, strict=True)
+    lost: int | None = Field(default=None, ge=0, strict=True)
 
 
 class SignalRequest(CallRequest):
@@ -332,6 +447,21 @@ class FeedbackRequest(CallRequest):
 
 
 def create_web_app(service, *, web_root):
+    presence_cleanup_tasks = set()
+
+    async def cleanup_presence(registration, request_id):
+        try:
+            token = await registration
+        except IntercomError:
+            return
+        await asyncio.to_thread(service.detach_presence, request_id, token)
+
+    def cleanup_done(task):
+        presence_cleanup_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            error = task.exception()
+            LOG.error("Presence cleanup failed", exc_info=(type(error), error, error.__traceback__))
+
     @asynccontextmanager
     async def lifespan(app):
         done = asyncio.Event()
@@ -348,9 +478,12 @@ def create_web_app(service, *, web_root):
         finally:
             done.set()
             await worker
+            if presence_cleanup_tasks:
+                await asyncio.gather(*presence_cleanup_tasks, return_exceptions=True)
             await asyncio.to_thread(service.close)
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.presence_cleanup_tasks = presence_cleanup_tasks
 
     @app.middleware("http")
     async def same_origin(request, call_next):
@@ -386,8 +519,40 @@ def create_web_app(service, *, web_root):
         return await asyncio.to_thread(service.start, body.request_id)
 
     @app.post("/api/call/stop")
-    async def stop(body: CallRequest):
-        return await asyncio.to_thread(service.stop, body.request_id)
+    async def stop(body: StopRequest):
+        return await asyncio.to_thread(service.stop, body.request_id, reason=body.reason)
+
+    @app.post("/api/call/diagnostic")
+    async def diagnostic(body: DiagnosticRequest):
+        return await asyncio.to_thread(service.diagnostic, body.request_id, body.model_dump(exclude_none=True))
+
+    @app.websocket("/api/call/presence")
+    async def presence(socket: WebSocket):
+        origin = socket.headers.get("origin")
+        expected = str(socket.url.replace(scheme="http", path="", query="")).rstrip("/")
+        request_id = socket.query_params.get("request_id", "")
+        if (origin != expected or socket.url.hostname not in {"127.0.0.1", "localhost", "testserver"}
+                or not re.fullmatch(r"[A-Za-z0-9._:-]{8,63}", request_id)):
+            await socket.close(code=1008)
+            return
+        # to_thread continues after its waiter is cancelled. Retain registration
+        # and its eventual token so cancellation cannot leave a phantom page.
+        registration = asyncio.create_task(asyncio.to_thread(service.attach_presence, request_id))
+        try:
+            await asyncio.shield(registration)
+            await socket.accept()
+            await socket.send_json({"ready": True})
+            while True:
+                await socket.receive_text()
+        except WebSocketDisconnect:
+            pass
+        except IntercomError:
+            await socket.close(code=1008)
+        finally:
+            cleanup = asyncio.create_task(cleanup_presence(registration, request_id))
+            presence_cleanup_tasks.add(cleanup)
+            cleanup.add_done_callback(cleanup_done)
+            await asyncio.shield(cleanup)
 
     @app.post("/api/photo")
     async def photo(body: CallRequest):
