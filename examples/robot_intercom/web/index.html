@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>机器人对讲 · WatcheRobot</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <a class="brand" href="/" aria-label="机器人对讲首页"
+          ><span class="brand-mark">w.</span> WatcheRobot</a
+        ><span class="network"><i></i> 局域网对讲</span>
+      </header>
+      <section class="intro">
+        <p class="eyebrow">ROBOT INTERCOM / 01</p>
+        <h1>让声音，<br />到它身边。</h1>
+        <p class="lead">
+          通过机器人实时说话、听见现场，<br />也可以拍张照片，看看它眼前的世界。
+        </p>
+      </section>
+      <div class="workspace">
+        <section class="call-card" aria-label="语音通话">
+          <div class="card-top">
+            <span>语音连接</span
+            ><span id="connection" class="badge">正在查找机器人</span>
+          </div>
+          <div id="callVisual" class="call-visual" data-state="idle">
+            <div class="robot-face" aria-hidden="true">
+              <div class="eyes"><i></i><i></i></div>
+              <div class="mouth"></div>
+            </div>
+            <span class="orbit"></span>
+          </div>
+          <h2 id="callTitle">准备好，就开始说话</h2>
+          <p id="message" role="status" aria-live="polite">
+            请在桌面端连接同一局域网内的机器人。
+          </p>
+          <div class="call-actions">
+            <button id="start" class="primary" disabled>
+              开始通话 <span>↗</span></button
+            ><button id="stop" class="end" hidden>结束通话</button
+            ><button id="mute" class="secondary" aria-pressed="false" disabled>
+              麦克风开启
+            </button>
+          </div>
+          <div class="listen">
+            <span>现场声音</span
+            ><button id="listen" class="text-button" aria-pressed="false">
+              收听中 · 点击关闭
+            </button>
+          </div>
+          <label class="noise-option"
+            ><input id="noise" type="checkbox" checked />
+            减少现场背景噪声</label
+          ><audio id="remoteAudio" autoplay></audio
+          ><button id="resumeAudio" class="text-button" hidden>
+            点击播放现场声音
+          </button>
+          <p class="footnote">
+            戴上耳机，双向交流更清晰。机器人嘴型会跟随实际播放的声音。通话与释放期间请勿切换机器人。
+          </p>
+        </section>
+        <section class="photo-card" aria-label="机器人拍照">
+          <div class="card-top">
+            <span>它眼前的世界</span><span class="eyebrow">PHOTO / JPEG</span>
+          </div>
+          <div class="photo-frame">
+            <img id="photo" alt="机器人拍摄的现场照片" hidden />
+            <div id="emptyPhoto">
+              <span class="viewfinder" aria-hidden="true">⌖</span>
+              <h2>留住这一刻</h2>
+              <p>通话中拍照，声音继续。</p>
+            </div>
+          </div>
+          <div class="photo-actions">
+            <div>
+              <p id="photoStatus" role="status">还没有照片</p>
+              <a id="download" hidden download>保存照片 ↓</a>
+            </div>
+            <button id="capture" class="camera-button" disabled>
+              <span aria-hidden="true">◎</span> 拍照
+            </button>
+          </div>
+        </section>
+      </div>
+      <footer>
+        <span>声音实时传输 · 照片保存在本机</span
+        ><span>WATCHE / CONNECT & BE THERE</span>
+      </footer>
+    </main>
+    <script type="module" src="/assets/app.mjs"></script>
+  </body>
+</html>
