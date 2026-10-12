@@ -122,7 +122,7 @@ class IntercomService:
         with self._state_lock:
             if request_id != self._owner or self._owner is None:
                 raise IntercomError("该页面不拥有当前通话，请刷新页面")
-            if self._state == "connecting" and self.clock() >= self._connect_due:
+            if self._state in {"starting", "connecting"} and self.clock() >= self._connect_due:
                 self._state = "cleanup_required"
                 self._last_error = "通话连接超时，请重新开始"
                 raise IntercomError(self._last_error)
@@ -160,8 +160,10 @@ class IntercomService:
                 self._address = lan_address(connection)
                 self._follow = True  # Enable may be applied even when its ACK is lost.
             try:
+                self._owned(request_id)
                 self.robot.expression_runtime.set_audio_follow(True)
                 self._online()
+                self._owned(request_id)
                 self.rtc.start(mode="audio")
                 with self._state_lock:
                     if self.clock() >= self._connect_due:

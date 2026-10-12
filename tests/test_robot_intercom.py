@@ -332,6 +332,33 @@ def test_inflight_signal_crossing_deadline_requires_cleanup(rig):
     assert not rig.rtc.active
 
 
+@pytest.mark.parametrize("phase", ["follow", "online"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_start_deadline_before_rtc_does_not_allocate_and_preserves_cleanup(rig, phase, cleanup_fails):
+    def follow(enabled):
+        rig.calls.append(("follow", enabled))
+        if enabled and phase == "follow":
+            rig.clock[0] = 30
+        if not enabled and cleanup_fails:
+            raise TimeoutError("release unconfirmed")
+    rig.robot.expression_runtime.set_audio_follow = follow
+    original_status = rig.service.device_status
+    def status():
+        if phase == "online" and ("follow", True) in rig.calls:
+            rig.clock[0] = 30
+        return original_status()
+    rig.service.device_status = status
+    with pytest.raises(rig.module.IntercomError, match="超时"):
+        rig.service.start("request-a")
+    assert not any(call[0] == "rtc" for call in rig.calls)
+    assert rig.calls == [("follow", True), ("follow", False)]
+    assert rig.service.status()["state"] == ("cleanup_required" if cleanup_fails else "idle")
+    if cleanup_fails:
+        rig.robot.expression_runtime.set_audio_follow = lambda enabled: rig.calls.append(("follow", enabled))
+        rig.service.stop("request-a")
+        assert rig.service.status()["state"] == "idle"
+
+
 def test_pending_heartbeat_is_not_expired_while_it_holds_signal_lock(rig):
     rig.service.start("request-a")
     entered, release = threading.Event(), threading.Event()

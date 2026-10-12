@@ -103,3 +103,10 @@
 - 同步 SDK 调用无法由 fetch AbortController 取消；文档明确 30 秒触发取消与清理，不保证硬实时释放。在途请求可以完成，但不会被当作成功协商或续期。
 - 另从 npm 下载 @jitsi/rnnoise-wasm 0.2.1，SHA512 integrity 与 NOTICE 完全一致。Git 保存的 vendor blob 逐字节匹配上游，SHA256 为 05a553f523d59502d133a6d05dbf1878137c9e7bcff06edf5561f7001b62f95f。此前 d8679704... 是 Windows autocrlf 检出后的 CRLF 工作文件散列，内容一致；本段澄清不把不同换行的散列误当上游原字节。
 - 最终 CI 与复审重新运行；未新增 Daemon 业务路由，未烧录或发布。
+
+
+### 2026-10-12 Asia/Shanghai｜KID / Codex｜启动阶段副作用门禁
+
+- 复审定位音频跟随/设备检查返回时已到截止，仍可能发起新的 RTC start。统一门禁扩展至 starting，启用前与 RTC start 前检查，不把截止后新操作当作不可取消的旧操作。
+- Red：跟随返回超时、在线检查返回超时各自覆盖清理成功/清理失败重试，共 4 项先失败；Green：不分配 RTC，仍释放已启用跟随，失败保留 cleanup_required 并可重试。最新 Python 专项 58/58。
+- 本阶段媒体实现未变，32 项浏览器专项继续有效；完整 CI 绑定最终提交。已人工补审截断后的媒体、测试与 source collector，并逐字节核对上游 Git blob。
