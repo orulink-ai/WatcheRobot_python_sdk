@@ -359,6 +359,34 @@ def test_start_deadline_before_rtc_does_not_allocate_and_preserves_cleanup(rig, 
         assert rig.service.status()["state"] == "idle"
 
 
+@pytest.mark.parametrize("operation", ["signal", "heartbeat", "feedback", "capture", "start"])
+def test_device_status_crossing_deadline_cannot_issue_new_operation(rig, operation):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    before = list(rig.calls)
+    original_capture = rig.robot.camera.capture
+    def capture(**kwargs):
+        rig.calls.append(("capture", None))
+        return original_capture(**kwargs)
+    rig.robot.camera.capture = capture
+    original_status = rig.service.device_status
+    def delayed_status():
+        rig.clock[0] = 30
+        return original_status()
+    rig.service.device_status = delayed_status
+    args = {
+        "signal": ("request-a", {"kind": "offer", "sdp": "late"}),
+        "heartbeat": ("request-a", 1000), "feedback": ("request-a", {}),
+        "capture": ("request-a",), "start": ("request-a",),
+    }
+    with pytest.raises(rig.module.IntercomError, match="超时"):
+        getattr(rig.service, operation)(*args[operation])
+    assert rig.calls == before
+    assert rig.service.status()["state"] == "cleanup_required"
+    rig.service.maintain()
+    assert not rig.rtc.active
+
+
 def test_pending_heartbeat_is_not_expired_while_it_holds_signal_lock(rig):
     rig.service.start("request-a")
     entered, release = threading.Event(), threading.Event()

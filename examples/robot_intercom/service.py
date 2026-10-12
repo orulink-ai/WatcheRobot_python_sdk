@@ -129,6 +129,13 @@ class IntercomService:
             if self._state not in {"starting", "connecting", "running"}:
                 raise IntercomError("通话正在释放，请稍候")
 
+    def _before_device_call(self, request_id):
+        self._owned(request_id)
+        self._online()
+        # Status queries may themselves cross the deadline. Check again next
+        # to the device side effect, after all potentially slow preparation.
+        self._owned(request_id)
+
     def start(self, request_id):
         with self._lifecycle:
             if self._closing:
@@ -137,8 +144,7 @@ class IntercomService:
                 raise IntercomError("该通话请求已结束，请重新开始通话")
             if self._owner is not None:
                 if self._owner == request_id and self._state in {"connecting", "running"}:
-                    self._owned(request_id)
-                    self._online()
+                    self._before_device_call(request_id)
                     return self.status()
                 raise IntercomError("已有通话或待释放资源，请先结束通话")
             connection = self._online()
@@ -160,10 +166,9 @@ class IntercomService:
                 self._address = lan_address(connection)
                 self._follow = True  # Enable may be applied even when its ACK is lost.
             try:
-                self._owned(request_id)
+                self._before_device_call(request_id)
                 self.robot.expression_runtime.set_audio_follow(True)
-                self._online()
-                self._owned(request_id)
+                self._before_device_call(request_id)
                 self.rtc.start(mode="audio")
                 with self._state_lock:
                     if self.clock() >= self._connect_due:
@@ -212,8 +217,7 @@ class IntercomService:
     def capture(self, request_id):
         # Stop/shutdown drains a photo before releasing the display or transport.
         with self._lifecycle:
-            self._owned(request_id)
-            self._online()
+            self._before_device_call(request_id)
             image = self.robot.camera.capture(timeout=10.0)
             self._owned(request_id)
             self.artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -225,7 +229,6 @@ class IntercomService:
     def signal(self, request_id, data):
         with self._signal_lock:
             self._owned(request_id)
-            self._online()
             value = data.get("sdp") if data.get("kind") == "offer" else data.get("candidate")
             if not isinstance(value, str) or not value:
                 raise ValueError("缺少 RTC 信令内容")
@@ -233,6 +236,7 @@ class IntercomService:
                 if self._address is None:
                     raise IntercomError("无法确定电脑局域网地址")
                 value = MDNS.sub(lambda match: match[1] + self._address + match[3], value)
+            self._before_device_call(request_id)
             if data["kind"] == "offer":
                 self.rtc.send_offer(value)
             else:
@@ -243,8 +247,7 @@ class IntercomService:
 
     def heartbeat(self, request_id, browser_send_us):
         with self._signal_lock:
-            self._owned(request_id)
-            self._online()
+            self._before_device_call(request_id)
             self.rtc.clock_ping(browser_send_us)
             self._owned(request_id)
             with self._state_lock:
@@ -258,8 +261,7 @@ class IntercomService:
 
     def feedback(self, request_id, metrics):
         with self._signal_lock:
-            self._owned(request_id)
-            self._online()
+            self._before_device_call(request_id)
             self.rtc.feedback(**metrics)
             self._owned(request_id)
             return {"ok": True}
