@@ -333,6 +333,49 @@ def test_cancelled_presence_registration_or_handshake_releases_robot(rig, phase)
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("call_state", ["connecting", "running"])
+@pytest.mark.parametrize("device_state", ["failed", "stopping", "stopped"])
+def test_device_terminal_releases_call_without_browser_requests(rig, call_state, device_state):
+    rig.rtc.state = "connecting" if call_state == "connecting" else "connected"
+    assert rig.service.start("request-a")["state"] == call_state
+    rig.service.attach_presence("request-a")
+    rig.clock[0] = 6  # Still before the negotiation deadline; a ping would be due.
+    reason = f"device-{device_state}"
+    rig.rtc.events = lambda **kwargs: [{"id": 1, "message": {
+        "type": "evt.rtc.state", "data": {"state": device_state, "reason": reason}}}]
+
+    rig.service.maintain()
+
+    status = rig.service.status()
+    assert status["state"] == "idle"
+    assert status["request_id"] is None
+    assert status["diagnostics"]["device_end_reason"] == reason
+    assert status["diagnostics"]["end_reason"] == "device_terminal"
+    assert not any(call[0] == "ping" for call in rig.calls)
+    assert rig.calls[-2:] == [("rtc", "stop"), ("follow", False)]
+
+
+@pytest.mark.parametrize("reason", ["user", "page_closed"])
+def test_cleanup_retry_preserves_first_exit_reason(rig, reason):
+    rig.service.start("request-a")
+    rig.rtc.fail_stop = True
+    with pytest.raises(TimeoutError):
+        rig.service.stop("request-a", reason=reason)
+    rig.rtc.fail_stop = False
+    rig.clock[0] = 2
+
+    rig.service.maintain()
+
+    status = rig.service.status()
+    assert status["state"] == "idle"
+    assert status["diagnostics"]["end_reason"] == reason
+    attempts = [event["reason"] for event in status["diagnostics"]["history"]
+                if event["kind"] == "stop_requested"]
+    assert attempts == [reason, "cleanup_retry"]
+    rig.service.start("request-b")
+    assert rig.service.status()["diagnostics"]["end_reason"] is None
+
+
 def test_diagnostics_retain_terminal_reason_and_never_record_signal_payload(rig):
     rig.service.start("request-a")
     rig.service.diagnostic("request-a", {"kind": "peer_state", "connection_state": "disconnected", "sdp": "private-signal"})

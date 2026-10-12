@@ -258,7 +258,8 @@ class IntercomService:
                 return {"matched": False, "state": self._state}
             with self._state_lock:
                 self._state = "cleanup_required"
-                self._end_reason = reason
+                if self._end_reason is None:
+                    self._end_reason = reason
             self._record("stop_requested", reason=reason)
             self._online()
             if self.rtc.snapshot().get("active"):
@@ -343,7 +344,8 @@ class IntercomService:
                 if message.get("type") == "evt.rtc.state":
                     data = message.get("data", {})
                     self._record("device_state", state=data.get("state"), reason=data.get("reason"))
-                    if data.get("state") in {"failed", "stopping", "stopped"} and state == "running":
+                    if (data.get("state") in {"failed", "stopping", "stopped"}
+                            and state in {"connecting", "running"}):
                         self._device_end_reason = data.get("reason") or data["state"]
             if (state in {"connecting", "running"} and live and self._device_end_reason is None
                     and (state == "running" or self.clock() < self._connect_due)
