@@ -11,7 +11,10 @@ static CSS orb. BarVisualizer skips animation scheduling for a constant frame
 sequence; its FFT slice is adapted to bins 2–128 to include speech fundamentals
 and formants. Audio uses the existing call streams, never demo amplitudes or another
 microphone acquisition. Components only borrow streams and release their own
-analysers. Visual errors fall back independently of RTC.
+analysers. FFT bins are proportionally divided across bars and clamped to the
+analyser buffer. The shared analysis helper closes owned nodes and contexts
+after partial initialization failure and handles rejected close promises.
+Visual errors fall back independently of RTC.
 
 `visuals.js` is built from `../frontend/` with npm's cross-platform build command.
 The pinned dependency tree is in its lockfile. `VISUALS-LICENSES.txt` contains

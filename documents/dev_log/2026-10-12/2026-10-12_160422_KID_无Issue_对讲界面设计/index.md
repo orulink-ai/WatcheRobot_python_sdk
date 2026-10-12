@@ -5,7 +5,7 @@
 - 创建时间：2026-10-12 16:04:22，Asia/Shanghai。
 - 建档作者：KID；参与者：KID / Codex。
 - 分支：codex/intercom-elevenlabs-ui；无 Issue。
-- 状态：本地初版完成；已修改并验证，未提交、未发布，待设计反馈与机器人实机复验。
+- 状态：源码已提交，PR #144 待最终修正验证与合入；应用源码已上传，商店目录待审；当前固件持续 RTC 未通过。历史条目的“未提交”描述对应当时状态。
 
 ## 背景、目标与边界
 
@@ -73,3 +73,13 @@
 - 新增文件纳入 staged diff 后发现官方组件 / shader 的末尾空白；源组件已清理，生成 bundle 内依赖 shader 保留原格式。源码空白检查排除该生成文件单独核验。
 - 配套工作区提交 ed0e4a81 修复固件入口旧参数泄漏并同步两平台入口与文档；SDK 合入后更新根仓 gitlink。
 - 当前 Gitee 旧 0.1.2 审核 #17 仍 open。新版本尚未上传或合入，不把源码交付等同商店上架。
+
+### 2026-10-12 18:08 Asia/Shanghai｜KID / Codex｜审查修正与最终本机验证
+
+SDK PR #144 的 Luxiao 报告指出固定 FFT 步长会使 25 个柱的末尾四柱为空，并提示分析器初始化异常的资源泄漏。提取既有算法到独立共享 helper，先按原行为运行四个语义用例，四项均失败；改为比例分段、FFT buffer 裁剪和可重入清理后同一四项通过。异常注入覆盖创建 source、创建 analyser、设置选项与 connect；借用轨道始终不被 stop，close Promise 拒绝被处理。组件实际导入该 helper，typecheck / build 再次通过，浏览器全量现在 211 项通过。最终 bundle 随修正提交，许可信息没有变化。
+
+干净 Python 3.11 全量完成：1866 passed、17 skipped；mypy 124 文件通过；sdist / wheel 构建及 twine check 通过。单独安装 wheel 并在隔离导入模式准备全部 bundled demos、CLI help 均通过。此前旧全局 SDK 导入导致的单项失败在干净环境消失。此次 follow-up 仅改变前端分析器与归档，未改 Python 行为，Python CI 最终 head 仍会复核。
+
+人工核对自动审查截断的关键源码：服务通过管理 REST 配对，生命周期 / 信令锁保护配对与通话资源；取消请求核对接受的 request_id（跨管理客户端仍非原子 CAS）；默认照片路由仅在显式开关启用；相机等待在命令前启用、完整 32 位失败身份和有界 16 条缓存由条件变量保护，finally 清空并释放锁；i18n 只更新展示；三个 React root dispose 会 unmount。自动审查有范围限制，不能据其 job 成功称全量审查通过。
+
+商店 0.1.3 原快照 cdca27700db5a9d5bbee90f56dc58a4eb231dfc0 已上传，目录 #18 已提交；旧本人 #17 经作者 / 标题 / SHA 核对后关闭。#18 合入请求被 Gitee 返回权限拒绝，未上架；待本次视觉修正再次上传并替换待审请求。GitHub 首版 head 的开发及 Python 3.10 / 3.12 兼容性均通过。当前状态：已提交首版、PR 待最终 head 检查与合入；商店待审核。

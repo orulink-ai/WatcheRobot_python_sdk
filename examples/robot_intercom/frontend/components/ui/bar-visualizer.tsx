@@ -12,41 +12,9 @@ import {
 
 import { cn } from "@/lib/utils"
 
-export interface AudioAnalyserOptions {
-  fftSize?: number
-  smoothingTimeConstant?: number
-  minDecibels?: number
-  maxDecibels?: number
-}
-
-function createAudioAnalyser(
-  mediaStream: MediaStream,
-  options: AudioAnalyserOptions = {}
-) {
-  const audioContext = new (window.AudioContext ||
-    (window as unknown as { webkitAudioContext: typeof AudioContext })
-      .webkitAudioContext)()
-  const source = audioContext.createMediaStreamSource(mediaStream)
-  const analyser = audioContext.createAnalyser()
-
-  if (options.fftSize) analyser.fftSize = options.fftSize
-  if (options.smoothingTimeConstant !== undefined) {
-    analyser.smoothingTimeConstant = options.smoothingTimeConstant
-  }
-  if (options.minDecibels !== undefined)
-    analyser.minDecibels = options.minDecibels
-  if (options.maxDecibels !== undefined)
-    analyser.maxDecibels = options.maxDecibels
-
-  source.connect(analyser)
-
-  const cleanup = () => {
-    source.disconnect()
-    audioContext.close()
-  }
-
-  return { analyser, audioContext, cleanup }
-}
+import { createAudioAnalyser, frequencyBandRanges } from "@/lib/audio-analysis.mjs"
+import type { AudioAnalyserOptions } from "@/lib/audio-analysis.mjs"
+export type { AudioAnalyserOptions } from "@/lib/audio-analysis.mjs"
 
 /**
  * Hook for tracking the volume of an audio stream using the Web Audio API.
@@ -125,8 +93,8 @@ export function useAudioVolume(
 
 export interface MultiBandVolumeOptions {
   bands?: number
-  loPass?: number // Low frequency cutoff
-  hiPass?: number // High frequency cutoff
+  loPass?: number // First FFT bin (inclusive)
+  hiPass?: number // Last FFT bin (exclusive)
   updateInterval?: number // Update interval in ms
   analyserOptions?: AudioAnalyserOptions
 }
@@ -193,10 +161,7 @@ export function useMultibandVolume(
 
     const bufferLength = analyser.frequencyBinCount
     const dataArray = new Float32Array(bufferLength)
-    const sliceStart = opts.loPass!
-    const sliceEnd = opts.hiPass!
-    const sliceLength = sliceEnd - sliceStart
-    const chunkSize = Math.ceil(sliceLength / opts.bands!)
+    const ranges = frequencyBandRanges(bufferLength, opts.bands!, opts.loPass!, opts.hiPass!)
 
     let lastUpdate = 0
     const updateInterval = opts.updateInterval!
@@ -211,8 +176,7 @@ export function useMultibandVolume(
         for (let i = 0; i < opts.bands!; i++) {
           let sum = 0
           let count = 0
-          const startIdx = sliceStart + i * chunkSize
-          const endIdx = Math.min(sliceStart + (i + 1) * chunkSize, sliceEnd)
+          const [startIdx, endIdx] = ranges[i]
 
           for (let j = startIdx; j < endIdx; j++) {
             sum += normalizeDb(dataArray[j])
