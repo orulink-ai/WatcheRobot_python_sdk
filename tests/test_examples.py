@@ -104,6 +104,17 @@ def test_media_lab_defaults_to_english_and_can_switch_to_chinese() -> None:
     assert "MutationObserver" in i18n
 
 
+def test_intercom_distribution_includes_built_visuals_without_build_tooling() -> None:
+    root = ROOT / "examples" / "robot_intercom"
+    files = {path.as_posix() for path in collect_application_source_files(root)}
+    assert {
+        "web/visuals.js", "web/visuals.js.LEGAL.txt", "web/call-clock.mjs",
+        "web/ELEVENLABS-LICENSE.txt", "web/VISUALS-LICENSES.txt",
+        "web/i18n.mjs", "web/device-connector.mjs",
+    } <= files
+    assert not any(path.startswith("frontend/") for path in files)
+
+
 def test_runtime_artifacts_are_ignored(tmp_path: Path) -> None:
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
 

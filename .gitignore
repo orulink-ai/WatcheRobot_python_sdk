@@ -14,3 +14,4 @@ dist/
 /watcherobot-*-output/
 /examples/watcherobot-*-output/
 /examples/camera.jpg
+/examples/robot_intercom/frontend/node_modules/

@@ -4,6 +4,8 @@ from __future__ import annotations
 import importlib.util
 import asyncio
 import threading
+import io
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -76,6 +78,121 @@ def test_start_enables_actual_playback_mouth_before_audio(rig):
     assert len(rig.calls) == 2
     with pytest.raises(rig.module.IntercomError):
         rig.service.start("request-b")
+
+
+def test_audio_only_robot_can_start_without_camera_capability(rig):
+    rig.robot.capabilities = ("rtc.audio.full_duplex.v1", "expression.audio_follow.v1")
+    rig.service.start("request-a")
+    assert rig.rtc.active
+    assert rig.calls == [("follow", True), ("rtc", "audio")]
+
+
+def test_default_demo_disables_photo_routes_without_interrupting_call(rig):
+    captures = []
+    rig.robot.camera.capture = lambda **kwargs: captures.append(kwargs)
+    rig.service.start("request-a")
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
+        assert client.get("/api/status").json()["features"]["photo"] is False
+        assert client.post("/api/photo", json={"request_id": "request-a"}).status_code == 404
+        assert client.get("/photos/photo-" + "a" * 32 + ".jpg").status_code == 404
+        assert not captures
+        assert rig.rtc.active
+
+
+def test_photo_can_be_explicitly_enabled_for_development(rig):
+    rig.service.start("request-a")
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web", enable_photo=True)) as client:
+        assert client.get("/api/status").json()["features"]["photo"] is True
+        response = client.post("/api/photo", json={"request_id": "request-a"})
+        assert response.status_code == 200
+        assert client.get(response.json()["url"]).content == b"\xff\xd8jpeg\xff\xd9"
+        assert rig.rtc.active
+
+
+@pytest.mark.parametrize("kind", ["device_failure", "timeout"])
+def test_photo_failure_explains_camera_problem_and_keeps_call(rig, kind):
+    from watcherobot.errors import CameraCaptureError
+    error = CameraCaptureError(100, "failed") if kind == "device_failure" else TimeoutError("JPEG timeout")
+    def capture(**kwargs):
+        raise error
+    rig.robot.camera.capture = capture
+    rig.service.start("request-a")
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web", enable_photo=True)) as client:
+        result = client.post("/api/photo", json={"request_id": "request-a"})
+        assert result.status_code == 409
+        assert "相机" in result.json()["error"] or "照片" in result.json()["error"]
+        assert "通话" in result.json()["error"]
+        assert rig.rtc.active
+        assert not list(rig.path.glob("*.jpg"))
+
+
+def test_connect_uses_daemon_management_and_waits_for_actual_online_status(rig):
+    rig.connection.update(online=False, state="idle")
+    paired = []
+    rig.service.device_pairer = lambda code, ip: paired.append((code, ip)) or {
+        "device": {"state": "discovering", "online": False, "request_id": "pair-new"}
+    }
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
+        response = client.post("/api/device/pair", json={"pairing_code": "123456"})
+        assert response.status_code == 202
+        assert response.json()["connection"]["online"] is False
+        assert client.get("/api/status").json()["connection"]["state"] == "idle"
+    assert paired == [("123456", None)]
+    assert not rig.calls
+
+
+@pytest.mark.parametrize("code,ip", [("12345", None), ("12a456", None), ("１２３４５６", None), ("123456", "not-an-ip")])
+def test_invalid_pairing_input_never_reaches_daemon(rig, code, ip):
+    paired = []
+    rig.service.device_pairer = lambda *args: paired.append(args)
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
+        assert client.post("/api/device/pair", json={"pairing_code": code, "device_ip": ip}).status_code == 422
+    assert not paired
+
+
+def test_pairing_cannot_replace_an_online_robot_or_a_call_pending_cleanup(rig):
+    paired = []
+    rig.service.device_pairer = lambda *args: paired.append(args)
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.pair_device("123456")
+    rig.service.start("request-a")
+    rig.connection["online"] = False
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.pair_device("123456")
+    assert not paired
+
+
+def test_cancel_pairing_is_scoped_to_this_app_accepted_request(rig):
+    rig.connection.update(online=False, state="discovering", request_id="pair-a")
+    canceled = []
+    rig.service.device_pairing_canceler = lambda: canceled.append(True)
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.cancel_pairing()
+    rig.service.device_pairer = lambda *args: {"device": dict(rig.connection)}
+    rig.service.pair_device("123456")
+    rig.connection["request_id"] = "another-page"
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.cancel_pairing()
+    assert not canceled
+    rig.connection["request_id"] = "pair-a"
+    assert rig.service.cancel_pairing()["canceled"]
+    assert canceled == [True]
+
+
+def test_pairing_adapter_posts_only_to_injected_daemon_management(rig, monkeypatch):
+    requests = []
+    def response(request, timeout):
+        requests.append((request.full_url, request.method, json.loads(request.data), timeout))
+        return io.BytesIO(b'{"device":{"state":"discovering","online":false}}')
+    monkeypatch.setattr(rig.module.urllib.request, "urlopen", response)
+    manager = rig.module.DeviceStatus("http://127.0.0.1:54321/daemon/devices")
+    manager.pair("012345", "192.168.1.88")
+    manager.cancel_pairing()
+    assert requests == [
+        ("http://127.0.0.1:54321/daemon/devices/pair", "POST",
+         {"pairing_code": "012345", "target_mode": "python_sdk", "device_ip": "192.168.1.88"}, 3),
+        ("http://127.0.0.1:54321/daemon/devices/pair/cancel", "POST", {}, 3),
+    ]
 
 
 def test_page_open_after_pairing_refreshes_capabilities_before_enabling_start(rig):

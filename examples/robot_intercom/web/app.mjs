@@ -2,8 +2,33 @@ import { createCallController } from "./call-controller.mjs";
 import { createRtcNoisePlayback } from "./rtc-noise-playback.mjs";
 import { connectCallPresence } from "./call-presence.mjs";
 import { createPhotoController } from "./photo-controller.mjs";
+import { createCallClock } from "./call-clock.mjs";
+import { createDeviceConnector } from "./device-connector.mjs";
+import { createI18n } from "./i18n.mjs";
 
 const $ = (id) => document.getElementById(id);
+let storage;
+try { storage = window.localStorage; } catch { /* Use browser language if storage is blocked. */ }
+const i18n = createI18n({ storage, languages: navigator.languages });
+const t = (source, values) => i18n.text(source, values);
+const dynamicTexts = new Map();
+function setText(id, source, values) {
+  dynamicTexts.set(id, { source: String(source), values });
+  $(id).textContent = t(String(source), values);
+}
+let callMessage = "先点击上方「连接机器人」，再开始通话。";
+function renderLanguage() {
+  document.documentElement.lang = i18n.locale;
+  for (const element of document.querySelectorAll("[data-i18n]"))
+    element.textContent = t(element.dataset.i18n);
+  for (const attribute of ["aria-label", "alt", "placeholder"])
+    for (const element of document.querySelectorAll(`[data-i18n-${attribute}]`))
+      element.setAttribute(attribute, t(element.getAttribute(`data-i18n-${attribute}`)));
+  $("languageZh").setAttribute("aria-pressed", String(i18n.locale === "zh-CN"));
+  $("languageEn").setAttribute("aria-pressed", String(i18n.locale === "en"));
+  for (const [id, { source, values }] of dynamicTexts)
+    $(id).textContent = t(source, values);
+}
 let status = null,
   listening = true,
   noise = null,
@@ -11,6 +36,35 @@ let status = null,
   refreshTimer;
 let lastMediaReport = 0;
 let photoController = null;
+const callClock = createCallClock();
+let visuals = null,
+  localStream = null,
+  remoteStream = null;
+let visualGeneration = 0;
+function renderVisuals() {
+  visuals?.update({
+    ...controller.snapshot(),
+    listening,
+    local: localStream,
+    remote: remoteStream,
+  });
+}
+async function mountVisuals() {
+  const token = ++visualGeneration;
+  try {
+    const module = await import("./visuals.js");
+    if (token !== visualGeneration) return;
+    visuals = module.mountVisuals({
+      orb: $("orbMount"),
+      input: $("inputWave"),
+      output: $("outputWave"),
+    });
+    renderVisuals();
+  } catch {
+    // RTC remains usable if the optional visual bundle cannot load.
+    document.body.dataset.visualFallback = "true";
+  }
+}
 async function api(path, body, options = {}) {
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
@@ -36,33 +90,57 @@ function render() {
   const supported = [
     "rtc.audio.full_duplex.v1",
     "expression.audio_follow.v1",
-    "camera.capture",
   ].every((c) => status?.capabilities?.includes(c));
-  $("connection").textContent = status?.connected
+  setText("connection", status?.connected
     ? "机器人已连接"
-    : "机器人未连接";
+    : "机器人未连接");
+  $("connection").dataset.connected = String(!!status?.connected);
   $("start").hidden = busy;
   $("start").disabled = !status?.connected || !supported;
   $("stop").hidden = !busy;
   $("stop").disabled = call.state === "stopping";
+  setText("stopLabel", call.state === "cleanup_required"
+      ? "重试结束通话"
+      : call.state === "stopping"
+        ? "正在结束…"
+        : "结束通话");
   $("mute").disabled = !["running", "connecting"].includes(call.state);
-  $("mute").textContent = call.muted ? "麦克风已静音" : "麦克风开启";
+  setText("muteLabel", call.muted ? "麦克风已静音" : "麦克风开启");
   $("mute").setAttribute("aria-pressed", String(call.muted));
+  $("listen").disabled = !["running", "connecting"].includes(call.state);
+  setText("listenLabel", listening ? "收听现场" : "收听已关闭");
+  setText("inputState", call.state === "running" ? (call.muted ? "已静音" : "传输中") : "未开启");
+  setText("outputState", call.state === "running" ? (listening ? "收听中" : "已关闭") : "未开启");
+  setText("callDuration", callClock.update(call));
+  $("callDuration").hidden = !busy;
+  const photoEnabled = status?.features?.photo === true;
+  $("photoPanel").hidden = !photoEnabled;
+  document.body.dataset.photoEnabled = String(photoEnabled);
+  setText("photoHint", call.state === "running"
+      ? "拍照不打断通话，通常约需 2 秒"
+      : "通话连接后即可拍照");
   $("capture").disabled =
+    !photoEnabled || !status?.capabilities?.includes("camera.capture") ||
     call.state !== "running" || photoController.snapshot().busy;
   $("callVisual").dataset.state = call.state;
-  $("callTitle").textContent = titles[call.state];
+  setText("callTitle", titles[call.state]);
   document.body.dataset.callState = call.state;
+  renderVisuals();
+  renderDevice();
   if (!busy && status?.connected && !supported)
-    $("message").textContent = "当前固件缺少通话或嘴型能力，请升级机器人固件。";
+    callMessage = "当前固件缺少通话或嘴型能力，请升级机器人固件。";
   else if (
     !busy &&
     status?.connected &&
-    $("message").textContent.trim().startsWith("请在桌面端")
+    ["请在桌面端", "先点击上方"].some((prefix) =>
+      callMessage.startsWith(prefix))
   )
-    $("message").textContent = "机器人已就绪，点击开始通话。";
+    callMessage = "机器人已就绪，点击开始通话。";
+  setText("message", callMessage);
 }
 async function playRemote(stream) {
+  remoteStream = stream;
+  renderVisuals();
   $("remoteAudio").srcObject = stream;
   $("remoteAudio").muted = !listening;
   try {
@@ -74,6 +152,10 @@ async function playRemote(stream) {
 }
 const controller = createCallController({
   api,
+  onLocal: (stream) => {
+    localStream = stream;
+    renderVisuals();
+  },
   connectPresence: connectCallPresence,
   report: (event) => {
     const requestId = controller.snapshot().requestId;
@@ -86,7 +168,7 @@ const controller = createCallController({
   },
   onState: (call) => {
     photoController?.updateCall(call);
-    if (call.message) $("message").textContent = call.message;
+    if (call.message) callMessage = call.message;
     render();
   },
   onStats: (stats) => {
@@ -126,6 +208,8 @@ const controller = createCallController({
     if (processed) await playRemote(processed.stream);
   },
   onDispose: () => {
+    localStream = remoteStream = null;
+    renderVisuals();
     noiseAbort?.abort();
     noiseAbort = null;
     noise?.dispose();
@@ -138,26 +222,81 @@ const controller = createCallController({
 async function refresh() {
   try {
     status = await api("/api/status");
+    deviceConnector.update(status.connection);
     render();
   } catch {
-    $("connection").textContent = "应用连接中断";
+    setText("connection", "应用连接中断");
+    $("connection").dataset.connected = "false";
     $("start").disabled = true;
+    deviceConnector.update(null);
   }
   refreshTimer = setTimeout(refresh, 2000);
 }
+const deviceConnector = createDeviceConnector({ api, onChange: renderDevice });
+function renderDevice() {
+  const pair = deviceConnector.snapshot(),
+    call = controller.snapshot();
+  const online = !!status?.connected;
+  const daemonBusy = ["discovering", "connecting", "reconnecting"].includes(
+    status?.connection?.state,
+  );
+  setText("deviceTitle", online
+    ? status.device?.name || "机器人已连接"
+    : pair.busy || daemonBusy
+      ? "正在连接机器人"
+      : "尚未连接机器人");
+  if (online)
+    setText("deviceDetail", "当前机器人 · {device}", {
+      device: status.device?.device_id || status.connection?.device_id || t("身份确认中"),
+    });
+  else setText("deviceDetail", call.requestId
+      ? "请恢复原机器人连接并完成通话释放，再重新配对。"
+      : pair.busy
+        ? pair.message
+        : "先连接机器人，再开始双向原声通话。");
+  setText("connectDevice", online
+    ? "已连接"
+    : pair.busy
+      ? "查看连接进度"
+      : "连接机器人");
+  $("connectDevice").disabled = online || call.requestId !== null;
+  $("devicePanel").dataset.connected = String(online);
+  setText("deviceFeedback", pair.message);
+  $("deviceFeedback").dataset.error = String(pair.phase === "error");
+  setText("pairSubmit", pair.busy ? "连接中…" : "连接机器人");
+  $("pairSubmit").disabled = pair.busy;
+  $("pairCode").disabled = $("pairIp").disabled = pair.busy;
+  $("cancelPair").hidden = pair.phase !== "waiting";
+  $("closePair").disabled = pair.busy;
+  if (pair.phase === "connected" && $("deviceDialog").open)
+    $("deviceDialog").close();
+}
+$("connectDevice").onclick = () => $("deviceDialog").showModal();
+$("closePair").onclick = () => $("deviceDialog").close();
+$("deviceDialog").addEventListener("cancel", (event) => {
+  if (deviceConnector.snapshot().busy) event.preventDefault();
+});
+$("pairForm").onsubmit = async (event) => {
+  event.preventDefault();
+  await deviceConnector.connect(
+    $("pairCode").value.trim(),
+    $("pairIp").value.trim(),
+  );
+  if (deviceConnector.snapshot().phase !== "error") $("pairCode").value = "";
+};
+$("cancelPair").onclick = () => deviceConnector.cancel();
 $("start").onclick = () => controller.start();
 $("stop").onclick = () =>
   controller.stop().catch((error) => {
-    $("message").textContent = error.message;
+    callMessage = error.message;
+    render();
   });
 $("mute").onclick = () => controller.setMuted(!controller.snapshot().muted);
 $("listen").onclick = () => {
   listening = !listening;
   $("remoteAudio").muted = !listening;
-  $("listen").textContent = listening
-    ? "收听中 · 点击关闭"
-    : "已关闭 · 点击收听";
   $("listen").setAttribute("aria-pressed", String(!listening));
+  render();
 };
 $("noise").onchange = () =>
   noise?.setOptions({ enabled: $("noise").checked, strength: 70 });
@@ -190,17 +329,17 @@ photoController = createPhotoController({
     const loading = phase === "loading";
     $("photoProgress").hidden = false;
     $("photoFrame").setAttribute("aria-busy", "true");
-    $("captureLabel").textContent = "拍照中…";
-    $("photoProgressTitle").textContent = loading ? "正在显示照片" : "正在拍照";
-    $("photoCountdown").textContent =
-      loading || remainingSeconds === 0 ? "…" : remainingSeconds;
+    setText("captureLabel", "拍照中…");
+    setText("photoProgressTitle", loading ? "正在显示照片" : "正在拍照");
+    setText("photoCountdown", loading || remainingSeconds === 0 ? "…" : remainingSeconds);
     const message = loading
       ? "照片已收到，正在显示…"
       : remainingSeconds > 0
-        ? `预计还需 ${remainingSeconds} 秒，通话继续。`
-        : `照片仍在处理中，已等待 ${elapsedSeconds} 秒。`;
-    $("photoProgressDetail").textContent = message;
-    $("photoStatus").textContent = message;
+        ? "预计还需 {seconds} 秒，通话继续。"
+        : "照片仍在处理中，已等待 {seconds} 秒。";
+    const values = { seconds: remainingSeconds > 0 ? remainingSeconds : elapsedSeconds };
+    setText("photoProgressDetail", message, values);
+    setText("photoStatus", message, values);
     render();
   },
   onPhoto: (photo, probe, elapsedMs) => {
@@ -210,26 +349,30 @@ photoController = createPhotoController({
     $("download").href = photo.url;
     $("download").download = photo.artifact;
     $("download").hidden = false;
-    $("photoStatus").textContent =
-      `${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${probe.naturalWidth} × ${probe.naturalHeight}`;
+    setText("photoStatus", `${new Date().toLocaleTimeString(i18n.locale, { hour: "2-digit", minute: "2-digit" })} · ${probe.naturalWidth} × ${probe.naturalHeight}`);
     document.body.dataset.photoElapsedMs = Math.round(elapsedMs);
   },
   onError: (error) => {
-    $("photoStatus").textContent = error.message;
+    setText("photoStatus", error.message);
   },
   onCancel: () => {
-    $("photoStatus").textContent = "已停止等待照片。通话中可重新拍照。";
+    setText("photoStatus", "已停止等待照片。通话中可重新拍照。");
   },
   onIdle: () => {
     $("photoProgress").hidden = true;
     $("photoFrame").setAttribute("aria-busy", "false");
-    $("captureLabel").textContent = "拍照";
+    setText("captureLabel", "拍照");
     render();
   },
 });
-$("capture").onclick = () =>
-  photoController.take(controller.snapshot().requestId);
+$("capture").onclick = () => {
+  if (status?.features?.photo === true)
+    photoController.take(controller.snapshot().requestId);
+};
 window.addEventListener("pagehide", () => {
+  ++visualGeneration;
+  visuals?.dispose();
+  visuals = null;
   clearTimeout(refreshTimer);
   photoController.cancel();
   controller.leave();
@@ -245,8 +388,21 @@ document.addEventListener("visibilitychange", () => {
 });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) {
+    mountVisuals();
     controller.stop().catch(() => {});
     refresh();
   }
 });
+$("languageZh").onclick = () => {
+  i18n.setLocale("zh-CN");
+  renderLanguage();
+  render();
+};
+$("languageEn").onclick = () => {
+  i18n.setLocale("en");
+  renderLanguage();
+  render();
+};
+renderLanguage();
+mountVisuals();
 refresh();

@@ -19,6 +19,15 @@ class CommandError(WatcheRobotError):
         self.reason = reason
 
 
+class CameraCaptureError(WatcheRobotError):
+    """An admitted camera session failed on the device before returning an image."""
+
+    def __init__(self, session_id: int, reason: str):
+        super().__init__(f"camera session {session_id} failed: {reason}")
+        self.session_id = session_id
+        self.reason = reason
+
+
 class JobError(WatcheRobotError):
     """Base exception for a terminal Job error."""
 

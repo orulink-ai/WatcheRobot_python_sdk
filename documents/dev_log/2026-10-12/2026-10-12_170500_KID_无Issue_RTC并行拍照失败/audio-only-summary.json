@@ -1,0 +1,24 @@
+[
+  {
+    "states": [
+      "connected",
+      "signaling",
+      "starting",
+      "stopping"
+    ],
+    "sampled_seconds": 10.53,
+    "min_internal_free_bytes": 2166,
+    "min_dma_free_bytes": 26
+  },
+  {
+    "states": [
+      "connected",
+      "signaling",
+      "starting",
+      "stopped"
+    ],
+    "sampled_seconds": 10.47,
+    "min_internal_free_bytes": 2122,
+    "min_dma_free_bytes": 26
+  }
+]

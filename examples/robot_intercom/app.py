@@ -23,8 +23,11 @@ async def main():
             status_url = os.environ.get("WATCHER_APP_DEVICE_STATUS_URL", "").strip()
             if not status_url:
                 raise RuntimeError("Daemon did not inject the device management URL")
+            device_manager = DeviceStatus(status_url)
             service = IntercomService(robot=context.robot, rtc=context.rtc,
-                                     device_status=DeviceStatus(status_url),
+                                     device_status=device_manager,
+                                     device_pairer=device_manager.pair,
+                                     device_pairing_canceler=device_manager.cancel_pairing,
                                      artifacts_dir=app_data / "photos",
                                      logger=context.logger)
             server = uvicorn.Server(uvicorn.Config(create_web_app(service, web_root=ROOT / "web"),
