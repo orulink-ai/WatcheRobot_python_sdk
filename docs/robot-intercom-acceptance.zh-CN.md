@@ -1,7 +1,265 @@
 # 机器人对讲验证与分发记录
 
-验证日期：2026-10-12。应用源码位于 `examples/robot_intercom`，身份为
+验证日期：2026-10-12～2026-10-13。应用源码位于 `examples/robot_intercom`，身份为
 `com.orulink.robot_intercom`，使用 SDK 0.1.11 的受管 Application 运行时。
+
+## 当前候选阶段：10 轮通话、长测与未完成的啸叫专项验收
+
+应用清单为 0.1.4 本地候选，实机为 **v0.5.6 / `214b4f9145dd` 基线加待合入
+的 RTC 麦克风增益补丁**，报告 `dirty=true`。下述连接与释放证据不能作为
+正式 v0.5.6 已包含补丁、应用已发布或声学问题已解决的依据。用户报告过声音
+反复播放并逐渐放大，本阶段未在增益 12 候选上准确复现该精确现象。啸叫
+专项验收未完成；按用户要求，本阶段诊断与生命周期验证完成、源码待审，
+新的喇叭场景试验留待下一阶段。本阶段不发布新商店版本；根代理核对现有
+0.1.3 目录请求 #19 仍为 open，不宣称源码或目录请求已合入。浏览器开启
+AEC / NS 和单流 RNNoise 降噪都不
+单独证明闭环增益小于 1，前述数字音源与静音发送测试也没有覆盖该闭环。
+
+### 正式页面重复通话及增益恢复
+
+按请求身份、持续增长的媒体计数、释放 sequence 和串口增益记录交叉核对，
+共 10 轮正式通话有成功释放证据。每轮通话串口均记录原增益 27、全双工限值
+12、结束恢复 27，设置与恢复结果均为 0。前 9 轮观测期间 TX / render errors、
+上行丢帧、播放队列丢帧及削顶计数为 0；第 10 轮为后述长测，有 7 次播放
+队列丢帧，不写全部零丢帧。此处 10 轮是本次新测量，不沿用历史 20 轮数量。
+
+释放 sequence 分别为 6、9、10、11、12、13、14、15、16、17，complete 均为
+true，释放各步骤结果和 failure count 均为 0。序号 7 / 8 对应中间两次很短的
+取消尝试，不计入正式轮次。第 2 / 4 轮没有采到 idle 轮询，分别通过后续通话
+快照内保留的成功 sequence 9 / 11 验证释放；不能写这两轮观察到了 idle。
+`release.complete` 可在下一轮通话时继续保留，只有结合 sequence 的递增及
+请求时间，才能把结果归到对应通话。部分启动计数在服务 running 后才刷新，
+不能把跨 reset 的负差值写成媒体丢失。
+
+### 第 10 轮持续通话的独立核对
+
+| 观测 | 结果 |
+| --- | ---: |
+| running 样本数 / 首末样本跨度 | 598 / 649.672 秒 |
+| 最大 running 轮询间隔 | 1.25 秒 |
+| running RTC / presence | 全部 connected / true |
+| 应用 call_start 至 stop 的单调时钟跨度 | 652.844 秒 |
+| stop_requested 至应用 released | 578 ms |
+| capture / TX / RX / decoded 增量 | 32,475 / 32,475 / 32,442 / 32,435 |
+| I2S 播放字节增量 | 20,494,720 B |
+| TX errors / render errors / 上行丢帧 / 削顶 | 0 / 0 / 0 / 0 |
+| 播放队列丢帧增量 | 7 |
+| 采样期间 internal / DMA 最低可用内存 | 10,578 / 3,090 B |
+
+这些增量使用同一通话的首末 running 样本，不伪称包含开始和停止的全部时间；
+最后停止快照的媒体计数更高，是尾部仍有媒体流动。最终 idle 资源快照的释放
+sequence 为 17，complete=true，各结果为 0。已稳定释放时 internal / DMA /
+PSRAM 可用内存为 38,126 / 30,434 / 5,737,464 B；与第 1 轮已稳定释放快照相比，
+heap / internal / DMA 各差 −8 B，PSRAM 差 0 B。有限次观察不能证明长期无泄漏。
+资源快照中的 DMA historical minimum 110 B 是自启动以来的值，不是该长测
+的采样最低值；串口 rtc_stop 当刻的整 KiB 内存尚在收尾，不与上述已稳定
+释放的精确资源快照混为同一阶段。停止快照内 rtc.stats.memory 仍为最后一份
+通话统计，已释放内存依据 resources.memory。
+
+本次离线核对的汇总标识为 `gain-formal10-crosschecked-safe-summary.json`，
+来源包括 `gain-candidate-samples.jsonl` / `gain-candidate-serial.log` 及
+`gain-product-samples.jsonl` / `gain-product-serial.log`。原始串口材料不进入
+应用发布包；汇总仅保留白名单指标，不输出配对内容、地址或凭据。原始文件
+在生命周期核对中有重新读取，不宣称每份日志仅读一次。这些材料暂无稳定
+外部归档，文件标识不构成可下载证据链接。
+
+The local 0.1.4 candidate completed 10 formal-UI calls with successful release on
+the v0.5.6 baseline plus a pending gain patch. Serial evidence confirmed 27 → 12 → 27
+gain transitions. Call 10 had 598 running samples spanning 649.672 seconds, all RTC
+connected and presence online, with a maximum 1.25-second poll gap. TX / RX growth
+was 32,475 / 32,442; TX and render errors, uplink drops, and clipping were zero, while
+playback-queue drops grew by 7. Application stop-to-release time was 578 ms. Release
+sequence 17 completed successfully. Sampled live-call DMA availability reached 3,090 B;
+the separate 110 B historical minimum is since boot. Settled first-to-last memory
+differences were only −8 B for heap / internal / DMA and 0 B for PSRAM, which does not
+prove long-term freedom from leaks. Calls 2 and 4 have retained successful release
+sequence evidence but no observed idle poll. Connectivity, gain restoration and
+release results do not establish acoustic-loop stability or double-talk quality.
+The user's precise repeating, growing-sound symptom has not yet been reproduced
+on the gain-12 candidate. Howling-specific acceptance remains incomplete. This
+phase's diagnostic and lifecycle validation is complete, with source review pending;
+no merge or complete fix is claimed. No new marketplace version is published,
+and the existing 0.1.3 catalog request #19 remains open.
+
+### 真实麦克风探针：有效采样不等于目标喇叭场景验收
+
+`loop-adaptive-3.json` 与 `loop-adaptive-4.json` 两轮均使用真实 getUserMedia，
+浏览器报告 AEC / NS / AGC=true、单声道 48 kHz，双 meter 为 48 kHz，返送
+播放未被阻止；分别以 RNNoise 开 / 关测量，均按 60 秒有界停止。meter 每桶
+保存实际 performance 时间窗、energy / samples、sampleValid、contextState
+及 4096 样本回调粒度，独立核对 RMS 与重算值一致，不把空桶当静音。
+
+但根代理在测后查询 Windows 端点，确认当时**实际默认输出为蓝牙耳机**，
+不是用户描述的电脑喇叭放在机器人旁的路径。原生刺激脚本原样播放 SDK 的
+`examples/sdk_media_lab/assets/sample_speech.wav`，没有缩放、重采样或归一化；
+PlaySound 调用时间只能证明 API 调用，不能证明机器人附近有有效声学输入。
+两轮返送主体接近背景，本机麦克风有不同幅度的瞬态，不能据此把瞬态归因于
+刺激或反馈，或把返回较小写成 AEC / 啸叫修复通过。
+
+离线分析只选服务 running、context running、samples>0 且完整落入各时间段的
+窗口，并以 sum(energy) / sum(samples) 计算 RMS。pre 从 connected 开始至
+刺激 API 开始，仅各 1 个完整桶；content 为 API 起止内完整桶；early tail 为
+API 结束后 1～11 秒，late tail 为结束后 26～46 秒。跨界桶不按比例拆分能量，
+API 时钟不假定等于实际 DAC 时钟。下表描述本次采样，不作为有效刺激后
+衰减验收或 RNNoise 单因素因果结论。
+
+| 测量与音频 | pre RMS | content RMS | early tail RMS | late tail RMS |
+| --- | ---: | ---: | ---: | ---: |
+| RNNoise 开，本机麦克风 | 0.00065005 | 0.00148112 | 0.00150475 | 0.00102201 |
+| RNNoise 开，原始返送 | 0.00028965 | 0.00031665 | 0.00032058 | 0.00032780 |
+| RNNoise 关，本机麦克风 | 0.00062164 | 0.02454430 | 0.01349568 | 0.00073748 |
+| RNNoise 关，原始返送 | 0.00030854 | 0.00036975 | 0.00034903 | 0.00033592 |
+
+耳机端点条件下，这两轮没有观测到返送能量持续放大的模式；这不排除正确喇叭
+端点条件下会发生问题。临时汇总标识为 `loop-adaptive-3-energy-analysis.json`
+和 `loop-adaptive-4-energy-analysis.json`，仍处本机 ignored 材料，无稳定外部
+归档。部分最终 device release 快照采得过早，不能据该快照确认两轮已完成
+设备收尾；本节不将其计入前述 10 轮正式释放数量。
+
+Two real-microphone runs captured valid energy windows with reported browser
+AEC / NS / AGC enabled and RNNoise respectively enabled / bypassed. Endpoint
+inspection later confirmed Bluetooth-headset output, so these runs do not accept
+the requested speaker-near-robot path. WinSound API timestamps do not establish
+valid acoustic excitation or DAC timing. Return energy showed no sustained growth
+under that headset condition; this does not rule out feedback on the correct speaker
+path. The next phase must verify playback and capture endpoints, effective stimulus,
+tail decay and human double-talk before accepting a howling fix.
+
+## 2026-10-12 后续调查：固件基线与未完成验收
+
+本节保留前期调查阶段，长测与增益恢复的后续证据见上方当前候选记录；声学
+闭环和真人双讲仍未完成验收。下面各版本的历史实机记录保持原样。旧固件
+`8fcd310d8802` / v0.5.5 实机通话中 DMA 可用内存降至 26 B，HMAC 返回
+`-141`（`PSA_ERROR_INSUFFICIENT_MEMORY`），确认存在内存不足导致 RTC
+校验失败的路径；这不是全部退出和回声问题的唯一解释。
+
+当前改以 `214b4f91` / v0.5.6 作为测量基线，该版本已有加密 GDMA reset
+以及录音缓冲使用 PSRAM 的改动。Wi-Fi 静态 TX24 配置保持时，通话 DMA
+可用内存约 3.3 KiB；两轮各 60 秒 AEC 实机诊断的 TX、render、queue 错误
+计数均为 0。长测与恢复验证未结束，不能把这些计数写为主观 AEC 效果
+验收通过、所有故障已解决或长期稳定性完成。当前建议复测采用 v0.5.6，
+应用仍执行原能力门禁，不新增按固件版本拒绝启动的规则。
+
+后续诊断将意外本机连接丢失记为 `presence_lost`，显式页面退出请求仍是
+`page_closed`。旧实现对所有 presence 关闭都写 `page_closed`，因此历史
+日志单独出现这个值不能证明真实 `pagehide`；有明确页面操作步骤的历史
+用例仍保留其操作依据。诊断语义更正不等于音频、网络或 AEC 根因修复。
+现场 RNNoise 降噪处理机器人返回电脑的收听音频，不是 AEC 开关，不改变
+浏览器麦克风回声消除请求，也不控制机器人固件 AEC。
+
+This section preserves the earlier investigation phase. See the current candidate
+record above for subsequent long-call and gain-restoration evidence; acoustic-loop
+and human double-talk acceptance remain unfinished. The historical hardware records
+below are preserved. On firmware `8fcd310d8802` /
+v0.5.5, available DMA memory fell to 26 B during a call and HMAC returned `-141`
+(`PSA_ERROR_INSUFFICIENT_MEMORY`). This confirms an insufficient-memory path to
+RTC integrity-check failure, not a complete explanation for all exits or echoes.
+The current baseline, `214b4f91` / v0.5.6, already includes crypto GDMA reset and
+PSRAM recording-buffer changes. With static Wi-Fi TX24 retained, call-time DMA
+availability was about 3.3 KiB. TX, render, and queue error counts were zero in
+two 60-second hardware AEC windows. Long-call and recovery testing is unfinished;
+subjective AEC quality and complete stability have not been accepted. We recommend
+v0.5.6 for current retesting while retaining existing capability checks without
+adding a firmware-version rejection rule.
+
+Unexpected local connection loss now records `presence_lost`; explicit page-exit
+requests retain `page_closed`. Older logs used `page_closed` for every presence
+closure, so that field alone does not prove a real `pagehide`. Historical tests
+with explicit page operations retain that independent evidence. This diagnostic
+correction does not fix the underlying audio, network, or AEC issue. Local RNNoise
+processes robot audio played on the computer; its checkbox does not control
+browser microphone echo cancellation or firmware AEC.
+
+### RTC 麦克风增益候选：三次 60 秒客观测量
+
+后续候选为 **v0.5.6 / `214b4f9145dd` 基线加待合入的 RTC 麦克风增益补丁**，
+设备报告 `dirty=true`；无补丁基线报告 `dirty=false`。不能把候选结果写成
+正式 v0.5.6 已包含该增益修复。下表六轮均记录 `completed_60_seconds`，
+测量结束时服务 running、RTC connected；候选三轮随后状态为 idle / stopped。
+这些是重复的 60 秒客观采样，不替代长时间通话、恢复、真人双讲或听感验收。
+
+临时数字探针在前 5 秒保持静音，随后播放峰值归一到 0.06 的 7.8645 秒 WAV，
+每次内容后加入 8 秒数字静音，周期 15.8645 秒。电脑麦克风未参与，电脑不
+播放返回声音，也未加入 RNNoise。名义内容时段为 5–12.8645、20.8645–28.729、
+36.729–44.5935 和 52.5935 秒至测量结束；“内容”包含 WAV 自身的静音。
+
+返回 PCM 的窗口均方按 `sum(energy) / sum(samples)` 计算，RMS 为其平方根。
+仅将完整落在单一名义时段内的窗口分组，跨边界窗口不按比例拆分音频能量。
+候选三轮有显式窗口起点和末尾 flush；基线三轮没有窗口起点，首窗虽含
+49,152 samples（48 kHz 下 1.024 秒），结束却分别只有 0.962 / 0.212 / 0.014 秒，
+含测量前音频，故排除。其余基线窗口按相邻报告时间端点条件重建，末尾
+0.639 / 0.380 / 0.597 秒没有返回窗口。名义 source 与返回音频的时钟对齐、
+AudioContext 重采样和实际媒体延迟均未实测，不能把这些分组当作精确声学时相。
+
+| 测量 | 完整名义内容窗口数 | 返回 PCM 均方 | 返回 PCM RMS | processed input/output 比值 dB |
+| --- | ---: | ---: | ---: | ---: |
+| 无补丁基线 1（条件重建） | 27 | 1.11790 × 10⁻⁴ | 0.0105731 | 11.2907 |
+| 无补丁基线 2（条件重建） | 26 | 6.36542 × 10⁻⁵ | 0.0079784 | 13.7691 |
+| 无补丁基线 3（条件重建） | 27 | 4.44319 × 10⁻⁵ | 0.0066657 | 14.8888 |
+| 增益候选 1 | 28 | 1.04349 × 10⁻⁶ | 0.0010215 | 17.3917 |
+| 增益候选 2 | 28 | 1.20904 × 10⁻⁶ | 0.0010996 | 17.7056 |
+| 增益候选 3 | 28 | 1.13581 × 10⁻⁶ | 0.0010657 | 17.9466 |
+
+候选与基线的名义内容窗口返回能量差约 −15.65～−20.30 dB，但该差同时受
+麦克风增益、房间背景、窗口覆盖和内容能量影响，不是独立 ERLE。设备比值
+只统计 processed 帧，排除 bypass 帧且包含环境声音，不代表近端语音保留、
+主观回声质量或双讲通过。延迟假设 0～1 秒、边界留白 0 / 0.15 / 0.25 秒
+的条件敏感性分析中，候选名义内容 RMS 仍较低；这不是媒体延迟测量。
+
+设备计数使用测量范围内首末 HTTP 样本，窗口并非完整 60 秒；没有固件遥测
+生成时间，不能按 HTTP 收到时间声称计数与返回 PCM 精确同步。
+
+| 测量 | HTTP 计数窗口 s | 发送 / 接收音频包增量 | reference starved | reference discard B | 播放队列丢帧 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 无补丁基线 1 | 59.472 | 2963 / 2964 | 20 | 20,480 | 0 |
+| 无补丁基线 2 | 59.549 | 2976 / 2977 | 23 | 23,552 | 0 |
+| 无补丁基线 3 | 59.922 | 3007 / 3008 | 9 | 9,216 | 0 |
+| 增益候选 1 | 59.018 | 2922 / 2923 | 24 | 24,576 | 0 |
+| 增益候选 2 | 59.685 | 2970 / 2970 | 31 | 31,744 | 1 |
+| 增益候选 3 | 59.449 | 2965 / 2963 | 23 | 23,040 | 2 |
+
+六轮 reference drops、麦克风削顶、上行丢帧、TX errors 与 render errors 均为 0。
+捕获、发送、接收、解码和 I2S 字节计数持续增长，但 reference starvation / discard
+仍存在，候选两轮有队列丢帧，不能写零丢帧或参考连续性已修复。
+
+### 近端单独测试：客观信号保留与增益代价
+
+远端数字 source 保持静音，电脑扬声器在机器人附近播放固定 WAV，返回 PCM
+只分析、不从电脑播放。候选第二轮与原基线使用相同完整内容窗口口径：
+7 个内容窗口 RMS 为 0.00408585，播放前 RMS 为 0.00115966，内容相对原基线
+为 −14.3327 dB。全程 WAV 能量包络相关系数为 0.887929，7 个内容窗口为
+0.926552。捕获 / 发送帧增量为 773 / 773，参考能量为 0，削顶为 0，
+结束仍为 running / connected。该结果支持声音仍随近端 WAV 进入上行，同时
+记录了较低的拾音幅度；没有主观试听、语音可懂度或真人双讲结论。
+
+候选第一轮播放前背景高于无补丁近端原基线约 15.98 dB，不能依据其全程相关性较低
+断言近端静音。后续仍需验证正常说话音量、增益恢复与真实双讲体验。
+
+本次数据及离线汇总保留在本机临时验收材料中，未进入应用发布包；汇总标识为
+`aec-gain3-vs-latest3-window-analysis.json` 和
+`aec-gain3-vs-latest3-reconstructed-phase-analysis.json`，不是外部稳定归档链接。
+未据本次测试更新应用商店分发、提交或合入状态。
+
+The candidate is the **v0.5.6 / `214b4f9145dd` baseline plus a pending RTC
+microphone-gain patch**, reported as dirty. Three 60-second candidate digital-WAV
+measurements completed, with running / connected at measurement end and subsequent
+idle / stopped status. Lower sample-normalized return energy is conditional on
+nominal source phases; the earlier baseline records lack explicit starts and a final
+flush. Processed input/output ratios are not isolated ERLE. Reference starvation,
+discard, and some candidate queue drops remain. The second near-end-only run retained
+a WAV-correlated signal at lower amplitude (content RMS 0.00408585, −14.3327 dB versus
+the matching original baseline; content-envelope correlation 0.926552). Human speech,
+gain restoration, subjective quality, double-talk, long-call, and recovery acceptance
+remain unfinished. This record does not update marketplace or merge status.
+
+### 页面退出证据的顺序限制
+
+真实 `pagehide` 的处理先关闭 presence，再发送退出 beacon。关闭若先到后端，
+首次原因可为 `presence_lost`；释放完成后到达的 beacon 不保证新增
+`stop_requested(page_closed)`。因此 `presence_lost` 不能单独证明网络故障，
+也不能仅据 `page_closed` 回溯证明历史页面关闭，需联合真实页面操作、
+WS code / reason、媒体进度与设备终止时间。真实页面导航及返回重开验收仍
+由现场操作独立记录，自动测试和本节离线分析不冒充该验收结果。
 
 ## 0.1.2：拍照预计倒计时与重复实机验收
 

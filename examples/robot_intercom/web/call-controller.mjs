@@ -271,8 +271,16 @@ export function createCallController({
         await allocation;
         if (!current(token)) return false;
         heartbeat(token, id);
-        const connectedPresence = await connectPresence(id, () => {
-          if (current(token)) fail(Error("本机通话连接已断开，请重新开始"));
+        const connectedPresence = await connectPresence(id, (detail = {}) => {
+          if (!current(token)) return;
+          report({
+            kind: "presence_lost",
+            close_code: detail.code,
+            close_reason: detail.reason,
+            was_clean: detail.wasClean,
+            error_seen: detail.errorSeen,
+          });
+          fail(Error("本机通话连接已断开，请重新开始"));
         });
         if (!current(token)) {
           connectedPresence?.close();

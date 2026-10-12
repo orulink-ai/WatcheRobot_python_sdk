@@ -14,7 +14,25 @@
 
 页面右上角可切换中文 / English。首次按浏览器首选支持语言选择；切换后在本机记住偏好。切换语言不重连机器人、不结束通话，连接弹窗、按钮、通话状态和错误提示同步切换。
 
-## 0.1.3 发布说明 / Release notes
+## 0.1.4 本地候选说明 / Local candidate notes
+
+应用清单当前为 0.1.4，退出诊断区分意外 presence 失联与显式页面退出。本阶段诊断与生命周期验证完成、源码待审，未宣称已合入；不能据版本号推断商店已合入或可下载。用户报告过声音重复并逐渐放大；该精确现象目前尚未在增益 12 候选上复现，啸叫专项验收未完成。本阶段不发布新商店版本，保留 0.1.3 的目录请求 #19，当前为 open。
+
+在 v0.5.6 / `214b4f9145dd` 加待合入 RTC 麦克风增益补丁的设备上，正式页面共完成 10 轮通话与成功释放，其中第 10 轮取得 598 个 running 样本，首末跨度 649.672 秒，全部为 RTC connected、presence 在线。该长测发送 / 接收音频包增量为 32,475 / 32,442，TX、render、上行丢帧和削顶计数为 0，播放队列丢帧为 7；停止请求至应用记录释放为 578 ms。串口分别确认通话增益由 27 限至 12，并在结束后恢复至 27，结果均为 0。详见 `docs/robot-intercom-acceptance.zh-CN.md`。
+
+这些结果支持当前设备的持续连接与资源释放，不证明声学闭环、真人双讲或主观听感通过。另完成的两轮真实麦克风探针虽取得有效采样，但事后核对本机实际默认输出是蓝牙耳机，未覆盖电脑喇叭放在机器人旁的声学路径，因此不用于啸叫专项验收。按用户要求，本阶段先收尾；下一阶段确认喇叭与采集端点后，再检查停止单次音源后的衰减及双讲。降低增益不能单独作为啸叫已解决的结论。
+
+The manifest is currently 0.1.4. Exit diagnostics distinguish unexpected presence loss from explicit page-exit requests. This phase's diagnostic and lifecycle validation is complete, with source review pending; no merge is claimed. The version does not imply marketplace approval or availability. The user reported repeating, growing sound; that precise symptom has not yet been reproduced on the gain-12 candidate. Howling-specific acceptance is incomplete. No new marketplace version is published in this phase; the existing 0.1.3 catalog request #19 remains open.
+
+On the v0.5.6 / `214b4f9145dd` baseline with a pending RTC microphone-gain patch, the formal UI completed 10 calls with successful release. Call 10 produced 598 running samples spanning 649.672 seconds, all RTC connected with presence online. Observed TX / RX growth was 32,475 / 32,442; TX errors, render errors, uplink drops, and clipping were zero, with 7 playback-queue drops. Application stop-to-release time was 578 ms. Serial evidence confirmed microphone gain changed from 27 to 12 during calls and returned to 27 after release, with successful results.
+
+This supports sustained connectivity and release on the tested device, not acoustic-loop stability, double-talk, or subjective quality. Two additional real-microphone probe runs captured valid samples, but later endpoint inspection found that the actual default output was a Bluetooth headset. They did not cover the computer-speaker-near-robot acoustic path and are not howling acceptance. At the user's request, this phase is closing; the next phase must confirm speaker and capture endpoints before testing decay and double-talk. Lower gain alone is not acceptance of the reported howling fix.
+
+## 0.1.3 历史版本说明 / Historical version notes
+
+以下保留 0.1.3 的版本记录与后续分阶段调查；源码版本说明不等同于商店已合入。
+
+The following preserves the 0.1.3 version record and staged investigation. A source-version record is not confirmation of marketplace approval.
 
 新增本应用内的机器人连接入口、中英文切换和 ElevenLabs 声音视觉组件。演示聚焦全双工原声 RTC，默认关闭拍照，不要求相机能力。连接、静音、收听、结束通话及错误反馈支持中英文。
 
@@ -24,7 +42,37 @@ Adds in-app robot pairing, Chinese / English switching, and ElevenLabs audio vis
 
 **Known issue:** In our current v0.5.5 PTL hardware tests, ICE disconnected repeatedly about 10 seconds after connection. Low internal memory and delayed PeerConnection scheduling were observed; the cause is still under investigation. This release does not fix that firmware-related call stability issue. After disconnection, the app attempts to release the call. If release is unconfirmed, use “Retry ending call”.
 
-只支持局域网，不提供公网穿透、STUN/TURN、AI 回答、语音识别或云端录音。现场声音支持本机 RNNoise 降噪，可通过复选框关闭；处理器不可用时使用原始现场声音。第三方许可见 `web/RNNOISE-NOTICE.md` 与相邻许可证文件。
+### 2026-10-12 第一阶段调查 / Initial investigation phase
+
+上方保留 0.1.3 发布时的问题记录。后续对照发现，旧固件 `8fcd310d8802` / v0.5.5 通话期间 DMA 可用内存降到 26 B，HMAC 返回 `-141`（`PSA_ERROR_INSUFFICIENT_MEMORY`）。这确认了一条内存不足导致 RTC 校验失败的路径，但不能解释全部历史退出或回声问题。
+
+第一阶段改用固件 `214b4f91` / v0.5.6 作为测量基线。该版本已有加密 GDMA reset 和录音缓冲迁移至 PSRAM 的改动；保留 Wi-Fi 静态 TX24 配置时，通话中 DMA 可用内存约 3.3 KiB。该阶段两轮各 60 秒的实机 AEC 诊断窗口中，TX、render 和 queue 错误计数均为 0，当时长时间通话与恢复验证尚未完成。后续 10 轮通话与长测结果见上方 0.1.4 候选记录；这些计数不等于主观回声消除效果通过，也不构成全部稳定性验收。运行仍按下方已有能力要求校验，不新增固件版本拒绝规则。
+
+退出诊断现在区分本机连接失联 `presence_lost` 与显式页面退出请求的 `page_closed`。旧日志中的 `page_closed` 曾用于所有 presence 断开，单独出现该字段不能证明真实发生 `pagehide`；诊断语义修正本身不会解决音频或网络故障。
+
+The notes above preserve the issue observed when 0.1.3 was released. Subsequent hardware comparison found that firmware `8fcd310d8802` / v0.5.5 had only 26 B of available DMA memory during a call, and HMAC returned `-141` (`PSA_ERROR_INSUFFICIENT_MEMORY`). This confirms one path from insufficient memory to RTC integrity-check failure; it does not explain every historical exit or echo issue.
+
+The initial measurement phase used firmware `214b4f91` / v0.5.6. It already includes crypto GDMA reset and recording-buffer changes that use PSRAM. With the existing static Wi-Fi TX24 configuration, available DMA memory during a call was approximately 3.3 KiB. TX, render, and queue error counts were all zero in two 60-second hardware AEC diagnostic windows; long-call and recovery testing had not yet been completed at that stage. See the 0.1.4 candidate notes above for subsequent 10-call and long-call evidence. These counters do not establish subjective echo-cancellation quality or complete stability. Existing capability checks still apply, without an added firmware-version rejection rule.
+
+Exit diagnostics now distinguish local connection loss (`presence_lost`) from an explicit page-exit request (`page_closed`). Older logs used `page_closed` for every presence disconnection, so that field alone does not prove a real `pagehide` occurred. This diagnostic correction does not itself fix audio or network failures.
+
+#### RTC 麦克风增益候选补丁 / Candidate RTC microphone-gain patch
+
+后续候选实机使用 **v0.5.6 / `214b4f9145dd` 基线加待合入的 RTC 麦克风增益补丁**，设备报告 `dirty=true`；正式 v0.5.6 基线不包含该候选补丁。候选完成三轮各 60 秒数字 WAV 测量，结束采样均为 running / connected，随后状态为 idle / stopped。三轮 TX、render、上行丢帧及削顶计数均为 0，播放队列丢帧分别为 0 / 1 / 2；参考音频 starved 为 24 / 31 / 23，discard 为 24,576 / 31,744 / 23,040 B，仍有参考连续性缺口。
+
+按完整名义 WAV 内容窗口累加能量并除以 samples，候选返回 PCM 的 RMS 为 0.001022 / 0.001100 / 0.001066，低于无补丁基线三轮的 0.010573 / 0.007978 / 0.006666。基线旧测量缺少显式窗口起点及末尾 flush，分析排除包含测量前音频的首窗，其余窗口按相邻时间端点条件重建；数字音源和返回音频的时钟与延迟未实测。这是短窗客观能量比较，processed input/output 比值不是独立 ERLE，不能替代真人双讲、主观听感、长期稳定性或恢复验收。
+
+近端单独测量中，候选第二轮完整 WAV 内容的 7 个窗口 RMS 为 0.004086，播放前为 0.001160；与原基线同口径内容相比为 −14.33 dB。全程和内容窗口的 WAV 能量包络相关系数分别为 0.88793 / 0.92655，支持近端声音仍被传送，同时显示较低的拾音幅度。候选第一轮播放前背景较高，不能据其全程相关性较低判断近端静音。该测量阶段尚未核对增益恢复，后续恢复证据见上方 0.1.4 记录；真人音量与双讲体验仍需实机确认。本次记录没有更新应用商店分发状态。
+
+Subsequent candidate hardware uses **the v0.5.6 / `214b4f9145dd` baseline plus a pending RTC microphone-gain patch**, reported as `dirty=true`; the released baseline does not include this patch. Three 60-second digital-WAV runs completed while running / connected, with subsequent idle / stopped status. TX errors, render errors, uplink dropped frames, and clipping were zero; playback-queue drops were 0 / 1 / 2. Reference starvation was 24 / 31 / 23 chunks and discarded reference bytes were 24,576 / 31,744 / 23,040, so reference-continuity gaps remain.
+
+Sample-normalized return RMS in whole nominal WAV-content windows was 0.001022 / 0.001100 / 0.001066, compared with 0.010573 / 0.007978 / 0.006666 in three unpatched baseline runs. Those earlier records lacked explicit window starts and a final flush: their first windows containing pre-measurement audio were excluded, and remaining starts were conditionally reconstructed from adjacent endpoints. Source/return clock alignment and latency were not measured. These short-window energy observations and processed input/output ratios are not isolated ERLE, subjective quality, double-talk, long-call, or recovery acceptance.
+
+In the second candidate near-end-only run, seven whole WAV-content windows had RMS 0.004086, versus 0.001160 before playback and −14.33 dB relative to the matching original baseline. WAV energy-envelope correlations were 0.88793 for the full record and 0.92655 for content windows. This supports retained near-end transmission with lower pickup amplitude. The first candidate near-end run had a louder pre-playback background, so its lower full-record correlation does not establish silence. Gain restoration had not been checked at that measurement stage; see the 0.1.4 notes above for subsequent restoration evidence. Human speech levels and double-talk still require hardware confirmation. This record does not update marketplace distribution status.
+
+只支持局域网，不提供公网穿透、STUN/TURN、AI 回答、语音识别或云端录音。现场声音支持本机 RNNoise 降噪，可通过复选框关闭；处理器不可用时使用原始现场声音。**“现场降噪”处理机器人返回电脑的收听音频，不是 AEC 开关**：它不改变电脑麦克风请求的浏览器回声消除，也不控制机器人固件的 AEC。第三方许可见 `web/RNNOISE-NOTICE.md` 与相邻许可证文件。
+
+This app supports LAN calls only, without public-network traversal, STUN/TURN, AI replies, speech recognition, or cloud recording. Local RNNoise noise reduction can be disabled with the checkbox; if unavailable, playback uses the original robot audio. **“Noise reduction” processes the robot audio heard on the computer; it is not an AEC switch.** It does not change the browser echo-cancellation request for the computer microphone or control firmware AEC. See `web/RNNOISE-NOTICE.md` and the adjacent license files.
 
 ## 运行要求
 
@@ -59,6 +107,14 @@ Adds in-app robot pairing, Chinese / English switching, and ElevenLabs audio vis
 Application 后端每秒通过注入的 RTC channel 发送设备保活，拍照不会阻塞这条链路。页面通过本机 WebSocket 声明通话仍然存在，原生 ping/pong 不依赖页面 JavaScript 定时器。因此页面主线程短暂停顿不会使固件的 5 秒保活期限过期。页面关闭或浏览器崩溃会关闭本机连接并释放通话；连接失去响应时，由 5 秒 ping 周期和 10 秒 pong 超时发现。兼容没有本机连接的旧客户端时，仍执行 10 秒页面租约，设备保活不会延长它。
 
 `/api/status` 的 `diagnostics` 返回最近 128 条连接状态、页面可见性、音频包进度与停止原因。相同事件以 `INTERCOM` 前缀写入 Daemon 管理的 Application 日志，便于区分设备 `heartbeat_timeout`、网络连接失败、页面退出及用户主动结束。诊断不保存 SDP、音频或照片内容。重新开始通话会重置本机诊断窗口，历史 Application 日志仍由 Daemon 管理。
+
+本机 WebSocket 异常关闭记录 `presence_lost`，并保留关闭 code、是否正常关闭、是否出现 error，以及有限的协议关闭原因。后端还记录 handler 退出类别、应用 shutdown 状态和心跳年龄；未知关闭文本被脱敏。显式退出请求仍使用 `page_closed`，释放重试保留首次退出原因。关闭证据可能因诊断与停止请求的先后顺序而只出现在一侧，需要结合设备终止原因和媒体进度判断故障。
+
+真实 `pagehide` 会先关闭 presence，再发页面退出 beacon；若关闭先被后端观察，首次原因也可能是 `presence_lost`。释放完成后到达的 beacon 不保证新增停止记录，因此任何一个原因值都不能单独证明用户关闭页面或网络失联，需结合真实页面操作、关闭事件与设备停止时间。
+
+An unexpected local WebSocket closure records `presence_lost`, with the close code, clean-close flag, error-event flag, and a limited protocol reason. The backend also records the handler-exit category, application shutdown state, and heartbeat age; unknown close text is redacted. Explicit page-exit requests still use `page_closed`, and release retries preserve the first exit reason. Diagnostic and stop requests may race, so closure evidence can appear on only one side. Interpret it alongside device termination reasons and media progress.
+
+A real `pagehide` closes presence before sending its page-exit beacon. If the backend observes the closure first, the initial reason can also be `presence_lost`. A beacon arriving after release may add no stop record. Neither reason alone establishes user page closure or network loss; correlate actual page actions, close events, and device-stop timing.
 
 ## 开发与发布
 

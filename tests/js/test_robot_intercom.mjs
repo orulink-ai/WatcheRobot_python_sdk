@@ -238,6 +238,7 @@ function presenceRig() {
   let socket,
     timeout,
     failures = 0;
+  const details = [];
   class Socket {
     constructor(url) {
       this.url = url;
@@ -253,7 +254,10 @@ function presenceRig() {
       this.listeners.close?.();
     }
   }
-  const promise = connectCallPresence("request-a", () => failures++, {
+  const promise = connectCallPresence("request-a", (detail) => {
+    failures++;
+    details.push(detail);
+  }, {
     WebSocketClass: Socket,
     baseUrl: "http://127.0.0.1:12345/",
     schedule: (callback) => {
@@ -267,6 +271,7 @@ function presenceRig() {
     socket,
     timeout: () => timeout(),
     failures: () => failures,
+    details,
   };
 }
 
@@ -294,6 +299,58 @@ test("presence timeout releases the pending connection and later socket errors f
   active.socket.listeners.error();
   active.socket.listeners.close();
   assert.equal(active.failures(), 1);
+});
+
+test("presence error waits for the real close metadata and repeated notifications fail once", async () => {
+  const r = presenceRig();
+  r.socket.listeners.message({ data: '{"ready":true}' });
+  await r.promise;
+  r.socket.listeners.error();
+  assert.equal(r.failures(), 0);
+  assert.equal(r.socket.closes, 0);
+  r.socket.listeners.close({ code: 1011, wasClean: false, reason: "keepalive ping timeout" });
+  r.socket.listeners.error();
+  r.socket.listeners.close({ code: 1006, wasClean: false, reason: "" });
+  assert.equal(r.failures(), 1);
+  assert.deepEqual(r.details, [{
+    code: 1011, wasClean: false, errorSeen: true, reason: "keepalive ping timeout",
+  }]);
+});
+
+test("presence close without an error retains its evidence and redacts untrusted reasons", async () => {
+  const r = presenceRig();
+  r.socket.listeners.message({ data: '{"ready":true}' });
+  await r.promise;
+  r.socket.listeners.close({ code: 1006, wasClean: false, reason: "token=private-secret".repeat(20) });
+  assert.equal(r.failures(), 1);
+  assert.deepEqual(r.details, [{
+    code: 1006, wasClean: false, errorSeen: false, reason: "[redacted]",
+  }]);
+});
+
+test("controller reports presence evidence once and ignores a retired socket", async () => {
+  const callbacks = [], reports = [];
+  const r = rig({
+    report: (value) => reports.push(value),
+    connectPresence: async (id, onClosed) => {
+      callbacks.push(onClosed);
+      return { close() {} };
+    },
+  });
+  await r.controller.start();
+  const detail = { code: 1006, wasClean: false, errorSeen: true, reason: "" };
+  callbacks[0](detail);
+  callbacks[0](detail);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(reports.filter((value) => value.kind === "presence_lost"), [{
+    kind: "presence_lost", close_code: 1006, was_clean: false, error_seen: true, close_reason: "",
+  }]);
+  assert.equal(r.requests.filter(([path]) => path.endsWith("/stop")).length, 1);
+  await r.controller.start();
+  callbacks[0](detail);
+  assert.notEqual(r.controller.snapshot().state, "idle");
+  assert.equal(reports.filter((value) => value.kind === "presence_lost").length, 1);
+  await r.controller.stop();
 });
 
 function deadlineRig(api) {
