@@ -158,6 +158,8 @@ class IntercomService:
                 self._online()
                 self.rtc.start(mode="audio")
                 with self._state_lock:
+                    if self.clock() >= self._connect_due:
+                        raise IntercomError("通话连接超时，请重新开始")
                     self._state = "running" if self.rtc.snapshot().get("state") == "connected" else "connecting"
                     self._last_seen = self.clock()
                 return self.status()
@@ -261,11 +263,13 @@ class IntercomService:
             try:
                 with self._state_lock:
                     owner = self._owner
-                    if self._state == "connecting" and self.rtc.snapshot().get("state") == "connected":
+                    now = self.clock()
+                    expired = (now >= self._connect_due if self._state == "connecting"
+                               else now - self._last_seen > 10)
+                    if (self._state == "connecting" and not expired
+                            and self.rtc.snapshot().get("state") == "connected"):
                         self._state = "running"
-                        self._last_seen = self.clock()
-                    expired = (self.clock() >= self._connect_due if self._state == "connecting"
-                               else self.clock() - self._last_seen > 10)
+                        self._last_seen = now
                     pending = self._state == "cleanup_required"
                 if owner and (expired or pending or not self.device_status().get("online")):
                     try:

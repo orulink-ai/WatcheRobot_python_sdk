@@ -265,6 +265,39 @@ def test_connected_call_switches_to_heartbeat_expiry(rig):
     assert not rig.rtc.active
 
 
+@pytest.mark.parametrize("observed_at", [30, 31])
+def test_connected_snapshot_at_or_after_deadline_is_released(rig, observed_at):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.clock[0] = observed_at
+    rig.rtc.state = "connected"
+    rig.service.maintain()
+    assert not rig.rtc.active
+    assert rig.service.status()["request_id"] is None
+
+
+def test_connection_just_before_deadline_can_run(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.clock[0] = 29.999
+    rig.rtc.state = "connected"
+    rig.service.maintain()
+    assert rig.rtc.active
+    assert rig.service.status()["state"] == "running"
+
+
+def test_blocked_start_cannot_accept_connected_after_deadline(rig):
+    original_start = rig.rtc.start
+    def delayed_start(**kwargs):
+        original_start(**kwargs)
+        rig.clock[0] = 30
+    rig.rtc.start = delayed_start
+    with pytest.raises(rig.module.IntercomError, match="超时"):
+        rig.service.start("request-a")
+    assert not rig.rtc.active
+    assert rig.service.status()["request_id"] is None
+
+
 def test_pending_heartbeat_is_not_expired_while_it_holds_signal_lock(rig):
     rig.service.start("request-a")
     entered, release = threading.Event(), threading.Event()

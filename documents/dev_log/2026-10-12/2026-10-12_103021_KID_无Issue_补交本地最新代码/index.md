@@ -84,3 +84,13 @@
 - 环境：Windows，Python 3.12.4，Node.js；C 主机测试使用 MSVC 19.40、Debug。仅复跑已有相关回归，不将事后复验包装成原开发的 Red/Green。
 - 排除保留原文字节的 RNNoise vendored 模块与 Apache LICENSE 后，git diff --cached --check 通过；二者的上游尾空白保留，符合未修改副本的来源声明；只纳入本仓源码、必要交付修正及档案，本机配置、日志及构建产物保持忽略。
 - 配套仓库：Workspace 将单独更新对应 gitlink；各源码 PR 独立审查，本次不直接向 dev/main 推送。
+
+
+### 2026-10-12 Asia/Shanghai｜KID / Codex｜协商截止边界与分发复验
+
+- 复审指出维护先将 connected 提升为 running 会绕过 30 秒截止。Red：截止时刻、截止后观察到 connected，以及阻塞 start 在截止后返回三项失败；截止前成功的控制用例通过。
+- Green：维护先使用同一时钟快照判过期，再允许转换；start 返回同样核对期限，超时进入既有释放路径。最新 Python examples/独立应用/RTC 47/47，浏览器专项 32/32。
+- 通过正式 Application source collector 生成临时 ZIP 并读回逐字节核对：20 个源文件，网页、全部媒体模块和三方许可均纳入；使用当前 src 的 app check 通过。此验证未发布应用，独立应用不属于 SDK 默认 bundled demos。
+- RNNoise SHA256：d8679704d55effe88b10c39ad133b58ce27d9b861c6402efaaff9634d09234a7，与此前记录一致。
+- 网页增加通话/释放期间勿切换机器人的提示；README 说明照片不自动过期，结束应用后由用户删除 JPEG。最近 256 个取消标识仍是有界缓存，不承诺无限期防重放。
+- 未改 Daemon 路由，未进行真人听感、LCD 或正式分发发布；完整 CI 与复审将针对本次 head 运行。
