@@ -224,16 +224,26 @@ class ExpressionRuntimeDomain(_Domain):
             if cleanup_error is not None:
                 raise cleanup_error
 
-    def set_audio_follow(self, enabled: bool) -> None:
+    def set_audio_follow(self, enabled: bool, *, emotion: int | None = None) -> None:
         """Draw the device's procedural mouth from successfully played RTC PCM.
 
         Requires ``expression.audio_follow.v1``. Firmware owns the audio clock
         and mouth calculation; no browser microphone levels are transmitted.
         Enabling selects the radial design without SD animation reads. Disabling
         closes the mouth and returns display ownership to the built-in state.
+        Optional emotion (0..6) requires ``expression.audio_follow.v2`` and changes
+        only the retained eye target; the device's PCM mouth clock keeps running.
         """
         if not isinstance(enabled, bool):
             raise TypeError("enabled must be a bool")
+        payload: dict[str, Any] = {"enabled": enabled}
+        if emotion is not None:
+            if isinstance(emotion, bool) or not isinstance(emotion, int) or not 0 <= emotion <= 6:
+                raise ValueError("emotion must be an integer between 0 and 6")
+            if not enabled:
+                raise ValueError("emotion requires enabled audio-follow")
+            self._robot._require_capability("expression.audio_follow.v2")
+            payload["emotion"] = emotion
         self._robot._require_capability("expression.audio_follow.v1")
         with self._lock:
             if enabled and (self._robot._closed or self._robot._closing):
@@ -246,7 +256,7 @@ class ExpressionRuntimeDomain(_Domain):
             if enabled:
                 self._audio_follow_enabled = True
                 self._audio_follow_device_id = device_id
-            self._robot._command("ctrl.expression.audio_follow", {"enabled": enabled})
+            self._robot._command("ctrl.expression.audio_follow", payload)
             self._audio_follow_enabled = enabled
             if not enabled:
                 self._audio_follow_device_id = None

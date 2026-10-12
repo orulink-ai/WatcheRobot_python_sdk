@@ -39,6 +39,20 @@ can distinguish new events from cached data even when the device payload repeats
 
 This additive capability is independent of the parameter renderer below.
 
+Firmware advertising `expression.audio_follow.v2` additionally accepts
+`set_audio_follow(True, emotion=6)`. The keyword is an integer from 0 to 6
+(neutral, smile, happy, anger, concentration, sad, speechless); booleans,
+fractions and an emotion with `enabled=False` are rejected before transport.
+Omitting the keyword keeps v1 compatibility and preserves the current emotion.
+An emotion update retains the same PCM clock, mouth spring and display instance;
+it does not reset playback. Stop/restart returns to neutral.
+
+The v2 payload is `{ "enabled": true, "emotion": 6 }`. The ACK confirms target
+acceptance. Resource telemetry includes `emotion_target` and
+`emotion_submitted`; the latter records the last successfully submitted renderer
+update, not LCD transfer or a photograph of the display. A renderer update error
+leaves `emotion_submitted` unchanged and increments `update_errors`.
+
 `app.robot.expression_runtime` controls the negotiated
 `expression.runtime.v3` capability. The Application sends compact parameters;
 the ESP32 generates RGB565 frames locally and keeps the Daemon content-agnostic.
