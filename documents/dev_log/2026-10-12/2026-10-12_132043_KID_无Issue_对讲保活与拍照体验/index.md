@@ -36,4 +36,13 @@ presence 注册由线程执行，协程取消不会停止线程，必须保留�
 
 ## 遗留与收尾
 
+### 2026-10-12 Asia/Shanghai｜KID / Codex｜最终分发快照
+
+协商保活修正 378c2da 已推送 SDK PR #143。正式分发接口上传并验证最终
+[应用快照](https://gitee.com/KID_gitee/WatcherRobot-com.orulink.robot_intercom/tree/496c7c9f7ddc61d92fc18486ddd7fc6e834e9e84)，提交
+[商店 #16](https://gitee.com/orulink-sz/watcherobot-app-store/pulls/16)，返回 pending。
+原 #15 是已核对身份和 SHA 的本账号旧请求，关闭以替换过时快照；不重复尝试
+已被权限拒绝的合并，不切换账号。源码和商店各自保留准确状态；最终 SDK CI
+与复审尚在进行，未提前标记合入。
+
 有限观察有少量队列丢帧、一次过期上行帧丢弃、削顶和内存余量紧，不宣称听感、零丢帧或长期无泄漏已验收。商店 #15 合入被现有 Gitee 凭据拒绝，未切换账号或绕过权限；最终源码需替换旧待审快照。SDK 使用 merge commit，合入后核对两个 parent，Workspace 单独更新 gitlink。

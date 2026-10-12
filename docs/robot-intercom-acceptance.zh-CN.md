@@ -88,6 +88,12 @@ ApplicationRtc.start() 清空事件历史、新会话过滤旧 session 的合同
 设备 ping，同时保留 30 秒协商期限；慢设备查询跨过期限时不发送过期 ping，
 并进入清理。两项失败用例修正后通过，相关 Python 回归累计 80 项。
 
+审查修正后的 0.1.2 已重新上传并通过固定源码验证：
+[最终源码](https://gitee.com/KID_gitee/WatcherRobot-com.orulink.robot_intercom/tree/496c7c9f7ddc61d92fc18486ddd7fc6e834e9e84)，
+[当前商店请求 #16](https://gitee.com/orulink-sz/watcherobot-app-store/pulls/16)
+返回 pending。此前 #15 已由本账号关闭以替换旧快照；由于商店合并权限受限，
+没有自行合入当前请求。前述 #15 待审状态为当时记录，当前以 #16 为准。
+
 用户报告页面出现 `WebRTC disconnect recovery timed out`。历史故障发生时没有
 完整的设备停止原因与浏览器状态时序，不能证明下述复现是该截图的唯一原因。
 
