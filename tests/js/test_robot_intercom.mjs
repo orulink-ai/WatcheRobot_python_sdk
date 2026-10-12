@@ -127,3 +127,103 @@ test("mute controls only local microphone and dispose releases all tracks", asyn
   assert.equal(r.track.stops, 1);
   assert.equal(r.peers[0].closed, true);
 });
+
+function deadlineRig(api) {
+  const deadlines = new Map();
+  let sequence = 0;
+  const r = rig({
+    api,
+    requestTimeoutMs: 20,
+    schedule: (fn, ms) => {
+      const id = ++sequence;
+      deadlines.set(id, { fn, ms });
+      return id;
+    },
+    cancel: (id) => deadlines.delete(id),
+  });
+  return { ...r, expireRequest() {
+    const entry = [...deadlines.entries()].find(([, timer]) => timer.ms === 20);
+    assert.ok(entry, "request deadline must be armed");
+    deadlines.delete(entry[0]);
+    entry[1].fn();
+  } };
+}
+
+test("a hung start times out, releases its identity, and ignores a late response", async () => {
+  const pending = deferred(), calls = [];
+  const r = deadlineRig(async (path, body) => {
+    calls.push([path, body]);
+    return path.endsWith("/start") ? pending.promise : { state: "idle", matched: true };
+  });
+  const started = r.controller.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  r.expireRequest();
+  assert.equal(await started, false);
+  assert.equal(r.track.stops, 1);
+  assert.equal(r.controller.snapshot().state, "idle");
+  assert.equal(calls[0][1].request_id, calls[1][1].request_id);
+  pending.resolve({});
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(r.peers.length, 0);
+});
+
+test("a hung offer times out and closes browser media before scoped release", async () => {
+  const r = deadlineRig(async (path) => path.endsWith("/signal")
+    ? new Promise(() => {}) : { state: "idle", matched: true });
+  const started = r.controller.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  r.expireRequest();
+  assert.equal(await started, false);
+  assert.equal(r.track.stops, 1);
+  assert.equal(r.peers[0].closed, true);
+});
+
+test("a hung stop retains ownership for a retry without leaving the UI stopping", async () => {
+  let hung = true;
+  const r = deadlineRig(async (path) => path.endsWith("/stop") && hung
+    ? new Promise(() => {}) : { state: "idle", matched: true, events: [] });
+  await r.controller.start();
+  const stopped = r.controller.stop();
+  const rejected = assert.rejects(stopped, /超时/);
+  await new Promise((resolve) => setImmediate(resolve));
+  r.expireRequest();
+  await rejected;
+  assert.equal(r.controller.snapshot().state, "cleanup_required");
+  assert.equal(await r.controller.start(), false);
+  hung = false;
+  await r.controller.stop();
+  assert.equal(r.controller.snapshot().requestId, null);
+});
+
+test("concealment feedback converts codec samples into 20 ms frames", async () => {
+  const timers = [];
+  const reports = new Map([
+    ["opus", { type: "codec", clockRate: 48000 }],
+    ["audio", { type: "inbound-rtp", kind: "audio", codecId: "opus", concealedSamples: 1920 }],
+  ]);
+  const s = rig({ schedule: (fn, ms) => { timers.push({ fn, ms }); return timers.length; } });
+  await s.controller.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  s.peers[0].getStats = async () => reports;
+  timers.find((timer) => timer.ms === 1000).fn();
+  await new Promise((resolve) => setImmediate(resolve));
+  const feedback = s.requests.filter(([path]) => path.endsWith("/feedback")).at(-1)[1];
+  assert.equal(feedback.audio_concealed_frames, 2);
+  await s.controller.stop();
+});
+
+test("the total connection deadline covers a pending microphone grant", async () => {
+  const pending = deferred(), timers = [];
+  const r = rig({
+    getMicrophone: () => pending.promise,
+    schedule: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+  });
+  const started = r.controller.start();
+  timers.find((timer) => timer.ms === 30000).fn();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(r.controller.snapshot().state, "idle");
+  pending.resolve(r.stream);
+  assert.equal(await started, false);
+  assert.equal(r.track.stops, 1);
+  assert.equal(r.requests.length, 0);
+});

@@ -8,11 +8,12 @@ let status = null,
   noise = null,
   noiseAbort = null,
   refreshTimer;
-async function api(path, body) {
+async function api(path, body, options = {}) {
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
+    signal: options.signal || AbortSignal.timeout(20000),
   });
   const result = await response.json();
   if (!response.ok) throw Error(result.error || "无法连接应用，请重新打开");

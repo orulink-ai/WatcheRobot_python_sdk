@@ -76,6 +76,7 @@ class IntercomService:
         self._address = None
         self._closing = False
         self._last_error = None
+        self._released_requests = {}
 
     def status(self):
         connection = self.device_status()
@@ -126,12 +127,16 @@ class IntercomService:
         with self._lifecycle:
             if self._closing:
                 raise IntercomError("应用正在退出")
+            if request_id in self._released_requests:
+                raise IntercomError("该通话请求已结束，请重新开始通话")
             if self._owner is not None:
                 if self._owner == request_id and self._state == "running":
                     self._online()
                     return self.status()
                 raise IntercomError("已有通话或待释放资源，请先结束通话")
             connection = self._online()
+            if not (connection.get("request_id") or connection.get("connection_id")):
+                raise IntercomError("设备配对身份尚未确认，请重新连接")
             self.robot.refresh_device_info(timeout=2.0)
             missing = REQUIRED.difference(self.robot.capabilities)
             if missing:
@@ -165,6 +170,14 @@ class IntercomService:
 
     def stop(self, request_id=None):
         with self._lifecycle, self._signal_lock:
+            # Remember scoped cancellations even if their start request has
+            # not reached the owner yet. Bounded replay history prevents a
+            # delayed allocation from undoing the browser's confirmed release.
+            retired = request_id or self._owner
+            if retired is not None:
+                self._released_requests[retired] = True
+                if len(self._released_requests) > 256:
+                    self._released_requests.pop(next(iter(self._released_requests)))
             if self._owner is None:
                 return {"matched": True, "state": "idle"}
             if request_id is not None and request_id != self._owner:

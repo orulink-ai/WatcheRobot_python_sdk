@@ -222,6 +222,21 @@ def test_browser_crash_expires_session(rig):
     assert rig.calls[-2:] == [("rtc", "stop"), ("follow", False)]
 
 
+def test_stop_before_late_start_cannot_reallocate_hardware(rig):
+    assert rig.service.stop("request-a")["state"] == "idle"
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.start("request-a")
+    assert not rig.calls
+    rig.service.start("request-b")
+
+
+def test_online_device_without_pairing_identity_cannot_start_hardware(rig):
+    rig.connection.pop("connection_id")
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.start("request-a")
+    assert not rig.calls
+
+
 def test_http_rejects_foreign_origin_and_private_files(rig):
     with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
         assert client.get("/").status_code == 200
