@@ -1365,6 +1365,84 @@ def test_camera_capture_with_feedback_reports_jpeg_timeout_with_context() -> Non
         robot.camera.capture_with_feedback(timeout=0.01)
 
 
+@pytest.mark.parametrize("method_name", ["capture", "capture_with_feedback"])
+@pytest.mark.parametrize("before_ack", [True, False])
+def test_camera_device_failure_wakes_capture_before_timeout(method_name, before_ack):
+    from watcherobot.errors import CameraCaptureError
+
+    class FailedCameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            session = response["data"]["session_id"]
+            event = {"type": "evt.sdk.camera.capture", "data": {
+                "session_id": session, "state": "failed", "reason": "failed"}}
+            if before_ack:
+                self.message_callback(event)
+            else:
+                threading.Timer(0.01, lambda: self.message_callback(event)).start()
+            return response
+
+    robot = WatcheRobot._from_transport(FailedCameraTransport())
+    outcome = Future()
+    def capture():
+        try:
+            outcome.set_result(getattr(robot.camera, method_name)(timeout=1))
+        except Exception as error:
+            outcome.set_exception(error)
+    thread = threading.Thread(target=capture, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(CameraCaptureError) as info:
+            outcome.result(timeout=0.3)
+        assert info.value.session_id == 100
+        assert info.value.reason == "failed"
+    finally:
+        thread.join(timeout=1.1)
+
+
+def test_camera_ignores_malformed_and_other_session_failure_then_can_capture_again():
+    class CameraTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            response = super().send_command(message_type, data, timeout)
+            session = response["data"]["session_id"]
+            for payload in [None, {"session_id": True, "state": "failed"},
+                            {"session_id": session + 1, "state": "failed", "reason": "old"}]:
+                self.message_callback({"type": "evt.sdk.camera.capture", "data": payload})
+            self.binary_callback(BinaryFrame(FRAME_IMAGE, FLAG_FIRST | FLAG_LAST,
+                                              session, 1, b"current"))
+            return response
+    robot = WatcheRobot._from_transport(CameraTransport())
+    assert robot.camera.capture(timeout=0.1).data == b"current"
+    assert robot.camera.capture(timeout=0.1).data == b"current"
+
+
+def test_camera_failure_uses_full_session_identity_and_releases_lock_for_retry():
+    from watcherobot import CameraCaptureError
+
+    class CameraTransport(FakeTransport):
+        attempts = 0
+        def send_command(self, message_type, data, timeout=None):
+            self.attempts += 1
+            session = 0x10064 + self.attempts
+            response = {"data": {"session_id": session}}
+            if self.attempts == 1:
+                self.message_callback({"type": "evt.sdk.camera.capture", "data": {
+                    "session_id": session, "state": "failed", "reason": "no_capacity"}})
+            else:
+                # A previous failure has the same 16-bit image stream ID.
+                self.message_callback({"type": "evt.sdk.camera.capture", "data": {
+                    "session_id": session - 0x10000, "state": "failed", "reason": "stale"}})
+                self.binary_callback(BinaryFrame(FRAME_IMAGE, FLAG_FIRST | FLAG_LAST,
+                                                  session & 0xFFFF, 1, b"retry"))
+            return response
+    robot = WatcheRobot._from_transport(CameraTransport())
+    with pytest.raises(CameraCaptureError) as info:
+        robot.camera.capture(timeout=0.1)
+    assert info.value.session_id == 0x10065
+    assert info.value.reason == "no_capacity"
+    assert robot.camera.capture(timeout=0.1).data == b"retry"
+
+
 def test_robot_close_releases_microphone_after_remote_end():
     transport = FakeTransport()
     robot = WatcheRobot._from_transport(transport)

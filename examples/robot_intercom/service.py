@@ -10,6 +10,7 @@ import socket
 import threading
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 import uuid
 from collections import deque
@@ -17,12 +18,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from watcherobot.errors import WatcheRobotError
 
 LOG = logging.getLogger(__name__)
-REQUIRED = {"rtc.audio.full_duplex.v1", "expression.audio_follow.v1", "camera.capture"}
+REQUIRED = {"rtc.audio.full_duplex.v1", "expression.audio_follow.v1"}
 MDNS = re.compile(r"(?im)(^(?:a=)?candidate:\S+\s+\d+\s+\S+\s+\d+\s+)(\S+\.local)(\s+\d+\s+typ\s+host\b)")
 
 
@@ -41,6 +44,29 @@ class DeviceStatus:
         except (OSError, ValueError, KeyError):
             return {"online": False, "state": "unavailable"}
 
+    def _manage(self, action, body):
+        request = urllib.request.Request(self.url.rstrip("/") + action,
+                                         data=json.dumps(body).encode("utf-8"),
+                                         headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=3) as response:
+                result = json.load(response)
+            if not isinstance(result, dict) or not isinstance(result.get("device"), dict):
+                raise IntercomError("连接响应异常，请重试")
+            return result
+        except urllib.error.HTTPError:
+            # Do not echo Daemon messages or pairing codes into logs/UI.
+            raise IntercomError("连接请求未被接受，请检查机器人状态后重试") from None
+        except (OSError, ValueError):
+            raise IntercomError("无法联系本机连接服务，请确认桌面端正在运行") from None
+
+    def pair(self, code, device_ip=None):
+        return self._manage("/pair", {"pairing_code": code, "target_mode": "python_sdk",
+                                     **({"device_ip": device_ip} if device_ip else {})})
+
+    def cancel_pairing(self):
+        return self._manage("/pair/cancel", {})
+
 
 def lan_address(connection):
     """Resolve the local interface on the device route, without sending media."""
@@ -58,9 +84,13 @@ def lan_address(connection):
 
 
 class IntercomService:
-    def __init__(self, *, robot, rtc, device_status, artifacts_dir, clock=time.monotonic, logger=LOG):
+    def __init__(self, *, robot, rtc, device_status, artifacts_dir, clock=time.monotonic, logger=LOG,
+                 device_pairer=None, device_pairing_canceler=None):
         self.robot, self.rtc = robot, rtc
         self.device_status = device_status
+        self.device_pairer = device_pairer
+        self.device_pairing_canceler = device_pairing_canceler
+        self._pairing_request_id = None
         self.artifacts_dir = Path(artifacts_dir)
         self.clock = clock
         self.logger = logger
@@ -151,10 +181,44 @@ class IntercomService:
         fresh = (connection.get("online") is True and evidence.get("consistent") is not False
                  and evidence.get("device_id") == self.robot.device_info.get("device_id")
                  and isinstance(received, (float, int)) and 0 <= self.clock() - received < 5)
-        return {**state, "connected": connection.get("online") is True,
+        # Only expose connection state/identity, never transport credentials.
+        safe_connection = {key: connection.get(key) for key in
+                           ("state", "online", "request_id", "device_id", "last_error", "reuniting")}
+        return {**state, "connected": connection.get("online") is True, "connection": safe_connection,
                 "device": self.robot.device_info, "capabilities": sorted(self.robot.capabilities),
                 "rtc": self.rtc.snapshot(),
                 "resources": evidence.get("snapshot") if fresh else None}
+
+    def pair_device(self, code, device_ip=None):
+        with self._lifecycle, self._signal_lock:
+            if self._closing or self._owner is not None:
+                raise IntercomError("请先完成当前通话的释放，再连接机器人")
+            if self.device_status().get("online"):
+                raise IntercomError("机器人已经连接，可以直接开始通话")
+            if self.device_pairer is None:
+                raise IntercomError("当前运行环境不支持页面配对，请在桌面端连接")
+            result = self.device_pairer(code, device_ip)
+            connection = result.get("device") if isinstance(result, dict) else None
+            if not isinstance(connection, dict):
+                raise IntercomError("连接响应异常，请重试")
+            self._pairing_request_id = connection.get("request_id")
+            return {"accepted": True, "connection": {key: connection.get(key) for key in
+                    ("state", "online", "request_id", "last_error")}}
+
+    def cancel_pairing(self):
+        with self._lifecycle, self._signal_lock:
+            if self._owner is not None or self._closing:
+                raise IntercomError("当前通话尚未释放，无法更改连接")
+            connection = self.device_status()
+            if connection.get("online"):
+                return {"connected": True}
+            if not self._pairing_request_id or connection.get("request_id") != self._pairing_request_id:
+                raise IntercomError("连接请求已变化，请刷新后查看当前机器人状态")
+            if self.device_pairing_canceler is None:
+                raise IntercomError("当前运行环境不支持取消配对")
+            self.device_pairing_canceler()
+            self._pairing_request_id = None
+            return {"canceled": True}
 
     def _online(self):
         connection = self.device_status()
@@ -280,12 +344,24 @@ class IntercomService:
         # Stop/shutdown drains a photo before releasing the display or transport.
         with self._lifecycle:
             self._before_device_call(request_id)
-            image = self.robot.camera.capture(timeout=10.0)
+            self._record("photo_requested")
+            try:
+                image = self.robot.camera.capture(timeout=10.0)
+            except WatcheRobotError as error:
+                reason = getattr(error, "reason", "camera_failed")
+                self._record("photo_failed", reason=reason, session_id=getattr(error, "session_id", None))
+                message = ("照片回传失败，请重试。通话不受影响。" if reason == "image_upload_failed"
+                           else "机器人相机未能完成拍照，请重试。通话不受影响。")
+                raise IntercomError(message) from error
+            except TimeoutError as error:
+                self._record("photo_failed", reason="timeout")
+                raise IntercomError("照片获取超时，请稍后重试。通话不受影响。") from error
             self._owned(request_id)
             self.artifacts_dir.mkdir(parents=True, exist_ok=True)
             name = f"photo-{uuid.uuid4().hex}.jpg"
             target = self.artifacts_dir / name
             target.write_bytes(bytes(image.data))
+            self._record("photo_completed", bytes=target.stat().st_size)
             return {"artifact": name, "url": f"/photos/{name}", "bytes": target.stat().st_size}
 
     def signal(self, request_id, data):
@@ -409,6 +485,16 @@ class CallRequest(BaseModel):
     request_id: str = Field(min_length=8, max_length=63, pattern=r"^[A-Za-z0-9._:-]+$")
 
 
+class DevicePairRequest(BaseModel):
+    pairing_code: str = Field(pattern=r"^[0-9]{6}$")
+    device_ip: str | None = Field(default=None, max_length=15)
+
+    @field_validator("device_ip")
+    @classmethod
+    def valid_ip(cls, value):
+        return str(ipaddress.IPv4Address(value)) if value is not None else None
+
+
 class StopRequest(CallRequest):
     reason: str = Field(default="user", max_length=40, pattern=r"^[a-z_]+$")
 
@@ -446,7 +532,7 @@ class FeedbackRequest(CallRequest):
     congestion_level: int = Field(default=0, ge=0, le=3, strict=True)
 
 
-def create_web_app(service, *, web_root):
+def create_web_app(service, *, web_root, enable_photo=False):
     presence_cleanup_tasks = set()
 
     async def cleanup_presence(registration, request_id):
@@ -501,6 +587,12 @@ def create_web_app(service, *, web_root):
     async def conflict(request, error):
         return JSONResponse({"error": str(error)}, status_code=409)
 
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request, error):
+        message = ("请检查输入：连接码需为六位数字，IP 地址需为有效 IPv4 地址"
+                   if request.url.path == "/api/device/pair" else "请求格式无效，请检查输入")
+        return JSONResponse({"error": message}, status_code=422)
+
     @app.exception_handler(Exception)
     async def failure(request, error):
         LOG.exception("Intercom operation failed", exc_info=error)
@@ -512,11 +604,21 @@ def create_web_app(service, *, web_root):
 
     @app.get("/api/status")
     async def status():
-        return await asyncio.to_thread(service.status)
+        result = await asyncio.to_thread(service.status)
+        return {**result, "features": {"photo": enable_photo}}
 
     @app.post("/api/call/start")
     async def start(body: CallRequest):
         return await asyncio.to_thread(service.start, body.request_id)
+
+    @app.post("/api/device/pair", status_code=202)
+    async def pair_device(body: DevicePairRequest):
+        return await asyncio.to_thread(service.pair_device, body.pairing_code,
+                                       str(body.device_ip) if body.device_ip is not None else None)
+
+    @app.post("/api/device/pair/cancel")
+    async def cancel_pairing():
+        return await asyncio.to_thread(service.cancel_pairing)
 
     @app.post("/api/call/stop")
     async def stop(body: StopRequest):
@@ -554,7 +656,6 @@ def create_web_app(service, *, web_root):
             cleanup.add_done_callback(cleanup_done)
             await asyncio.shield(cleanup)
 
-    @app.post("/api/photo")
     async def photo(body: CallRequest):
         return await asyncio.to_thread(service.capture, body.request_id)
 
@@ -574,7 +675,6 @@ def create_web_app(service, *, web_root):
     async def events(request_id: str, after: int = 0):
         return await asyncio.to_thread(service.events, request_id, max(0, after))
 
-    @app.get("/photos/{name}")
     async def artifact(name: str):
         if re.fullmatch(r"photo-[0-9a-f]{32}\.jpg", name) is None:
             return JSONResponse({"error": "照片不存在"}, status_code=404)
@@ -583,6 +683,10 @@ def create_web_app(service, *, web_root):
             return JSONResponse({"error": "照片不存在"}, status_code=404)
         return FileResponse(path, media_type="image/jpeg", filename=name,
                             content_disposition_type="inline")
+
+    if enable_photo:
+        app.add_api_route("/api/photo", photo, methods=["POST"])
+        app.add_api_route("/photos/{name}", artifact, methods=["GET"])
 
     app.mount("/assets", StaticFiles(directory=web_root), name="assets")
     return app

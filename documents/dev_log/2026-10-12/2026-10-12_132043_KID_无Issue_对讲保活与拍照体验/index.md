@@ -54,3 +54,7 @@ presence 注册由线程执行，协程取消不会停止线程，必须保留�
 - Green：终止事件处理覆盖协商与通话，终止后不再 ping，复用现有维护清理流程；首次退出原因只赋值一次，各次尝试原因保留在历史，下一通话重置。相关 Python 88 项、浏览器 51 项重新通过，Git 空白检查通过。未重构，未伪称完成设备失败注入。
 - 重新上传且验证包含本次修正的 [0.1.2 固定源码](https://gitee.com/KID_gitee/WatcherRobot-com.orulink.robot_intercom/tree/721e187ab829e9f9b1dcf95e660c2824e2d78b1a)，[商店 #17](https://gitee.com/orulink-sz/watcherobot-app-store/pulls/17) 返回 pending；核对 #16 的作者、标题和固定 SHA 后关闭旧请求。当前以 #17 为准，不重复尝试已拒绝的目录合并。
 - 本次源码仍待最终 CI 与复审，按用户授权完成后继续 SDK merge 及 Workspace gitlink 交付。
+
+## 后续变更
+
+2026-10-12｜KID / Codex｜补充：[ElevenLabs 对讲界面设计](../2026-10-12_160422_KID_无Issue_对讲界面设计/index.md)。改善视觉与操作层级，保持原声通话、保活、释放和拍照身份隔离。

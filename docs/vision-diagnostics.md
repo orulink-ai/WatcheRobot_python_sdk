@@ -72,6 +72,17 @@ instead of competing for the Himax transport. Applications should retry later
 with bounded backoff and should not bypass the Runtime by opening a second
 device connection.
 
+## Camera capture failures
+
+`robot.camera.capture()` and `capture_with_feedback()` raise
+`watcherobot.CameraCaptureError` when the device reports a terminal capture
+failure. The exception inherits from `WatcheRobotError` and exposes the full
+`session_id` and device `reason`. A failure event can arrive before the command
+ACK; it is retained and matched to that capture once the ACK identifies the
+session. If no terminal result arrives, the existing `TimeoutError` behavior
+still applies. Applications should show the failure and allow a bounded retry,
+without treating a camera failure as an RTC disconnection.
+
 ## Face-tracking preflight
 
 Before starting face tracking, check both the generic backend state and the

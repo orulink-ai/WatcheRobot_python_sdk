@@ -20,6 +20,7 @@ export function createCallController({
   cancel = (id) => clearTimeout(id),
   requestTimeoutMs = 20000,
   onState = () => {},
+  onLocal = () => {},
   onRemote = () => {},
   onStats = () => {},
   onDispose = () => {},
@@ -87,6 +88,7 @@ export function createCallController({
     peer = null;
     for (const track of stream?.getTracks() || []) track.stop();
     stream = null;
+    onLocal(null);
     remoteCandidates = [];
     jitter = null;
     onDispose();
@@ -263,6 +265,7 @@ export function createCallController({
           return false;
         }
         stream = microphone;
+        onLocal(stream);
         allocated = true;
         allocation = request("/api/call/start", { request_id: id });
         await allocation;

@@ -3,102 +3,276 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>机器人对讲 · WatcheRobot</title>
+    <meta name="theme-color" content="#f7f6f2" />
+    <title data-i18n="机器人对讲 · WatcheRobot">机器人对讲 · WatcheRobot</title>
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
-  <body>
+  <body data-photo-enabled="false">
+    <svg
+      class="icon-definitions"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <symbol id="i-mic" viewBox="0 0 24 24">
+        <rect x="9" y="2" width="6" height="12" rx="3" />
+        <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8" />
+      </symbol>
+      <symbol id="i-speaker" viewBox="0 0 24 24">
+        <path
+          d="m11 4-6 5H2v6h3l6 5zM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"
+        />
+      </symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24">
+        <path
+          d="m8 3-2 4H3a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2-4z"
+        />
+        <circle cx="12" cy="13" r="4" />
+      </symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24">
+        <path d="M5 12h14m-5-5 5 5-5 5" />
+      </symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24">
+        <path
+          d="M5 2h4l2 5-3 2a16 16 0 0 0 7 7l2-3 5 2v4a3 3 0 0 1-3 3C9 21 3 15 2 5a3 3 0 0 1 3-3Z"
+        />
+      </symbol>
+      <symbol id="i-headphones" viewBox="0 0 24 24">
+        <path d="M3 14v-3a9 9 0 0 1 18 0v3" />
+        <rect x="2" y="12" width="5" height="9" rx="2" />
+        <rect x="17" y="12" width="5" height="9" rx="2" />
+      </symbol>
+    </svg>
     <main class="shell">
-      <header>
+      <header class="topbar">
         <a class="brand" href="/" aria-label="机器人对讲首页"
-          ><span class="brand-mark">w.</span> WatcheRobot</a
-        ><span class="network"><i></i> 局域网对讲</span>
+           data-i18n-aria-label="机器人对讲首页"><span class="brand-mark">w<span>•</span></span> WatcheRobot
+          <span class="brand-divider">/</span
+          ><span class="brand-app"><span data-i18n="对讲">对讲</span></span></a
+        >
+        <div class="topbar-actions"><div class="language-switch" role="group" aria-label="Language / 语言"><button id="languageZh" type="button" lang="zh-CN" aria-pressed="true">中文</button><button id="languageEn" type="button" lang="en" aria-pressed="false">EN</button></div><span class="network"><i></i><span data-i18n="局域网连接"> 局域网连接</span></span></div>
       </header>
       <section class="intro">
-        <p class="eyebrow">ROBOT INTERCOM / 01</p>
-        <h1>让声音，<br />到它身边。</h1>
-        <p class="lead">
-          通过机器人实时说话、听见现场，<br />也可以拍张照片，看看它眼前的世界。
-        </p>
+        <div>
+          <p class="eyebrow">A LITTLE CLOSER</p>
+          <h1><span data-i18n="声音在这里，你在它身边。">声音在这里，你在它身边。</span></h1>
+          <p class="lead"><span data-i18n="把你的原声传给机器人，也听见它身边的声音。">
+            把你的原声传给机器人，也听见它身边的声音。
+          </span></p>
+        </div>
+        <span class="local-note"
+          ><span class="local-dot"></span><span data-i18n="原声 · 实时 · 本地"> 原声 · 实时 · 本地</span></span
+        >
       </section>
-      <div class="workspace">
-        <section class="call-card" aria-label="语音通话">
-          <div class="card-top">
-            <span>语音连接</span
-            ><span id="connection" class="badge">正在查找机器人</span>
-          </div>
-          <div id="callVisual" class="call-visual" data-state="idle">
-            <div class="robot-face" aria-hidden="true">
-              <div class="eyes"><i></i><i></i></div>
-              <div class="mouth"></div>
-            </div>
-            <span class="orbit"></span>
-          </div>
-          <h2 id="callTitle">准备好，就开始说话</h2>
-          <p id="message" role="status" aria-live="polite">
-            请在桌面端连接同一局域网内的机器人。
-          </p>
-          <div class="call-actions">
-            <button id="start" class="primary" disabled>
-              开始通话 <span>↗</span></button
-            ><button id="stop" class="end" hidden>结束通话</button
-            ><button id="mute" class="secondary" aria-pressed="false" disabled>
-              麦克风开启
-            </button>
-          </div>
-          <div class="listen">
-            <span>现场声音</span
-            ><button id="listen" class="text-button" aria-pressed="false">
-              收听中 · 点击关闭
-            </button>
-          </div>
-          <label class="noise-option"
-            ><input id="noise" type="checkbox" checked />
-            减少现场背景噪声</label
-          ><audio id="remoteAudio" autoplay></audio
-          ><button id="resumeAudio" class="text-button" hidden>
-            点击播放现场声音
+      <section id="devicePanel" class="device-panel" aria-label="机器人连接" data-i18n-aria-label="机器人连接">
+        <span class="device-symbol" aria-hidden="true">w.</span>
+        <div class="device-copy">
+          <h2 id="deviceTitle"><span data-i18n="尚未连接机器人">尚未连接机器人</span></h2>
+          <p id="deviceDetail"><span data-i18n="先连接机器人，再开始双向原声通话。">先连接机器人，再开始双向原声通话。</span></p>
+        </div>
+        <button id="connectDevice" class="device-connect"><span data-i18n="连接机器人">
+          连接机器人 </span><span aria-hidden="true">→</span>
+        </button>
+      </section>
+      <dialog
+        id="deviceDialog"
+        aria-labelledby="pairTitle"
+        aria-describedby="pairDescription"
+      >
+        <div class="dialog-top">
+          <span class="eyebrow">CONNECT YOUR ROBOT</span
+          ><button
+            id="closePair"
+            class="dialog-close"
+            aria-label="关闭连接窗口"
+           data-i18n-aria-label="关闭连接窗口">
+            ×
           </button>
-          <p class="footnote">
-            戴上耳机，双向交流更清晰。机器人嘴型会跟随实际播放的声音。通话与释放期间请勿切换机器人。
-          </p>
-        </section>
-        <section class="photo-card" aria-label="机器人拍照">
+        </div>
+        <h2 id="pairTitle"><span data-i18n="连接机器人">连接机器人</span></h2>
+        <p id="pairDescription"><span data-i18n="电脑和机器人连接同一 Wi-Fi。">
+          电脑和机器人连接同一 Wi-Fi。</span><br /><span data-i18n="在机器人上打开「Python SDK」，输入屏幕上的连接码。">在机器人上打开「Python
+          SDK」，输入屏幕上的连接码。
+        </span></p>
+        <form id="pairForm">
+          <label for="pairCode"><span data-i18n="六位连接码">六位连接码</span></label>
+          <input
+            id="pairCode"
+            name="pairing_code"
+            inputmode="numeric"
+            autocomplete="off"
+            maxlength="6"
+            pattern="[0-9]{6}"
+            placeholder="000000"
+            required
+            autofocus
+          />
+          <details class="pair-advanced">
+            <summary><span data-i18n="找不到机器人？指定 IP 地址">找不到机器人？指定 IP 地址</span></summary>
+            <label for="pairIp"><span data-i18n="机器人 IP（可选）">机器人 IP（可选）</span></label
+            ><input
+              id="pairIp"
+              name="device_ip"
+              placeholder="例如 192.168.1.100"
+              maxlength="15"
+              autocomplete="off"
+            data-i18n-placeholder="例如 192.168.1.100" />
+            <p><span data-i18n="使用机器人显示的 IP，避免局域网自动查找受到限制。">使用机器人显示的 IP，避免局域网自动查找受到限制。</span></p>
+          </details>
+          <p id="deviceFeedback" role="status" aria-live="polite"><span data-i18n="输入机器人屏幕上的六位连接码。">
+            输入机器人屏幕上的六位连接码。
+          </span></p>
+          <div class="pair-actions">
+            <button id="pairSubmit" class="primary" type="submit"><span data-i18n="连接机器人">
+              连接机器人</span></button
+            ><button
+              id="cancelPair"
+              class="device-connect"
+              type="button"
+              hidden
+            ><span data-i18n="取消连接">
+              取消连接
+            </span></button>
+          </div>
+        </form>
+      </dialog>
+      <div class="workspace">
+        <section class="call-card" aria-label="语音通话" data-i18n-aria-label="语音通话">
           <div class="card-top">
-            <span>它眼前的世界</span><span class="eyebrow">PHOTO / JPEG</span>
+            <span class="section-label"
+              ><span class="section-dot"></span><span data-i18n="语音对讲"> 语音对讲</span></span
+            ><span id="connection" class="badge" role="status"
+              ><span data-i18n="正在查找机器人">正在查找机器人</span></span
+            >
+          </div>
+          <div class="call-stage">
+            <div
+              id="callVisual"
+              class="call-visual"
+              data-state="idle"
+              aria-hidden="true"
+            >
+              <div class="orb-halo"></div>
+              <div id="orbMount"><div class="static-orb"></div></div>
+            </div>
+            <div class="call-caption">
+              <span id="callDuration" class="duration" aria-label="通话时长"
+                 data-i18n-aria-label="通话时长">—</span
+              >
+              <h2 id="callTitle"><span data-i18n="准备好，就开始说话">准备好，就开始说话</span></h2>
+              <p id="message" role="status" aria-live="polite"><span data-i18n="先点击上方「连接机器人」，再开始通话。">
+                先点击上方「连接机器人」，再开始通话。
+              </span></p>
+            </div>
+            <div class="call-actions">
+              <button id="start" class="primary" disabled>
+                <svg><use href="#i-phone" /></svg><span data-i18n="开始通话">开始通话</span><svg
+                  class="action-arrow"
+                >
+                  <use href="#i-arrow" />
+                </svg></button
+              ><button id="stop" class="end" hidden>
+                <svg><use href="#i-phone" /></svg
+                ><span id="stopLabel"><span data-i18n="结束通话">结束通话</span></span>
+              </button>
+            </div>
+          </div>
+          <div class="audio-controls">
+            <div class="audio-channel">
+              <div class="channel-top">
+                <span><span data-i18n="我的声音">我的声音 </span><span class="direction"><span data-i18n="→ 机器人">→ 机器人</span></span></span
+                ><span id="inputState" class="channel-state"><span data-i18n="未开启">未开启</span></span>
+              </div>
+              <div id="inputWave" class="wave-mount" aria-hidden="true"></div>
+              <button
+                id="mute"
+                class="channel-toggle"
+                aria-pressed="false"
+                disabled
+              >
+                <svg><use href="#i-mic" /></svg
+                ><span id="muteLabel"><span data-i18n="麦克风开启">麦克风开启</span></span
+                ><span class="toggle-track" aria-hidden="true"></span>
+              </button>
+            </div>
+            <div class="audio-channel">
+              <div class="channel-top">
+                <span><span data-i18n="现场声音">现场声音 </span><span class="direction"><span data-i18n="→ 我">→ 我</span></span></span
+                ><span id="outputState" class="channel-state"><span data-i18n="未开启">未开启</span></span>
+              </div>
+              <div id="outputWave" class="wave-mount" aria-hidden="true"></div>
+              <button
+                id="listen"
+                class="channel-toggle"
+                aria-pressed="false"
+                disabled
+              >
+                <svg><use href="#i-speaker" /></svg
+                ><span id="listenLabel"><span data-i18n="收听现场">收听现场</span></span
+                ><span class="toggle-track" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+          <div class="call-bottom">
+            <label class="noise-option"
+              ><input id="noise" type="checkbox" checked /><span data-i18n="现场降噪">现场降噪</span></label
+            ><span
+              ><svg><use href="#i-headphones" /></svg><span data-i18n="戴上耳机，交流更清晰">
+              戴上耳机，交流更清晰</span></span
+            >
+          </div>
+          <audio id="remoteAudio" autoplay></audio
+          ><button id="resumeAudio" class="audio-resume" hidden><span data-i18n="点击播放现场声音">
+            点击播放现场声音
+          </span></button>
+        </section>
+        <aside id="photoPanel" class="photo-card" aria-label="机器人拍照" hidden data-i18n-aria-label="机器人拍照">
+          <div class="card-top">
+            <span class="section-label"><span data-i18n="它眼前的世界">它眼前的世界</span></span
+            ><span class="small-label">SNAPSHOT</span>
           </div>
           <div id="photoFrame" class="photo-frame" aria-busy="false">
-            <img id="photo" alt="机器人拍摄的现场照片" hidden />
+            <img id="photo" alt="机器人拍摄的现场照片" hidden data-i18n-alt="机器人拍摄的现场照片" />
             <div id="emptyPhoto">
-              <span class="viewfinder" aria-hidden="true">⌖</span>
-              <h2>留住这一刻</h2>
-              <p>通话中拍照，声音继续。</p>
+              <span class="frame-corner tl"></span
+              ><span class="frame-corner tr"></span
+              ><span class="frame-corner bl"></span
+              ><span class="frame-corner br"></span>
+              <div class="camera-placeholder">
+                <svg><use href="#i-camera" /></svg>
+              </div>
+              <h2><span data-i18n="看看那一边">看看那一边</span></h2>
+              <p><span data-i18n="开始通话后，拍下机器人眼前的一刻。">开始通话后，拍下机器人眼前的一刻。</span></p>
+              <span class="snapshot-note"><span data-i18n="单张照片 · 非实时视频">单张照片 · 非实时视频</span></span>
             </div>
             <div id="photoProgress" class="photo-progress" hidden>
-              <p id="photoProgressTitle">正在拍照</p>
+              <p id="photoProgressTitle"><span data-i18n="正在拍照">正在拍照</span></p>
               <span
                 id="photoCountdown"
                 class="photo-countdown"
                 aria-hidden="true"
                 >2</span
               >
-              <p id="photoProgressDetail">预计还需 2 秒，通话继续。</p>
+              <p id="photoProgressDetail"><span data-i18n="预计还需 2 秒，通话继续。">预计还需 2 秒，通话继续。</span></p>
             </div>
           </div>
-          <div class="photo-actions">
-            <div>
-              <p id="photoStatus" role="status">还没有照片</p>
-              <a id="download" hidden download>保存照片 ↓</a>
-            </div>
-            <button id="capture" class="camera-button" disabled>
-              <span aria-hidden="true">◎</span
-              ><span id="captureLabel">拍照</span>
-            </button>
+          <div class="photo-meta">
+            <p id="photoStatus" role="status"><span data-i18n="还没有照片">还没有照片</span></p>
+            <a id="download" hidden download><span data-i18n="保存照片 ↓">保存照片 ↓</span></a>
           </div>
-        </section>
+          <button id="capture" class="camera-button" disabled>
+            <svg><use href="#i-camera" /></svg
+            ><span id="captureLabel"><span data-i18n="拍照">拍照</span></span>
+          </button>
+          <p id="photoHint" class="photo-hint"><span data-i18n="通话连接后即可拍照">通话连接后即可拍照</span></p>
+          <div class="photo-note">
+            <span class="note-symbol">↳</span>
+            <p><span data-i18n="拍照时通话继续。">拍照时通话继续。</span><br /><span data-i18n="照片自动保存在这台电脑上。">照片自动保存在这台电脑上。</span></p>
+          </div>
+        </aside>
       </div>
       <footer>
-        <span>声音实时传输 · 照片保存在本机</span
-        ><span>WATCHE / CONNECT & BE THERE</span>
+        <span><span data-i18n="你的原声，它的嘴型。每一句，都像在身边。">你的原声，它的嘴型。每一句，都像在身边。</span></span
+        ><span class="footer-mark">WATCHE <span>·</span> BE THERE</span>
       </footer>
     </main>
     <script type="module" src="/assets/app.mjs"></script>

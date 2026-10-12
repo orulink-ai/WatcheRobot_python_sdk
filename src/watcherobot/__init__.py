@@ -1,5 +1,6 @@
 from .errors import (
     AuthenticationError,
+    CameraCaptureError,
     CommandError,
     ConnectionTimeoutError,
     JobCancelledError,
@@ -59,6 +60,7 @@ __all__ = [
     "BluetoothProvisioningError",
     "BluetoothUnavailableError",
     "CommandError",
+    "CameraCaptureError",
     "ConnectionTimeoutError",
     "DeviceAmbiguityError",
     "DeviceNotFoundError",

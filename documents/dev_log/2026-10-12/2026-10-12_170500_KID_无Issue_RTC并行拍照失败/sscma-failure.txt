@@ -1,0 +1,14 @@
+E (11386627) MEM_MON: [before:ctrl.camera.capture:0] critical(internal_free) int{free=11KB largest=7KB min=7KB} dma{free=4KB largest=3KB min=0KB} 8bit{free=4649KB largest=3776KB min=3797KB} psram{free=4637KB largest=3776KB min=3790KB} stack_hwm=6136 ctx{app=sdk.control.app resource=wifi+audio+mcu}
+I (11386643) SDK_CONTROL_APP: resource_table stage=before:ctrl.camera.capture:0 | resource | active | resident_stack_bytes
+I (11386693) WATCHER_SDK: camera stage init: session=2
+E (11386694) MEM_MON: [after:ctrl.camera.capture:0] critical(internal_free) int{free=7KB largest=3KB min=3KB} dma{free=4KB largest=3KB min=0KB} 8bit{free=4641KB largest=3776KB min=3793KB} psram{free=4634KB largest=3776KB min=3790KB} stack_hwm=6136 ctx{app=sdk.control.app resource=wifi+audio+mcu}
+I (11386732) SDK_CONTROL_APP: resource_table stage=after:ctrl.camera.capture:0 | resource | active | resident_stack_bytes
+E (11386732) sscma_client.io.spi: sscma_client_new_io_spi_bus(99): no mem for SPI DMA buffer
+E (11386766) HAL_CAMERA: bsp_sscma_client_init failed
+E (11386769) CAMERA_SVC: camera_service_init(93): hal_camera_init failed
+I (11386771) WATCHER_SDK: camera stage prepare sdk complete: session=2 result=ESP_FAIL
+W (11386817) WATCHER_SDK: camera capture session 2 failed: ESP_FAIL
+I (11386818) SDK_CONTROL_APP: SDK camera complete: session=2 result=-6 upload_failed=0
+W (11386831) SDK_CONTROL_APP: SDK camera capture completed with result=-6
+E (11386870) MEM_MON: [completed:camera:-6] critical(internal_free) int{free=11KB largest=7KB min=3KB} dma{free=4KB largest=3KB min=0KB} 8bit{free=4639KB largest=3776KB min=3793KB} psram{free=4627KB largest=3776KB min=3790KB} stack_hwm=6136 ctx{app=sdk.control.app resource=wifi+audio+mcu}
+I (11386886) SDK_CONTROL_APP: resource_table stage=completed:camera:-6 | resource | active | resident_stack_bytes

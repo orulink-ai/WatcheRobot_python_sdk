@@ -13,7 +13,7 @@ from types import TracebackType
 from typing import Any, Callable
 
 from ._internal.audio_status import AudioStatusKind, classify_audio_status
-from .errors import CommandError, WatcheRobotError
+from .errors import CameraCaptureError, CommandError, WatcheRobotError
 from .audio import AudioPlayback, PCMAudio, load_audio_file
 from .job import Job, JobState
 from .inputs import InputDomain, parse_input_event
@@ -868,7 +868,10 @@ class CameraDomain(_Domain):
         quality: int = 0,
         timeout: float = 5.0,
     ) -> ImageFrame:
-        """Capture a JPEG; timeout includes waiting for any previous capture."""
+        """Capture a JPEG; timeout includes waiting for any previous capture.
+
+        Raises CameraCaptureError if the device reports a terminal failure.
+        """
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive and finite")
         # Preserve the legacy command when the startup capability sync is unavailable.
@@ -889,7 +892,10 @@ class CameraDomain(_Domain):
         quality: int = 0,
         timeout: float = 10.0,
     ) -> ImageFrame:
-        """Capture a JPEG with the firmware-owned photo animation and shutter sound."""
+        """Capture a JPEG with the firmware-owned photo animation and shutter sound.
+
+        Raises CameraCaptureError if the device reports a terminal failure.
+        """
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("timeout must be positive and finite")
         self._robot._require_capability("camera.capture.feedback.v1")
@@ -928,6 +934,9 @@ class WatcheRobot:
         self._pending_audio_frames: list[tuple[bytes, int, int, int]] = []
         self._media_lock = threading.Lock()
         self._image_queue: queue.Queue[ImageFrame] = queue.Queue(maxsize=1)
+        self._camera_results = threading.Condition()
+        self._camera_failures: dict[int, CameraCaptureError] = {}
+        self._camera_waiting = False
         self._image_assemblies: dict[int, _ImageAssembly] = {}
         self._image_assembly_lock = threading.Lock()
         self._camera_lock = threading.Lock()
@@ -1406,6 +1415,10 @@ class WatcheRobot:
         try:
             with self._image_assembly_lock:
                 self._image_assemblies.clear()
+            with self._camera_results:
+                self._camera_failures.clear()
+                # Arm before sending: terminal events can arrive before ACK.
+                self._camera_waiting = True
             while True:
                 try:
                     self._image_queue.get_nowait()
@@ -1438,23 +1451,28 @@ class WatcheRobot:
                 raise WatcheRobotError("camera ACK did not include session_id")
             expected_stream_id = session_id & 0xFFFF
             while True:
-                try:
-                    image = self._image_queue.get_nowait()
-                except queue.Empty:
+                with self._camera_results:
+                    failure = self._camera_failures.pop(session_id, None)
+                    if failure is not None:
+                        raise failure
+                    try:
+                        image = self._image_queue.get_nowait()
+                    except queue.Empty:
+                        image = None
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0:
+                    if image is None and remaining <= 0:
                         raise TimeoutError(
                             f"{operation_name} did not return a JPEG before timeout"
                         )
-                    try:
-                        image = self._image_queue.get(timeout=remaining)
-                    except queue.Empty as error:
-                        raise TimeoutError(
-                            f"{operation_name} did not return a JPEG before timeout"
-                        ) from error
+                    if image is None:
+                        self._camera_results.wait(timeout=remaining)
+                        continue
                 if image.session_id in (0, expected_stream_id):
                     return image
         finally:
+            with self._camera_results:
+                self._camera_waiting = False
+                self._camera_failures.clear()
             self._camera_lock.release()
 
     def _open_face_tracking_preview(
@@ -1533,6 +1551,23 @@ class WatcheRobot:
         return True
 
     def _on_message(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "evt.sdk.camera.capture":
+            data = message.get("data")
+            if not isinstance(data, dict) or data.get("state") != "failed":
+                return
+            session_id = data.get("session_id")
+            reason = data.get("reason")
+            if type(session_id) is not int or not 0 < session_id <= 0xFFFFFFFF:
+                return
+            if not isinstance(reason, str) or not reason:
+                reason = "failed"
+            with self._camera_results:
+                if self._camera_waiting:
+                    if len(self._camera_failures) >= 16:
+                        self._camera_failures.pop(next(iter(self._camera_failures)))
+                    self._camera_failures[session_id] = CameraCaptureError(session_id, reason)
+                    self._camera_results.notify_all()
+            return
         if message.get("type") == "daemon.device.state":
             data = message.get("data", {})
             if isinstance(data, dict) and data.get("online") is False:
@@ -1681,14 +1716,16 @@ class WatcheRobot:
         )
 
     def _enqueue_image(self, image: ImageFrame) -> None:
-        try:
-            self._image_queue.put_nowait(image)
-        except queue.Full:
+        with self._camera_results:
             try:
-                self._image_queue.get_nowait()
-            except queue.Empty:
-                pass
-            self._image_queue.put_nowait(image)
+                self._image_queue.put_nowait(image)
+            except queue.Full:
+                try:
+                    self._image_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                self._image_queue.put_nowait(image)
+            self._camera_results.notify_all()
 
     def _on_disconnect(self) -> None:
         self.recordings.device_connection_lost()

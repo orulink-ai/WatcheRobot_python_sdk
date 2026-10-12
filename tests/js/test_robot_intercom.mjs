@@ -67,6 +67,32 @@ function rig(overrides = {}) {
   return { controller, requests, states, track, peers, stream };
 }
 
+test("visuals receive the existing microphone and release it with the call", async () => {
+  const streams = [];
+  const r = rig({ onLocal: (stream) => streams.push(stream) });
+  await r.controller.start();
+  assert.equal(streams[0], r.stream);
+  assert.equal(r.track.stops, 0);
+  await r.controller.stop();
+  assert.equal(streams.at(-1), null);
+  assert.equal(r.track.stops, 1);
+});
+
+test("a cancelled late microphone never reaches the visual layer", async () => {
+  const pending = deferred(),
+    streams = [];
+  const r = rig({
+    getMicrophone: () => pending.promise,
+    onLocal: (s) => streams.push(s),
+  });
+  const started = r.controller.start();
+  await r.controller.stop();
+  pending.resolve(r.stream);
+  await started;
+  assert.ok(!streams.includes(r.stream));
+  assert.equal(r.track.stops, 1);
+});
+
 test("cancelled microphone permission cannot allocate hardware or leak the late stream", async () => {
   const pending = deferred();
   const r = rig({ getMicrophone: () => pending.promise });

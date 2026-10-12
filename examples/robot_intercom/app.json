@@ -2,11 +2,11 @@
   "schema_version": 2,
   "id": "com.orulink.robot_intercom",
   "name": "机器人对讲",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "requires_watcherobot": ">=0.1.11,<0.2",
   "dependencies": [],
   "supported_host_platforms": ["windows"],
-  "description": "在同一局域网内通过机器人进行双向原声通话，让嘴型跟随声音，并在通话中拍照、查看和保存照片。",
+  "description": "在同一局域网内通过机器人进行全双工原声对讲，双向实时传声，让机器人嘴型跟随实际播放的声音。",
   "author": "Orulink AI",
   "icon": "icon.svg"
 }
