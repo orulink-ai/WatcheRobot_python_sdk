@@ -7,7 +7,7 @@
 - 需求：用户确认本地最新代码此前遗漏提交到远端，要求补交。
 - 工作分支：codex/publish-local-dev-20261012。
 - 原本地源码提交：2c1a6bac114583f61ce01248b9acf9d01b123bac。
-- 状态：本地集成及回归完成；提交通过包含本档案的 Git 历史追溯，推送与 draft PR 待处理，未合入或发布。
+- 状态：补交分支已推送，PR #142 已建立；用户已明确授权合入现有对应主线。合入前修正示例应用清单遗漏，本地回归通过，远端 CI 待复验；未发布。
 
 ## 背景、目标与边界
 
@@ -33,7 +33,16 @@
 
 ## 遗留事项
 
-相关测试已完成，推送和 PR 创建待完成；draft PR 交付不代表源码已经合入 dev/main 或发布。
+相关专项测试已完成，代码和 PR 已上传；正式合入需完成 CI 复验并检查最终 merge commit 恰有两个 parent。真人听感与硬件回归缺口保持如实记录。
+
+### 2026-10-12 12:00 Asia/Shanghai｜KID / Codex｜合入前 CI 修正
+
+- 用户指定合并来源为 `codex/publish-local-dev-20261012`；SDK 现有主线为 `main`，配套桌面与 ESP32 为 `dev`，Workspace 为 `main`。
+- Red：远端 SDK CI 在 Python 3.10、3.11、3.12 均因示例应用总清单未登记 `robot_intercom` 失败；其余 1807 项通过、5 项跳过。本地单独运行 `python -m pytest tests/test_examples.py::test_every_example_is_a_complete_managed_application -q` 复现同一失败。
+- Green：仅在 `EXAMPLE_IDS` 增加 `robot_intercom` 及 manifest ID，使现有应用合同测试覆盖该应用的身份、SDK 依赖和注入通道入口，未删除或放松原断言。
+- 验证：使用当前 `src`，`python -m pytest tests/test_examples.py tests/test_robot_intercom.py tests/application/test_rtc.py -q` 共 38 项通过。
+- 未重构业务代码，Daemon 路由与 Application 所有权边界保持既有合同。远端全套 CI 将在 push 后复验，不提前声称通过或已合入。
+- 配套 PR：桌面 #178、ESP32 #259、Workspace #135；Workspace 将在子仓库合入后更新 gitlink。
 
 
 ### 2026-10-12T10:33:57+08:00｜KID / Codex｜提交前验收
