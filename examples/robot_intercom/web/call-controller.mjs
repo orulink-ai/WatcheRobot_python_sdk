@@ -22,6 +22,8 @@ export function createCallController({
   onRemote = () => {},
   onStats = () => {},
   onDispose = () => {},
+  connectPresence = async () => null,
+  report = () => {},
 } = {}) {
   let generation = 0,
     requestId = null,
@@ -35,6 +37,7 @@ export function createCallController({
     muted = false,
     remoteCandidates = [],
     jitter = null;
+  let presence = null;
   const timers = new Set();
   const snapshot = () => ({ requestId, state, muted });
   function update(next, message = "") {
@@ -50,7 +53,11 @@ export function createCallController({
     timers.add(id);
     return id;
   }
-  function dispose() {
+  function dispose(closePresence = true) {
+    if (closePresence) {
+      presence?.close();
+      presence = null;
+    }
     for (const timer of timers) cancel(timer);
     timers.clear();
     recovery?.stop();
@@ -70,9 +77,22 @@ export function createCallController({
       state === "cleanup_required"
     )
       return;
+    report({
+      kind: "browser_failure",
+      connection_state: peer?.connectionState,
+      ice_state: peer?.iceConnectionState,
+    });
     try {
-      await controller.stop();
-      update("idle", error.message || String(error));
+      await controller.stop({ reason: "browser_failure" });
+      const messages = {
+        "WebRTC disconnect recovery timed out":
+          "网络连接中断且未恢复，请重新开始通话。",
+        "WebRTC connection failed": "语音连接失败，请检查局域网后重新开始。",
+        "WebRTC connection closed": "语音连接已关闭，请重新开始。",
+        heartbeat_timeout: "通话连接未能保持，已安全结束，请重新开始。",
+        peer_disconnected: "机器人音频连接已中断，请重新开始通话。",
+      };
+      update("idle", messages[error.message] || error.message || String(error));
     } catch (releaseError) {
       update(
         "cleanup_required",
@@ -217,6 +237,14 @@ export function createCallController({
         allocation = api("/api/call/start", { request_id: id });
         await allocation;
         if (!current(token)) return false;
+        const connectedPresence = await connectPresence(id, () => {
+          if (current(token)) fail(Error("本机通话连接已断开，请重新开始"));
+        });
+        if (!current(token)) {
+          connectedPresence?.close();
+          return false;
+        }
+        presence = connectedPresence;
         const activePeer = (peer = makePeer());
         for (const track of stream.getAudioTracks())
           activePeer.addTrack(track, stream);
@@ -228,11 +256,24 @@ export function createCallController({
         );
         activePeer.addEventListener("connectionstatechange", () => {
           if (!current(token)) return;
+          report({
+            kind: "peer_state",
+            connection_state: activePeer.connectionState,
+            ice_state: activePeer.iceConnectionState,
+          });
           recovery?.update(activePeer.connectionState);
           if (activePeer.connectionState === "connected")
             update("running", "通话已连接，你的声音正在传到机器人。");
           else if (activePeer.connectionState === "disconnected")
             update("connecting", "网络短暂中断，正在恢复…");
+        });
+        activePeer.addEventListener("iceconnectionstatechange", () => {
+          if (current(token))
+            report({
+              kind: "peer_state",
+              connection_state: activePeer.connectionState,
+              ice_state: activePeer.iceConnectionState,
+            });
         });
         activePeer.addEventListener("track", (event) => {
           if (current(token) && event.track.kind === "audio") {
@@ -286,7 +327,7 @@ export function createCallController({
         return false;
       }
     },
-    async stop() {
+    async stop({ reason = "user" } = {}) {
       if (stopping) return stopping;
       if (!requestId) return true;
       const id = requestId,
@@ -294,12 +335,15 @@ export function createCallController({
         pending = allocation;
       ++generation;
       update("stopping", "正在结束通话…");
-      dispose();
+      dispose(false);
       stopping = (async () => {
         try {
           if (needsRelease) {
             await pending?.catch(() => {});
-            const result = await api("/api/call/stop", { request_id: id });
+            const result = await api("/api/call/stop", {
+              request_id: id,
+              reason,
+            });
             if (result.state !== "idle" && result.matched !== false)
               throw Error("机器人释放尚未确认");
           }
@@ -316,6 +360,8 @@ export function createCallController({
       try {
         return await stopping;
       } finally {
+        presence?.close();
+        presence = null;
         stopping = null;
       }
     },
@@ -329,13 +375,16 @@ export function createCallController({
       const id = requestId;
       ++generation;
       dispose();
-      // Server-side heartbeat expiry also handles browser/OS crashes.
+      // Native presence closure also handles browser/OS crashes.
       if (id && allocated)
         navigator.sendBeacon(
           "/api/call/stop",
-          new Blob([JSON.stringify({ request_id: id })], {
-            type: "application/json",
-          }),
+          new Blob(
+            [JSON.stringify({ request_id: id, reason: "page_closed" })],
+            {
+              type: "application/json",
+            },
+          ),
         );
     },
   };

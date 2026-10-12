@@ -1,5 +1,6 @@
 import { createCallController } from "./call-controller.mjs";
 import { createRtcNoisePlayback } from "./rtc-noise-playback.mjs";
+import { connectCallPresence } from "./call-presence.mjs";
 
 const $ = (id) => document.getElementById(id);
 let status = null,
@@ -8,6 +9,7 @@ let status = null,
   noise = null,
   noiseAbort = null,
   refreshTimer;
+let lastMediaReport = 0;
 async function api(path, body) {
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
@@ -53,7 +55,7 @@ function render() {
   else if (
     !busy &&
     status?.connected &&
-    $("message").textContent.startsWith("请在桌面端")
+    $("message").textContent.trim().startsWith("请在桌面端")
   )
     $("message").textContent = "机器人已就绪，点击开始通话。";
 }
@@ -69,6 +71,16 @@ async function playRemote(stream) {
 }
 const controller = createCallController({
   api,
+  connectPresence: connectCallPresence,
+  report: (event) => {
+    const requestId = controller.snapshot().requestId;
+    if (requestId)
+      api("/api/call/diagnostic", {
+        request_id: requestId,
+        visibility: document.visibilityState,
+        ...event,
+      }).catch(() => {});
+  },
   onState: (call) => {
     if (call.message) $("message").textContent = call.message;
     render();
@@ -76,6 +88,18 @@ const controller = createCallController({
   onStats: (stats) => {
     document.body.dataset.audioSent = stats.sent;
     document.body.dataset.audioReceived = stats.received;
+    if (performance.now() - lastMediaReport > 5000) {
+      lastMediaReport = performance.now();
+      const requestId = controller.snapshot().requestId;
+      if (requestId)
+        api("/api/call/diagnostic", {
+          request_id: requestId,
+          kind: "media_sample",
+          sent: stats.sent,
+          received: stats.received,
+          lost: stats.lost,
+        }).catch(() => {});
+    }
   },
   onRemote: async (stream, isCurrent) => {
     noiseAbort?.abort();
@@ -167,6 +191,15 @@ $("capture").onclick = async () => {
 window.addEventListener("pagehide", () => {
   clearTimeout(refreshTimer);
   controller.leave();
+});
+document.addEventListener("visibilitychange", () => {
+  const requestId = controller.snapshot().requestId;
+  if (requestId)
+    api("/api/call/diagnostic", {
+      request_id: requestId,
+      kind: "visibility",
+      visibility: document.visibilityState,
+    }).catch(() => {});
 });
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) {

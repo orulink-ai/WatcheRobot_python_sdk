@@ -222,6 +222,136 @@ def test_browser_crash_expires_session(rig):
     assert rig.calls[-2:] == [("rtc", "stop"), ("follow", False)]
 
 
+def test_device_keepalive_survives_a_short_browser_timer_pause(rig):
+    rig.service.start("request-a")
+    rig.clock[0] = 4
+    rig.service.maintain()
+    assert any(call[0] == "ping" for call in rig.calls)
+    assert rig.service._last_seen == 0  # Device pings must not renew page ownership.
+    rig.clock[0] = 12
+    rig.service.maintain()
+    assert rig.service.status()["state"] == "idle"
+
+
+def test_device_keepalive_is_not_blocked_by_photo_or_sent_to_new_pairing(rig):
+    rig.connection["request_id"] = "pairing-a"
+    rig.service.start("request-a")
+    entered, release = threading.Event(), threading.Event()
+    def capture(**kwargs):
+        entered.set()
+        assert release.wait(3)
+        return SimpleNamespace(data=b"jpeg")
+    rig.robot.camera.capture = capture
+    photo = threading.Thread(target=lambda: rig.service.capture("request-a"))
+    photo.start()
+    assert entered.wait(1)
+    try:
+        rig.clock[0] = 4
+        rig.service.maintain()
+        assert any(call[0] == "ping" for call in rig.calls)
+        rig.connection["request_id"] = "pairing-b"
+        before = list(rig.calls)
+        rig.clock[0] = 6
+        rig.service.maintain()
+        assert rig.calls == before
+    finally:
+        release.set()
+        photo.join(3)
+
+
+def test_browser_presence_survives_timer_suspension_and_disconnect_releases(rig):
+    rig.service.start("request-a")
+    token = rig.service.attach_presence("request-a")
+    rig.clock[0] = 60
+    rig.service.maintain()
+    assert rig.service.status()["state"] == "running"
+    assert any(call[0] == "ping" for call in rig.calls)
+    rig.service.detach_presence("request-a", token)
+    assert rig.service.status()["state"] == "idle"
+    rig.service.start("request-b")
+    rig.service.detach_presence("request-a", token)
+    assert rig.service.status()["state"] == "running"
+
+
+def test_presence_rejects_stale_or_duplicate_connections(rig):
+    rig.service.start("request-a")
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.attach_presence("request-b")
+    token = rig.service.attach_presence("request-a")
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.attach_presence("request-a")
+    rig.service.detach_presence("request-a", token)
+
+
+def test_diagnostics_retain_terminal_reason_and_never_record_signal_payload(rig):
+    rig.service.start("request-a")
+    rig.service.diagnostic("request-a", {"kind": "peer_state", "connection_state": "disconnected", "sdp": "private-signal"})
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.diagnostic("request-b", {"kind": "peer_state"})
+    rig.rtc.events = lambda **kwargs: [{"id": 1, "message": {
+        "type": "evt.rtc.state", "data": {"state": "stopped", "reason": "heartbeat_timeout"}}}]
+    rig.service.maintain()
+    rig.service.stop("request-a", reason="browser_failure")
+    diagnostic = rig.service.status()["diagnostics"]
+    assert diagnostic["device_end_reason"] == "heartbeat_timeout"
+    assert diagnostic["end_reason"] == "device_terminal"
+    assert any(e["kind"] == "peer_state" for e in diagnostic["history"])
+    import json
+    assert "private-signal" not in json.dumps(diagnostic)
+
+
+def test_presence_websocket_checks_origin_and_cleans_up_on_close(rig):
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
+        client.post("/api/call/start", json={"request_id": "request-a"})
+        from starlette.websockets import WebSocketDisconnect
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect("/api/call/presence?request_id=request-a", headers={"Origin": "https://evil.example"}):
+                pass
+        with client.websocket_connect("/api/call/presence?request_id=request-a", headers={"Origin": "http://testserver"}) as ws:
+            assert ws.receive_json() == {"ready": True}
+        assert rig.service.status()["state"] == "idle"
+
+
+def load_local_http():
+    spec = importlib.util.spec_from_file_location("intercom_local_http", ROOT / "local_http.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_local_origin_is_reused_after_restart(tmp_path):
+    module = load_local_http()
+    state = tmp_path / "http-port.json"
+    with module.open_listener(state) as listener:
+        original = listener.getsockname()
+        assert original[0] == "127.0.0.1"
+    with module.open_listener(state) as listener:
+        assert listener.getsockname() == original
+
+
+def test_busy_origin_uses_temporary_port_without_overwriting_preference(tmp_path):
+    module = load_local_http()
+    state = tmp_path / "http-port.json"
+    with module.open_listener(state) as first:
+        original = first.getsockname()
+        saved = state.read_bytes()
+        with module.open_listener(state) as second:
+            assert second.getsockname()[1] != original[1]
+        assert state.read_bytes() == saved
+    with module.open_listener(state) as listener:
+        assert listener.getsockname() == original
+
+
+def test_invalid_origin_preferences_are_replaced_safely(tmp_path):
+    module = load_local_http()
+    state = tmp_path / "http-port.json"
+    for data in ('broken', '{"port":true}', '{"port":1}', '{"port":70000}'):
+        state.write_text(data)
+        with module.open_listener(state) as listener:
+            assert listener.getsockname()[0] == "127.0.0.1"
+            assert listener.getsockname()[1] > 1023
+
+
 def test_http_rejects_foreign_origin_and_private_files(rig):
     with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
         assert client.get("/").status_code == 200
