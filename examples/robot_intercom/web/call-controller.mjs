@@ -227,7 +227,7 @@ export function createCallController({
       allocated = false;
       muted = false;
       update("starting", "请允许使用电脑麦克风…");
-      later(() => {
+      const connectionDeadline = later(() => {
         if (current(token) && state !== "running")
           fail(Error("连接超时，请确认电脑与机器人在同一局域网"));
       }, 30000);
@@ -242,6 +242,7 @@ export function createCallController({
         allocation = request("/api/call/start", { request_id: id });
         await allocation;
         if (!current(token)) return false;
+        heartbeat(token, id);
         const activePeer = (peer = makePeer());
         for (const track of stream.getAudioTracks())
           activePeer.addTrack(track, stream);
@@ -254,9 +255,11 @@ export function createCallController({
         activePeer.addEventListener("connectionstatechange", () => {
           if (!current(token)) return;
           recovery?.update(activePeer.connectionState);
-          if (activePeer.connectionState === "connected")
+          if (activePeer.connectionState === "connected") {
+            cancel(connectionDeadline);
+            timers.delete(connectionDeadline);
             update("running", "通话已连接，你的声音正在传到机器人。");
-          else if (activePeer.connectionState === "disconnected")
+          } else if (activePeer.connectionState === "disconnected")
             update("connecting", "网络短暂中断，正在恢复…");
         });
         activePeer.addEventListener("track", (event) => {
@@ -292,7 +295,6 @@ export function createCallController({
         update("connecting", "正在连接同一局域网里的机器人…");
         poll.cursor = 0;
         poll(token, id);
-        heartbeat(token, id);
         feedback(token, id);
         return true;
       } catch (error) {

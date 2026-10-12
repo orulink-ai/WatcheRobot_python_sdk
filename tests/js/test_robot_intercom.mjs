@@ -227,3 +227,36 @@ test("the total connection deadline covers a pending microphone grant", async ()
   assert.equal(r.track.stops, 1);
   assert.equal(r.requests.length, 0);
 });
+
+test("a connected call retires its setup deadline before connection recovery", async () => {
+  const timers = new Map();
+  let sequence = 0;
+  const r = rig({
+    schedule: (fn, ms) => { const id = ++sequence; timers.set(id, { fn, ms }); return id; },
+    cancel: (id) => timers.delete(id),
+  });
+  await r.controller.start();
+  const peer = r.peers[0];
+  peer.connectionState = "connected";
+  peer.listeners.connectionstatechange();
+  assert.equal([...timers.values()].some((timer) => timer.ms === 30000), false);
+  peer.connectionState = "disconnected";
+  peer.listeners.connectionstatechange();
+  assert.equal(r.controller.snapshot().state, "connecting");
+  assert.equal([...timers.values()].some((timer) => timer.ms === 3000), true);
+  await r.controller.stop();
+});
+
+test("heartbeat starts after allocation while offer signalling is still pending", async () => {
+  const pending = deferred(), calls = [];
+  const r = rig({ api: async (path) => {
+    calls.push(path);
+    return path.endsWith("/signal") ? pending.promise : { state: "idle", matched: true, events: [] };
+  } });
+  const started = r.controller.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(calls.includes("/api/call/heartbeat"));
+  pending.resolve({});
+  await started;
+  await r.controller.stop();
+});

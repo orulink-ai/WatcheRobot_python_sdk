@@ -22,6 +22,7 @@ def rig(tmp_path):
                       preview_websocket_url="ws://192.168.1.10:80/preview")
     class Rtc:
         active = False
+        state = "connected"
         fail_start = False
         fail_stop = False
         def start(self, *, mode):
@@ -37,7 +38,7 @@ def rig(tmp_path):
             self.active = False
             return True
         def snapshot(self):
-            return dict(active=self.active, state="connected" if self.active else "idle", stats={})
+            return dict(active=self.active, state=self.state if self.active else "idle", stats={})
         def clock_ping(self, value):
             calls.append(("ping", value))
         def send_offer(self, value):
@@ -235,6 +236,53 @@ def test_online_device_without_pairing_identity_cannot_start_hardware(rig):
     with pytest.raises(rig.module.IntercomError):
         rig.service.start("request-a")
     assert not rig.calls
+
+
+def test_slow_offer_within_negotiation_deadline_is_not_expired(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.clock[0] = 11
+    rig.service.maintain()
+    assert rig.rtc.active
+    assert rig.service.status()["request_id"] == "request-a"
+    rig.clock[0] = 31
+    rig.service.maintain()
+    assert not rig.rtc.active
+    assert rig.service.status()["request_id"] is None
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.signal("request-a", {"kind": "offer", "sdp": "late"})
+
+
+def test_connected_call_switches_to_heartbeat_expiry(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.clock[0] = 15
+    rig.rtc.state = "connected"
+    rig.service.maintain()
+    assert rig.service.status()["state"] == "running"
+    rig.clock[0] = 26
+    rig.service.maintain()
+    assert not rig.rtc.active
+
+
+def test_pending_heartbeat_is_not_expired_while_it_holds_signal_lock(rig):
+    rig.service.start("request-a")
+    entered, release = threading.Event(), threading.Event()
+    def ping(value):
+        entered.set()
+        assert release.wait(3)
+    rig.rtc.clock_ping = ping
+    thread = threading.Thread(target=lambda: rig.service.heartbeat("request-a", 1000))
+    thread.start()
+    assert entered.wait(1)
+    rig.clock[0] = 11
+    rig.service.maintain()
+    assert rig.rtc.active
+    release.set()
+    thread.join(3)
+    assert not thread.is_alive()
+    rig.service.maintain()
+    assert rig.rtc.active
 
 
 def test_http_rejects_foreign_origin_and_private_files(rig):

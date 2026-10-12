@@ -73,6 +73,7 @@ class IntercomService:
         self._follow = False
         self._state = "idle"
         self._last_seen = 0.0
+        self._connect_due = 0.0
         self._address = None
         self._closing = False
         self._last_error = None
@@ -120,7 +121,7 @@ class IntercomService:
     def _owned(self, request_id):
         if request_id != self._owner or self._owner is None:
             raise IntercomError("该页面不拥有当前通话，请刷新页面")
-        if self._state not in {"starting", "running"}:
+        if self._state not in {"starting", "connecting", "running"}:
             raise IntercomError("通话正在释放，请稍候")
 
     def start(self, request_id):
@@ -130,7 +131,7 @@ class IntercomService:
             if request_id in self._released_requests:
                 raise IntercomError("该通话请求已结束，请重新开始通话")
             if self._owner is not None:
-                if self._owner == request_id and self._state == "running":
+                if self._owner == request_id and self._state in {"connecting", "running"}:
                     self._online()
                     return self.status()
                 raise IntercomError("已有通话或待释放资源，请先结束通话")
@@ -149,6 +150,7 @@ class IntercomService:
                 self._connection_id = connection.get("request_id") or connection.get("connection_id")
                 self._state, self._last_error = "starting", None
                 self._last_seen = self.clock()
+                self._connect_due = self._last_seen + 30
                 self._address = lan_address(connection)
                 self._follow = True  # Enable may be applied even when its ACK is lost.
             try:
@@ -156,7 +158,7 @@ class IntercomService:
                 self._online()
                 self.rtc.start(mode="audio")
                 with self._state_lock:
-                    self._state = "running"
+                    self._state = "running" if self.rtc.snapshot().get("state") == "connected" else "connecting"
                     self._last_seen = self.clock()
                 return self.status()
             except Exception:
@@ -252,16 +254,27 @@ class IntercomService:
         if not self._lifecycle.acquire(blocking=False):
             return
         try:
-            with self._state_lock:
-                owner = self._owner
-                expired = self.clock() - self._last_seen > 10
-                pending = self._state == "cleanup_required"
-            if owner and (expired or pending or not self.device_status().get("online")):
-                try:
-                    self.stop(owner)
-                except Exception as error:
-                    with self._state_lock:
-                        self._last_error = str(error)
+            # Heartbeats and signals may be awaiting bounded SDK sends. Check
+            # expiry only after their state update, without blocking maintenance.
+            if not self._signal_lock.acquire(blocking=False):
+                return
+            try:
+                with self._state_lock:
+                    owner = self._owner
+                    if self._state == "connecting" and self.rtc.snapshot().get("state") == "connected":
+                        self._state = "running"
+                        self._last_seen = self.clock()
+                    expired = (self.clock() >= self._connect_due if self._state == "connecting"
+                               else self.clock() - self._last_seen > 10)
+                    pending = self._state == "cleanup_required"
+                if owner and (expired or pending or not self.device_status().get("online")):
+                    try:
+                        self.stop(owner)
+                    except Exception as error:
+                        with self._state_lock:
+                            self._last_error = str(error)
+            finally:
+                self._signal_lock.release()
         finally:
             self._lifecycle.release()
 
