@@ -119,10 +119,15 @@ class IntercomService:
         return connection
 
     def _owned(self, request_id):
-        if request_id != self._owner or self._owner is None:
-            raise IntercomError("该页面不拥有当前通话，请刷新页面")
-        if self._state not in {"starting", "connecting", "running"}:
-            raise IntercomError("通话正在释放，请稍候")
+        with self._state_lock:
+            if request_id != self._owner or self._owner is None:
+                raise IntercomError("该页面不拥有当前通话，请刷新页面")
+            if self._state == "connecting" and self.clock() >= self._connect_due:
+                self._state = "cleanup_required"
+                self._last_error = "通话连接超时，请重新开始"
+                raise IntercomError(self._last_error)
+            if self._state not in {"starting", "connecting", "running"}:
+                raise IntercomError("通话正在释放，请稍候")
 
     def start(self, request_id):
         with self._lifecycle:
@@ -132,6 +137,7 @@ class IntercomService:
                 raise IntercomError("该通话请求已结束，请重新开始通话")
             if self._owner is not None:
                 if self._owner == request_id and self._state in {"connecting", "running"}:
+                    self._owned(request_id)
                     self._online()
                     return self.status()
                 raise IntercomError("已有通话或待释放资源，请先结束通话")
@@ -207,6 +213,7 @@ class IntercomService:
             self._owned(request_id)
             self._online()
             image = self.robot.camera.capture(timeout=10.0)
+            self._owned(request_id)
             self.artifacts_dir.mkdir(parents=True, exist_ok=True)
             name = f"photo-{uuid.uuid4().hex}.jpg"
             target = self.artifacts_dir / name
@@ -229,6 +236,7 @@ class IntercomService:
             else:
                 self.rtc.send_candidate(value, sdp_mid=data.get("sdp_mid", "0"),
                                         sdp_mline_index=data.get("sdp_mline_index", 0))
+            self._owned(request_id)
             return {"ok": True}
 
     def heartbeat(self, request_id, browser_send_us):
@@ -236,6 +244,7 @@ class IntercomService:
             self._owned(request_id)
             self._online()
             self.rtc.clock_ping(browser_send_us)
+            self._owned(request_id)
             with self._state_lock:
                 self._last_seen = self.clock()
             return {"ok": True}
@@ -250,6 +259,7 @@ class IntercomService:
             self._owned(request_id)
             self._online()
             self.rtc.feedback(**metrics)
+            self._owned(request_id)
             return {"ok": True}
 
     def maintain(self):

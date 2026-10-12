@@ -94,3 +94,12 @@
 - RNNoise SHA256：d8679704d55effe88b10c39ad133b58ce27d9b861c6402efaaff9634d09234a7，与此前记录一致。
 - 网页增加通话/释放期间勿切换机器人的提示；README 说明照片不自动过期，结束应用后由用户删除 JPEG。最近 256 个取消标识仍是有界缓存，不承诺无限期防重放。
 - 未改 Daemon 路由，未进行真人听感、LCD 或正式分发发布；完整 CI 与复审将针对本次 head 运行。
+
+
+### 2026-10-12 Asia/Shanghai｜KID / Codex｜请求入口截止门禁
+
+- 复审发现维护尚未执行时，截止后的信令仍可进入 SDK。Red：signal、heartbeat、feedback、events、capture、幂等 start 六类入口及在途信令跨截止共 7 项失败。
+- Green：在状态锁内统一所有权/协商期限检查，截止进入 cleanup_required；设备调用前拒绝迟到请求，信令/心跳/反馈/照片返回后重新检查，待维护或用户重试安全释放。Python 专项 54/54。
+- 同步 SDK 调用无法由 fetch AbortController 取消；文档明确 30 秒触发取消与清理，不保证硬实时释放。在途请求可以完成，但不会被当作成功协商或续期。
+- 另从 npm 下载 @jitsi/rnnoise-wasm 0.2.1，SHA512 integrity 与 NOTICE 完全一致。Git 保存的 vendor blob 逐字节匹配上游，SHA256 为 05a553f523d59502d133a6d05dbf1878137c9e7bcff06edf5561f7001b62f95f。此前 d8679704... 是 Windows autocrlf 检出后的 CRLF 工作文件散列，内容一致；本段澄清不把不同换行的散列误当上游原字节。
+- 最终 CI 与复审重新运行；未新增 Daemon 业务路由，未烧录或发布。

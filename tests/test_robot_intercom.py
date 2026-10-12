@@ -298,6 +298,40 @@ def test_blocked_start_cannot_accept_connected_after_deadline(rig):
     assert rig.service.status()["request_id"] is None
 
 
+@pytest.mark.parametrize("operation", ["signal", "heartbeat", "feedback", "events", "capture", "start"])
+def test_expired_negotiation_rejects_requests_before_maintenance(rig, operation):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    before = list(rig.calls)
+    rig.clock[0] = 30
+    args = {
+        "signal": ("request-a", {"kind": "offer", "sdp": "late"}),
+        "heartbeat": ("request-a", 1000), "feedback": ("request-a", {}),
+        "events": ("request-a", 0), "capture": ("request-a",), "start": ("request-a",),
+    }
+    with pytest.raises(rig.module.IntercomError, match="超时"):
+        getattr(rig.service, operation)(*args[operation])
+    assert rig.calls == before
+    assert rig.service.status()["state"] == "cleanup_required"
+    rig.service.maintain()
+    assert not rig.rtc.active
+
+
+def test_inflight_signal_crossing_deadline_requires_cleanup(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    def slow_offer(value):
+        rig.calls.append(("offer", value))
+        rig.clock[0] = 31
+    rig.rtc.send_offer = slow_offer
+    rig.clock[0] = 29
+    with pytest.raises(rig.module.IntercomError, match="超时"):
+        rig.service.signal("request-a", {"kind": "offer", "sdp": "offer"})
+    assert rig.service.status()["state"] == "cleanup_required"
+    rig.service.maintain()
+    assert not rig.rtc.active
+
+
 def test_pending_heartbeat_is_not_expired_while_it_holds_signal_lock(rig):
     rig.service.start("request-a")
     entered, release = threading.Event(), threading.Event()
