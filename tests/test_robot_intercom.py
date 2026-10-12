@@ -469,6 +469,34 @@ def test_presence_keeps_a_timely_connected_call_alive_during_browser_pause(rig):
     assert any(call[0] == "ping" for call in rig.calls)
 
 
+def test_presence_keeps_negotiating_device_alive_without_extending_deadline(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.service.attach_presence("request-a")
+    rig.clock[0] = 6
+    rig.service.maintain()
+    assert any(call[0] == "ping" for call in rig.calls)
+    assert rig.service.status()["state"] == "connecting"
+    rig.clock[0] = 30
+    rig.service.maintain()
+    assert not rig.rtc.active
+
+
+def test_backend_ping_rechecks_deadline_after_slow_device_status(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.service.attach_presence("request-a")
+    original = rig.service.device_status
+    def slow_status():
+        rig.clock[0] = 30
+        return original()
+    rig.service.device_status = slow_status
+    rig.clock[0] = 29
+    rig.service.maintain()
+    assert not any(call[0] == "ping" for call in rig.calls)
+    assert not rig.rtc.active
+
+
 @pytest.mark.parametrize("observed_at", [30, 31])
 def test_connected_snapshot_at_or_after_deadline_is_released(rig, observed_at):
     rig.rtc.state = "connecting"

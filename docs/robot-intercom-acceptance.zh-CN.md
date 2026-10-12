@@ -84,6 +84,10 @@ ApplicationRtc.start() 清空事件历史、新会话过滤旧 session 的合同
 4 秒仍未显示旧结果，新拍照成功，耗时 1872 ms，双向包 286 / 283，正常
 结束后资源释放完成。
 
+追加协商阶段保活：presence 已建立但 WebRTC 仍 connecting 时，后端也发送
+设备 ping，同时保留 30 秒协商期限；慢设备查询跨过期限时不发送过期 ping，
+并进入清理。两项失败用例修正后通过，相关 Python 回归累计 80 项。
+
 用户报告页面出现 `WebRTC disconnect recovery timed out`。历史故障发生时没有
 完整的设备停止原因与浏览器状态时序，不能证明下述复现是该截图的唯一原因。
 

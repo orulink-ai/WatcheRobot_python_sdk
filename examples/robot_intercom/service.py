@@ -345,10 +345,12 @@ class IntercomService:
                     self._record("device_state", state=data.get("state"), reason=data.get("reason"))
                     if data.get("state") in {"failed", "stopping", "stopped"} and state == "running":
                         self._device_end_reason = data.get("reason") or data["state"]
-            if (state == "running" and live and self._device_end_reason is None
+            if (state in {"connecting", "running"} and live and self._device_end_reason is None
+                    and (state == "running" or self.clock() < self._connect_due)
                     and self.clock() - self._device_ping_at >= 1):
-                self._online()
+                self._before_device_call(owner)
                 self.rtc.clock_ping(time.time_ns() // 1000)
+                self._owned(owner)
                 self._device_ping_at = self.clock()
         except Exception as error:
             with self._state_lock:
