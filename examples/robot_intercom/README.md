@@ -10,7 +10,7 @@
 2. 安装并运行“机器人对讲”，本机会打开应用网页。
 3. 点击“开始通话”，允许浏览器使用电脑麦克风。建议戴耳机避免现场声学回声。
 4. 使用“麦克风开启 / 已静音”控制向机器人发送声音；“现场声音”控制本机收听。
-5. 通话中点击“拍照”，收到照片后点击“保存照片”。不启动持续视频，不使用会占用显示和音频的拍照反馈效果。
+5. 通话中点击“拍照”，界面立即显示预计剩余秒数，收到照片后点击“保存照片”。不启动持续视频，不使用会占用显示和音频的拍照反馈效果。
 6. 点击“结束通话”释放通话与嘴型。关闭页面同样请求释放；浏览器异常退出后，本机连接关闭或失去响应也会触发清理。
 
 只支持局域网，不提供公网穿透、STUN/TURN、AI 回答、语音识别或云端录音。现场声音支持本机 RNNoise 降噪，可通过复选框关闭；处理器不可用时使用原始现场声音。第三方许可见 `web/RNNOISE-NOTICE.md` 与相邻许可证文件。
@@ -24,6 +24,12 @@
 - Windows 照片位于 `%LOCALAPPDATA%/WatcheRobot/robot-intercom/photos`，按独立文件保存。照片不会进入发布源码，应用也不上传照片。
 - 结束应用会停止本应用拥有的通话和音频跟随表情；不宣称恢复固件的随机 SD 表情及自动行为。
 - 一次管理一台机器人。通话和资源释放期间不要切换设备；临时断线后，可在原配对会话恢复连接并重试释放。若重新配对产生了新会话，应用拒绝向新会话发送旧通话的释放指令，此时需确认原机器人已结束通话后重启应用。
+
+## 拍照等待反馈
+
+点击后立即向机器人请求拍照，不额外等待倒计时结束才触发快门。当前 PTL 相机切换到拍照模式后需要预热曝光、等待有效帧并丢弃旧帧；实机测得预热约 1.2 秒，从点击到照片显示约 1.8～2.0 秒。预热用于避免第一张照片发黑，没有为缩短等待而取消。
+
+界面默认显示“预计还需 2 秒”，并根据当前页面此前成功拍照的耗时调整下一次估计。倒计时是等待估计，不是精确快门时刻。超过估计仍未收到照片时，会显示已经等待的秒数；收到后显示“正在显示照片”，图片解码成功才更新预览与保存链接。拍照中禁止重复点击，通话保活继续。超过 15 秒提示重试，失败时保留上一张照片；关闭页面会取消本机请求和计时器。
 
 ## 通话保活与诊断
 
@@ -54,7 +60,9 @@ watcherobot app submit . --provider gitee --commit <publish 返回的完整提�
 
 ```text
 python -m pytest tests/test_robot_intercom.py tests/application/test_rtc.py
-node --test tests/js/test_robot_intercom.mjs tests/js/test_rtc_audio_capture.mjs tests/js/test_rtc_audio_latency.mjs tests/js/test_rtc_connection_recovery.mjs tests/js/test_rtc_noise_playback.mjs tests/js/test_rtc_noise_suppression.mjs
+node --test tests/js/test_robot_intercom.mjs tests/js/test_robot_intercom_photo.mjs tests/js/test_rtc_audio_capture.mjs tests/js/test_rtc_audio_latency.mjs tests/js/test_rtc_connection_recovery.mjs tests/js/test_rtc_noise_playback.mjs tests/js/test_rtc_noise_suppression.mjs
 ```
 
 服务层测试覆盖能力门禁、实际播放嘴型启用顺序、启动失败与丢失确认后的释放、通话中拍照、旧页面隔离、设备切换保护、停止失败重试、拍照中的后端保活、页面暂停与退出、本机连接来源校验、诊断以及稳定端口。浏览器控制器测试覆盖麦克风权限晚到、启动确认晚到、本机连接确认晚到、释放重试、页面退出原因与静音轨道。自动测试不能替代实体听感与 LCD 视觉验收。
+
+拍照控制器独立测试覆盖立即请求、防重复点击、超出预计时间、等待图片解码、请求和解码失败、超时中止、页面退出、过期结果隔离及下一次耗时估计。

@@ -318,6 +318,33 @@ h1 {
   object-fit: contain;
   max-height: 400px;
 }
+.photo-progress {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(239, 242, 232, 0.96);
+  color: var(--ink);
+  text-align: center;
+  padding: 24px;
+}
+.photo-progress p {
+  margin: 0;
+  font-size: 14px;
+}
+.photo-progress #photoProgressDetail {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.photo-countdown {
+  font-size: 64px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
 .photo-actions {
   display: flex;
   align-items: center;
@@ -344,7 +371,7 @@ h1 {
   gap: 10px;
   align-items: center;
 }
-.camera-button span {
+.camera-button span:first-child {
   font-size: 22px;
 }
 footer {

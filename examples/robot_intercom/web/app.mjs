@@ -1,20 +1,21 @@
 import { createCallController } from "./call-controller.mjs";
 import { createRtcNoisePlayback } from "./rtc-noise-playback.mjs";
 import { connectCallPresence } from "./call-presence.mjs";
+import { createPhotoController } from "./photo-controller.mjs";
 
 const $ = (id) => document.getElementById(id);
 let status = null,
-  photoPending = false,
   listening = true,
   noise = null,
   noiseAbort = null,
   refreshTimer;
 let lastMediaReport = 0;
-async function api(path, body) {
+async function api(path, body, signal) {
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
   const result = await response.json();
   if (!response.ok) throw Error(result.error || "无法连接应用，请重新打开");
@@ -46,7 +47,8 @@ function render() {
   $("mute").disabled = !["running", "connecting"].includes(call.state);
   $("mute").textContent = call.muted ? "麦克风已静音" : "麦克风开启";
   $("mute").setAttribute("aria-pressed", String(call.muted));
-  $("capture").disabled = call.state !== "running" || photoPending;
+  $("capture").disabled =
+    call.state !== "running" || photoController.snapshot().busy;
   $("callVisual").dataset.state = call.state;
   $("callTitle").textContent = titles[call.state];
   document.body.dataset.callState = call.state;
@@ -161,18 +163,41 @@ $("resumeAudio").onclick = async () => {
   await noise?.resume();
   await playRemote($("remoteAudio").srcObject);
 };
-$("capture").onclick = async () => {
-  if (photoPending) return;
-  photoPending = true;
-  render();
-  $("photoStatus").textContent = "正在拍照…";
-  try {
-    const photo = await api("/api/photo", {
-      request_id: controller.snapshot().requestId,
-    });
+const photoController = createPhotoController({
+  capture: (requestId, signal) =>
+    api("/api/photo", { request_id: requestId }, signal),
+  load: async (photo, signal) => {
     const probe = new Image();
+    const cancelImage = () => {
+      probe.src = "";
+    };
+    signal.addEventListener("abort", cancelImage, { once: true });
     probe.src = photo.url;
-    await probe.decode();
+    try {
+      await probe.decode();
+      return probe;
+    } finally {
+      signal.removeEventListener("abort", cancelImage);
+    }
+  },
+  onProgress: ({ phase, remainingSeconds, elapsedSeconds }) => {
+    const loading = phase === "loading";
+    $("photoProgress").hidden = false;
+    $("photoFrame").setAttribute("aria-busy", "true");
+    $("captureLabel").textContent = "拍照中…";
+    $("photoProgressTitle").textContent = loading ? "正在显示照片" : "正在拍照";
+    $("photoCountdown").textContent =
+      loading || remainingSeconds === 0 ? "…" : remainingSeconds;
+    const message = loading
+      ? "照片已收到，正在显示…"
+      : remainingSeconds > 0
+        ? `预计还需 ${remainingSeconds} 秒，通话继续。`
+        : `照片仍在处理中，已等待 ${elapsedSeconds} 秒。`;
+    $("photoProgressDetail").textContent = message;
+    $("photoStatus").textContent = message;
+    render();
+  },
+  onPhoto: (photo, probe, elapsedMs) => {
     $("photo").src = photo.url;
     $("photo").hidden = false;
     $("emptyPhoto").hidden = true;
@@ -181,15 +206,23 @@ $("capture").onclick = async () => {
     $("download").hidden = false;
     $("photoStatus").textContent =
       `${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} · ${probe.naturalWidth} × ${probe.naturalHeight}`;
-  } catch (error) {
+    document.body.dataset.photoElapsedMs = Math.round(elapsedMs);
+  },
+  onError: (error) => {
     $("photoStatus").textContent = error.message;
-  } finally {
-    photoPending = false;
+  },
+  onIdle: () => {
+    $("photoProgress").hidden = true;
+    $("photoFrame").setAttribute("aria-busy", "false");
+    $("captureLabel").textContent = "拍照";
     render();
-  }
-};
+  },
+});
+$("capture").onclick = () =>
+  photoController.take(controller.snapshot().requestId);
 window.addEventListener("pagehide", () => {
   clearTimeout(refreshTimer);
+  photoController.cancel();
   controller.leave();
 });
 document.addEventListener("visibilitychange", () => {
