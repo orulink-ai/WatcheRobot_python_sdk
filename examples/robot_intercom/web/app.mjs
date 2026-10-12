@@ -10,6 +10,7 @@ let status = null,
   noiseAbort = null,
   refreshTimer;
 let lastMediaReport = 0;
+let photoController = null;
 async function api(path, body, options = {}) {
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
@@ -84,6 +85,7 @@ const controller = createCallController({
       }).catch(() => {});
   },
   onState: (call) => {
+    photoController?.updateCall(call);
     if (call.message) $("message").textContent = call.message;
     render();
   },
@@ -163,7 +165,11 @@ $("resumeAudio").onclick = async () => {
   await noise?.resume();
   await playRemote($("remoteAudio").srcObject);
 };
-const photoController = createPhotoController({
+photoController = createPhotoController({
+  isCurrent: (requestId) => {
+    const call = controller.snapshot();
+    return call.requestId === requestId && call.state === "running";
+  },
   capture: (requestId, signal) =>
     api("/api/photo", { request_id: requestId }, { signal }),
   load: async (photo, signal) => {
@@ -210,6 +216,9 @@ const photoController = createPhotoController({
   },
   onError: (error) => {
     $("photoStatus").textContent = error.message;
+  },
+  onCancel: () => {
+    $("photoStatus").textContent = "已停止等待照片。通话中可重新拍照。";
   },
   onIdle: () => {
     $("photoProgress").hidden = true;

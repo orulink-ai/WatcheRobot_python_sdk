@@ -2,10 +2,12 @@
 export function createPhotoController({
   capture,
   load,
+  isCurrent = () => true,
   onProgress = () => {},
   onPhoto = () => {},
   onError = () => {},
   onIdle = () => {},
+  onCancel = () => {},
   clock = () => performance.now(),
   schedule = setTimeout,
   cancel = clearTimeout,
@@ -31,13 +33,14 @@ export function createPhotoController({
   const controller = {
     snapshot: () => ({ busy: active !== null }),
     async take(requestId) {
-      if (active) return false;
+      if (active || !isCurrent(requestId)) return false;
       const abort = new AbortController();
       let interrupt;
       const interruption = new Promise((resolve, reject) => {
         interrupt = reject;
       });
       const job = {
+        requestId,
         abort,
         interrupt,
         started: clock(),
@@ -59,11 +62,11 @@ export function createPhotoController({
       }, timeoutMs);
       const work = (async () => {
         const photo = await capture(requestId, abort.signal);
-        if (active !== job) return false;
+        if (active !== job || !isCurrent(requestId)) return false;
         job.phase = "loading";
         notify(job);
         const image = await load(photo, abort.signal);
-        if (active !== job) return false;
+        if (active !== job || !isCurrent(requestId)) return false;
         const duration = elapsed(job);
         onPhoto(photo, image, duration);
         estimate = Math.min(
@@ -75,7 +78,8 @@ export function createPhotoController({
       try {
         return await Promise.race([work, interruption]);
       } catch (error) {
-        if (active === job && !job.cancelled) onError(error);
+        if (active === job && !job.cancelled && isCurrent(requestId))
+          onError(error);
         return false;
       } finally {
         if (active === job) {
@@ -85,6 +89,10 @@ export function createPhotoController({
         }
       }
     },
+    updateCall({ requestId, state }) {
+      if (active && (requestId !== active.requestId || state !== "running"))
+        controller.cancel();
+    },
     cancel() {
       const job = active;
       if (!job) return;
@@ -93,6 +101,7 @@ export function createPhotoController({
       clear(job);
       job.interrupt(Error("Photo cancelled"));
       job.abort.abort();
+      onCancel();
       onIdle();
     },
   };

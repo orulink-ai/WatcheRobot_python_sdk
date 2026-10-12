@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import asyncio
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -282,6 +283,54 @@ def test_presence_rejects_stale_or_duplicate_connections(rig):
     with pytest.raises(rig.module.IntercomError):
         rig.service.attach_presence("request-a")
     rig.service.detach_presence("request-a", token)
+
+
+@pytest.mark.parametrize("phase", ["registration", "registration_double_cancel", "handshake"])
+def test_cancelled_presence_registration_or_handshake_releases_robot(rig, phase):
+    from starlette.datastructures import URL
+
+    rig.service.start("request-a")
+    entered, release = threading.Event(), threading.Event()
+    original = rig.service.attach_presence
+    def attach(request_id):
+        token = original(request_id)
+        if phase.startswith("registration"):
+            entered.set()
+            assert release.wait(3)
+        return token
+    rig.service.attach_presence = attach
+    app = rig.module.create_web_app(rig.service, web_root=ROOT / "web")
+    endpoint = next(route.endpoint for route in app.routes if route.path == "/api/call/presence")
+
+    async def scenario():
+        accepting = asyncio.Event()
+        class Socket:
+            headers = {"origin": "http://127.0.0.1:12345"}
+            url = URL("ws://127.0.0.1:12345/api/call/presence?request_id=request-a")
+            query_params = {"request_id": "request-a"}
+            async def accept(self):
+                accepting.set()
+                await asyncio.Future()
+            async def close(self, **kwargs):
+                pass
+        task = asyncio.create_task(endpoint(Socket()))
+        if phase.startswith("registration"):
+            assert await asyncio.to_thread(entered.wait, 1)
+        else:
+            await asyncio.wait_for(accepting.wait(), 1)
+        task.cancel()
+        if phase == "registration_double_cancel":
+            await asyncio.sleep(0)
+            task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.gather(*getattr(app.state, "presence_cleanup_tasks", set()))
+        assert rig.service._presence is None
+        assert not rig.rtc.active
+        assert rig.calls[-1] == ("follow", False)
+        assert rig.service.status()["state"] == "idle"
+    asyncio.run(scenario())
 
 
 def test_diagnostics_retain_terminal_reason_and_never_record_signal_payload(rig):

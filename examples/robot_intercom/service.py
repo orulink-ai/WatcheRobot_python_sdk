@@ -443,6 +443,21 @@ class FeedbackRequest(CallRequest):
 
 
 def create_web_app(service, *, web_root):
+    presence_cleanup_tasks = set()
+
+    async def cleanup_presence(registration, request_id):
+        try:
+            token = await registration
+        except IntercomError:
+            return
+        await asyncio.to_thread(service.detach_presence, request_id, token)
+
+    def cleanup_done(task):
+        presence_cleanup_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            error = task.exception()
+            LOG.error("Presence cleanup failed", exc_info=(type(error), error, error.__traceback__))
+
     @asynccontextmanager
     async def lifespan(app):
         done = asyncio.Event()
@@ -459,9 +474,12 @@ def create_web_app(service, *, web_root):
         finally:
             done.set()
             await worker
+            if presence_cleanup_tasks:
+                await asyncio.gather(*presence_cleanup_tasks, return_exceptions=True)
             await asyncio.to_thread(service.close)
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.presence_cleanup_tasks = presence_cleanup_tasks
 
     @app.middleware("http")
     async def same_origin(request, call_next):
@@ -513,20 +531,24 @@ def create_web_app(service, *, web_root):
                 or not re.fullmatch(r"[A-Za-z0-9._:-]{8,63}", request_id)):
             await socket.close(code=1008)
             return
+        # to_thread continues after its waiter is cancelled. Retain registration
+        # and its eventual token so cancellation cannot leave a phantom page.
+        registration = asyncio.create_task(asyncio.to_thread(service.attach_presence, request_id))
         try:
-            token = await asyncio.to_thread(service.attach_presence, request_id)
-        except IntercomError:
-            await socket.close(code=1008)
-            return
-        try:
+            await asyncio.shield(registration)
             await socket.accept()
             await socket.send_json({"ready": True})
             while True:
                 await socket.receive_text()
         except WebSocketDisconnect:
             pass
+        except IntercomError:
+            await socket.close(code=1008)
         finally:
-            await asyncio.to_thread(service.detach_presence, request_id, token)
+            cleanup = asyncio.create_task(cleanup_presence(registration, request_id))
+            presence_cleanup_tasks.add(cleanup)
+            cleanup.add_done_callback(cleanup_done)
+            await asyncio.shield(cleanup)
 
     @app.post("/api/photo")
     async def photo(body: CallRequest):

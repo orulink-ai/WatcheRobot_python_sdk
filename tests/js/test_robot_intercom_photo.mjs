@@ -195,3 +195,49 @@ test("completed captures update the next estimate within a bounded range", async
   r.controller.cancel();
   await next;
 });
+
+test("a call ending or being replaced invalidates its pending photo before display", async () => {
+  for (const nextId of [null, "call-b"]) {
+    const image = deferred();
+    let callId = "call-a";
+    const r = rig({
+      load: () => image.promise,
+      isCurrent: (id) => callId === id,
+    });
+    const work = r.controller.take("call-a");
+    await flush();
+    callId = nextId;
+    image.resolve({ naturalWidth: 1 });
+    assert.equal(await work, false);
+    assert.equal(r.photos.length, 0);
+    assert.equal(r.errors.length, 0);
+    assert.equal(r.timers.size, 0);
+  }
+});
+
+test("call state updates cancel capture immediately for stop, failure, and replacement", async () => {
+  for (const call of [
+    { requestId: "call-a", state: "stopping" },
+    { requestId: "call-a", state: "cleanup_required" },
+    { requestId: "call-b", state: "starting" },
+  ]) {
+    const pending = deferred();
+    let signal;
+    const r = rig({
+      capture: (id, value) => {
+        signal = value;
+        return pending.promise;
+      },
+    });
+    const work = r.controller.take("call-a");
+    r.controller.updateCall({ requestId: "call-a", state: "running" });
+    assert.equal(signal.aborted, false);
+    r.controller.updateCall(call);
+    assert.equal(await work, false);
+    assert.equal(signal.aborted, true);
+    pending.resolve({ url: "/late.jpg" });
+    await flush();
+    assert.equal(r.photos.length, 0);
+    assert.equal(r.timers.size, 0);
+  }
+});
