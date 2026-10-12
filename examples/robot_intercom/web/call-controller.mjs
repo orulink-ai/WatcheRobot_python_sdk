@@ -18,6 +18,7 @@ export function createCallController({
   makeId = () => crypto.randomUUID(),
   schedule = (fn, ms) => setTimeout(fn, ms),
   cancel = (id) => clearTimeout(id),
+  requestTimeoutMs = 20000,
   onState = () => {},
   onRemote = () => {},
   onStats = () => {},
@@ -52,6 +53,26 @@ export function createCallController({
     }, delay);
     timers.add(id);
     return id;
+  }
+  async function request(path, body) {
+    const abort = new AbortController();
+    let timer;
+    const deadline = new Promise((_, reject) => {
+      // Keep request deadlines independent of dispose(): stop may still need
+      // the bounded allocation result before sending its scoped release.
+      timer = schedule(() => {
+        abort.abort();
+        reject(Error("应用请求超时，请重试结束通话"));
+      }, requestTimeoutMs);
+    });
+    try {
+      return await Promise.race([
+        api(path, body, { signal: abort.signal }),
+        deadline,
+      ]);
+    } finally {
+      cancel(timer);
+    }
   }
   function dispose(closePresence = true) {
     if (closePresence) {
@@ -103,7 +124,7 @@ export function createCallController({
   async function poll(token, id) {
     if (!current(token)) return;
     try {
-      const payload = await api(
+      const payload = await request(
         `/api/call/events?request_id=${encodeURIComponent(id)}&after=${poll.cursor}`,
       );
       if (!current(token)) return;
@@ -156,7 +177,7 @@ export function createCallController({
   async function heartbeat(token, id) {
     if (!current(token)) return;
     try {
-      await api("/api/call/heartbeat", {
+      await request("/api/call/heartbeat", {
         request_id: id,
         browser_send_us: Math.round(
           (performance.timeOrigin + performance.now()) * 1000,
@@ -190,14 +211,19 @@ export function createCallController({
           received += report.packetsReceived || 0;
           lost += Math.max(0, report.packetsLost || 0);
           jitterUs = Math.max(jitterUs, Math.round((report.jitter || 0) * 1e6));
-          concealed += report.concealedSamples || 0;
+          // Device feedback uses 20 ms frames, while RTC reports PCM samples.
+          const rate = reports.get(report.codecId)?.clockRate;
+          if (rate > 0)
+            concealed += Math.floor(
+              ((report.concealedSamples || 0) * 50) / rate,
+            );
           const sample = sampleAudioJitterBuffer(jitter, report);
           jitter = sample.counter;
           queue = Math.max(queue, sample.actualMs);
         }
       });
       onStats({ sent, received, lost, level });
-      await api("/api/call/feedback", {
+      await request("/api/call/feedback", {
         request_id: id,
         display_fps_x100: 0,
         frame_age_p95_us: 0,
@@ -226,6 +252,10 @@ export function createCallController({
       allocated = false;
       muted = false;
       update("starting", "请允许使用电脑麦克风…");
+      const connectionDeadline = later(() => {
+        if (current(token) && state !== "running")
+          fail(Error("连接超时，请确认电脑与机器人在同一局域网"));
+      }, 30000);
       try {
         const microphone = await getMicrophone();
         if (!current(token)) {
@@ -234,9 +264,10 @@ export function createCallController({
         }
         stream = microphone;
         allocated = true;
-        allocation = api("/api/call/start", { request_id: id });
+        allocation = request("/api/call/start", { request_id: id });
         await allocation;
         if (!current(token)) return false;
+        heartbeat(token, id);
         const connectedPresence = await connectPresence(id, () => {
           if (current(token)) fail(Error("本机通话连接已断开，请重新开始"));
         });
@@ -262,9 +293,11 @@ export function createCallController({
             ice_state: activePeer.iceConnectionState,
           });
           recovery?.update(activePeer.connectionState);
-          if (activePeer.connectionState === "connected")
+          if (activePeer.connectionState === "connected") {
+            cancel(connectionDeadline);
+            timers.delete(connectionDeadline);
             update("running", "通话已连接，你的声音正在传到机器人。");
-          else if (activePeer.connectionState === "disconnected")
+          } else if (activePeer.connectionState === "disconnected")
             update("connecting", "网络短暂中断，正在恢复…");
         });
         activePeer.addEventListener("iceconnectionstatechange", () => {
@@ -285,7 +318,7 @@ export function createCallController({
         });
         activePeer.addEventListener("icecandidate", (event) => {
           if (!current(token) || !event.candidate) return;
-          api("/api/call/signal", {
+          request("/api/call/signal", {
             request_id: id,
             kind: "candidate",
             candidate: event.candidate.candidate,
@@ -299,7 +332,7 @@ export function createCallController({
         if (!current(token)) return false;
         await activePeer.setLocalDescription(offer);
         if (!current(token)) return false;
-        await api("/api/call/signal", {
+        await request("/api/call/signal", {
           request_id: id,
           kind: "offer",
           sdp: offer.sdp,
@@ -308,12 +341,7 @@ export function createCallController({
         update("connecting", "正在连接同一局域网里的机器人…");
         poll.cursor = 0;
         poll(token, id);
-        heartbeat(token, id);
         feedback(token, id);
-        later(() => {
-          if (current(token) && activePeer.connectionState !== "connected")
-            fail(Error("连接超时，请确认电脑与机器人在同一局域网"));
-        }, 15000);
         return true;
       } catch (error) {
         if (!current(token)) return false;
@@ -340,7 +368,7 @@ export function createCallController({
         try {
           if (needsRelease) {
             await pending?.catch(() => {});
-            const result = await api("/api/call/stop", {
+            const result = await request("/api/call/stop", {
               request_id: id,
               reason,
             });

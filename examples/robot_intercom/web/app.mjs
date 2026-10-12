@@ -10,12 +10,12 @@ let status = null,
   noiseAbort = null,
   refreshTimer;
 let lastMediaReport = 0;
-async function api(path, body, signal) {
+async function api(path, body, options = {}) {
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
-    signal,
+    signal: options.signal || AbortSignal.timeout(20000),
   });
   const result = await response.json();
   if (!response.ok) throw Error(result.error || "无法连接应用，请重新打开");
@@ -165,7 +165,7 @@ $("resumeAudio").onclick = async () => {
 };
 const photoController = createPhotoController({
   capture: (requestId, signal) =>
-    api("/api/photo", { request_id: requestId }, signal),
+    api("/api/photo", { request_id: requestId }, { signal }),
   load: async (photo, signal) => {
     const probe = new Image();
     const cancelImage = () => {

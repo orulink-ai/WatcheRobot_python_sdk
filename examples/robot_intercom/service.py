@@ -75,9 +75,11 @@ class IntercomService:
         self._follow = False
         self._state = "idle"
         self._last_seen = 0.0
+        self._connect_due = 0.0
         self._address = None
         self._closing = False
         self._last_error = None
+        self._released_requests = {}
         self._presence = None
         self._device_ping_at = 0.0
         self._rtc_cursor = 0
@@ -168,21 +170,37 @@ class IntercomService:
         return connection
 
     def _owned(self, request_id):
-        if request_id != self._owner or self._owner is None:
-            raise IntercomError("该页面不拥有当前通话，请刷新页面")
-        if self._state not in {"starting", "running"}:
-            raise IntercomError("通话正在释放，请稍候")
+        with self._state_lock:
+            if request_id != self._owner or self._owner is None:
+                raise IntercomError("该页面不拥有当前通话，请刷新页面")
+            if self._state in {"starting", "connecting"} and self.clock() >= self._connect_due:
+                self._state = "cleanup_required"
+                self._last_error = "通话连接超时，请重新开始"
+                raise IntercomError(self._last_error)
+            if self._state not in {"starting", "connecting", "running"}:
+                raise IntercomError("通话正在释放，请稍候")
+
+    def _before_device_call(self, request_id):
+        self._owned(request_id)
+        self._online()
+        # Status queries may themselves cross the deadline. Check again next
+        # to the device side effect, after all potentially slow preparation.
+        self._owned(request_id)
 
     def start(self, request_id):
         with self._lifecycle:
             if self._closing:
                 raise IntercomError("应用正在退出")
+            if request_id in self._released_requests:
+                raise IntercomError("该通话请求已结束，请重新开始通话")
             if self._owner is not None:
-                if self._owner == request_id and self._state == "running":
-                    self._online()
+                if self._owner == request_id and self._state in {"connecting", "running"}:
+                    self._before_device_call(request_id)
                     return self.status()
                 raise IntercomError("已有通话或待释放资源，请先结束通话")
             connection = self._online()
+            if not (connection.get("request_id") or connection.get("connection_id")):
+                raise IntercomError("设备配对身份尚未确认，请重新连接")
             self.robot.refresh_device_info(timeout=2.0)
             missing = REQUIRED.difference(self.robot.capabilities)
             if missing:
@@ -195,6 +213,7 @@ class IntercomService:
                 self._connection_id = connection.get("request_id") or connection.get("connection_id")
                 self._state, self._last_error = "starting", None
                 self._last_seen = self.clock()
+                self._connect_due = self._last_seen + 30
                 self._address = lan_address(connection)
                 self._follow = True  # Enable may be applied even when its ACK is lost.
                 self._presence = None
@@ -204,11 +223,14 @@ class IntercomService:
                 self._history.clear()
             self._record("call_start")
             try:
+                self._before_device_call(request_id)
                 self.robot.expression_runtime.set_audio_follow(True)
-                self._online()
+                self._before_device_call(request_id)
                 self.rtc.start(mode="audio")
                 with self._state_lock:
-                    self._state = "running"
+                    if self.clock() >= self._connect_due:
+                        raise IntercomError("通话连接超时，请重新开始")
+                    self._state = "running" if self.rtc.snapshot().get("state") == "connected" else "connecting"
                     self._last_seen = self.clock()
                 return self.status()
             except Exception:
@@ -222,6 +244,14 @@ class IntercomService:
 
     def stop(self, request_id=None, *, reason="user"):
         with self._lifecycle, self._signal_lock:
+            # Remember scoped cancellations even if their start request has
+            # not reached the owner yet. Bounded replay history prevents a
+            # delayed allocation from undoing the browser's confirmed release.
+            retired = request_id or self._owner
+            if retired is not None:
+                self._released_requests[retired] = True
+                if len(self._released_requests) > 256:
+                    self._released_requests.pop(next(iter(self._released_requests)))
             if self._owner is None:
                 return {"matched": True, "state": "idle"}
             if request_id is not None and request_id != self._owner:
@@ -248,9 +278,9 @@ class IntercomService:
     def capture(self, request_id):
         # Stop/shutdown drains a photo before releasing the display or transport.
         with self._lifecycle:
-            self._owned(request_id)
-            self._online()
+            self._before_device_call(request_id)
             image = self.robot.camera.capture(timeout=10.0)
+            self._owned(request_id)
             self.artifacts_dir.mkdir(parents=True, exist_ok=True)
             name = f"photo-{uuid.uuid4().hex}.jpg"
             target = self.artifacts_dir / name
@@ -260,7 +290,6 @@ class IntercomService:
     def signal(self, request_id, data):
         with self._signal_lock:
             self._owned(request_id)
-            self._online()
             value = data.get("sdp") if data.get("kind") == "offer" else data.get("candidate")
             if not isinstance(value, str) or not value:
                 raise ValueError("缺少 RTC 信令内容")
@@ -268,18 +297,20 @@ class IntercomService:
                 if self._address is None:
                     raise IntercomError("无法确定电脑局域网地址")
                 value = MDNS.sub(lambda match: match[1] + self._address + match[3], value)
+            self._before_device_call(request_id)
             if data["kind"] == "offer":
                 self.rtc.send_offer(value)
             else:
                 self.rtc.send_candidate(value, sdp_mid=data.get("sdp_mid", "0"),
                                         sdp_mline_index=data.get("sdp_mline_index", 0))
+            self._owned(request_id)
             return {"ok": True}
 
     def heartbeat(self, request_id, browser_send_us):
         with self._signal_lock:
-            self._owned(request_id)
-            self._online()
+            self._before_device_call(request_id)
             self.rtc.clock_ping(browser_send_us)
+            self._owned(request_id)
             with self._state_lock:
                 self._last_seen = self.clock()
             return {"ok": True}
@@ -291,9 +322,9 @@ class IntercomService:
 
     def feedback(self, request_id, metrics):
         with self._signal_lock:
-            self._owned(request_id)
-            self._online()
+            self._before_device_call(request_id)
             self.rtc.feedback(**metrics)
+            self._owned(request_id)
             return {"ok": True}
 
     def _maintain_signal(self):
@@ -333,19 +364,32 @@ class IntercomService:
         if not self._lifecycle.acquire(blocking=False):
             return
         try:
-            with self._state_lock:
-                owner = self._owner
-                expired = self._presence is None and self.clock() - self._last_seen > 10
-                pending = self._state == "cleanup_required"
-                terminal = self._device_end_reason is not None
-            offline = owner and not self.device_status().get("online")
-            if owner and (expired or pending or terminal or offline):
-                try:
-                    reason = "device_terminal" if terminal else "page_expired" if expired else "device_offline" if offline else "cleanup_retry"
-                    self.stop(owner, reason=reason)
-                except Exception as error:
-                    with self._state_lock:
-                        self._last_error = str(error)
+            # Heartbeats and signals may be awaiting bounded SDK sends. Check
+            # expiry only after their state update, without blocking maintenance.
+            if not self._signal_lock.acquire(blocking=False):
+                return
+            try:
+                with self._state_lock:
+                    owner = self._owner
+                    now = self.clock()
+                    expired = (now >= self._connect_due if self._state == "connecting"
+                               else self._presence is None and now - self._last_seen > 10)
+                    if (self._state == "connecting" and not expired
+                            and self.rtc.snapshot().get("state") == "connected"):
+                        self._state = "running"
+                        self._last_seen = now
+                    pending = self._state == "cleanup_required"
+                    terminal = self._device_end_reason is not None
+                offline = owner and not self.device_status().get("online")
+                if owner and (expired or pending or terminal or offline):
+                    try:
+                        reason = "device_terminal" if terminal else "page_expired" if expired else "device_offline" if offline else "cleanup_retry"
+                        self.stop(owner, reason=reason)
+                    except Exception as error:
+                        with self._state_lock:
+                            self._last_error = str(error)
+            finally:
+                self._signal_lock.release()
         finally:
             self._lifecycle.release()
 

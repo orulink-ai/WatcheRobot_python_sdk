@@ -22,6 +22,7 @@ def rig(tmp_path):
                       preview_websocket_url="ws://192.168.1.10:80/preview")
     class Rtc:
         active = False
+        state = "connected"
         fail_start = False
         fail_stop = False
         def start(self, *, mode):
@@ -37,7 +38,7 @@ def rig(tmp_path):
             self.active = False
             return True
         def snapshot(self):
-            return dict(active=self.active, state="connected" if self.active else "idle", stats={})
+            return dict(active=self.active, state=self.state if self.active else "idle", stats={})
         def clock_ping(self, value):
             calls.append(("ping", value))
         def send_offer(self, value):
@@ -350,6 +351,215 @@ def test_invalid_origin_preferences_are_replaced_safely(tmp_path):
         with module.open_listener(state) as listener:
             assert listener.getsockname()[0] == "127.0.0.1"
             assert listener.getsockname()[1] > 1023
+
+
+def test_stop_before_late_start_cannot_reallocate_hardware(rig):
+    assert rig.service.stop("request-a")["state"] == "idle"
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.start("request-a")
+    assert not rig.calls
+    rig.service.start("request-b")
+
+
+def test_online_device_without_pairing_identity_cannot_start_hardware(rig):
+    rig.connection.pop("connection_id")
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.start("request-a")
+    assert not rig.calls
+
+
+def test_slow_offer_within_negotiation_deadline_is_not_expired(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.clock[0] = 11
+    rig.service.maintain()
+    assert rig.rtc.active
+    assert rig.service.status()["request_id"] == "request-a"
+    rig.clock[0] = 31
+    rig.service.maintain()
+    assert not rig.rtc.active
+    assert rig.service.status()["request_id"] is None
+    with pytest.raises(rig.module.IntercomError):
+        rig.service.signal("request-a", {"kind": "offer", "sdp": "late"})
+
+
+def test_connected_call_switches_to_heartbeat_expiry(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.clock[0] = 15
+    rig.rtc.state = "connected"
+    rig.service.maintain()
+    assert rig.service.status()["state"] == "running"
+    rig.clock[0] = 26
+    rig.service.maintain()
+    assert not rig.rtc.active
+
+
+def test_presence_cannot_extend_the_negotiation_deadline(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.service.attach_presence("request-a")
+    rig.clock[0] = 30
+    rig.rtc.state = "connected"
+    rig.service.maintain()
+    assert not rig.rtc.active
+    assert rig.service.status()["state"] == "idle"
+
+
+def test_presence_keeps_a_timely_connected_call_alive_during_browser_pause(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.service.attach_presence("request-a")
+    rig.clock[0] = 29
+    rig.rtc.state = "connected"
+    rig.service.maintain()
+    assert rig.service.status()["state"] == "running"
+    rig.clock[0] = 54
+    rig.service.maintain()
+    assert rig.rtc.active
+    assert any(call[0] == "ping" for call in rig.calls)
+
+
+@pytest.mark.parametrize("observed_at", [30, 31])
+def test_connected_snapshot_at_or_after_deadline_is_released(rig, observed_at):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.clock[0] = observed_at
+    rig.rtc.state = "connected"
+    rig.service.maintain()
+    assert not rig.rtc.active
+    assert rig.service.status()["request_id"] is None
+
+
+def test_connection_just_before_deadline_can_run(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    rig.clock[0] = 29.999
+    rig.rtc.state = "connected"
+    rig.service.maintain()
+    assert rig.rtc.active
+    assert rig.service.status()["state"] == "running"
+
+
+def test_blocked_start_cannot_accept_connected_after_deadline(rig):
+    original_start = rig.rtc.start
+    def delayed_start(**kwargs):
+        original_start(**kwargs)
+        rig.clock[0] = 30
+    rig.rtc.start = delayed_start
+    with pytest.raises(rig.module.IntercomError, match="超时"):
+        rig.service.start("request-a")
+    assert not rig.rtc.active
+    assert rig.service.status()["request_id"] is None
+
+
+@pytest.mark.parametrize("operation", ["signal", "heartbeat", "feedback", "events", "capture", "start"])
+def test_expired_negotiation_rejects_requests_before_maintenance(rig, operation):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    before = list(rig.calls)
+    rig.clock[0] = 30
+    args = {
+        "signal": ("request-a", {"kind": "offer", "sdp": "late"}),
+        "heartbeat": ("request-a", 1000), "feedback": ("request-a", {}),
+        "events": ("request-a", 0), "capture": ("request-a",), "start": ("request-a",),
+    }
+    with pytest.raises(rig.module.IntercomError, match="超时"):
+        getattr(rig.service, operation)(*args[operation])
+    assert rig.calls == before
+    assert rig.service.status()["state"] == "cleanup_required"
+    rig.service.maintain()
+    assert not rig.rtc.active
+
+
+def test_inflight_signal_crossing_deadline_requires_cleanup(rig):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    def slow_offer(value):
+        rig.calls.append(("offer", value))
+        rig.clock[0] = 31
+    rig.rtc.send_offer = slow_offer
+    rig.clock[0] = 29
+    with pytest.raises(rig.module.IntercomError, match="超时"):
+        rig.service.signal("request-a", {"kind": "offer", "sdp": "offer"})
+    assert rig.service.status()["state"] == "cleanup_required"
+    rig.service.maintain()
+    assert not rig.rtc.active
+
+
+@pytest.mark.parametrize("phase", ["follow", "online"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_start_deadline_before_rtc_does_not_allocate_and_preserves_cleanup(rig, phase, cleanup_fails):
+    def follow(enabled):
+        rig.calls.append(("follow", enabled))
+        if enabled and phase == "follow":
+            rig.clock[0] = 30
+        if not enabled and cleanup_fails:
+            raise TimeoutError("release unconfirmed")
+    rig.robot.expression_runtime.set_audio_follow = follow
+    original_status = rig.service.device_status
+    def status():
+        if phase == "online" and ("follow", True) in rig.calls:
+            rig.clock[0] = 30
+        return original_status()
+    rig.service.device_status = status
+    with pytest.raises(rig.module.IntercomError, match="超时"):
+        rig.service.start("request-a")
+    assert not any(call[0] == "rtc" for call in rig.calls)
+    assert rig.calls == [("follow", True), ("follow", False)]
+    assert rig.service.status()["state"] == ("cleanup_required" if cleanup_fails else "idle")
+    if cleanup_fails:
+        rig.robot.expression_runtime.set_audio_follow = lambda enabled: rig.calls.append(("follow", enabled))
+        rig.service.stop("request-a")
+        assert rig.service.status()["state"] == "idle"
+
+
+@pytest.mark.parametrize("operation", ["signal", "heartbeat", "feedback", "capture", "start"])
+def test_device_status_crossing_deadline_cannot_issue_new_operation(rig, operation):
+    rig.rtc.state = "connecting"
+    rig.service.start("request-a")
+    before = list(rig.calls)
+    original_capture = rig.robot.camera.capture
+    def capture(**kwargs):
+        rig.calls.append(("capture", None))
+        return original_capture(**kwargs)
+    rig.robot.camera.capture = capture
+    original_status = rig.service.device_status
+    def delayed_status():
+        rig.clock[0] = 30
+        return original_status()
+    rig.service.device_status = delayed_status
+    args = {
+        "signal": ("request-a", {"kind": "offer", "sdp": "late"}),
+        "heartbeat": ("request-a", 1000), "feedback": ("request-a", {}),
+        "capture": ("request-a",), "start": ("request-a",),
+    }
+    with pytest.raises(rig.module.IntercomError, match="超时"):
+        getattr(rig.service, operation)(*args[operation])
+    assert rig.calls == before
+    assert rig.service.status()["state"] == "cleanup_required"
+    rig.service.maintain()
+    assert not rig.rtc.active
+
+
+def test_pending_heartbeat_is_not_expired_while_it_holds_signal_lock(rig):
+    rig.service.start("request-a")
+    entered, release = threading.Event(), threading.Event()
+    def ping(value):
+        entered.set()
+        assert release.wait(3)
+    rig.rtc.clock_ping = ping
+    thread = threading.Thread(target=lambda: rig.service.heartbeat("request-a", 1000))
+    thread.start()
+    assert entered.wait(1)
+    rig.clock[0] = 11
+    rig.service.maintain()
+    assert rig.rtc.active
+    release.set()
+    thread.join(3)
+    assert not thread.is_alive()
+    rig.service.maintain()
+    assert rig.rtc.active
 
 
 def test_http_rejects_foreign_origin_and_private_files(rig):
