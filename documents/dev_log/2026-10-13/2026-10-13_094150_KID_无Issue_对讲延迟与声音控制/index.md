@@ -1,7 +1,7 @@
 # 对讲延迟与声音控制
 
 - 创建时间：2026-10-13 09:41:50 Asia/Shanghai；作者：KID；参与者：Codex。
-- 无 Issue；状态：声音功能阶段交付，延迟与硬件音量待验证；交付状态：准备提交与商店投稿，未合入。
+- 无 Issue；状态：声音功能阶段交付，延迟与硬件音量待验证；交付状态：源码已本地提交、Gitee 0.1.5 快照已上传、目录 #21 待审核，未合入正式目录。
 - 范围：robot_intercom 浏览器音频；保持 Daemon 内容无关路由和现有固件。
 
 ## 背景、目标与验收
@@ -75,3 +75,13 @@ node --test tests/js/test_intercom*.mjs tests/js/test_robot_intercom*.mjs tests/
 ```
 
 商店平台为 Gitee，当前开发者账号 KID_gitee。只读核对旧待审 #19 是该账号的 robot_intercom 0.1.3 请求，固定源码 19c80bd1fc96e1c96a61d1939e74e269bd94c830。准备发布新版固定快照并替换旧投稿；实际 SHA 与审核状态待远端返回后追加，不能提前称正式目录可下载。
+
+## 2026-10-13 10:29 Asia/Shanghai｜KID / Codex｜实际提交与商店回读
+
+- SDK 功能提交：`e62a3cd`（feat(intercom): 增加人声优先与实时声音控制并准备 0.1.5 商店投稿），22 个文件，752 行新增、45 行删除；SDK 工作树提交后干净。
+- 0.1.5 的实际 CLI `app check` 通过，发布文件集合 36 个；不含测试、前端开发依赖、本机环境、串口日志或缓存。
+- 实际调用 SDK `app publish examples/robot_intercom --provider gitee --jsonl` 成功，固定快照 [21d60bcdd58f51d66ed97243c498a805cdc67528](https://gitee.com/KID_gitee/WatcherRobot-com.orulink.robot_intercom/tree/21d60bcdd58f51d66ed97243c498a805cdc67528)。SDK 回读校验快照完成。
+- 在新版快照上传成功后，再核对旧 #19 作者、完整标题、旧 SHA 和 open 状态；使用系统当前登录账号关闭旧投稿，HTTP 200、state=closed，替换过时的 0.1.3 审核请求。
+- 实际调用 SDK `app submit examples/robot_intercom --provider gitee --commit 21d60bcdd58f51d66ed97243c498a805cdc67528 --jsonl` 成功，返回 [目录请求 #21](https://gitee.com/orulink-sz/watcherobot-app-store/pulls/21)、pr_status=pending。
+- 独立回读 #21：HTTP 200、state=open、author=KID_gitee，标题与正文包含本次完整快照 SHA。当前是已投稿待审核，不是已正式上架；本轮没有 GitHub push/PR/合入，也没有商店目录合入。用户本轮范围为 commit 与商店投稿。
+- 声纹隔离调研未引入新实现；本次发布仍是泛人声增强。延迟、硬件音量、真人轻声、双讲与啸叫验收缺口继续保留。
