@@ -6,6 +6,20 @@
 
 ## 使用
 
+### 0.1.5 声音设置
+
+- 机器人返回电脑的音频默认选“人声优先”：本机 RNNoise 语音概率驱动平滑衰减，保留约 200ms 的语音尾部，非语音增益最低为 0.2；不做硬静音，不识别特定说话人。“自然现场”保留较多环境音。
+- 关闭“现场降噪”直接播放原始 RTC stream，跳过约 20ms 的降噪算法缓冲。每次通话保留稳定的静音 RTC 消费者维持播放时钟，切换不重新建立 RTC。
+- “我的声音效果”提供原声、低沉、明亮、机器人音效，全部在浏览器处理。变调用约 40ms 的双读头窗口，保持输出时长；原声且发送音量 100% 时直接发送麦克风轨道，绕过效果处理图。
+- 当前“机器人通话音量”调整发送端数字增益 0–100%，不是系统音量或硬件响度读回。固件自适应播放增益可能部分抵消数字衰减，不能保证百分比与实际响度线性对应；真正系统音量控制需要新增设备协议，尚未实现。
+- 诊断展示网络 RTT、接收缓冲、浏览器实际目标及最低缓冲需求、麦克风报告延迟和发送图基准。未报告的数据用“—”，不把分段指标当作声学端到端延迟。
+
+### 0.1.5 Sound settings
+
+Speech focus uses local RNNoise and speech-probability-driven soft attenuation on robot audio heard on the computer. It preserves a 200ms speech tail and a nonzero gain floor; it does not identify a specific speaker. Natural ambience retains more environmental sound. Disabling noise reduction plays the original RTC stream directly. A stable muted consumer maintains the receiver clock throughout the call.
+
+Original / Deep / Bright / Robot effects process the outgoing voice locally. Original at 100% sends the native microphone track; pitch effects use a bounded 40ms window without changing duration. Call volume is outgoing digital attenuation, not a system-volume command. Firmware adaptive gain may partially offset attenuation. Hardware loudness and full acoustic latency remain acceptance gaps. Segment metrics are not end-to-end audio latency.
+
 1. 将电脑和机器人连接到同一局域网。
 2. 安装并运行“机器人对讲”，本机会打开应用网页。
 3. 点击页面顶部“连接机器人”。在机器人上打开“Python SDK”，输入其屏幕上的六位连接码；找不到时可展开填写机器人 IP。配对由桌面 Daemon 管理，页面显示查找、连接或失败状态。已在桌面配对的机器人会自动显示，无需重复连接。实际在线后点击“开始通话”，允许浏览器使用电脑麦克风。建议戴耳机避免现场声学回声。
@@ -14,15 +28,15 @@
 
 页面右上角可切换中文 / English。首次按浏览器首选支持语言选择；切换后在本机记住偏好。切换语言不重连机器人、不结束通话，连接弹窗、按钮、通话状态和错误提示同步切换。
 
-## 0.1.4 本地候选说明 / Local candidate notes
+## 0.1.4 历史候选说明 / Historical candidate notes
 
-应用清单当前为 0.1.4，退出诊断区分意外 presence 失联与显式页面退出。本阶段诊断与生命周期验证完成、源码待审，未宣称已合入；不能据版本号推断商店已合入或可下载。用户报告过声音重复并逐渐放大；该精确现象目前尚未在增益 12 候选上复现，啸叫专项验收未完成。本阶段不发布新商店版本，保留 0.1.3 的目录请求 #19，当前为 open。
+0.1.4 候选阶段的退出诊断区分意外 presence 失联与显式页面退出。该阶段诊断与生命周期验证完成、源码待审，未宣称已合入；不能据版本号推断商店已合入或可下载。用户报告过声音重复并逐渐放大；该精确现象当时尚未在增益 12 候选上复现，啸叫专项验收未完成。该阶段未发布新商店版本，保留了 0.1.3 的目录请求 #19。
 
 在 v0.5.6 / `214b4f9145dd` 加待合入 RTC 麦克风增益补丁的设备上，正式页面共完成 10 轮通话与成功释放，其中第 10 轮取得 598 个 running 样本，首末跨度 649.672 秒，全部为 RTC connected、presence 在线。该长测发送 / 接收音频包增量为 32,475 / 32,442，TX、render、上行丢帧和削顶计数为 0，播放队列丢帧为 7；停止请求至应用记录释放为 578 ms。串口分别确认通话增益由 27 限至 12，并在结束后恢复至 27，结果均为 0。详见 `docs/robot-intercom-acceptance.zh-CN.md`。
 
 这些结果支持当前设备的持续连接与资源释放，不证明声学闭环、真人双讲或主观听感通过。另完成的两轮真实麦克风探针虽取得有效采样，但事后核对本机实际默认输出是蓝牙耳机，未覆盖电脑喇叭放在机器人旁的声学路径，因此不用于啸叫专项验收。按用户要求，本阶段先收尾；下一阶段确认喇叭与采集端点后，再检查停止单次音源后的衰减及双讲。降低增益不能单独作为啸叫已解决的结论。
 
-The manifest is currently 0.1.4. Exit diagnostics distinguish unexpected presence loss from explicit page-exit requests. This phase's diagnostic and lifecycle validation is complete, with source review pending; no merge is claimed. The version does not imply marketplace approval or availability. The user reported repeating, growing sound; that precise symptom has not yet been reproduced on the gain-12 candidate. Howling-specific acceptance is incomplete. No new marketplace version is published in this phase; the existing 0.1.3 catalog request #19 remains open.
+During the 0.1.4 candidate phase, exit diagnostics distinguished unexpected presence loss from explicit page-exit requests. That phase's diagnostic and lifecycle validation was complete, with source review pending; no merge was claimed. A version number does not imply marketplace approval or availability. The user reported repeating, growing sound; that precise symptom had not been reproduced on the gain-12 candidate. Howling-specific acceptance remained incomplete. That phase did not publish a new marketplace version and retained the existing 0.1.3 catalog request #19.
 
 On the v0.5.6 / `214b4f9145dd` baseline with a pending RTC microphone-gain patch, the formal UI completed 10 calls with successful release. Call 10 produced 598 running samples spanning 649.672 seconds, all RTC connected with presence online. Observed TX / RX growth was 32,475 / 32,442; TX errors, render errors, uplink drops, and clipping were zero, with 7 playback-queue drops. Application stop-to-release time was 578 ms. Serial evidence confirmed microphone gain changed from 27 to 12 during calls and returned to 27 after release, with successful results.
 

@@ -4,12 +4,13 @@ export function microphoneProcessingStatus(settings = {}) {
 }
 
 export async function createRtcNoisePlayback(remoteStream, {
-  enabled = true, strength = 70, isCurrent = () => true, onState = () => {}, onFallback = () => {}, signal,
+  enabled = true, strength = 70, voiceFocus = false, keepReceiverClock = true,
+  isCurrent = () => true, onState = () => {}, onFallback = () => {}, signal,
 } = {}, {
   createContext = () => new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' }),
   createNode = context => new AudioWorkletNode(context, 'robot-noise-suppression', {
     numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
-    processorOptions: { strength: enabled ? strength : 0 },
+    processorOptions: { strength: enabled ? strength : 0, voiceFocus },
   }),
   createSink = () => new Audio(),
 } = {}) {
@@ -64,8 +65,10 @@ export async function createRtcNoisePlayback(remoteStream, {
     source = context.createMediaStreamSource(remoteStream);
     destination = context.createMediaStreamDestination();
     // A muted RTC consumer keeps Chromium's receiver playout clock running.
-    sink = createSink(); sink.muted = true; sink.srcObject = remoteStream;
-    sink.play().catch(() => {});
+    if (keepReceiverClock) {
+      sink = createSink(); sink.muted = true; sink.srcObject = remoteStream;
+      sink.play().catch(() => {});
+    }
     source.connect(node); node.connect(destination);
     await context.resume();
     if (!current()) { await dispose(); return null; }

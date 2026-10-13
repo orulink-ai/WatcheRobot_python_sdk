@@ -140,7 +140,10 @@ class IntercomService:
         with self._signal_lock:
             self._owned(request_id)
             allowed = {"connection_state", "ice_state", "visibility", "sent", "received", "lost",
-                       "close_code", "close_reason", "was_clean", "error_seen"}
+                       "close_code", "close_reason", "was_clean", "error_seen",
+                       "rtt_ms", "receive_buffer_ms", "receive_target_ms", "receive_minimum_ms",
+                       "receiver_hint_supported",
+                       "capture_ms", "context_ms", "playback_mode", "voice_mode"}
             evidence = {key: value for key, value in data.items() if key in allowed}
             if "close_reason" in evidence:
                 evidence["close_reason"] = safe_presence_reason(evidence["close_reason"])
@@ -525,6 +528,15 @@ class StopRequest(CallRequest):
 
 
 class DiagnosticRequest(CallRequest):
+    receiver_hint_supported: bool | None = Field(default=None, strict=True)
+    rtt_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    receive_buffer_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    receive_target_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    receive_minimum_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    capture_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    context_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    playback_mode: str | None = Field(default=None, pattern=r"^(raw|denoised)$")
+    voice_mode: str | None = Field(default=None, pattern=r"^(original|deep|bright|robot)$")
     kind: str = Field(pattern=r"^(peer_state|visibility|media_sample|browser_failure|presence_lost)$")
     connection_state: str | None = Field(default=None, max_length=24, pattern=r"^[a-z]+$")
     ice_state: str | None = Field(default=None, max_length=24, pattern=r"^[a-z]+$")

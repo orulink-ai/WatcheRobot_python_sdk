@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createI18n } from "../../examples/robot_intercom/web/i18n.mjs";
+import fs from 'node:fs';
+
+test('all sound controls and hints have English translations', () => {
+  const en = createI18n({ storage: null, languages: ['en'] });
+  const html = fs.readFileSync(new URL('../../examples/robot_intercom/web/index.html', import.meta.url), 'utf8');
+  for (const match of html.matchAll(/data-i18n="([^"]+)"/g)) {
+    if (/[\u4e00-\u9fff]/.test(match[1])) assert.notEqual(en.text(match[1]), match[1], match[1]);
+  }
+});
 
 test("browser language is used until a saved choice overrides it", () => {
   const values = new Map();

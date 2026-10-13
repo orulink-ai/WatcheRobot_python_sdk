@@ -11,6 +11,18 @@ const deferred = () => {
   });
   return { promise, resolve, reject };
 };
+
+test('cancel during microphone processing releases late graph without starting device', async () => {
+  const pending = deferred(); let disposed = 0;
+  const r = rig({ prepareMicrophone: () => pending.promise });
+  const started = r.controller.start();
+  await new Promise(resolve => setImmediate(resolve));
+  await r.controller.stop();
+  pending.resolve({ stream: r.stream, dispose: () => disposed++ });
+  await started;
+  assert.equal(disposed, 1); assert.equal(r.track.stops, 1);
+  assert.equal(r.requests.length, 0);
+});
 function rig(overrides = {}) {
   const requests = [],
     states = [];
@@ -30,7 +42,7 @@ function rig(overrides = {}) {
       this.connectionState = "new";
       peers.push(this);
     }
-    addTrack() {}
+    addTrack(track) { this.sentTrack = track; }
     addEventListener(name, callback) {
       this.listeners[name] = callback;
     }
@@ -71,6 +83,7 @@ test("visuals receive the existing microphone and release it with the call", asy
   const streams = [];
   const r = rig({ onLocal: (stream) => streams.push(stream) });
   await r.controller.start();
+  assert.equal(r.peers[0].sentTrack, r.track);
   assert.equal(streams[0], r.stream);
   assert.equal(r.track.stops, 0);
   await r.controller.stop();

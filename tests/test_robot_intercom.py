@@ -655,6 +655,22 @@ def load_local_http():
     return module
 
 
+def test_audio_diagnostic_segments_validate_ranges_and_keep_unknown_distinct(rig):
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
+        client.post("/api/call/start", json={"request_id": "request-a"})
+        body = {"request_id": "request-a", "kind": "media_sample", "rtt_ms": 32,
+                "receive_buffer_ms": 160, "receive_target_ms": 150, "receive_minimum_ms": 140,
+                "capture_ms": None, "context_ms": 0, "playback_mode": "raw", "voice_mode": "original"}
+        assert client.post("/api/call/diagnostic", json=body).status_code == 200
+        event = rig.service.status()["diagnostics"]["history"][-1]
+        assert event["rtt_ms"] == 32 and event["receive_buffer_ms"] == 160
+        assert event["context_ms"] == 0 and event.get("capture_ms") is None
+        for field, value in [("rtt_ms", -1), ("receive_buffer_ms", 60001),
+                             ("capture_ms", "10"), ("context_ms", True),
+                             ("playback_mode", "unknown"), ("voice_mode", "secret")]:
+            assert client.post("/api/call/diagnostic", json={**body, field: value}).status_code == 422
+
+
 def test_local_origin_is_reused_after_restart(tmp_path):
     module = load_local_http()
     state = tmp_path / "http-port.json"
