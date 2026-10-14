@@ -200,12 +200,12 @@ jobs:
       - name: Select minimum supported runtime dependencies
         if: matrix.dependency-profile == 'lowest'
         run: |
-          python -m pip install \
+          python -m pip install -e ".[test]" \
             "av==16.*" \
             "bleak==3.*" \
             "esptool==4.8.*" \
             "fastapi==0.129.*" \
-            "huggingface-hub==1.26.*" \
+            "huggingface-hub==1.32.*" \
             "keyring==25.7.*" \
             "packaging==24.*" \
             "Pillow==11.*" \
