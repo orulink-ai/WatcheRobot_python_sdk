@@ -162,6 +162,34 @@ def test_expression_audio_follow_uses_device_playback_and_cleans_up_on_close():
     assert transport.closed
 
 
+@pytest.mark.parametrize("emotion", [True, -1, 7, 1.5, "happy"])
+def test_audio_follow_emotion_rejects_invalid_values_without_commands(emotion):
+    transport = FakeTransport()
+    transport.capabilities += ("expression.audio_follow.v1", "expression.audio_follow.v2")
+    robot = WatcheRobot._from_transport(transport)
+    with pytest.raises((ValueError, TypeError), match="emotion"):
+        robot.expression_runtime.set_audio_follow(True, emotion=emotion)
+    assert transport.commands == []
+    robot.close()
+
+
+def test_audio_follow_emotion_negotiates_v2_and_preserves_cleanup():
+    transport = FakeTransport()
+    transport.capabilities += ("expression.audio_follow.v1",)
+    robot = WatcheRobot._from_transport(transport)
+    with pytest.raises(WatcheRobotError, match="expression.audio_follow.v2"):
+        robot.expression_runtime.set_audio_follow(True, emotion=6)
+    assert not transport.commands
+    transport.capabilities += ("expression.audio_follow.v2",)
+    for emotion in range(7):
+        robot.expression_runtime.set_audio_follow(True, emotion=emotion)
+        assert transport.commands[-1] == ("ctrl.expression.audio_follow", {"enabled": True, "emotion": emotion})
+    with pytest.raises(ValueError, match="emotion"):
+        robot.expression_runtime.set_audio_follow(False, emotion=2)
+    robot.close()
+    assert transport.commands[-1] == ("ctrl.expression.audio_follow", {"enabled": False})
+
+
 def test_audio_follow_cleanup_retains_original_device_ownership():
     transport = FakeTransport()
     transport.capabilities += ("expression.audio_follow.v1",)

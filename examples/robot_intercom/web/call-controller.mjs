@@ -15,6 +15,7 @@ export function createCallController({
       video: false,
     }),
   makePeer = () => new RTCPeerConnection({ iceServers: [] }),
+  prepareMicrophone = async (stream) => ({ stream }),
   makeId = () => crypto.randomUUID(),
   schedule = (fn, ms) => setTimeout(fn, ms),
   cancel = (id) => clearTimeout(id),
@@ -31,6 +32,8 @@ export function createCallController({
     requestId = null,
     state = "idle",
     stream = null,
+    microphoneGraph = null,
+    graphAbort = null,
     peer = null,
     allocation = null;
   let allocated = false,
@@ -40,6 +43,7 @@ export function createCallController({
     remoteCandidates = [],
     jitter = null;
   let presence = null;
+  let receiverHints = null;
   const timers = new Set();
   const snapshot = () => ({ requestId, state, muted });
   function update(next, message = "") {
@@ -86,11 +90,15 @@ export function createCallController({
     recovery = null;
     peer?.close();
     peer = null;
+    graphAbort?.abort(); graphAbort = null;
+    microphoneGraph?.dispose?.();
+    microphoneGraph = null;
     for (const track of stream?.getTracks() || []) track.stop();
     stream = null;
     onLocal(null);
     remoteCandidates = [];
     jitter = null;
+    receiverHints = null;
     onDispose();
   }
   async function fail(error) {
@@ -153,7 +161,7 @@ export function createCallController({
               sdp: data.sdp,
             });
             if (!current(token)) return;
-            configureLowLatencyAudioReceivers(activePeer);
+            receiverHints = configureLowLatencyAudioReceivers(activePeer);
             for (const candidate of remoteCandidates.splice(0)) {
               await activePeer.addIceCandidate(candidate);
               if (!current(token)) return;
@@ -201,6 +209,11 @@ export function createCallController({
         received = 0,
         lost = 0,
         queue = 0,
+        queueValid = false,
+        target = 0,
+        minimum = 0,
+        targetValid = false,
+        minimumValid = false,
         jitterUs = 0,
         concealed = 0,
         level = 0;
@@ -221,10 +234,20 @@ export function createCallController({
             );
           const sample = sampleAudioJitterBuffer(jitter, report);
           jitter = sample.counter;
+          queueValid ||= sample.sampleValid;
+          targetValid ||= sample.sampleValid && Number.isFinite(report.jitterBufferTargetDelay);
+          minimumValid ||= sample.sampleValid && Number.isFinite(report.jitterBufferMinimumDelay);
           queue = Math.max(queue, sample.actualMs);
+          target = Math.max(target, sample.targetMs);
+          minimum = Math.max(minimum, sample.minimumMs);
         }
       });
-      onStats({ sent, received, lost, level });
+      onStats({ sent, received, lost, level,
+        rttMs: selectMediaRoundTripUs(reports) ? selectMediaRoundTripUs(reports) / 1000 : null,
+        receiveBufferMs: queueValid ? queue : null,
+        receiveTargetMs: targetValid ? target : null,
+        receiveMinimumMs: minimumValid ? minimum : null,
+        jitterMs: jitterUs / 1000, receiverHintSupported: receiverHints === null ? null : receiverHints > 0 });
       await request("/api/call/feedback", {
         request_id: id,
         display_fps_x100: 0,
@@ -266,13 +289,26 @@ export function createCallController({
         }
         stream = microphone;
         onLocal(stream);
+        graphAbort = new AbortController();
+        const prepared = await prepareMicrophone(stream, () => current(token), graphAbort.signal);
+        if (!current(token)) { await prepared?.dispose?.(); return false; }
+        if (!prepared?.stream) throw Error('麦克风处理不可用，请重新开始');
+        microphoneGraph = prepared;
         allocated = true;
         allocation = request("/api/call/start", { request_id: id });
         await allocation;
         if (!current(token)) return false;
         heartbeat(token, id);
-        const connectedPresence = await connectPresence(id, () => {
-          if (current(token)) fail(Error("本机通话连接已断开，请重新开始"));
+        const connectedPresence = await connectPresence(id, (detail = {}) => {
+          if (!current(token)) return;
+          report({
+            kind: "presence_lost",
+            close_code: detail.code,
+            close_reason: detail.reason,
+            was_clean: detail.wasClean,
+            error_seen: detail.errorSeen,
+          });
+          fail(Error("本机通话连接已断开，请重新开始"));
         });
         if (!current(token)) {
           connectedPresence?.close();
@@ -280,8 +316,10 @@ export function createCallController({
         }
         presence = connectedPresence;
         const activePeer = (peer = makePeer());
-        for (const track of stream.getAudioTracks())
-          activePeer.addTrack(track, stream);
+        for (const track of microphoneGraph.stream.getAudioTracks()) {
+          const sender = activePeer.addTrack(track, microphoneGraph.stream);
+          microphoneGraph.attachSender?.(sender);
+        }
         recovery = createConnectionRecovery(
           (reason) => {
             if (current(token)) fail(Error(reason));
@@ -313,7 +351,7 @@ export function createCallController({
         });
         activePeer.addEventListener("track", (event) => {
           if (current(token) && event.track.kind === "audio") {
-            configureLowLatencyAudioReceivers(activePeer);
+            receiverHints = configureLowLatencyAudioReceivers(activePeer);
             onRemote(event.streams[0] || new MediaStream([event.track]), () =>
               current(token),
             );
@@ -400,6 +438,9 @@ export function createCallController({
       muted = value === true;
       for (const track of stream?.getAudioTracks() || [])
         track.enabled = !muted;
+      for (const track of microphoneGraph?.stream.getAudioTracks() || [])
+        track.enabled = !muted;
+      microphoneGraph?.setMuted?.(muted);
       onState({ ...snapshot(), message: "" });
     },
     leave() {

@@ -1,7 +1,8 @@
 // RNNoise operates on 10 ms mono frames at 48 kHz, with one frame of lookahead.
 export const NOISE_FRAME_SAMPLES = 480;
+import { SpeechFocus } from './speech-focus.mjs';
 
-export function createDenoiseFrameProcessor(module, { strength = 70 } = {}) {
+export function createDenoiseFrameProcessor(module, { strength = 70, voiceFocus = false } = {}) {
   const handle = module._rnnoise_create(0);
   const pointer = module._malloc(NOISE_FRAME_SAMPLES * 4);
   if (!handle || !pointer) {
@@ -11,6 +12,7 @@ export function createDenoiseFrameProcessor(module, { strength = 70 } = {}) {
   }
   const dry = new Float32Array(NOISE_FRAME_SAMPLES);
   let wet = 0, disposed = false;
+  const focus = new SpeechFocus();
   function setStrength(value) {
     wet = Math.max(0, Math.min(85, Number.isFinite(Number(value)) ? Number(value) : 70)) / 100;
   }
@@ -26,10 +28,11 @@ export function createDenoiseFrameProcessor(module, { strength = 70 } = {}) {
       const offset = pointer / 4;
       for (let i = 0; i < NOISE_FRAME_SAMPLES; i++) module.HEAPF32[offset + i] = input[i] * 32768;
       // Keep the recurrent state warm even in bypass, avoiding restart artifacts.
-      module._rnnoise_process_frame(handle, pointer, pointer);
+      const probability = module._rnnoise_process_frame(handle, pointer, pointer);
+      if (voiceFocus) focus.update(probability);
       for (let i = 0; i < NOISE_FRAME_SAMPLES; i++) {
         const cleaned = module.HEAPF32[offset + i] / 32768;
-        output[i] = (1 - wet) * dry[i] + wet * cleaned;
+        output[i] = ((1 - wet) * dry[i] + wet * cleaned) * (voiceFocus ? focus.next() : 1);
         dry[i] = input[i];
       }
     },

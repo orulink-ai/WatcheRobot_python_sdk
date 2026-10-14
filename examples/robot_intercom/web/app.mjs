@@ -1,5 +1,6 @@
 import { createCallController } from "./call-controller.mjs";
-import { createRtcNoisePlayback } from "./rtc-noise-playback.mjs";
+import { createRemotePlayback } from "./remote-playback.mjs";
+import { createVoiceInput } from "./voice-input.mjs";
 import { connectCallPresence } from "./call-presence.mjs";
 import { createPhotoController } from "./photo-controller.mjs";
 import { createCallClock } from "./call-clock.mjs";
@@ -31,10 +32,26 @@ function renderLanguage() {
 }
 let status = null,
   listening = true,
-  noise = null,
-  noiseAbort = null,
+  voice = null,
   refreshTimer;
 let lastMediaReport = 0;
+let latencyStats = null, voiceStats = null, playbackStats = null;
+function renderSound() {
+  const ms = value => value === null || value === undefined ? '—' : `${Math.round(value)} ms`;
+  $('volumeValue').textContent = `${$('robotVolume').value}%`;
+  $('latencyRtt').textContent = ms(latencyStats?.rttMs);
+  $('latencyBuffer').textContent = ms(latencyStats?.receiveBufferMs);
+  $('latencyTarget').textContent = ms(latencyStats?.receiveTargetMs);
+  $('latencyMinimum').textContent = ms(latencyStats?.receiveMinimumMs);
+  setText('latencyHint', latencyStats?.receiverHintSupported === true ? '已请求 20ms 接收目标'
+    : latencyStats?.receiverHintSupported === false ? '浏览器不支持接收目标设置' : '尚无数据');
+  $('latencyCapture').textContent = ms(voiceStats?.captureMs);
+  $('latencyContext').textContent = ms(voiceStats?.baseMs);
+  setText('playbackMode', playbackStats?.mode === 'denoised'
+    ? playbackStats.profile === 'speech' ? '人声优先 · 算法缓冲约 20ms' : '降噪播放 · 算法缓冲约 20ms'
+    : '原始播放 · 跳过降噪处理');
+  $('listenProfile').disabled = !$('noise').checked;
+}
 let photoController = null;
 const callClock = createCallClock();
 let visuals = null,
@@ -108,6 +125,7 @@ function render() {
   setText("muteLabel", call.muted ? "麦克风已静音" : "麦克风开启");
   $("mute").setAttribute("aria-pressed", String(call.muted));
   $("listen").disabled = !["running", "connecting"].includes(call.state);
+  $('voiceMode').disabled = !!voiceStats && !voiceStats.effectAvailable;
   setText("listenLabel", listening ? "收听现场" : "收听已关闭");
   setText("inputState", call.state === "running" ? (call.muted ? "已静音" : "传输中") : "未开启");
   setText("outputState", call.state === "running" ? (listening ? "收听中" : "已关闭") : "未开启");
@@ -127,6 +145,7 @@ function render() {
   document.body.dataset.callState = call.state;
   renderVisuals();
   renderDevice();
+  renderSound();
   if (!busy && status?.connected && !supported)
     callMessage = "当前固件缺少通话或嘴型能力，请升级机器人固件。";
   else if (
@@ -152,6 +171,23 @@ async function playRemote(stream) {
 }
 const controller = createCallController({
   api,
+  prepareMicrophone: async (stream, isCurrent, signal) => {
+    const prepared = await createVoiceInput(stream, {
+      volume: Number($('robotVolume').value), mode: $('voiceMode').value, isCurrent, signal,
+      onState: state => {
+        if (isCurrent()) {
+          voiceStats = state; $('voiceMode').value = state.mode;
+          $('voiceMode').disabled = !state.effectAvailable; renderSound();
+        }
+      },
+    });
+    if (isCurrent()) {
+      voice = prepared;
+      if (voiceStats && !voiceStats.effectAvailable) $('voiceMode').value = 'original';
+      render();
+    }
+    return prepared;
+  },
   onLocal: (stream) => {
     localStream = stream;
     renderVisuals();
@@ -172,6 +208,7 @@ const controller = createCallController({
     render();
   },
   onStats: (stats) => {
+    latencyStats = stats; renderSound();
     document.body.dataset.audioSent = stats.sent;
     document.body.dataset.audioReceived = stats.received;
     if (performance.now() - lastMediaReport > 5000) {
@@ -184,41 +221,37 @@ const controller = createCallController({
           sent: stats.sent,
           received: stats.received,
           lost: stats.lost,
+          rtt_ms: stats.rttMs === null ? null : Math.round(stats.rttMs),
+          receive_buffer_ms: stats.receiveBufferMs,
+          receive_target_ms: stats.receiveTargetMs,
+          receive_minimum_ms: stats.receiveMinimumMs,
+          receiver_hint_supported: stats.receiverHintSupported,
+          capture_ms: voiceStats?.captureMs,
+          context_ms: voiceStats?.baseMs,
+          playback_mode: playbackStats?.mode,
+          voice_mode: voiceStats?.mode,
         }).catch(() => {});
     }
   },
   onRemote: async (stream, isCurrent) => {
-    noiseAbort?.abort();
-    const abort = (noiseAbort = new AbortController());
-    await playRemote(stream);
-    const processed = await createRtcNoisePlayback(stream, {
-      enabled: $("noise").checked,
-      strength: 70,
-      signal: abort.signal,
-      isCurrent,
-      onFallback: () => {
-        if (isCurrent()) playRemote(stream);
-      },
-    });
-    if (!isCurrent()) {
-      await processed?.dispose();
-      return;
+    if (isCurrent()) {
+      await playback.setProfile($('listenProfile').value);
+      if (isCurrent()) await playback.start(stream, $('noise').checked);
     }
-    noise = processed;
-    if (processed) await playRemote(processed.stream);
   },
   onDispose: () => {
     localStream = remoteStream = null;
     renderVisuals();
-    noiseAbort?.abort();
-    noiseAbort = null;
-    noise?.dispose();
-    noise = null;
+    playback.dispose();
+    voice = null; latencyStats = voiceStats = playbackStats = null;
+    renderSound();
     $("remoteAudio").pause();
     $("remoteAudio").srcObject = null;
     $("resumeAudio").hidden = true;
   },
 });
+const playback = createRemotePlayback({ play: playRemote,
+  onState: state => { playbackStats = state; renderSound(); } });
 async function refresh() {
   try {
     status = await api("/api/status");
@@ -298,10 +331,21 @@ $("listen").onclick = () => {
   $("listen").setAttribute("aria-pressed", String(!listening));
   render();
 };
-$("noise").onchange = () =>
-  noise?.setOptions({ enabled: $("noise").checked, strength: 70 });
+$("noise").onchange = () => { renderSound(); playback.setEnabled($("noise").checked).catch(() => {}); };
+$('listenProfile').onchange = () => playback.setProfile($('listenProfile').value).catch(() => {});
+$('robotVolume').oninput = () => {
+  voice?.setVolume(Number($('robotVolume').value))?.catch(soundError); renderSound();
+};
+function soundError() {
+  callMessage = '声音切换失败，请结束后重新开始通话。'; render();
+}
+$('voiceMode').onchange = () => {
+  try { voice?.setMode($('voiceMode').value)?.catch(soundError); }
+  catch { $('voiceMode').value = 'original'; soundError(); }
+};
 $("resumeAudio").onclick = async () => {
-  await noise?.resume();
+  await playback.resume();
+  await voice?.resume();
   await playRemote($("remoteAudio").srcObject);
 };
 photoController = createPhotoController({

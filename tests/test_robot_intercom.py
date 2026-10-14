@@ -402,6 +402,97 @@ def test_presence_rejects_stale_or_duplicate_connections(rig):
     rig.service.detach_presence("request-a", token)
 
 
+def test_unexpected_presence_disconnect_is_not_reported_as_page_exit(rig):
+    rig.service.start("request-a")
+    token = rig.service.attach_presence("request-a")
+
+    rig.service.detach_presence("request-a", token)
+
+    assert rig.service.status()["diagnostics"]["end_reason"] == "presence_lost"
+
+
+def test_presence_disconnect_has_its_own_reason_and_bounded_evidence(rig):
+    rig.service.start("request-a")
+    token = rig.service.attach_presence("request-a")
+    rig.clock[0] = 3.25
+
+    rig.service.detach_presence("request-a", token, close_code=1011,
+                                close_reason="keepalive ping timeout", close_kind="disconnect")
+
+    diagnostic = rig.service.status()["diagnostics"]
+    assert diagnostic["end_reason"] == "presence_lost"
+    closed = next(event for event in diagnostic["history"] if event["kind"] == "presence_closed")
+    assert closed["close_code"] == 1011
+    assert closed["close_reason"] == "keepalive ping timeout"
+    assert closed["close_kind"] == "disconnect"
+    assert closed["heartbeat_age_ms"] == 3250
+    assert closed["shutdown"] is False
+
+
+def test_presence_disconnect_preserves_explicit_page_exit_reason_and_cannot_touch_new_call(rig):
+    rig.service.start("request-a")
+    token = rig.service.attach_presence("request-a")
+    rig.rtc.fail_stop = True
+    with pytest.raises(TimeoutError):
+        rig.service.stop("request-a", reason="page_closed")
+    rig.rtc.fail_stop = False
+    rig.service.detach_presence("request-a", token)
+    assert rig.service.status()["diagnostics"]["end_reason"] == "page_closed"
+    rig.service.start("request-b")
+    new_token = rig.service.attach_presence("request-b")
+    before = rig.service.status()["diagnostics"]
+
+    rig.service.detach_presence("request-a", token, close_code=1006, close_reason="private-token")
+
+    assert rig.service.status()["diagnostics"] == before
+    assert rig.service._presence == new_token
+    assert rig.rtc.active
+
+
+def test_presence_loss_reason_survives_concurrent_maintenance_cleanup(rig):
+    rig.service.start("request-a")
+    token = rig.service.attach_presence("request-a")
+    entered, release = threading.Event(), threading.Event()
+    original = rig.service.stop
+
+    def stop(request_id=None, *, reason="user"):
+        if reason == "presence_lost":
+            entered.set()
+            assert release.wait(3)
+        return original(request_id, reason=reason)
+
+    rig.service.stop = stop
+    worker = threading.Thread(target=lambda: rig.service.detach_presence("request-a", token))
+    worker.start()
+    try:
+        assert entered.wait(1)
+        rig.service.maintain()
+        assert rig.service.status()["state"] == "idle"
+        assert rig.service.status()["diagnostics"]["end_reason"] == "presence_lost"
+    finally:
+        release.set()
+        worker.join(3)
+    assert not worker.is_alive()
+
+
+def test_presence_disconnect_redacts_untrusted_reason_and_records_shutdown(rig, caplog):
+    rig.service.start("request-a")
+    token = rig.service.attach_presence("request-a")
+    rig.service.request_shutdown()
+    secret = "token=private-presence-secret" * 20
+
+    with caplog.at_level("INFO"):
+        rig.service.detach_presence("request-a", token, close_code=1012,
+                                    close_reason=secret, close_kind="disconnect")
+
+    diagnostic = rig.service.status()["diagnostics"]
+    closed = next(event for event in diagnostic["history"] if event["kind"] == "presence_closed")
+    assert closed["shutdown"] is True
+    assert len(closed["close_reason"]) <= 80
+    assert "private-presence-secret" not in json.dumps(diagnostic)
+    assert "private-presence-secret" not in caplog.text
+
+
 @pytest.mark.parametrize("phase", ["registration", "registration_double_cancel", "handshake"])
 def test_cancelled_presence_registration_or_handshake_releases_robot(rig, phase):
     from starlette.datastructures import URL
@@ -522,11 +613,62 @@ def test_presence_websocket_checks_origin_and_cleans_up_on_close(rig):
         assert rig.service.status()["state"] == "idle"
 
 
+def test_presence_websocket_retains_abnormal_disconnect_metadata(rig):
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
+        client.post("/api/call/start", json={"request_id": "request-a"})
+        with client.websocket_connect("/api/call/presence?request_id=request-a",
+                                      headers={"Origin": "http://testserver"}) as ws:
+            assert ws.receive_json() == {"ready": True}
+            ws.close(code=1011, reason="keepalive ping timeout")
+        diagnostic = rig.service.status()["diagnostics"]
+        closed = next(event for event in diagnostic["history"] if event["kind"] == "presence_closed")
+        assert closed["close_code"] == 1011
+        assert closed["close_reason"] == "keepalive ping timeout"
+        assert diagnostic["end_reason"] == "presence_lost"
+
+
+def test_presence_browser_diagnostic_fields_are_validated_and_redacted(rig):
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
+        client.post("/api/call/start", json={"request_id": "request-a"})
+        response = client.post("/api/call/diagnostic", json={
+            "request_id": "request-a", "kind": "presence_lost", "close_code": 1006,
+            "was_clean": False, "error_seen": True, "close_reason": "token=private-secret",
+        })
+        assert response.status_code == 200
+        event = rig.service.status()["diagnostics"]["history"][-1]
+        assert event["kind"] == "presence_lost"
+        assert event["close_code"] == 1006
+        assert event["was_clean"] is False
+        assert event["error_seen"] is True
+        assert "private-secret" not in json.dumps(event)
+        for field, value in [("close_code", -1), ("close_code", 65536), ("was_clean", "false"),
+                             ("error_seen", "true")]:
+            assert client.post("/api/call/diagnostic", json={
+                "request_id": "request-a", "kind": "presence_lost", field: value,
+            }).status_code == 422
+
+
 def load_local_http():
     spec = importlib.util.spec_from_file_location("intercom_local_http", ROOT / "local_http.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_audio_diagnostic_segments_validate_ranges_and_keep_unknown_distinct(rig):
+    with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
+        client.post("/api/call/start", json={"request_id": "request-a"})
+        body = {"request_id": "request-a", "kind": "media_sample", "rtt_ms": 32,
+                "receive_buffer_ms": 160, "receive_target_ms": 150, "receive_minimum_ms": 140,
+                "capture_ms": None, "context_ms": 0, "playback_mode": "raw", "voice_mode": "original"}
+        assert client.post("/api/call/diagnostic", json=body).status_code == 200
+        event = rig.service.status()["diagnostics"]["history"][-1]
+        assert event["rtt_ms"] == 32 and event["receive_buffer_ms"] == 160
+        assert event["context_ms"] == 0 and event.get("capture_ms") is None
+        for field, value in [("rtt_ms", -1), ("receive_buffer_ms", 60001),
+                             ("capture_ms", "10"), ("context_ms", True),
+                             ("playback_mode", "unknown"), ("voice_mode", "secret")]:
+            assert client.post("/api/call/diagnostic", json={**body, field: value}).status_code == 422
 
 
 def test_local_origin_is_reused_after_restart(tmp_path):

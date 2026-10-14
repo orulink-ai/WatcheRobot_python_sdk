@@ -224,6 +224,42 @@
           ><button id="resumeAudio" class="audio-resume" hidden><span data-i18n="点击播放现场声音">
             点击播放现场声音
           </span></button>
+          <details class="sound-settings">
+            <summary data-i18n="声音设置">声音设置</summary>
+            <div class="sound-controls">
+              <label for="listenProfile" data-i18n="现场收听模式">现场收听模式</label>
+              <select id="listenProfile" aria-describedby="focusHint">
+                <option value="speech" data-i18n="人声优先">人声优先</option>
+                <option value="natural" data-i18n="自然现场">自然现场</option>
+              </select>
+              <p id="focusHint" data-i18n="人声优先会降低停顿时的环境音；关闭现场降噪可直接收听原始声音。">人声优先会降低停顿时的环境音；关闭现场降噪可直接收听原始声音。</p>
+              <label for="robotVolume"><span data-i18n="机器人通话音量">机器人通话音量</span><output id="volumeValue" for="robotVolume">100%</output></label>
+              <input id="robotVolume" type="range" min="0" max="100" step="1" value="100" aria-label="机器人通话音量" data-i18n-aria-label="机器人通话音量" aria-describedby="volumeHint" />
+              <p id="volumeHint" data-i18n="调整发送声音强度；机器人自动增益可能影响实际响度。">调整发送声音强度；机器人自动增益可能影响实际响度。</p>
+              <label for="voiceMode" data-i18n="我的声音效果">我的声音效果</label>
+              <select id="voiceMode" aria-describedby="effectHint">
+                <option value="original" data-i18n="原声">原声</option>
+                <option value="deep" data-i18n="低沉">低沉</option>
+                <option value="bright" data-i18n="明亮">明亮</option>
+                <option value="robot" data-i18n="机器人音效">机器人音效</option>
+              </select>
+              <p id="effectHint" data-i18n="效果在电脑上实时处理；变调会增加少量延迟。">效果在电脑上实时处理；变调会增加少量延迟。</p>
+            </div>
+          </details>
+          <details class="sound-settings latency-details">
+            <summary data-i18n="连接与延迟诊断">连接与延迟诊断</summary>
+            <dl class="latency-grid">
+              <div><dt data-i18n="网络往返">网络往返</dt><dd id="latencyRtt">—</dd></div>
+              <div><dt data-i18n="电脑接收缓冲">电脑接收缓冲</dt><dd id="latencyBuffer">—</dd></div>
+              <div><dt data-i18n="浏览器实际缓冲目标">浏览器实际缓冲目标</dt><dd id="latencyTarget">—</dd></div>
+              <div><dt data-i18n="浏览器最低缓冲需求">浏览器最低缓冲需求</dt><dd id="latencyMinimum">—</dd></div>
+              <div><dt data-i18n="麦克风报告延迟">麦克风报告延迟</dt><dd id="latencyCapture">—</dd></div>
+              <div><dt data-i18n="发送音频处理基准">发送音频处理基准</dt><dd id="latencyContext">—</dd></div>
+            </dl>
+            <p id="latencyHint" data-i18n="尚无数据">尚无数据</p>
+            <p id="playbackMode" data-i18n="原始播放 · 跳过降噪处理">原始播放 · 跳过降噪处理</p>
+            <p data-i18n="这些分段指标不代表声音端到端延迟；— 表示尚无数据。">这些分段指标不代表声音端到端延迟；— 表示尚无数据。</p>
+          </details>
         </section>
         <aside id="photoPanel" class="photo-card" aria-label="机器人拍照" hidden data-i18n-aria-label="机器人拍照">
           <div class="card-top">

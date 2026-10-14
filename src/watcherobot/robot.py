@@ -224,16 +224,26 @@ class ExpressionRuntimeDomain(_Domain):
             if cleanup_error is not None:
                 raise cleanup_error
 
-    def set_audio_follow(self, enabled: bool) -> None:
+    def set_audio_follow(self, enabled: bool, *, emotion: int | None = None) -> None:
         """Draw the device's procedural mouth from successfully played RTC PCM.
 
         Requires ``expression.audio_follow.v1``. Firmware owns the audio clock
         and mouth calculation; no browser microphone levels are transmitted.
         Enabling selects the radial design without SD animation reads. Disabling
         closes the mouth and returns display ownership to the built-in state.
+        Optional emotion (0..6) requires ``expression.audio_follow.v2`` and changes
+        only the retained eye target; the device's PCM mouth clock keeps running.
         """
         if not isinstance(enabled, bool):
             raise TypeError("enabled must be a bool")
+        payload: dict[str, Any] = {"enabled": enabled}
+        if emotion is not None:
+            if isinstance(emotion, bool) or not isinstance(emotion, int) or not 0 <= emotion <= 6:
+                raise ValueError("emotion must be an integer between 0 and 6")
+            if not enabled:
+                raise ValueError("emotion requires enabled audio-follow")
+            self._robot._require_capability("expression.audio_follow.v2")
+            payload["emotion"] = emotion
         self._robot._require_capability("expression.audio_follow.v1")
         with self._lock:
             if enabled and (self._robot._closed or self._robot._closing):
@@ -246,7 +256,7 @@ class ExpressionRuntimeDomain(_Domain):
             if enabled:
                 self._audio_follow_enabled = True
                 self._audio_follow_device_id = device_id
-            self._robot._command("ctrl.expression.audio_follow", {"enabled": enabled})
+            self._robot._command("ctrl.expression.audio_follow", payload)
             self._audio_follow_enabled = enabled
             if not enabled:
                 self._audio_follow_device_id = None
@@ -957,6 +967,9 @@ class WatcheRobot:
         self.expression_runtime = ExpressionRuntimeDomain(self)
         self.motion = MotionDomain(self)
         self.audio = AudioDomain(self)
+        from .speech import SpeechDomain
+
+        self.speech = SpeechDomain(self)
         self.expressions = ExpressionDomain(self)
         self.works = WorkDomain(self)
         self.lights = LightsDomain(self)
@@ -1067,6 +1080,10 @@ class WatcheRobot:
                 return
             self._closing = True
             microphone = self._microphone
+        try:
+            self.speech._close()
+        except Exception:
+            _LOGGER.warning("Speech cleanup failed while closing robot", exc_info=True)
         try:
             self.expression_runtime._close()
         except Exception:
@@ -1551,6 +1568,9 @@ class WatcheRobot:
         return True
 
     def _on_message(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "evt.speech":
+            self.speech._event(message.get("data"))
+            return
         if message.get("type") == "evt.sdk.camera.capture":
             data = message.get("data")
             if not isinstance(data, dict) or data.get("state") != "failed":
@@ -1572,6 +1592,7 @@ class WatcheRobot:
             data = message.get("data", {})
             if isinstance(data, dict) and data.get("online") is False:
                 self.recordings.device_connection_lost()
+                self.speech._disconnected()
             return
         if message.get("type") == "evt.face_tracking.preview.frame":
             with self._face_tracking_lock:
@@ -1728,6 +1749,7 @@ class WatcheRobot:
             self._camera_results.notify_all()
 
     def _on_disconnect(self) -> None:
+        self.speech._disconnected()
         self.recordings.device_connection_lost()
         with self._media_lock:
             was_closed = self._closed

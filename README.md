@@ -322,3 +322,9 @@ Licensed under [Apache-2.0](LICENSE).
 
 使用 `watcherobot app init my_voice_app --template voice` 生成用户自己的分层语音项目，填写本地凭据后执行 `watcherobot app run`。
 支持开放的 ASR/LLM/TTS 适配器、默认半双工与应用广场发布；详见 [语音模板指南](docs/voice-template.zh-CN.md)。
+
+## 复用机器人 JoyInside 语音
+
+配置好 JoyInside 的机器人可通过 `robot.speech.open()`、`recognize()` 与 `say()` 向 Application 提供识别与播报，凭据留在设备上。需要支持 `speech.joyinside.v1` 的固件；识别模式为 `conversation_asr`，固件过滤云端自动回复。
+
+接口说明见 [设备语音](docs/device-speech.md)，完整的 [本地 Pi Application](examples/joyinside_pi/README.md) 可由 `watcherobot app run examples/joyinside_pi` 启动。

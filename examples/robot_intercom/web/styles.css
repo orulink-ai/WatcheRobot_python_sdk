@@ -15,6 +15,21 @@
   --font:
     IntercomSystem, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 }
+.sound-settings {
+  border-top: 1px solid var(--line);
+  margin-top: 18px;
+  padding: 16px clamp(18px, 4vw, 26px) 18px;
+}
+.sound-settings summary { cursor: pointer; font-size: 13px; color: var(--ink); padding: 4px 0; }
+.sound-controls { display: grid; gap: 12px; padding-top: 18px; }
+.sound-controls label { display: flex; justify-content: space-between; align-items: center; }
+.sound-controls input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+.sound-controls select { font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.sound-settings p { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0; }
+.latency-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.latency-grid dt { color: var(--muted); font-size: 12px; }
+.latency-grid dd { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+summary:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 * {
   box-sizing: border-box;
 }

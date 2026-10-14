@@ -27,6 +27,18 @@ from watcherobot.errors import WatcheRobotError
 LOG = logging.getLogger(__name__)
 REQUIRED = {"rtc.audio.full_duplex.v1", "expression.audio_follow.v1"}
 MDNS = re.compile(r"(?im)(^(?:a=)?candidate:\S+\s+\d+\s+\S+\s+\d+\s+)(\S+\.local)(\s+\d+\s+typ\s+host\b)")
+PRESENCE_CLOSE_REASONS = frozenset({
+    "", "normal closure", "going away", "ping timeout", "keepalive ping timeout",
+    "service restart", "server restart", "server shutdown", "shutdown",
+    "internal error", "internal server error", "policy violation", "connection closed",
+})
+
+
+def safe_presence_reason(value):
+    """Close reasons are untrusted text and may contain URLs or credentials."""
+    if value is None:
+        return None
+    return value if isinstance(value, str) and value in PRESENCE_CLOSE_REASONS else "[redacted]"
 
 
 class IntercomError(RuntimeError):
@@ -127,8 +139,15 @@ class IntercomService:
     def diagnostic(self, request_id, data):
         with self._signal_lock:
             self._owned(request_id)
-            allowed = {"connection_state", "ice_state", "visibility", "sent", "received", "lost"}
-            self._record(data["kind"], **{key: value for key, value in data.items() if key in allowed})
+            allowed = {"connection_state", "ice_state", "visibility", "sent", "received", "lost",
+                       "close_code", "close_reason", "was_clean", "error_seen",
+                       "rtt_ms", "receive_buffer_ms", "receive_target_ms", "receive_minimum_ms",
+                       "receiver_hint_supported",
+                       "capture_ms", "context_ms", "playback_mode", "voice_mode"}
+            evidence = {key: value for key, value in data.items() if key in allowed}
+            if "close_reason" in evidence:
+                evidence["close_reason"] = safe_presence_reason(evidence["close_reason"])
+            self._record(data["kind"], **evidence)
         return {"ok": True}
 
     def attach_presence(self, request_id):
@@ -141,16 +160,24 @@ class IntercomService:
             self._record("presence_open")
             return self._presence
 
-    def detach_presence(self, request_id, token):
+    def detach_presence(self, request_id, token, *, close_code=None, close_reason=None,
+                        close_kind="disconnect"):
         with self._signal_lock:
             if request_id != self._owner or token != self._presence:
                 return
             self._presence = None
             with self._state_lock:
                 self._state = "cleanup_required"
-            self._record("presence_closed")
+                # Maintenance may acquire the lifecycle lock before stop().
+                # Preserve the observed loss before that cleanup can retry.
+                if self._end_reason is None:
+                    self._end_reason = "presence_lost"
+            self._record("presence_closed", close_code=close_code,
+                         close_reason=safe_presence_reason(close_reason), close_kind=close_kind,
+                         shutdown=self._closing,
+                         heartbeat_age_ms=round((self.clock() - self._last_seen) * 1000))
         try:
-            self.stop(request_id, reason="page_closed")
+            self.stop(request_id, reason="presence_lost")
         except Exception as error:
             with self._state_lock:
                 self._last_error = str(error)
@@ -324,7 +351,8 @@ class IntercomService:
                 self._state = "cleanup_required"
                 if self._end_reason is None:
                     self._end_reason = reason
-            self._record("stop_requested", reason=reason)
+            self._record("stop_requested", reason=reason, shutdown=self._closing,
+                         heartbeat_age_ms=round((self.clock() - self._last_seen) * 1000))
             self._online()
             if self.rtc.snapshot().get("active"):
                 self.rtc.stop()
@@ -500,13 +528,31 @@ class StopRequest(CallRequest):
 
 
 class DiagnosticRequest(CallRequest):
-    kind: str = Field(pattern=r"^(peer_state|visibility|media_sample|browser_failure)$")
+    receiver_hint_supported: bool | None = Field(default=None, strict=True)
+    rtt_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    receive_buffer_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    receive_target_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    receive_minimum_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    capture_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    context_ms: int | None = Field(default=None, ge=0, le=60000, strict=True)
+    playback_mode: str | None = Field(default=None, pattern=r"^(raw|denoised)$")
+    voice_mode: str | None = Field(default=None, pattern=r"^(original|deep|bright|robot)$")
+    kind: str = Field(pattern=r"^(peer_state|visibility|media_sample|browser_failure|presence_lost)$")
     connection_state: str | None = Field(default=None, max_length=24, pattern=r"^[a-z]+$")
     ice_state: str | None = Field(default=None, max_length=24, pattern=r"^[a-z]+$")
     visibility: str | None = Field(default=None, pattern=r"^(visible|hidden)$")
     sent: int | None = Field(default=None, ge=0, strict=True)
     received: int | None = Field(default=None, ge=0, strict=True)
     lost: int | None = Field(default=None, ge=0, strict=True)
+    close_code: int | None = Field(default=None, ge=0, le=65535, strict=True)
+    close_reason: str | None = Field(default=None, max_length=123)
+    was_clean: bool | None = Field(default=None, strict=True)
+    error_seen: bool | None = Field(default=None, strict=True)
+
+    @field_validator("close_reason")
+    @classmethod
+    def redact_close_reason(cls, value):
+        return safe_presence_reason(value)
 
 
 class SignalRequest(CallRequest):
@@ -535,12 +581,12 @@ class FeedbackRequest(CallRequest):
 def create_web_app(service, *, web_root, enable_photo=False):
     presence_cleanup_tasks = set()
 
-    async def cleanup_presence(registration, request_id):
+    async def cleanup_presence(registration, request_id, close_details):
         try:
             token = await registration
         except IntercomError:
             return
-        await asyncio.to_thread(service.detach_presence, request_id, token)
+        await asyncio.to_thread(service.detach_presence, request_id, token, **close_details)
 
     def cleanup_done(task):
         presence_cleanup_tasks.discard(task)
@@ -640,18 +686,23 @@ def create_web_app(service, *, web_root, enable_photo=False):
         # to_thread continues after its waiter is cancelled. Retain registration
         # and its eventual token so cancellation cannot leave a phantom page.
         registration = asyncio.create_task(asyncio.to_thread(service.attach_presence, request_id))
+        close_details = {"close_kind": "handler_exit"}
         try:
             await asyncio.shield(registration)
             await socket.accept()
             await socket.send_json({"ready": True})
             while True:
                 await socket.receive_text()
-        except WebSocketDisconnect:
-            pass
+        except WebSocketDisconnect as error:
+            close_details = {"close_kind": "disconnect", "close_code": error.code,
+                             "close_reason": error.reason}
+        except asyncio.CancelledError:
+            close_details = {"close_kind": "cancelled"}
+            raise
         except IntercomError:
             await socket.close(code=1008)
         finally:
-            cleanup = asyncio.create_task(cleanup_presence(registration, request_id))
+            cleanup = asyncio.create_task(cleanup_presence(registration, request_id, close_details))
             presence_cleanup_tasks.add(cleanup)
             cleanup.add_done_callback(cleanup_done)
             await asyncio.shield(cleanup)
