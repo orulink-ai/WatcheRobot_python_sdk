@@ -10,6 +10,7 @@ EXAMPLE_IDS = {
     "sdk_media_lab": "example.sdk_media_lab",
     "expression_lab": "com.orulink.expression_lab",
     "robot_intercom": "com.orulink.robot_intercom",
+    "joyinside_pi": "com.orulink.joyinside_pi",
 }
 
 
