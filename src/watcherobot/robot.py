@@ -967,6 +967,9 @@ class WatcheRobot:
         self.expression_runtime = ExpressionRuntimeDomain(self)
         self.motion = MotionDomain(self)
         self.audio = AudioDomain(self)
+        from .speech import SpeechDomain
+
+        self.speech = SpeechDomain(self)
         self.expressions = ExpressionDomain(self)
         self.works = WorkDomain(self)
         self.lights = LightsDomain(self)
@@ -1077,6 +1080,10 @@ class WatcheRobot:
                 return
             self._closing = True
             microphone = self._microphone
+        try:
+            self.speech._close()
+        except Exception:
+            _LOGGER.warning("Speech cleanup failed while closing robot", exc_info=True)
         try:
             self.expression_runtime._close()
         except Exception:
@@ -1561,6 +1568,9 @@ class WatcheRobot:
         return True
 
     def _on_message(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "evt.speech":
+            self.speech._event(message.get("data"))
+            return
         if message.get("type") == "evt.sdk.camera.capture":
             data = message.get("data")
             if not isinstance(data, dict) or data.get("state") != "failed":
@@ -1582,6 +1592,7 @@ class WatcheRobot:
             data = message.get("data", {})
             if isinstance(data, dict) and data.get("online") is False:
                 self.recordings.device_connection_lost()
+                self.speech._disconnected()
             return
         if message.get("type") == "evt.face_tracking.preview.frame":
             with self._face_tracking_lock:
@@ -1738,6 +1749,7 @@ class WatcheRobot:
             self._camera_results.notify_all()
 
     def _on_disconnect(self) -> None:
+        self.speech._disconnected()
         self.recordings.device_connection_lost()
         with self._media_lock:
             was_closed = self._closed
