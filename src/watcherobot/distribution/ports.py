@@ -282,6 +282,10 @@ class HubRateLimitError(HubNetworkError):
     """The Hub rejected a request because its rate limit was exceeded."""
 
 
+class HubLocalIOError(HubError):
+    """Local cache or staging I/O failed; this does not reject remote source."""
+
+
 class HubInvalidResponse(HubError):
     """The Hub response does not satisfy the expected identity contract."""
 

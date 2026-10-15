@@ -45,6 +45,7 @@ def test_app_help_describes_the_supported_developer_workflow(capsys) -> None:
         "install",
         "list",
         "uninstall",
+        "cleanup",
         "start",
         "stop",
     ):
@@ -80,6 +81,7 @@ def test_distribution_sidecar_help_contains_only_distribution_commands(
         "install",
         "list",
         "uninstall",
+        "cleanup",
     ):
         assert re.search(rf"(?m)^\s+{command}\s+", output)
     for runtime_command in (

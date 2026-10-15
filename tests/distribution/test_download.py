@@ -347,11 +347,70 @@ def test_snapshot_forwards_byte_updates_as_jsonl_progress(tmp_path):
             return self.download_repository_snapshot(**kwargs)
 
     events = RecordingEvents()
-    download_application_snapshot(provider="huggingface", repo_id=SPACE_ID,
-        commit=COMMIT, target=tmp_path, hub=Hub(), events=events,
-        watcherobot_version="1.5.0")
-    updates = [event.to_dict()["data"] for event in events.events
-               if "downloaded_bytes" in event.data]
-    assert [(v["downloaded_bytes"], v["total_bytes"], v["download_attempt"]) for v in updates] == [
-        (0, 100, 0), (40, 100, 0), (0, 100, 1), (100, 100, 1)]
+    download_application_snapshot(
+        provider="huggingface",
+        repo_id=SPACE_ID,
+        commit=COMMIT,
+        target=tmp_path,
+        hub=Hub(),
+        events=events,
+        watcherobot_version="1.5.0",
+    )
+    updates = [
+        event.to_dict()["data"]
+        for event in events.events
+        if "downloaded_bytes" in event.data
+    ]
+    assert [
+        (v["downloaded_bytes"], v["total_bytes"], v["download_attempt"])
+        for v in updates
+    ] == [(0, 100, 0), (40, 100, 0), (0, 100, 1), (100, 100, 1)]
     assert events.events[-2].stage == "validating_snapshot"
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows MAX_PATH regression")
+def test_long_windows_download_staging_validates_and_delivers_assets(tmp_path):
+    from watcherobot.runtime.windows_paths import filesystem_path
+
+    target = tmp_path / ("profile-" + "x" * 70) / ("transaction-" + "y" * 60) / "source"
+    filesystem_path(target).mkdir(parents=True)
+
+    class LongAssetHub(FakeSnapshotHub):
+        def download_repository_snapshot(self, **kwargs):
+            revision = super().download_repository_snapshot(**kwargs)
+            asset = kwargs["target"] / "web/assets" / ("z" * 70 + ".wasm")
+            asset.parent.mkdir(parents=True)
+            asset.write_bytes(b"wasm")
+            return revision
+
+    result = download_application_snapshot(
+        provider="huggingface",
+        repo_id=SPACE_ID,
+        commit=COMMIT,
+        target=target,
+        hub=LongAssetHub(),
+        watcherobot_version="1.5.0",
+    )
+    assert (
+        filesystem_path(target) / "web/assets" / ("z" * 70 + ".wasm")
+    ).read_bytes() == b"wasm"
+    assert result.commit == COMMIT
+
+
+def test_local_io_error_is_internal_error_not_source_rejection(tmp_path):
+    from watcherobot.distribution.ports import HubLocalIOError
+
+    target = tmp_path / "target"
+    target.mkdir()
+    with pytest.raises(DownloadError) as captured:
+        download_application_snapshot(
+            provider="huggingface",
+            repo_id=SPACE_ID,
+            commit=COMMIT,
+            target=target,
+            hub=FakeSnapshotHub(failure=HubLocalIOError("private local path")),
+            watcherobot_version="1.5.0",
+        )
+    assert captured.value.code is ErrorCode.INTERNAL_ERROR
+    assert "private local path" not in str(captured.value)
+    assert not list(target.iterdir())

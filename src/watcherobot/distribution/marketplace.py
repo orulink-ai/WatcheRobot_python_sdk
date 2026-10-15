@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from packaging.specifiers import SpecifierSet
 
 from watcherobot import __version__
@@ -14,13 +14,13 @@ from watcherobot.runtime.daemon.application.manifest import (
 
 from .catalog_submission import (
     CATALOG_PATH,
-    CATALOG_REPO_ID,
     CatalogDocumentError,
     parse_catalog_entries,
 )
 from .events import ErrorCode, EventSink, ProgressEvent
 from .providers import get_provider
-from .ports import HubError, HubRateLimitError, MarketplaceHubClient
+from .marketplace_icons import MAX_CATALOG_ICON_BYTES, read_marketplace_icon
+from .ports import HubError, HubInvalidResponse, HubRateLimitError, MarketplaceHubClient
 
 
 class MarketplaceError(RuntimeError):
@@ -57,6 +57,7 @@ class MarketplaceApplication:
     compatible: bool
     supported_host_platforms: tuple[str, ...] = ()
     host_compatible: bool = False
+    icon_data_url: str | None = None
 
     @classmethod
     def from_metadata(
@@ -89,7 +90,7 @@ class MarketplaceApplication:
         )
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "repo_id": self.repo_id,
             "commit": self.commit,
             "source_url": self.source_url,
@@ -106,6 +107,9 @@ class MarketplaceApplication:
             "compatible": self.compatible,
             "host_compatible": self.host_compatible,
         }
+        if self.icon_data_url is not None:
+            result["icon_data_url"] = self.icon_data_url
+        return result
 
 
 @dataclass(frozen=True)
@@ -151,7 +155,7 @@ def load_official_marketplace(
         )
     except HubError as exc:
         raise MarketplaceError(
-            ErrorCode.RATE_LIMITED if isinstance(exc, HubRateLimitError) else ErrorCode.REMOTE_ERROR,
+            _hub_error_code(exc),
             "Unable to load the latest Application marketplace",
             details=_http_details(exc, "fetching_catalog"),
         ) from exc
@@ -167,6 +171,7 @@ def load_official_marketplace(
     installed_version = watcherobot_version or __version__
     applications: list[MarketplaceApplication] = []
     seen_app_ids: set[str] = set()
+    icon_budget = MAX_CATALOG_ICON_BYTES
     for entry in entries:
         source_details: dict[str, object] = {
             "repo_id": entry.repo_id,
@@ -187,7 +192,7 @@ def load_official_marketplace(
             )
         except HubError as exc:
             raise MarketplaceError(
-                ErrorCode.RATE_LIMITED if isinstance(exc, HubRateLimitError) else ErrorCode.REMOTE_ERROR,
+                _hub_error_code(exc),
                 "Unable to load the latest Application marketplace",
                 details={**source_details, **_http_details(exc, "reading_manifest")},
             ) from exc
@@ -219,20 +224,34 @@ def load_official_marketplace(
                 details={**source_details, "id": metadata.app_id},
             )
         seen_app_ids.add(metadata.app_id)
-        applications.append(
-            MarketplaceApplication.from_metadata(
-                repo_id=entry.repo_id,
-                commit=entry.commit,
-                metadata=metadata,
-                provider=provider,
-                watcherobot_version=installed_version,
-            )
+        application = MarketplaceApplication.from_metadata(
+            repo_id=entry.repo_id,
+            commit=entry.commit,
+            metadata=metadata,
+            provider=provider,
+            watcherobot_version=installed_version,
         )
+        if metadata.icon and icon_budget > 0:
+            icon = read_marketplace_icon(
+                hub, repo_id=entry.repo_id, commit=entry.commit, path=metadata.icon,
+            )
+            if icon is not None and len(icon) <= icon_budget:
+                application = replace(application, icon_data_url=icon)
+                icon_budget -= len(icon)
+        applications.append(application)
 
     return OfficialMarketplace(
         catalog_commit=document.commit,
         applications=tuple(applications),
     )
+
+
+def _hub_error_code(error: HubError) -> ErrorCode:
+    if isinstance(error, HubRateLimitError):
+        return ErrorCode.RATE_LIMITED
+    if isinstance(error, HubInvalidResponse):
+        return ErrorCode.CATALOG_INVALID
+    return ErrorCode.REMOTE_ERROR
 
 
 def _http_details(error: HubError, stage: str) -> dict[str, object]:
