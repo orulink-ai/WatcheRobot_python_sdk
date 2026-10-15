@@ -256,7 +256,7 @@ def add_distribution_commands(
     _add_jsonl_argument(list_command)
     uninstall = app_commands.add_parser(
         "uninstall",
-        help="Remove one SDK-managed Application into recoverable trash",
+        help="Delete one SDK-managed Application source and environment",
     )
     uninstall.add_argument(
         "--store-root",
@@ -1051,6 +1051,7 @@ def _run_application_uninstall(args: argparse.Namespace) -> int:
         result = uninstall_application(
             store_root=args.store_root,
             application_id=args.app_id,
+            events=event_writer,
         )
     except ApplicationInstallError as exc:
         return _print_install_error(exc.code, str(exc), event_writer=event_writer)
@@ -1102,7 +1103,7 @@ def _print_uninstall_result(result: ApplicationUninstallResult) -> None:
         "Application removed",
         (
             ("ID", result.application_id),
-            ("Recoverable trash", str(result.trash_root)),
+            ("Removed staging path", str(result.trash_root)),
         ),
     )
 
