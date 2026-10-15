@@ -1,5 +1,11 @@
 # Gitee 公开目录限流识别
 
+## 后续变更：2026-10-14
+
+wugui / Codex：[TOS 商店完整目录](../../2026-10-14/2026-10-14_200000_wugui_无Issue_TOS商店目录/index.md)
+将国内列表逐项 API 读取替换为 SDK 单次读取 TOS 完整快照；保留本档案原有限流分类供其他 API 使用。
+此变更不代表 Gitee 源码安装已恢复，也不恢复已取消的固定刷新冷却。
+
 2026-10-03 Asia/Shanghai；建档作者 orulink-wugui；实施 Codex。用户要求定位并解决桌面应用广场刷新失败。本地已修改，未提交。
 
 真实目录 branch 请求 HTTP403、文本体含 rate limit exceeded。通用 transport 仅按JSON解码导致限流标记丢失；修复为只识别明确限流，返回脱敏标记。GiteePublicRepository 抛 HubRateLimitError，marketplace 转稳定 rate_limited，退出码4。普通403仍按网络/访问错误，不能推断限流。

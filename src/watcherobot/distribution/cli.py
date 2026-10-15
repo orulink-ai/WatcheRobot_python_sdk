@@ -15,8 +15,8 @@ from watcherobot.runtime.daemon.application.manifest import (
 
 from .check import check_application
 from .credentials import CredentialStoreError, SystemCredentialStore
-from .gitee_repository import GiteeApi, GiteeRepository
-from .gitee_public import GiteePublicRepository
+from .gitee_repository import GiteeRepository
+from .gitee_git import GiteeGitRepository
 from .gitee_auth import GiteeHubClient
 from .download import DownloadError, DownloadResult, download_application_snapshot
 from .events import (
@@ -756,12 +756,12 @@ class _HumanMarketplaceEventSink:
             print(f"{event.message}...", file=sys.stderr)
 
 
-def _build_marketplace_dependencies(provider: str) -> _MarketplaceDependencies:
+def _build_marketplace_dependencies(
+    provider: str,
+) -> _MarketplaceDependencies:
     return _MarketplaceDependencies(
         hub=(
-            GiteeRepository(
-                api=GiteeApi(timeout=None), public=GiteePublicRepository(timeout=None),
-            )
+            GiteeGitRepository()
             if provider == "gitee"
             else HuggingFaceMarketplaceHubClient()
         )
@@ -769,8 +769,8 @@ def _build_marketplace_dependencies(provider: str) -> _MarketplaceDependencies:
 
 
 def _run_application_marketplace(args: argparse.Namespace) -> int:
-    dependencies = _build_marketplace_dependencies(args.provider)
     event_writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    dependencies = _build_marketplace_dependencies(args.provider)
     events: EventSink = event_writer or _HumanMarketplaceEventSink()
     try:
         result = load_official_marketplace(
@@ -886,7 +886,7 @@ class _HumanDownloadEventSink:
 def _build_download_dependencies(provider: str) -> _DownloadDependencies:
     return _DownloadDependencies(
         hub=(
-            GiteeRepository()
+            GiteeGitRepository()
             if provider == "gitee"
             else HuggingFaceMarketplaceHubClient()
         )
@@ -991,7 +991,7 @@ class _HumanInstallEventSink:
 def _build_install_dependencies(provider: str) -> _InstallDependencies:
     return _InstallDependencies(
         hub=(
-            GiteeRepository()
+            GiteeGitRepository()
             if provider == "gitee"
             else HuggingFaceMarketplaceHubClient()
         )

@@ -14,7 +14,7 @@ from .catalog_submission import (
 from .check import ApplicationCheckResult, check_application
 from .events import ErrorCode, EventSink, ProgressEvent
 from .providers import get_provider
-from .ports import HubError, MarketplaceHubClient
+from .ports import HubError, HubInvalidResponse, HubRateLimitError, MarketplaceHubClient
 from .source_files import ApplicationSourceError
 
 
@@ -129,8 +129,11 @@ def download_application_snapshot(
                 )
         except HubError as exc:
             raise DownloadError(
-                ErrorCode.REMOTE_ERROR,
-                "Unable to download immutable Application source",
+                (ErrorCode.APP_CONTENT_FORBIDDEN if isinstance(exc, HubInvalidResponse)
+                 else ErrorCode.RATE_LIMITED if isinstance(exc, HubRateLimitError)
+                 else ErrorCode.REMOTE_ERROR),
+                "Application source was rejected" if isinstance(exc, HubInvalidResponse)
+                else "Unable to download the reviewed Application source",
                 details=details,
             ) from exc
         if revision.commit != reference.commit:

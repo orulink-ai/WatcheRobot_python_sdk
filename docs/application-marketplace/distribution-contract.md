@@ -26,6 +26,10 @@
 
 ## 公开命令
 
+国内 `marketplace --provider gitee` 使用 [内嵌 Git 合同](git-catalog.zh-CN.md)，
+通过 Git 协议取得官方目录及每项固定提交的 app.json，源码下载和安装复用同一固定提交缓存。
+终端用户不需要安装 Git；开发者上传与投稿管理操作继续使用现有 API。
+
 下表使用发行包的独立入口。开发模式下 `watcherobot app ...` 复用同一实现。
 开发者手动使用时默认不加 `--jsonl`，会得到英文摘要或表格；`marketplace --details`
 用于查看完整固定来源、commit 和 Manifest。全部人工命令见
@@ -151,6 +155,6 @@ Daemon 管理接口的版本握手、兼容矩阵和日志安全边界见
 
 ### 广场请求截止与实际状态
 
-国内 `app marketplace --provider gitee` 创建 `GiteeApi(timeout=None)` 与 `GiteePublicRepository(timeout=None)`，包括目录、commit、tree 和 manifest 的读取，不设置 SDK 固定请求截止；Desktop 同时移除120秒进程截止。无响应时继续等待；操作系统连接错误仍为真实失败。其他命令保留原超时，不改变发布/安装/下载策略及 Hugging Face 库默认策略。
+国内 marketplace、download、install 使用 Dulwich 匿名 Git HTTPS 获取，具体截止、历史提交回退与缓存上限见 [内嵌 Git 合同](git-catalog.zh-CN.md)。桌面商店仍没有固定 120 秒进程截止；用户可以取消。失败不会覆盖有效展示缓存，SDK 不自动切换凭据或 Gitee API。
 
-收到 HTTP 错误时，`error.details.http_status` 为实际整数状态码，`stage` 为 `fetching_catalog` 或 `reading_manifest`；没有实际 HTTP 响应时不填虚构状态。Desktop 仅接受100–599的状态码，不传递原始响应正文。`rate_limited` 不等于一定能在某个固定时间恢复；移除超时不能解除远端403。
+没有实际 HTTP 响应时不填虚构状态，不暴露 Git 服务端原始错误正文。上传与投稿仍使用既有 API；Git 服务也可能受平台独立限制，不能承诺永不限流。

@@ -20,7 +20,7 @@ from .catalog_submission import (
 )
 from .events import ErrorCode, EventSink, ProgressEvent
 from .providers import get_provider
-from .ports import HubError, HubRateLimitError, MarketplaceHubClient
+from .ports import HubError, HubInvalidResponse, HubRateLimitError, MarketplaceHubClient
 
 
 class MarketplaceError(RuntimeError):
@@ -151,7 +151,7 @@ def load_official_marketplace(
         )
     except HubError as exc:
         raise MarketplaceError(
-            ErrorCode.RATE_LIMITED if isinstance(exc, HubRateLimitError) else ErrorCode.REMOTE_ERROR,
+            _hub_error_code(exc),
             "Unable to load the latest Application marketplace",
             details=_http_details(exc, "fetching_catalog"),
         ) from exc
@@ -187,7 +187,7 @@ def load_official_marketplace(
             )
         except HubError as exc:
             raise MarketplaceError(
-                ErrorCode.RATE_LIMITED if isinstance(exc, HubRateLimitError) else ErrorCode.REMOTE_ERROR,
+                _hub_error_code(exc),
                 "Unable to load the latest Application marketplace",
                 details={**source_details, **_http_details(exc, "reading_manifest")},
             ) from exc
@@ -233,6 +233,14 @@ def load_official_marketplace(
         catalog_commit=document.commit,
         applications=tuple(applications),
     )
+
+
+def _hub_error_code(error: HubError) -> ErrorCode:
+    if isinstance(error, HubRateLimitError):
+        return ErrorCode.RATE_LIMITED
+    if isinstance(error, HubInvalidResponse):
+        return ErrorCode.CATALOG_INVALID
+    return ErrorCode.REMOTE_ERROR
 
 
 def _http_details(error: HubError, stage: str) -> dict[str, object]:
