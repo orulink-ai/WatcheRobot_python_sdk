@@ -60,3 +60,7 @@ Workspace 原核查档案为 meta repo 中的“商店安装进度、卸载与 G
 - 提交风险扫描的命中已人工核对：SDK 的 token 读取表达式、AccessToken 类型声明，以及 Desktop 已有 bluetooth-smoke 命令参数解析；均为变量或类型，不是真实凭据。本次新增内容不包含凭据或本机缓存。
 - Desktop 原有两份生成 schema 改动排除；原分发回归 482 passed/6 skipped、前端 38 passed、tsc/mypy 通过的结果沿用，不因单纯提交而重复全量测试。来源锁更新后另做锁相关验证。
 - Windows 新增功能未作真机复测，正式包未重建；推送结果以最终 Git 远端核对为准。
+
+## 后续变更：2026-10-15 PR #146 本地验收
+
+[本地验收与跨平台测试修正](../2026-10-15_KID_无Issue_PR146本地验收/index.md)：修正 Windows 换行断言及扩展路径下占用模拟，保留原功能设计与既有验证历史。

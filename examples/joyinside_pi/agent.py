@@ -141,7 +141,7 @@ class PiAgent:
         draining = asyncio.create_task(drain())
         try:
             await asyncio.wait_for(process.wait(), 2)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             process.kill()
             await process.wait()
         finally:

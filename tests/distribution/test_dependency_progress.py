@@ -47,7 +47,7 @@ print('ok')
 """,
         Sink(),
     )
-    assert result.returncode == 0 and result.stdout == b"ok\n"
+    assert result.returncode == 0 and result.stdout.splitlines() == [b"ok"]
     assert (tmp_path / "activity-seen").exists()
     assert [e.stage for e in events] == [
         "resolving_dependencies",

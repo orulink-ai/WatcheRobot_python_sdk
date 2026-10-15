@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from watcherobot.distribution.install import cleanup_uninstalled_applications
+from watcherobot.runtime.windows_paths import filesystem_path
 
 
 @pytest.fixture(autouse=True)
@@ -66,10 +67,11 @@ def test_locked_residue_is_reported_and_other_residues_still_cleaned(
     store = tmp_path / "store"
     locked = residue(store, "a" * 32 + "-uninstall")
     other = residue(store, "b" * 32 + "-uninstall")
+    locked_file = filesystem_path(locked / "source/app.py")
     original = Path.unlink
 
     def fail(path, *args, **kwargs):
-        if path == locked / "source/app.py":
+        if path == locked_file:
             raise PermissionError("busy")
         return original(path, *args, **kwargs)
 
