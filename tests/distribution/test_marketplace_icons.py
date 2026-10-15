@@ -38,3 +38,9 @@ def test_invalid_path_is_not_fetched(path):
 @pytest.mark.parametrize("payload", [b"<html>error</html>", b"x" * (256 * 1024 + 1), b'<!DOCTYPE svg [<!ENTITY x "oops">]><svg/>', HubFileNotFound("missing")], ids=["html", "oversized", "entity", "missing"])
 def test_missing_invalid_or_oversized_icon_is_optional(payload):
     assert read_marketplace_icon(Hub(payload), repo_id="alice/app", commit="a" * 40, path="icon.svg") is None
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-32-le"])
+def test_non_utf8_xml_cannot_bypass_entity_rejection(encoding):
+    payload = '<!DOCTYPE svg [<!ENTITY word "expanded">]><svg xmlns="http://www.w3.org/2000/svg">&word;</svg>'.encode(encoding)
+    assert read_marketplace_icon(Hub(payload), repo_id="alice/app", commit="a" * 40, path="icon.svg") is None

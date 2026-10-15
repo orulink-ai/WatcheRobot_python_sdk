@@ -37,9 +37,16 @@ def read_marketplace_icon(
         mime = "image/gif"
     elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
         mime = "image/webp"
-    elif b"<!DOCTYPE" not in data.upper() and b"<!ENTITY" not in data.upper():
+    else:
+        # Decode before inspecting XML: UTF-16/32 can hide DTD tokens in bytes.
         try:
-            root = ET.fromstring(data)
+            text = data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return None
+        if "\x00" in text or "<!DOCTYPE" in text.upper() or "<!ENTITY" in text.upper():
+            return None
+        try:
+            root = ET.fromstring(text)
             if root.tag in {"svg", "{http://www.w3.org/2000/svg}svg"}:
                 mime = "image/svg+xml"
         except ET.ParseError:

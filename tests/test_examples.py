@@ -7,6 +7,7 @@ from watcherobot.distribution.source_files import collect_application_source_fil
 
 ROOT = Path(__file__).parents[1]
 EXAMPLE_IDS = {
+    "joyinside_pi": "com.orulink.joyinside_pi",
     "sdk_media_lab": "example.sdk_media_lab",
     "expression_lab": "com.orulink.expression_lab",
     "robot_intercom": "com.orulink.robot_intercom",

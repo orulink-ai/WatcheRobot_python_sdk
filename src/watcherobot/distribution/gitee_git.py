@@ -9,12 +9,13 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol, cast
 
 from dulwich.client import HttpGitClient
 from dulwich.config import ConfigDict
 from dulwich.errors import GitProtocolError, NotGitRepository
-from dulwich.objects import Blob, Commit, Tree
+from dulwich.objects import Blob, Commit, ObjectID, Tree
+from dulwich.refs import Ref
 from dulwich.repo import Repo
 from filelock import FileLock, Timeout
 from urllib3 import PoolManager, ProxyManager
@@ -122,7 +123,7 @@ class GiteeGitTransport:
         client = _BoundedClient(repo_id, deadline=self.deadline, budget=self.budget)
         try:
             refs = client.get_refs(f"/{repo_id}.git").refs
-            sha = refs.get(b"refs/heads/master")
+            sha = refs.get(Ref(b"refs/heads/master"))
             if sha is None:
                 raise HubRevisionNotFound(
                     "Official Gitee catalog master branch was not found"
@@ -144,9 +145,11 @@ class GiteeGitTransport:
             self.budget = [0]
         client = _BoundedClient(repo_id, deadline=self.deadline, budget=self.budget)
 
-        def wants(refs: dict[bytes, bytes], *args: Any, **kwargs: Any) -> list[bytes]:
+        def wants(
+            refs: Mapping[Ref, ObjectID], depth: int | None = None
+        ) -> list[ObjectID]:
             if commit is not None:
-                return [commit.encode("ascii")]
+                return [ObjectID(commit.encode("ascii"))]
             return list(
                 set(sha for ref, sha in refs.items() if ref.startswith(b"refs/heads/"))
             )
@@ -212,7 +215,7 @@ class GiteeGitRepository:
                     item = next((entry for entry in files if entry[0] == path), None)
                     if item is None:
                         raise HubFileNotFound("Gitee source file was not found")
-                    blob = repo[item[2]]
+                    blob = cast(Blob, repo[item[2]])
                     if len(blob.data) > _MAX_FILE_BYTES:
                         raise HubInvalidResponse(
                             "Gitee metadata file exceeds size limit"
@@ -254,17 +257,17 @@ class GiteeGitRepository:
                 cached = self._ensure(repo_id, commit)
                 with Repo(str(cached / "repo")) as repo:
                     files = self._files(repo, repo_id, commit)
-                    total = sum(len(repo[oid].data) for _, _, oid in files)
+                    total = sum(len(cast(Blob, repo[oid]).data) for _, _, oid in files)
                     done = 0
                     if on_progress:
                         on_progress(0, total, 0)
                     for path, mode, oid in files:
                         dest = target / path
                         dest.parent.mkdir(parents=True, exist_ok=True)
-                        dest.write_bytes(repo[oid].data)
+                        dest.write_bytes(cast(Blob, repo[oid]).data)
                         if mode == 0o100755:
                             dest.chmod(0o755)
-                        done += len(repo[oid].data)
+                        done += len(cast(Blob, repo[oid]).data)
                         if on_progress:
                             on_progress(done, total, 0)
         except BaseException as exc:
@@ -309,10 +312,10 @@ class GiteeGitRepository:
                 except HubRevisionNotFound:
                     pass
                 for depth in (32, 256):
-                    if commit.encode() in repo.object_store:
+                    if ObjectID(commit.encode("ascii")) in repo.object_store:
                         break
                     self.transport.fetch(repo_id, repo, None, depth)
-                if commit.encode() not in repo.object_store:
+                if ObjectID(commit.encode("ascii")) not in repo.object_store:
                     raise HubRevisionNotFound(
                         "Reviewed commit unavailable within the bounded Git history"
                     )
