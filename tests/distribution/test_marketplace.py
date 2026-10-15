@@ -299,3 +299,22 @@ def test_marketplace_preserves_http_status_without_remote_body():
         load_official_marketplace(provider='gitee', hub=LimitedHub())
     assert caught.value.details == {'http_status': 403, 'stage': 'fetching_catalog'}
     assert 'private remote body' not in str(caught.value)
+
+
+@pytest.mark.parametrize("provider", ["gitee", "huggingface"])
+def test_marketplace_embeds_icon_using_selected_hub_and_reviewed_commit(provider):
+    import base64
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg"/>'
+
+    class IconHub(FakeMarketplaceHub):
+        def read_repository_file(self, *, repo_id, commit, path):
+            if path == "assets/icon.svg":
+                self.calls.append(("file", (repo_id, commit, path)))
+                return svg
+            return super().read_repository_file(repo_id=repo_id, commit=commit, path=path)
+
+    hub = IconHub(catalog=_catalog([{"repo_id": FIRST_SPACE, "commit": FIRST_COMMIT}]),
+                  manifests={(FIRST_SPACE, FIRST_COMMIT): _manifest("com.example.first", name="First", extra={"icon": "assets/icon.svg"})})
+    result = load_official_marketplace(provider=provider, hub=hub, watcherobot_version="1.5.0")
+    assert result.to_dict()["applications"][0]["icon_data_url"] == "data:image/svg+xml;base64," + base64.b64encode(svg).decode()
+    assert hub.calls[-1] == ("file", (FIRST_SPACE, FIRST_COMMIT, "assets/icon.svg"))
