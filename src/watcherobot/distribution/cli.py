@@ -15,9 +15,6 @@ from watcherobot.runtime.daemon.application.manifest import (
 
 from .check import check_application
 from .credentials import CredentialStoreError, SystemCredentialStore
-from .gitee_repository import GiteeRepository
-from .gitee_git import GiteeGitRepository
-from .gitee_auth import GiteeHubClient
 from .download import DownloadError, DownloadResult, download_application_snapshot
 from .events import (
     DistributionEvent,
@@ -30,6 +27,9 @@ from .events import (
     ResultEvent,
     exit_code_for,
 )
+from .gitee_auth import GiteeHubClient
+from .gitee_git import GiteeGitRepository
+from .gitee_repository import GiteeRepository
 from .hf_marketplace import HuggingFaceMarketplaceHubClient
 from .hf_publish import HuggingFacePublishHubClient
 from .hub_http import HuggingFaceHubClient
@@ -38,6 +38,7 @@ from .install import (
     ApplicationInstallResult,
     ApplicationUninstallResult,
     InstalledApplication,
+    cleanup_uninstalled_applications,
     install_application,
     list_installed_applications,
     uninstall_application,
@@ -51,11 +52,11 @@ from .marketplace import (
 from .oauth_http import HuggingFaceOAuthClient
 from .ports import (
     AccessToken,
+    CredentialStore,
     HubAuthenticationError,
+    HubClient,
     HubInvalidResponse,
     HubNetworkError,
-    CredentialStore,
-    HubClient,
     MarketplaceHubClient,
     OAuthClient,
     PublishHubClient,
@@ -63,7 +64,6 @@ from .ports import (
 from .publish import PublishError, PublishResult, publish_application
 from .source_files import ApplicationSourceError
 from .submit import SubmitError, SubmitResult, submit_application
-
 
 DISTRIBUTION_COMMANDS = frozenset(
     {
@@ -77,6 +77,7 @@ DISTRIBUTION_COMMANDS = frozenset(
         "install",
         "list",
         "uninstall",
+        "cleanup",
     }
 )
 _JSONL_HELP = (
@@ -266,6 +267,9 @@ def add_distribution_commands(
     )
     uninstall.add_argument("--app-id", required=True, help="Installed Application ID")
     _add_jsonl_argument(uninstall)
+    cleanup = app_commands.add_parser("cleanup", help="Retry deletion of historical uninstall residues")
+    cleanup.add_argument("--store-root", type=Path, required=True, help="SDK-managed local Application Store root")
+    _add_jsonl_argument(cleanup)
     for remote in (publish, submit, marketplace, download, install):
         remote.add_argument(
             "--provider", choices=("huggingface", "gitee"), required=True
@@ -342,6 +346,8 @@ def run_command(args: argparse.Namespace) -> int:
         return _run_application_list(args)
     if args.app_command == "uninstall":
         return _run_application_uninstall(args)
+    if args.app_command == "cleanup":
+        return _run_application_cleanup(args)
     raise AssertionError("unreachable distribution command")
 
 
@@ -1043,6 +1049,23 @@ def _run_application_list(args: argparse.Namespace) -> int:
     else:
         _print_install_inventory(applications)
     return ExitCode.SUCCESS
+
+
+def _run_application_cleanup(args: argparse.Namespace) -> int:
+    writer = JsonLineEventWriter(sys.stdout) if args.jsonl else None
+    try:
+        result = cleanup_uninstalled_applications(store_root=args.store_root)
+    except (ApplicationInstallError, OSError):
+        return _print_install_error(ErrorCode.INTERNAL_ERROR, "Unable to clean uninstall residues", event_writer=writer)
+    if writer is not None:
+        if result["failed_count"]:
+            writer.emit(ErrorEvent(code=ErrorCode.INTERNAL_ERROR,
+                                   message="Some uninstall residues remain; retry cleanup later", details=dict(result)))
+        else:
+            writer.emit(ResultEvent(data=dict(result)))
+    else:
+        print(f"Removed uninstall residues: {result['removed_count']}; pending retry: {result['failed_count']}")
+    return ExitCode.SUCCESS if result["failed_count"] == 0 else ExitCode.INTERNAL_ERROR
 
 
 def _run_application_uninstall(args: argparse.Namespace) -> int:

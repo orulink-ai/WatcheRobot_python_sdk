@@ -47,7 +47,8 @@
 | `watcher-distribution app download --provider huggingface --repo-id <id> --commit <sha> --target <empty-dir> --jsonl` | 匿名下载并校验固定快照 | 不需要 | 否 |
 | `watcher-distribution app install --provider huggingface --repo-id <id> --commit <sha> --store-root <dir> --runtime-root <locked-runtime-dir> --jsonl` | 下载固定快照、验证锁定 Runtime、创建每 App 独立环境并原子安装 | 不需要 | 否 |
 | `watcher-distribution app list --store-root <dir> --jsonl` | 读取 SDK App Store 已安装记录 | 不需要 | 否 |
-| `watcher-distribution app uninstall --store-root <dir> --app-id <id> --jsonl` | 将一个 App 移入可恢复本地回收目录 | 不需要 | 否 |
+| `watcher-distribution app uninstall --store-root <dir> --app-id <id> --jsonl` | 实际删除 App 源码、独立环境及安装目录 | 不需要 | 否 |
+| `watcher-distribution app cleanup --store-root <dir> --jsonl` | 重试清理历史卸载残留，返回删除/失败数量 | 不需要 | 否 |
 
 V1 的 Space 名称固定为 `<hf_username>/WatcherRobot-<app_id>`。发布工具只能管理由当前 OAuth App 创建的同名 Space；遇到其他来源的同名仓库必须返回归属冲突。
 
@@ -75,6 +76,36 @@ stdout 每行必须是一个完整 JSON 对象，事件类型只允许 `progress
 - `progress.data`、`result.data` 和 `error.details` 是命令相关结构化字段；调用方必须按事件类型读取，不能解析 `message` 文案判断业务状态。
 - Desktop 取消任务时应先终止分发子进程树；若命令自行观察到取消，则返回 `operation_cancelled`。
 
+### 安装阶段与依赖实时进度
+
+安装主进度是 12 个检查点的完成比例，不代表下载字节或剩余时间。
+依赖安装期间以独立线程同时消费 uv stdout/stderr，主线程将允许名单内的摘要转换为以下结构化阶段：
+
+| stage | 实际活动 | stage_completed / stage_total |
+| --- | --- | --- |
+| `resolving_dependencies` | 开始解析依赖 | 0 / 3 |
+| `preparing_dependencies` | 已完成解析，准备包 | 1 / 3 |
+| `downloading_dependencies` | uv 报告开始/完成包下载 | 1 / 3 |
+| `installing_dependency_files` | uv 报告 Prepared / Installed 或 Audited | 2 / 3 或 3 / 3 |
+
+这些事件保持 `completed_steps=5, total_steps=12`，将阶段内实际检查点折算到整体安装进度。
+`completed_items` 表示当前子阶段已报告完成的包数；`total_items` 仅在摘要明确给出总数时存在。
+下载计数只统计 uv 明确报告完成的包，缓存命中和未单独报告的小包不制造下载计数。
+没有可靠总量或字节回调时，只显示活动状态和已知计数，不伪造字节、速率、预计时间或按时间递增的百分比。
+旧版/未知 uv 输出不作为协议透传，仍显示解析活动；原始包名、URL、路径与凭据不进入 JSONL。
+重试会重新报告解析阶段，反映实际重试而非复用上一次进度。
+单流输出上限仍为 1 MiB、单命令超时 300 秒；超时、超限或异常会终止受管子进程树。
+
+### 历史卸载残留
+
+SDK 安装、卸载前在既有写操作锁内尝试清理 `trash/<32位小写hex>-uninstall`。
+也可单独运行 `app cleanup --store-root <dir>`；该命令只取得写锁，不触发共享 Runtime GC。
+仅删除普通直接子目录，不跟随 symlink/junction；Windows 只读属性在受管普通项上按需清除。
+保留 `-previous` 回滚目录、失败安装事务、正在使用的 apps、共享 Runtime 与 Git/uv 缓存。
+清理某项失败时继续处理其它项，失败项保留以便下次重试；自动清理不让历史占用阻断新安装或卸载。
+显式 cleanup 成功返回 `removed_count`、`failed_count=0`；若有失败则返回相同计数的 `error.details`、`internal_error` 和退出码 5。
+成功卸载检查应用根与本次卸载临时根均已消失；删除失败仅尽力恢复尚存文件，不能恢复已经删除的文件。
+
 ### 下载字节进度
 
 `downloading_snapshot` 的 `data` 可包含以下字段，均描述当前固定快照，不能按文件数或安装阶段推算百分比：
@@ -87,7 +118,7 @@ stdout 每行必须是一个完整 JSON 对象，事件类型只允许 `progress
 - `total_bytes`：下载开始前确定的固定总量；无法确定时为 `null`。Hugging Face dry-run 排除完整缓存文件；续传保留的部分字节计入已取得字节，其完整文件大小仍计入总量。全部命中缓存时总量为零，保持不定进度直到进入校验阶段，不伪造百分比。
 - `download_attempt`：从零开始的重试代数。HTTP 续传被拒绝、已取得字节被丢弃时增加代数；新代数允许计数回退，同一代数内累计值不得回退。它不是应用安装 operation ID。
 - HF 中间字节回调最多每 100 毫秒上报一次，首次、显式重试和实际达到总量时立即上报；节流只减少事件数量，不插值、不推算字节。Desktop 在新代数显示“重试下载”提示。
-- 旧适配器可以仅发送阶段事件；缺少字节字段、总量未知或非正数时显示不定进度。校验和安装阶段始终使用独立不定进度，不继承下载百分比。
+- 旧适配器可以仅发送阶段事件；缺少字节字段、总量未知或非正数时，源码字节进度保持未知。整体进度可使用独立的实际安装检查点；校验和安装不继承源码下载百分比。
 - Desktop 应拒绝已结束或不匹配 operation 的事件及旧 sequence/attempt；同一 attempt 的分母异常变化应降级为不定进度，不能用历史最大百分比掩盖变化。
 
 Hugging Face 字节回调使用 `snapshot_download(dry_run=True)` 与 `tqdm_class`，依赖下限为 **huggingface-hub 1.32**（小于 2）。1.32.0 的真实下载器已通过 HTTP mock transport 验证分块、缓存、续传和续传拒绝后重试；不能依赖旧版只报告文件数的回调。新 SDK 源码需要通过源码开发运行时或重新构建的分发产物接入；旧的 Desktop SDK commit 锁与冻结程序不会自动获得此能力。

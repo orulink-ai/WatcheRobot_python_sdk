@@ -51,7 +51,8 @@ watcherobot app marketplace --provider huggingface --details
 | `install` | Download a reviewed fixed commit, create its isolated environment, and atomically install it into the SDK App Store | No | Application, Runtime, commit, and install root |
 | `list` | Read the local SDK App Store inventory | No | Compact installed-Application table |
 | `run-installed` | Run one installed App from a custom SDK App Store through an isolated Daemon | Starts or reuses isolated Daemon | App status and test Daemon endpoint |
-| `uninstall` | Move one installed Application to recoverable local trash | No | Removed ID and trash root |
+| `uninstall` | Delete one installed Application, including its source and isolated environment | No | Removed ID and the now-absent temporary trash root |
+| `cleanup` | Retry deletion of historical UUID-named uninstall residues only | No | Removed/failed counts; exit 5 and an error event if any remain locked |
 | `start` | Start the Application currently selected by the Daemon | Yes or reuses it | ID, state, and PID |
 | `stop` | Stop the currently running Application | Yes or reuses it | ID and final state |
 
@@ -60,6 +61,15 @@ Desktop-supplied locked Application Runtime, copies it after verification when
 needed, and creates one isolated `.venv` per Application. `list` and `uninstall`
 operate on that same SDK App Store root. Application selection remains a Daemon
 management action; the SDK does not expose `select`.
+
+`watcherobot app cleanup --store-root <store-directory>` works in PowerShell and
+macOS/Linux shells. It only removes ordinary `trash/<32-lowercase-hex>-uninstall`
+directories, without following symlinks or Windows junctions. Rollback roots,
+failed-install transactions, installed apps and shared caches remain untouched.
+Install/uninstall also retry this cleanup under their write lock. A locked residue
+does not block other residues or a new operation. Dependency installation reports
+live uv resolution/download/preparation/installation activity and observed package
+counts; it does not estimate network bytes or elapsed-time percentages.
 
 ## Creating a project
 

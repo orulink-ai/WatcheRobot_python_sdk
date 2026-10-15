@@ -7,8 +7,6 @@ isolated environment creation, install records, inventory, and removal.
 
 from __future__ import annotations
 
-from .providers import get_provider
-
 import hashlib
 import json
 import os
@@ -16,15 +14,21 @@ import platform
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Callable, Protocol
+from typing import Protocol
+
+from watcherobot.runtime.cleanup import reference_lock, store_operation
+from watcherobot.runtime.daemon.application.manifest import ApplicationManifestError
+from watcherobot.runtime.windows_paths import filesystem_path
 
 from .download import (
     DownloadError,
@@ -33,9 +37,7 @@ from .download import (
 )
 from .events import DistributionEvent, ErrorCode, EventSink, ProgressEvent
 from .ports import MarketplaceHubClient
-from watcherobot.runtime.cleanup import store_operation
-from watcherobot.runtime.windows_paths import filesystem_path
-from watcherobot.runtime.daemon.application.manifest import ApplicationManifestError
+from .providers import get_provider
 
 _RUNTIME_MANIFEST = "runtime.json"
 _RUNTIME_TREE_PREFIX = b"watcher-application-runtime-tree-sha256-v1\0"
@@ -84,6 +86,9 @@ class ApplicationEnvironmentRunner(Protocol):
 class SystemApplicationEnvironmentRunner:
     """The production runner for the locked Python and uv Runtime resources."""
 
+    def __init__(self, events: EventSink | None = None) -> None:
+        self.events = events
+
     def run(
         self,
         command: ApplicationEnvironmentCommand,
@@ -114,19 +119,28 @@ class SystemApplicationEnvironmentRunner:
                 }
             )
             environment.update(dict(command.environment))
+            # Parse only uv's plain, locale-independent summaries, never ANSI/TTY output.
             for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
                 try:
-                    completed = subprocess.run(
-                        [str(command.executable), *command.arguments],
-                        cwd=command.current_dir,
-                        env=environment,
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        check=False,
-                        timeout=300,
-                    )
-                except subprocess.TimeoutExpired as exc:
+                    if command.stage == "installing_dependencies" and self.events is not None:
+                        from .dependency_progress import run_dependency_install
+
+                        completed = run_dependency_install(
+                            [str(command.executable), "--color", "never", *command.arguments],
+                            cwd=command.current_dir, env=environment, events=self.events,
+                            max_output_bytes=_MAX_OUTPUT_BYTES,
+                        )
+                    else:
+                        completed = subprocess.run(
+                            [str(command.executable), *command.arguments],
+                            cwd=command.current_dir,
+                            env=environment,
+                            stdin=subprocess.DEVNULL,
+                            capture_output=True,
+                            check=False,
+                            timeout=300,
+                        )
+                except (subprocess.TimeoutExpired, ValueError) as exc:
                     raise ApplicationInstallError(
                         ErrorCode.INTERNAL_ERROR,
                         "Application environment command failed",
@@ -280,6 +294,7 @@ def install_application(
     get_provider(provider)
     events = _InstallationEvents(events) if events is not None else None
     paths = _open_store(store_root)
+    _cleanup_uninstall_residue(paths)
     _emit(events, "preparing_runtime", "Preparing locked Application Runtime")
     runtime = _prepare_runtime(paths, runtime_root, events=events)
     transaction_id, transaction = _create_install_transaction(paths)
@@ -307,7 +322,7 @@ def install_application(
                     "Application ID belongs to a different source; uninstall it before switching provider or publisher",
                 )
         environment = candidate / ".venv"
-        runner = environment_runner or SystemApplicationEnvironmentRunner()
+        runner = environment_runner or SystemApplicationEnvironmentRunner(events=events)
         dependencies = snapshot.application.dependencies
         if snapshot.application.schema_version == 3:
             from .dependency_lock import read_dependency_lock
@@ -403,6 +418,7 @@ def uninstall_application(
     """Remove the managed source/environment and verify physical removal."""
 
     paths = _open_store(store_root)
+    _cleanup_uninstall_residue(paths)
     destination = paths.app(application_id)
     if (destination.is_symlink() or getattr(destination, "is_junction", lambda: False)()
             or not destination.is_dir()):
@@ -429,11 +445,48 @@ def uninstall_application(
     return ApplicationUninstallResult(application_id=application_id, trash_root=trash_root)
 
 
-def _delete_application_tree(root: Path, events: EventSink | None) -> None:
-    import stat
+def cleanup_uninstalled_applications(*, store_root: Path) -> dict[str, int]:
+    """Retry disposable historical uninstall roots; never collect rollback roots."""
+    with reference_lock():
+        return _cleanup_uninstall_residue(_open_store(store_root))
 
+
+def _cleanup_uninstall_residue(paths: _StorePaths) -> dict[str, int]:
+    removed = failed = 0
+    try:
+        roots = sorted(paths.trash.iterdir())
+    except OSError:
+        return {"removed_count": 0, "failed_count": 1}
+    for root in roots:
+        if not re.fullmatch(r"[0-9a-f]{32}-uninstall", root.name):
+            continue
+        try:
+            info = root.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or root.is_symlink()
+                    or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                continue
+            _delete_application_tree(root, None)
+            removed += 1
+        except OSError:
+            failed += 1
+    return {"removed_count": removed, "failed_count": failed}
+
+
+def _remove_owned_entry(path: Path, *, directory: bool, link: bool, windows: bool) -> None:
+    remove = path.rmdir if directory else path.unlink
+    try:
+        remove()
+    except PermissionError:
+        # Do not chmod links/junctions: that could affect an external target.
+        if not windows or link:
+            raise
+        path.chmod(path.lstat().st_mode | stat.S_IWRITE)
+        remove()
+
+
+def _delete_application_tree(root: Path, events: EventSink | None) -> None:
     root = filesystem_path(root)
-    entries: list[tuple[Path, bool]] = []
+    entries: list[tuple[Path, bool, bool]] = []
     def collect(path: Path) -> None:
         info = path.lstat()
         reparse = bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
@@ -441,7 +494,7 @@ def _delete_application_tree(root: Path, events: EventSink | None) -> None:
         if directory and not reparse and not path.is_symlink():
             for child in path.iterdir():
                 collect(child)
-        entries.append((path, directory))
+        entries.append((path, directory, reparse or stat.S_ISLNK(info.st_mode)))
     collect(root)
     total = len(entries)
     last_report = 0.0
@@ -450,11 +503,8 @@ def _delete_application_tree(root: Path, events: EventSink | None) -> None:
             events.emit(ProgressEvent("uninstalling_application", "Removing Application files and environment",
                                       {"completed_items": completed, "total_items": total}))
     report(0)
-    for completed, (path, directory) in enumerate(entries, 1):
-        if directory:
-            path.rmdir()
-        else:
-            path.unlink()
+    for completed, (path, directory, link) in enumerate(entries, 1):
+        _remove_owned_entry(path, directory=directory, link=link, windows=os.name == "nt")
         now = time.monotonic()
         if completed == total or now - last_report >= 0.1:
             report(completed)
@@ -467,6 +517,10 @@ _INSTALL_STAGES = (
     "compiling_entrypoint", "importing_watcherobot", "listing_dependencies",
     "freezing_dependencies", "promoting_installation", "installation_complete",
 )
+_DEPENDENCY_STAGES = frozenset({
+    "resolving_dependencies", "preparing_dependencies",
+    "downloading_dependencies", "installing_dependency_files",
+})
 
 
 class _InstallationEvents:
@@ -475,10 +529,11 @@ class _InstallationEvents:
         self.destination = destination
 
     def emit(self, event: DistributionEvent) -> None:
-        if isinstance(event, ProgressEvent) and event.stage in _INSTALL_STAGES:
+        if isinstance(event, ProgressEvent) and (event.stage in _INSTALL_STAGES or event.stage in _DEPENDENCY_STAGES):
+            stage = "installing_dependencies" if event.stage in _DEPENDENCY_STAGES else event.stage
             event = ProgressEvent(event.stage, event.message, {
                 **event.data,
-                "completed_steps": _INSTALL_STAGES.index(event.stage),
+                "completed_steps": _INSTALL_STAGES.index(stage),
                 "total_steps": len(_INSTALL_STAGES) - 1,
             })
         self.destination.emit(event)
@@ -488,13 +543,16 @@ def _open_store(store_root: Path) -> _StorePaths:
     root = Path(store_root)
     try:
         root.mkdir(parents=True, exist_ok=True)
-        if root.is_symlink() or not root.is_dir():
+        if (root.is_symlink()
+                or getattr(root.lstat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                or not root.is_dir()):
             raise OSError("store root is not a regular directory")
         root = root.resolve()
         paths = _StorePaths(root)
         for directory in (paths.apps, paths.staging, paths.trash):
             directory.mkdir(parents=True, exist_ok=True)
-            if (directory.is_symlink() or getattr(directory, "is_junction", lambda: False)()
+            if (directory.is_symlink()
+                    or getattr(directory.lstat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
                     or not directory.is_dir()):
                 raise OSError("store directory is not a regular directory")
         return paths
