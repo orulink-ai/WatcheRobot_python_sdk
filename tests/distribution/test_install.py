@@ -373,6 +373,10 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
     assert installed.application_root == store_root / "apps/com.example.demo"
     assert installed.application_root.joinpath("source/app.py").is_file()
     assert installed.application_root.joinpath(".venv").is_dir()
+    if platform.system() == "Windows":
+        bootstrap = installed.application_root / ".venv/Lib/site-packages/_w.pth"
+        assert bootstrap.is_file()
+        assert str(store_root) not in bootstrap.read_text()
     record = json.loads(installed.application_root.joinpath("install.json").read_text())
     assert record["source"]["repo_id"] == SPACE_ID
     assert record["source"]["commit"] == COMMIT
@@ -585,3 +589,79 @@ def test_runtime_tree_hash_ignores_regenerable_python_bytecode(tmp_path: Path) -
     assert install_module._runtime_tree_sha256(runtime_python) == clean_hash
     cache.joinpath("owned.txt").write_text("unexpected", encoding="utf-8")
     assert install_module._runtime_tree_sha256(runtime_python) != clean_hash
+
+
+def test_install_transaction_uses_short_id_and_reserves_directory(tmp_path):
+    paths = install_module._open_store(tmp_path / "store")
+    transaction_id, transaction = install_module._create_install_transaction(paths)
+    assert len(transaction_id) == 16
+    assert all(c in "0123456789abcdef" for c in transaction_id)
+    assert transaction == paths.staging / transaction_id
+    assert transaction.is_dir()
+
+
+def test_install_transaction_collision_keeps_staging_and_rollback_data(
+    tmp_path, monkeypatch
+):
+    paths = install_module._open_store(tmp_path / "store")
+    ids = ["a" * 16, "b" * 16, "c" * 16, "d" * 16]
+    protected = [
+        paths.staging / ids[0],
+        paths.trash / ids[1],
+        paths.trash / (ids[2] + "-previous"),
+    ]
+    for directory in protected:
+        directory.mkdir()
+        (directory / "keep").write_text("original")
+    choices = iter(ids)
+    monkeypatch.setattr(
+        install_module.secrets, "token_hex", lambda count: next(choices)
+    )
+    selected, transaction = install_module._create_install_transaction(paths)
+    assert selected == ids[-1]
+    assert transaction.is_dir()
+    for directory in protected:
+        assert (directory / "keep").read_text() == "original"
+
+
+def test_install_transaction_collision_limit_preserves_existing_files(
+    tmp_path, monkeypatch
+):
+    paths = install_module._open_store(tmp_path / "store")
+    existing = paths.staging / ("a" * 16)
+    existing.mkdir()
+    (existing / "keep").write_text("original")
+    monkeypatch.setattr(install_module.secrets, "token_hex", lambda count: "a" * 16)
+    with pytest.raises(ApplicationInstallError) as error:
+        install_module._create_install_transaction(paths)
+    assert error.value.code is ErrorCode.INTERNAL_ERROR
+    assert (existing / "keep").read_text() == "original"
+    assert list(paths.staging.iterdir()) == [existing]
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows environment startup")
+def test_managed_environment_bootstrap_normalizes_long_paths_without_fixed_locations(
+    tmp_path,
+):
+    import ntpath
+    from types import SimpleNamespace
+
+    environment = tmp_path / "managed-env"
+    install_module._prepare_windows_environment(environment)
+    bootstrap = environment / "Lib/site-packages/_w.pth"
+    paths = [r"C:\deep\Lib", r"\\server\share\Lib", r"\\?\C:\already", "relative", ""]
+    fake_sys = SimpleNamespace(path=list(paths))
+    fake_os = SimpleNamespace(path=ntpath)
+
+    def importer(name, *args, **kwargs):
+        return {"os": fake_os, "sys": fake_sys}[name]
+
+    exec(bootstrap.read_text(), {"__builtins__": {"__import__": importer}})
+    assert fake_sys.path == [
+        r"\\?\C:\deep\Lib",
+        r"\\?\UNC\server\share\Lib",
+        r"\\?\C:\already",
+        "relative",
+        "",
+    ]
+    assert str(tmp_path) not in bootstrap.read_text()

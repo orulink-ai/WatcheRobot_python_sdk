@@ -7,6 +7,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from watcherobot.runtime.windows_paths import filesystem_path
+
 from .catalog_submission import (
     CatalogDocumentError,
     validate_catalog_reference,
@@ -14,7 +16,7 @@ from .catalog_submission import (
 from .check import ApplicationCheckResult, check_application
 from .events import ErrorCode, EventSink, ProgressEvent
 from .providers import get_provider
-from .ports import HubError, HubInvalidResponse, HubRateLimitError, MarketplaceHubClient
+from .ports import HubError, HubInvalidResponse, HubLocalIOError, HubRateLimitError, MarketplaceHubClient
 from .source_files import ApplicationSourceError
 
 
@@ -129,10 +131,12 @@ def download_application_snapshot(
                 )
         except HubError as exc:
             raise DownloadError(
-                (ErrorCode.APP_CONTENT_FORBIDDEN if isinstance(exc, HubInvalidResponse)
+                (ErrorCode.INTERNAL_ERROR if isinstance(exc, HubLocalIOError)
+                 else ErrorCode.APP_CONTENT_FORBIDDEN if isinstance(exc, HubInvalidResponse)
                  else ErrorCode.RATE_LIMITED if isinstance(exc, HubRateLimitError)
                  else ErrorCode.REMOTE_ERROR),
-                "Application source was rejected" if isinstance(exc, HubInvalidResponse)
+                "Unable to write local Application files" if isinstance(exc, HubLocalIOError)
+                else "Application source was rejected" if isinstance(exc, HubInvalidResponse)
                 else "Unable to download the reviewed Application source",
                 details=details,
             ) from exc
@@ -194,13 +198,13 @@ def download_application_snapshot(
         repo_id=reference.repo_id,
         commit=reference.commit,
         source_url=revision.url,
-        target=destination,
+        target=Path(target).resolve(),
         application=application,
     )
 
 
 def _require_empty_target(target: Path) -> Path:
-    requested = Path(target)
+    requested = filesystem_path(Path(target))
     if requested.is_symlink() or not requested.is_dir():
         raise DownloadError(
             ErrorCode.APP_CONTENT_FORBIDDEN,

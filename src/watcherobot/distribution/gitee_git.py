@@ -21,6 +21,8 @@ from urllib3 import PoolManager, ProxyManager
 from urllib.request import getproxies, proxy_bypass
 import certifi
 
+from watcherobot.runtime.windows_paths import filesystem_path
+
 from .download import MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_FILES
 from .gitee_public import CATALOG_REPO_ID, CATALOG_PATH, _validate_reference
 from .gitee_repository import _validate_snapshot_path
@@ -29,6 +31,7 @@ from .ports import (
     HubError,
     HubFileNotFound,
     HubInvalidResponse,
+    HubLocalIOError,
     HubNetworkError,
     HubRevisionNotFound,
     RepositoryRevision,
@@ -181,7 +184,7 @@ class GiteeGitRepository:
     def __init__(
         self, *, cache_root: Path | None = None, transport: GitTransport | None = None
     ) -> None:
-        self.cache_root = (
+        self.cache_root = filesystem_path(
             Path(cache_root) if cache_root is not None else default_git_cache_root()
         )
         self.transport = transport or GiteeGitTransport()
@@ -217,7 +220,9 @@ class GiteeGitRepository:
                     return bytes(blob.data)
         except Timeout:
             raise HubNetworkError("Gitee Git cache is busy; retry later") from None
-        except (OSError, KeyError, ValueError):
+        except OSError as exc:
+            raise HubLocalIOError("Unable to read the local Git cache") from exc
+        except (KeyError, ValueError):
             raise HubInvalidResponse("Gitee Git cache or source is invalid") from None
 
     def download_repository_snapshot_with_progress(
@@ -241,6 +246,7 @@ class GiteeGitRepository:
         on_progress: SnapshotProgress | None = None,
     ) -> RepositoryRevision:
         _validate_reference(repo_id, commit, "app.json")
+        target = filesystem_path(target)
         if target.is_symlink() or not target.is_dir() or any(target.iterdir()):
             raise HubInvalidResponse("Snapshot target must be an empty directory")
         try:
@@ -266,7 +272,11 @@ class GiteeGitRepository:
                 shutil.rmtree(child) if child.is_dir() else child.unlink()
             if isinstance(exc, Timeout):
                 raise HubNetworkError("Gitee Git cache is busy; retry later") from None
-            if isinstance(exc, (OSError, KeyError, ValueError)):
+            if isinstance(exc, OSError):
+                raise HubLocalIOError(
+                    "Unable to write local Application source files"
+                ) from exc
+            if isinstance(exc, (KeyError, ValueError)):
                 raise HubInvalidResponse(
                     "Gitee Git cache or source is invalid"
                 ) from None

@@ -14,6 +14,7 @@ import json
 import os
 import platform
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,7 @@ from .download import (
 from .events import ErrorCode, EventSink, ProgressEvent
 from .ports import MarketplaceHubClient
 from watcherobot.runtime.cleanup import store_operation
+from watcherobot.runtime.windows_paths import filesystem_path
 from watcherobot.runtime.daemon.application.manifest import ApplicationManifestError
 
 _RUNTIME_MANIFEST = "runtime.json"
@@ -279,8 +281,7 @@ def install_application(
     paths = _open_store(store_root)
     _emit(events, "preparing_runtime", "Preparing locked Application Runtime")
     runtime = _prepare_runtime(paths, runtime_root)
-    transaction_id = uuid.uuid4().hex
-    transaction = paths.staging / transaction_id
+    transaction_id, transaction = _create_install_transaction(paths)
     candidate = transaction / "candidate"
     source = candidate / "source"
     source.mkdir(parents=True, exist_ok=False)
@@ -436,6 +437,55 @@ def _open_store(store_root: Path) -> _StorePaths:
         ) from exc
 
 
+def _create_install_transaction(paths: _StorePaths) -> tuple[str, Path]:
+    """Reserve a 64-bit transaction ID without overwriting staging or rollback."""
+    for _ in range(16):
+        transaction_id = secrets.token_hex(8)
+        transaction = paths.staging / transaction_id
+        retained = (
+            paths.trash / transaction_id,
+            paths.trash / f"{transaction_id}-previous",
+        )
+        if any(path.exists() or path.is_symlink() for path in retained):
+            continue
+        try:
+            transaction.mkdir(exist_ok=False)
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            raise ApplicationInstallError(
+                ErrorCode.INTERNAL_ERROR,
+                "Unable to create Application installation staging",
+            ) from exc
+        return transaction_id, transaction
+    raise ApplicationInstallError(
+        ErrorCode.INTERNAL_ERROR,
+        "Unable to reserve a unique Application installation transaction",
+    )
+
+
+def _prepare_windows_environment(environment: Path) -> None:
+    """Normalize import roots at startup in this SDK-owned environment only.
+
+    A long pyvenv.cfg home may be canonicalized back to a regular path by
+    CPython. FileFinder can then miss standard-library packages beyond
+    MAX_PATH. A relative, location-independent site hook also survives promotion.
+    """
+    if os.name != "nt":
+        return
+    site_packages = filesystem_path(environment / "Lib" / "site-packages")
+    site_packages.mkdir(parents=True, exist_ok=True)
+    prefix = chr(92) * 2 + "?" + chr(92)
+    unc = prefix + "UNC" + chr(92)
+    network = chr(92) * 2
+    bootstrap = (
+        "import os,sys; sys.path[:] = [p if not os.path.isabs(p) "
+        f"or p.startswith({prefix!r}) else {unc!r}+p[2:] "
+        f"if p.startswith({network!r}) else {prefix!r}+p for p in sys.path]\n"
+    )
+    (site_packages / "_w.pth").write_text(bootstrap, encoding="utf-8")
+
+
 def _prepare_runtime(paths: _StorePaths, source_root: Path) -> _RuntimeResources:
     from watcherobot.runtime.repository import prepare_bundle
 
@@ -449,7 +499,8 @@ def _prepare_runtime(paths: _StorePaths, source_root: Path) -> _RuntimeResources
                 time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
                 continue
             raise ApplicationInstallError(
-                ErrorCode.INTERNAL_ERROR, "Unable to prepare immutable Application Runtime",
+                ErrorCode.INTERNAL_ERROR,
+                "Unable to prepare immutable Application Runtime",
             ) from exc
     raise AssertionError("unreachable")
 
@@ -753,6 +804,8 @@ def _create_environment(
                 ErrorCode.INTERNAL_ERROR,
                 "Application environment command failed",
             )
+        if command.stage == "creating_environment":
+            _prepare_windows_environment(environment)
         outputs[command.stage] = output
     return _resolved_dependencies(
         outputs["listing_dependencies"].stdout,

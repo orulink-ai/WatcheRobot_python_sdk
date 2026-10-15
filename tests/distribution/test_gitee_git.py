@@ -155,7 +155,6 @@ def test_cli_routes_browser_and_download_to_git():
 
 
 def test_refused_sha_falls_back_to_bounded_history(setup, tmp_path):
-
     reader, transport, old, _, remote = setup
 
     class History(Transport):
@@ -271,3 +270,40 @@ def test_git_cache_merges_concurrent_same_commit_fetches(setup):
         values = list(pool.map(read, range(2)))
     assert values[0] == values[1]
     assert len(transport.calls) == 1
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows MAX_PATH regression")
+def test_export_supports_windows_long_installation_paths(setup, tmp_path):
+    from pathlib import Path
+
+    reader, transport, _, _, remote = setup
+    sha = revision(
+        remote, [("app.json", b"{}", 0o100644), ("a" * 80 + ".wasm", b"wasm", 0o100644)]
+    )
+    target = (
+        tmp_path / ("long-profile-" + "x" * 65) / ("transaction-" + "y" * 65) / "source"
+    )
+    extended = Path("\\\\?\\" + str(target.resolve()))
+    extended.mkdir(parents=True)
+    reader.download_repository_snapshot(repo_id=REPO, commit=sha, target=target)
+    assert (extended / ("a" * 80 + ".wasm")).read_bytes() == b"wasm"
+
+
+def test_local_write_failure_is_not_reported_as_invalid_source(
+    setup, tmp_path, monkeypatch
+):
+    from pathlib import Path
+    from watcherobot.distribution.ports import HubLocalIOError
+
+    reader, _, old, _, _ = setup
+    reader.read_repository_file(repo_id=REPO, commit=old, path="app.json")
+    target = tmp_path / "disk-full"
+    target.mkdir()
+
+    def fail(*args, **kwargs):
+        raise OSError("disk is full")
+
+    monkeypatch.setattr(Path, "write_bytes", fail)
+    with pytest.raises(HubLocalIOError):
+        reader.download_repository_snapshot(repo_id=REPO, commit=old, target=target)
+    assert not list(target.iterdir())

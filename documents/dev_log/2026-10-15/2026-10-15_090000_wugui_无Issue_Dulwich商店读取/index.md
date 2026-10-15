@@ -75,3 +75,7 @@ SDK 内嵌 Dulwich 匿名 HTTPS 获取官方目录和应用源码，缓存固定
 - 新模块/测试 ruff check 通过；gitee_git.py、cli.py、download.py 的 mypy --follow-imports=skip 通过。
 - 旧TOS中间提交与Dulwich实现已合并为一个最终提交；原历史可从远端旧SHA与临时bundle追溯。
 - Desktop配套分支将锁定本提交；按用户本次授权推送，不创建PR，不合入主分支。
+
+## 后续变更：2026-10-15 Windows实际安装路径
+
+[长路径修复](../2026-10-15_103000_wugui_无Issue_商店安装长路径修复/index.md)更正此前短临时目录安装验收覆盖不足，修复实际桌面路径导出失败和本地I/O误判。原短路径成功证据保留，不扩写为实际桌面验收。
