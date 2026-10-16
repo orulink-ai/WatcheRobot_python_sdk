@@ -1,0 +1,69 @@
+# Trusted notification transport only. Never check out or execute PR code.
+name: Lu Xiao Event Relay
+on:
+  workflow_dispatch: {}
+  pull_request_target:
+    types: [opened, reopened, synchronize, edited, closed, ready_for_review, converted_to_draft]
+  workflow_run:
+    workflows: ["PR Review by Luxiao", "Prepare SDK release", "Release Python package", "SDK CI", "Python SDK Security and SBOM"]
+    types: [requested, in_progress, completed]
+  release:
+    types: [published, edited]
+  push:
+    branches: [main, dev]
+    tags: ['v*']
+permissions: {}
+jobs:
+  forward-event:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.name != 'Lu Xiao Event Relay'
+    runs-on: ["self-hosted", "Linux", "X64", "sdk-orchestrator"]
+    timeout-minutes: 2
+    steps:
+      - name: Forward signed event to private Lu Xiao receiver
+        shell: python3 {0}
+        env:
+          LUXIAO_NOTIFY_HMAC: ${{ secrets.LUXIAO_NOTIFY_HMAC }}
+          LUXIAO_NOTIFY_CA_CERT: ${{ vars.LUXIAO_NOTIFY_CA_CERT }}
+          LUXIAO_NOTIFY_ENDPOINT: ${{ vars.LUXIAO_NOTIFY_ENDPOINT }}
+        run: |
+          """Only forward trusted GitHub event data. Never check out or execute PR code."""
+          import hashlib
+          import hmac
+          import json
+          import os
+          from pathlib import Path
+          import ssl
+          import time
+          from urllib.request import Request, urlopen
+
+
+          def forward(environ=os.environ, opener=urlopen, sleep=time.sleep):
+              if environ.get('LUXIAO_NOTIFY_ENDPOINT')!='https://192.168.1.105:9925/github/webhook':
+                  raise ValueError('unapproved notification endpoint')
+              raw=Path(environ['GITHUB_EVENT_PATH']).read_bytes()
+              if len(raw)>2*1024*1024:raise ValueError('event exceeds receiver limit')
+              payload=json.loads(raw)
+              if payload.get('repository',{}).get('full_name')!=environ['GITHUB_REPOSITORY']:raise ValueError('repository mismatch')
+              event=environ['GITHUB_EVENT_NAME']
+              # pull_request_target executes a trusted default-branch workflow. Forward its
+              # payload as a PR event; no action from the PR branch is loaded or executed.
+              event='pull_request' if event=='pull_request_target' else event
+              if event=='workflow_dispatch':event='ping'
+              identity='relay-'+environ['GITHUB_RUN_ID']+'-'+environ['GITHUB_RUN_ATTEMPT']
+              secret=environ['LUXIAO_NOTIFY_HMAC'].encode()
+              signature='sha256='+hmac.new(secret,raw,hashlib.sha256).hexdigest()
+              context=ssl.create_default_context(cadata=environ['LUXIAO_NOTIFY_CA_CERT'])
+              request=Request(environ['LUXIAO_NOTIFY_ENDPOINT'],data=raw,headers={'Content-Type':'application/json','X-GitHub-Event':event,'X-GitHub-Delivery':identity,'X-Hub-Signature-256':signature},method='POST')
+              for attempt in range(3):
+                  try:
+                      with opener(request,timeout=8,context=context) as response:
+                          if response.status not in {200,202}:raise RuntimeError('receiver rejected event')
+                      return
+                  except Exception:
+                      if attempt==2:raise RuntimeError('internal event relay unavailable; two-minute reconciliation remains enabled') from None
+                      sleep(attempt+1)
+
+
+          if __name__=='__main__':
+              forward()
+              print('GitHub event accepted by the internal notification receiver.')
