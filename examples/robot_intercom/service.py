@@ -17,6 +17,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
@@ -705,7 +706,11 @@ def create_web_app(service, *, web_root, enable_photo=False):
             cleanup = asyncio.create_task(cleanup_presence(registration, request_id, close_details))
             presence_cleanup_tasks.add(cleanup)
             cleanup.add_done_callback(cleanup_done)
-            await asyncio.shield(cleanup)
+            # ASGI servers/test clients may use AnyIO level cancellation:
+            # asyncio.shield retains the cleanup task, but its waiter can still
+            # exit early. Keep the handler alive until robot cleanup completes.
+            with anyio.CancelScope(shield=True):
+                await asyncio.shield(cleanup)
 
     async def photo(body: CallRequest):
         return await asyncio.to_thread(service.capture, body.request_id)

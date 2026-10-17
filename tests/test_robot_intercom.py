@@ -601,6 +601,59 @@ def test_diagnostics_retain_terminal_reason_and_never_record_signal_payload(rig)
     assert "private-signal" not in json.dumps(diagnostic)
 
 
+def test_presence_scope_cancellation_waits_for_cleanup(rig):
+    import anyio
+    from starlette.datastructures import URL
+    from starlette.websockets import WebSocketDisconnect
+
+    rig.service.start("request-a")
+    entered, release = threading.Event(), threading.Event()
+    original = rig.service.detach_presence
+
+    def detach(*args, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        return original(*args, **kwargs)
+
+    rig.service.detach_presence = detach
+    app = rig.module.create_web_app(rig.service, web_root=ROOT / "web")
+    endpoint = next(route.endpoint for route in app.routes if route.path == "/api/call/presence")
+
+    async def scenario():
+        exited = asyncio.Event()
+
+        async def run():
+            with anyio.CancelScope() as scope:
+                class Socket:
+                    headers = {"origin": "http://testserver"}
+                    url = URL("ws://testserver/api/call/presence?request_id=request-a")
+                    query_params = {"request_id": "request-a"}
+                    async def accept(self):
+                        pass
+                    async def send_json(self, data):
+                        pass
+                    async def receive_text(self):
+                        scope.cancel()
+                        raise WebSocketDisconnect(code=1000)
+                await endpoint(Socket())
+            exited.set()
+
+        task = asyncio.create_task(run())
+        try:
+            assert await asyncio.to_thread(entered.wait, 1)
+            # The cleanup worker is deliberately blocked, not merely scheduled.
+            assert not exited.is_set(), "handler exited before robot cleanup completed"
+        finally:
+            release.set()
+            await task
+            await asyncio.gather(*app.state.presence_cleanup_tasks)
+        assert rig.service.status()["state"] == "idle"
+        assert not rig.rtc.active
+        assert rig.calls[-1] == ("follow", False)
+
+    asyncio.run(scenario())
+
+
 def test_presence_websocket_checks_origin_and_cleans_up_on_close(rig):
     with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
         client.post("/api/call/start", json={"request_id": "request-a"})

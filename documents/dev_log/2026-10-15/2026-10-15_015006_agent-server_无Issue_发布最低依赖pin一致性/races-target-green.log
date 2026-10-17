@@ -1,0 +1,742 @@
+........................................................................ [ 13%]
+.............................s.......................................... [ 26%]
+.......................................................sss.............. [ 39%]
+........................................................................ [ 52%]
+........................................................................ [ 65%]
+........................................................................ [ 78%]
+...........s............................................................ [ 91%]
+............................................                             [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.11/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/runtime/test_maintenance_extensions.py::test_portable_work_import_rejects_duplicate_zip_entries
+  /home/hermesadmin/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/zipfile.py:1580: UserWarning: Duplicate name: 'work.json'
+    return self._open_to_write(zinfo, force_zip64=force_zip64)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+==================================== PASSES ====================================
+_______ test_unselect_preserves_live_connections_and_transparent_routing _______
+------------------------------ Captured log call -------------------------------
+ERROR    websockets.server:server.py:378 connection handler failed
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/websockets/asyncio/server.py", line 376, in conn_handler
+    await self.handler(connection)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/connections/websocket_server.py", line 219, in _handle_connection
+    await result
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/runtime.py", line 673, in _device_disconnected
+    self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/pairing/udp.py", line 448, in activate
+    raise PairingSessionError("invalid_device_ip")
+watcherobot.runtime.daemon.pairing.session.PairingSessionError: invalid_device_ip
+__________________ test_manual_pairing_seeds_durable_binding ___________________
+------------------------------ Captured log call -------------------------------
+ERROR    websockets.server:server.py:378 connection handler failed
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/websockets/asyncio/server.py", line 376, in conn_handler
+    await self.handler(connection)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/connections/websocket_server.py", line 219, in _handle_connection
+    await result
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/runtime.py", line 673, in _device_disconnected
+    self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/pairing/udp.py", line 448, in activate
+    raise PairingSessionError("invalid_device_ip")
+watcherobot.runtime.daemon.pairing.session.PairingSessionError: invalid_device_ip
+________________ test_restart_autoreunites_without_pairing_code ________________
+------------------------------ Captured log call -------------------------------
+ERROR    websockets.server:server.py:378 connection handler failed
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/websockets/asyncio/server.py", line 376, in conn_handler
+    await self.handler(connection)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/connections/websocket_server.py", line 219, in _handle_connection
+    await result
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/runtime.py", line 673, in _device_disconnected
+    self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/pairing/udp.py", line 448, in activate
+    raise PairingSessionError("invalid_device_ip")
+watcherobot.runtime.daemon.pairing.session.PairingSessionError: invalid_device_ip
+ERROR    websockets.server:server.py:378 connection handler failed
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/websockets/asyncio/server.py", line 376, in conn_handler
+    await self.handler(connection)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/connections/websocket_server.py", line 219, in _handle_connection
+    await result
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/runtime.py", line 673, in _device_disconnected
+    self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/pairing/udp.py", line 448, in activate
+    raise PairingSessionError("invalid_device_ip")
+watcherobot.runtime.daemon.pairing.session.PairingSessionError: invalid_device_ip
+__________________ test_desktop_disconnect_clears_the_binding __________________
+------------------------------ Captured log call -------------------------------
+ERROR    websockets.server:server.py:378 connection handler failed
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/websockets/asyncio/server.py", line 376, in conn_handler
+    await self.handler(connection)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/connections/websocket_server.py", line 219, in _handle_connection
+    await result
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/runtime.py", line 673, in _device_disconnected
+    self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/pairing/udp.py", line 448, in activate
+    raise PairingSessionError("invalid_device_ip")
+watcherobot.runtime.daemon.pairing.session.PairingSessionError: invalid_device_ip
+______ test_active_application_owns_routing_then_desktop_control_recovers ______
+------------------------------ Captured log call -------------------------------
+ERROR    websockets.server:server.py:378 connection handler failed
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/websockets/asyncio/server.py", line 376, in conn_handler
+    await self.handler(connection)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/connections/websocket_server.py", line 219, in _handle_connection
+    await result
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/runtime.py", line 673, in _device_disconnected
+    self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/pairing/udp.py", line 448, in activate
+    raise PairingSessionError("invalid_device_ip")
+watcherobot.runtime.daemon.pairing.session.PairingSessionError: invalid_device_ip
+ERROR    websockets.server:server.py:378 connection handler failed
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/websockets/asyncio/server.py", line 376, in conn_handler
+    await self.handler(connection)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/connections/websocket_server.py", line 219, in _handle_connection
+    await result
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/runtime.py", line 673, in _device_disconnected
+    self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/pairing/udp.py", line 448, in activate
+    raise PairingSessionError("invalid_device_ip")
+watcherobot.runtime.daemon.pairing.session.PairingSessionError: invalid_device_ip
+________________ test_complete_daemon_application_vertical_flow ________________
+------------------------------ Captured log call -------------------------------
+ERROR    websockets.server:server.py:378 connection handler failed
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/websockets/asyncio/server.py", line 376, in conn_handler
+    await self.handler(connection)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/connections/websocket_server.py", line 219, in _handle_connection
+    await result
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/runtime.py", line 673, in _device_disconnected
+    self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/pairing/udp.py", line 448, in activate
+    raise PairingSessionError("invalid_device_ip")
+watcherobot.runtime.daemon.pairing.session.PairingSessionError: invalid_device_ip
+ERROR    websockets.server:server.py:378 connection handler failed
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/websockets/asyncio/server.py", line 376, in conn_handler
+    await self.handler(connection)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/connections/websocket_server.py", line 219, in _handle_connection
+    await result
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/runtime.py", line 673, in _device_disconnected
+    self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
+  File "/home/hermesadmin/sdk-pr148-repair/src/watcherobot/runtime/daemon/pairing/udp.py", line 448, in activate
+    raise PairingSessionError("invalid_device_ip")
+watcherobot.runtime.daemon.pairing.session.PairingSessionError: invalid_device_ip
+___ test_udp_service_connect_timeout_still_cleans_up_when_cancel_send_fails ____
+------------------------------ Captured log call -------------------------------
+WARNING  watcherobot.runtime.daemon.pairing.udp:udp.py:643 Pairing UDP timeout cancel failed (peer=192.168.1.25, error=network down)
+_______ test_udp_service_keeps_healthy_interface_when_another_bind_fails _______
+------------------------------ Captured log call -------------------------------
+WARNING  watcherobot.runtime.daemon.pairing.udp:udp.py:643 Unable to open pairing UDP channel (interface=Wi-Fi, local=192.168.1.20, broadcast=192.168.1.255, error=cannot bind 192.168.1.20)
+WARNING  watcherobot.runtime.daemon.pairing.udp:udp.py:643 Unable to open pairing UDP channel (interface=Wi-Fi, local=192.168.1.20, broadcast=192.168.1.255, error=cannot bind 192.168.1.20)
+____ test_udp_service_start_fails_when_every_visible_interface_cannot_bind _____
+------------------------------ Captured log call -------------------------------
+WARNING  watcherobot.runtime.daemon.pairing.udp:udp.py:643 Unable to open pairing UDP channel (interface=Wi-Fi, local=192.168.1.20, broadcast=192.168.1.255, error=cannot bind 192.168.1.20)
+___________ test_udp_service_reopens_channel_after_broadcast_failure ___________
+------------------------------ Captured log call -------------------------------
+WARNING  watcherobot.runtime.daemon.pairing.udp:udp.py:643 Pairing UDP broadcast failed (interface=Wi-Fi, local=192.168.1.20, broadcast=192.168.1.255, error=network path unavailable)
+____ test_presence_disconnect_redacts_untrusted_reason_and_records_shutdown ____
+------------------------------ Captured log call -------------------------------
+INFO     intercom_service:service.py:137 INTERCOM {"at_ms": 0, "request_id": "request-a", "kind": "presence_closed", "close_code": 1012, "close_reason": "[redacted]", "close_kind": "disconnect", "shutdown": true, "heartbeat_age_ms": 0}
+INFO     intercom_service:service.py:137 INTERCOM {"at_ms": 0, "request_id": "request-a", "kind": "stop_requested", "reason": "presence_lost", "shutdown": true, "heartbeat_age_ms": 0}
+INFO     intercom_service:service.py:137 INTERCOM {"at_ms": 0, "request_id": "request-a", "kind": "released", "reason": "presence_lost"}
+_ test_start_deadline_before_rtc_does_not_allocate_and_preserves_cleanup[True-follow] _
+------------------------------ Captured log call -------------------------------
+ERROR    intercom_service:service.py:333 Intercom startup cleanup remains pending
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/examples/robot_intercom/service.py", line 319, in start
+    self._before_device_call(request_id)
+  File "/home/hermesadmin/sdk-pr148-repair/examples/robot_intercom/service.py", line 275, in _before_device_call
+    self._owned(request_id)
+  File "/home/hermesadmin/sdk-pr148-repair/examples/robot_intercom/service.py", line 270, in _owned
+    raise IntercomError(self._last_error)
+intercom_service.IntercomError: 通话连接超时，请重新开始
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/examples/robot_intercom/service.py", line 331, in start
+    self.stop(request_id)
+  File "/home/hermesadmin/sdk-pr148-repair/examples/robot_intercom/service.py", line 362, in stop
+    self.robot.expression_runtime.set_audio_follow(False)
+  File "/home/hermesadmin/sdk-pr148-repair/tests/test_robot_intercom.py", line 930, in follow
+    raise TimeoutError("release unconfirmed")
+TimeoutError: release unconfirmed
+_ test_start_deadline_before_rtc_does_not_allocate_and_preserves_cleanup[True-online] _
+------------------------------ Captured log call -------------------------------
+ERROR    intercom_service:service.py:333 Intercom startup cleanup remains pending
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/examples/robot_intercom/service.py", line 319, in start
+    self._before_device_call(request_id)
+  File "/home/hermesadmin/sdk-pr148-repair/examples/robot_intercom/service.py", line 279, in _before_device_call
+    self._owned(request_id)
+  File "/home/hermesadmin/sdk-pr148-repair/examples/robot_intercom/service.py", line 270, in _owned
+    raise IntercomError(self._last_error)
+intercom_service.IntercomError: 通话连接超时，请重新开始
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/hermesadmin/sdk-pr148-repair/examples/robot_intercom/service.py", line 331, in start
+    self.stop(request_id)
+  File "/home/hermesadmin/sdk-pr148-repair/examples/robot_intercom/service.py", line 362, in stop
+    self.robot.expression_runtime.set_audio_follow(False)
+  File "/home/hermesadmin/sdk-pr148-repair/tests/test_robot_intercom.py", line 930, in follow
+    raise TimeoutError("release unconfirmed")
+TimeoutError: release unconfirmed
+=========================== short test summary info ============================
+PASSED tests/runtime/test_application_bridge.py::test_local_bridge_keeps_channel_source_and_raw_frame_content
+PASSED tests/runtime/test_application_bridge.py::test_local_bridge_rejects_invalid_run_credential
+PASSED tests/runtime/test_application_client.py::test_communicators_require_both_daemon_channel_urls
+PASSED tests/runtime/test_application_client.py::test_communicators_send_only_after_channel_is_connected
+PASSED tests/runtime/test_application_client.py::test_local_connect_options_match_the_installed_websockets_api
+PASSED tests/runtime/test_application_client.py::test_communicators_connect_to_local_channels_with_proxy_environment
+PASSED tests/runtime/test_application_client.py::test_communicators_receive_while_connected_callback_waits
+PASSED tests/runtime/test_application_launcher.py::test_local_launch_grant_cannot_authorize_a_later_selection
+PASSED tests/runtime/test_application_launcher.py::test_locally_authorized_spec_can_be_refreshed_for_start
+PASSED tests/runtime/test_application_launcher.py::test_python_launcher_builds_only_the_fixed_app_entrypoint
+PASSED tests/runtime/test_application_launcher.py::test_python_launcher_can_start_the_default_application_from_source
+PASSED tests/runtime/test_application_launcher.py::test_source_default_launcher_accepts_only_the_explicit_trusted_pair
+PASSED tests/runtime/test_application_launcher.py::test_source_default_launcher_configuration_must_be_complete
+PASSED tests/runtime/test_application_launcher.py::test_source_default_launcher_preserves_trusted_virtualenv_symlink
+PASSED tests/runtime/test_application_launcher.py::test_source_default_launcher_runs_with_workspace_virtualenv_dependencies
+PASSED tests/runtime/test_application_launcher.py::test_managed_python_launcher_preserves_venv_path_inside_controlled_root
+PASSED tests/runtime/test_application_launcher.py::test_managed_python_launcher_rejects_path_outside_controlled_root
+PASSED tests/runtime/test_application_launcher.py::test_third_party_application_cannot_borrow_source_default_authorization
+PASSED tests/runtime/test_application_launcher.py::test_windows_python_launcher_uses_pythonw_for_the_fixed_entrypoint
+PASSED tests/runtime/test_application_launcher.py::test_windows_python_launcher_cannot_escape_controlled_root
+PASSED tests/runtime/test_application_launcher.py::test_windows_source_default_launcher_uses_adjacent_pythonw
+PASSED tests/runtime/test_application_launcher.py::test_windows_source_default_launcher_falls_back_to_trusted_python
+PASSED tests/runtime/test_application_launcher.py::test_windows_source_default_launcher_cannot_escape_trusted_directory
+PASSED tests/runtime/test_application_launcher.py::test_windows_source_default_pythonw_cannot_escape_launcher_directory
+PASSED tests/runtime/test_application_launcher.py::test_windows_pythonw_must_remain_inside_the_controlled_root
+PASSED tests/runtime/test_application_launcher.py::test_bundled_launcher_is_reserved_for_the_default_application
+PASSED tests/runtime/test_application_launcher.py::test_launcher_kind_cannot_cross_the_default_application_boundary[bundled-com.example.third_party]
+PASSED tests/runtime/test_application_launcher.py::test_launcher_rejects_executable_outside_its_controlled_root[python]
+PASSED tests/runtime/test_application_launcher.py::test_launcher_rejects_executable_outside_its_controlled_root[bundled]
+PASSED tests/runtime/test_application_launcher.py::test_launcher_rejects_arbitrary_executable_names[python-arbitrary.exe]
+PASSED tests/runtime/test_application_launcher.py::test_launcher_rejects_arbitrary_executable_names[bundled-other-app.exe]
+PASSED tests/runtime/test_application_launcher.py::test_launcher_rejects_relative_or_missing_executable
+PASSED tests/runtime/test_application_launcher.py::test_launcher_rejects_unknown_kind_before_process_execution
+PASSED tests/runtime/test_application_logging.py::test_log_service_saves_before_forwarding_and_ignores_desktop_failure
+PASSED tests/runtime/test_application_logging.py::test_runtime_captures_application_stdout_and_stderr
+PASSED tests/runtime/test_application_logging.py::test_log_service_can_persist_lifecycle_without_forwarding
+PASSED tests/runtime/test_application_logging.py::test_runtime_writes_lifecycle_log_when_application_exits_silently
+PASSED tests/runtime/test_application_manifest.py::test_manifest_requires_fixed_app_py_and_compatible_watcherobot
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_missing_watcherobot_requirement
+PASSED tests/runtime/test_application_manifest.py::test_schema_v2_requires_and_preserves_supported_host_platforms
+PASSED tests/runtime/test_application_manifest.py::test_schema_v2_rejects_missing_or_invalid_supported_host_platforms
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_incompatible_watcherobot_version
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_arbitrary_entrypoint_override
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_invalid_requirement_syntax
+PASSED tests/runtime/test_application_manifest.py::test_manifest_accepts_standard_python_requirements
+PASSED tests/runtime/test_application_manifest.py::test_manifest_allows_watcherobot_version_constraint_from_bundled_wheel
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_watcherobot_direct_reference[watcherobot @ https://example.com/watcherobot.whl]
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_watcherobot_direct_reference[Watcherobot @ file:///tmp/watcherobot]
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_invalid_python_requirement
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_application_ids_that_are_not_catalog_safe[../escape]
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_application_ids_that_are_not_catalog_safe[UPPER]
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_application_ids_that_are_not_catalog_safe[space app]
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_application_ids_that_are_not_catalog_safe[]
+PASSED tests/runtime/test_application_manifest.py::test_manifest_rejects_application_ids_that_are_not_catalog_safe[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]
+PASSED tests/runtime/test_application_manifest_metadata.py::test_parse_remote_manifest_reuses_schema_without_local_source_files
+PASSED tests/runtime/test_application_manifest_metadata.py::test_parse_remote_manifest_rejects_the_same_invalid_schema[not json]
+PASSED tests/runtime/test_application_manifest_metadata.py::test_parse_remote_manifest_rejects_the_same_invalid_schema[\xff]
+PASSED tests/runtime/test_application_manifest_metadata.py::test_parse_remote_manifest_rejects_the_same_invalid_schema[{"schema_version": 1, "id": "com.orulink.remote_demo", "name": "Remote Demo", "version": "1.2.3", "requires_watcherobot": ">=1.0,<2.0", "dependencies": ["httpx>=0.28,<1"], "description": "Remote metadata", "author": "Orulink", "icon": "assets/icon.png", "unknown": "field"}]
+PASSED tests/runtime/test_application_manifest_metadata.py::test_parse_remote_manifest_rejects_the_same_invalid_schema[{"schema_version": 1, "id": "com.orulink.remote_demo", "name": "Remote Demo", "version": "1.2.3", "requires_watcherobot": ">=1.0,<2.0", "dependencies": ["not a requirement ???"], "description": "Remote metadata", "author": "Orulink", "icon": "assets/icon.png"}]
+PASSED tests/runtime/test_application_manifest_metadata.py::test_parse_remote_manifest_enforces_sdk_compatibility
+PASSED tests/runtime/test_application_runtime.py::test_runtime_injects_only_the_configured_read_only_device_status_url
+PASSED tests/runtime/test_application_runtime.py::test_runtime_bypasses_system_proxy_for_local_application_channels
+PASSED tests/runtime/test_application_runtime.py::test_windows_application_launch_hides_the_console_window
+PASSED tests/runtime/test_application_runtime.py::test_runtime_starts_only_current_app_and_stops_cleanly
+PASSED tests/runtime/test_application_runtime.py::test_runtime_uses_a_private_shutdown_signal_directory
+PASSED tests/runtime/test_application_runtime.py::test_runtime_releases_session_when_application_fails_to_start
+PASSED tests/runtime/test_application_runtime.py::test_runtime_marks_a_normally_completed_application_as_ended
+PASSED tests/runtime/test_application_runtime.py::test_runtime_allows_clean_process_exit_after_channels_close
+PASSED tests/runtime/test_application_runtime.py::test_runtime_stop_cleans_application_process_tree
+PASSED tests/runtime/test_application_runtime.py::test_runtime_requests_graceful_shutdown_before_closing_channels
+PASSED tests/runtime/test_application_runtime.py::test_runtime_allows_media_cleanup_to_finish_before_terminating_application
+PASSED tests/runtime/test_application_runtime.py::test_runtime_waits_for_launcher_descendant_to_release_media
+PASSED tests/runtime/test_application_runtime.py::test_runtime_excludes_asyncio_child_from_psutil_wait
+PASSED tests/runtime/test_application_runtime.py::test_default_runtime_allows_cold_application_startup
+PASSED tests/runtime/test_application_runtime.py::test_runtime_requires_a_controlled_launch_spec_before_starting
+PASSED tests/runtime/test_application_runtime.py::test_runtime_represents_an_unselected_application_explicitly
+PASSED tests/runtime/test_application_runtime.py::test_runtime_can_select_another_application_without_restarting_itself
+PASSED tests/runtime/test_application_runtime.py::test_runtime_selects_directory_and_controlled_launcher_atomically
+PASSED tests/runtime/test_application_runtime.py::test_runtime_cleans_inherited_python_environment_for_selected_app
+PASSED tests/runtime/test_application_runtime.py::test_runtime_maps_invalid_refreshed_launch_spec_to_start_error
+PASSED tests/runtime/test_application_runtime.py::test_runtime_keeps_server_environment_only_for_default_application
+PASSED tests/runtime/test_application_runtime.py::test_running_application_cannot_switch_controlled_launcher
+PASSED tests/runtime/test_application_session.py::test_only_current_application_can_hold_the_single_runtime_session
+PASSED tests/runtime/test_application_session.py::test_run_credential_is_scoped_to_one_runtime_session
+PASSED tests/runtime/test_application_session.py::test_desktop_and_device_channels_complete_one_session
+PASSED tests/runtime/test_application_session.py::test_duplicate_channel_connection_is_rejected
+PASSED tests/runtime/test_application_session.py::test_required_channel_disconnect_marks_application_abnormal
+PASSED tests/runtime/test_application_start_selected.py::test_changed_selection_rejects_start_without_spawning[test_app]
+PASSED tests/runtime/test_application_start_selected.py::test_changed_selection_rejects_start_without_spawning[different_app]
+PASSED tests/runtime/test_application_start_selected.py::test_selection_checked_after_waiting_for_lifecycle_lock
+PASSED tests/runtime/test_application_start_selected.py::test_bound_start_succeeds_and_legacy_start_remains_supported
+PASSED tests/runtime/test_application_start_selected.py::test_bound_start_requires_explicit_nonempty_token
+PASSED tests/runtime/test_application_unselect.py::test_idle_unselect_clears_launch_spec_and_is_idempotent
+PASSED tests/runtime/test_application_unselect.py::test_unselect_rejects_active_sessions_without_mutation[starting]
+PASSED tests/runtime/test_application_unselect.py::test_unselect_rejects_active_sessions_without_mutation[running]
+PASSED tests/runtime/test_application_unselect.py::test_unselect_rejects_active_sessions_without_mutation[error]
+PASSED tests/runtime/test_application_unselect.py::test_unselect_rejects_pending_lifecycle_and_selection_mismatch
+PASSED tests/runtime/test_application_unselect.py::test_unselect_preserves_live_connections_and_transparent_routing
+PASSED tests/runtime/test_application_unselect.py::test_unselect_rejects_remaining_process_and_runtime_draining
+PASSED tests/runtime/test_application_unselect.py::test_unselect_requires_an_explicit_target
+PASSED tests/runtime/test_background_process.py::test_background_options_preserve_hidden_console_contract
+PASSED tests/runtime/test_connection_identity.py::test_device_connection_ids_are_unique_for_registry_lifetime
+PASSED tests/runtime/test_connection_identity.py::test_device_connection_state_only_tracks_current_connection
+PASSED tests/runtime/test_control_rest.py::test_control_rest_manages_application_lifecycle_and_device_pairing
+PASSED tests/runtime/test_control_rest.py::test_control_rest_reports_occupied_and_start_failure
+PASSED tests/runtime/test_control_rest.py::test_control_rest_reports_restart_failure_without_a_second_browser_request
+PASSED tests/runtime/test_control_rest.py::test_control_rest_starts_creator_work_install
+PASSED tests/runtime/test_control_rest.py::test_control_rest_reads_an_editable_work_from_sd
+PASSED tests/runtime/test_control_rest.py::test_control_rest_returns_active_maintenance_job
+PASSED tests/runtime/test_control_rest.py::test_control_rest_adds_release_reader_and_device_info_without_breaking_local_install
+PASSED tests/runtime/test_control_rest.py::test_control_rest_validates_local_package_before_install
+PASSED tests/runtime/test_control_rest.py::test_control_rest_allows_only_local_desktop_origins
+PASSED tests/runtime/test_control_rest.py::test_control_rest_allows_private_network_preflight_for_local_desktop
+PASSED tests/runtime/test_control_rest.py::test_control_server_binds_and_serves_status
+PASSED tests/runtime/test_control_rest.py::test_slow_maintenance_io_does_not_block_daemon_status
+PASSED tests/runtime/test_control_rest.py::test_slow_application_selection_does_not_block_management_requests
+PASSED tests/runtime/test_control_rest.py::test_control_rest_selects_application_and_requests_runtime_shutdown
+PASSED tests/runtime/test_control_rest.py::test_control_status_omits_runtime_identity_without_runtime_metadata
+PASSED tests/runtime/test_control_rest.py::test_control_status_exposes_verified_runtime_discovery_metadata
+PASSED tests/runtime/test_control_rest.py::test_control_rest_rejects_legacy_or_arbitrary_launcher_requests
+PASSED tests/runtime/test_control_rest.py::test_control_rest_maps_invalid_launcher_to_stable_error
+PASSED tests/runtime/test_control_rest.py::test_control_rest_does_not_own_application_catalog_mutation
+PASSED tests/runtime/test_control_rest.py::test_prepared_update_blocks_start_and_can_be_cancelled
+PASSED tests/runtime/test_control_rest.py::test_update_does_not_interrupt_running_application
+PASSED tests/runtime/test_control_rest.py::test_shutdown_closes_application_admission_immediately
+PASSED tests/runtime/test_control_rest.py::test_shutdown_cannot_be_cancelled_by_prepared_update_token
+PASSED tests/runtime/test_daemon_entrypoint.py::test_activate_shared_selects_version_without_forcing_same_version_restart
+PASSED tests/runtime/test_daemon_entrypoint.py::test_check_runtime_reports_identity_after_service_import
+PASSED tests/runtime/test_daemon_entrypoint.py::test_stop_shared_uses_requested_state_root
+PASSED tests/runtime/test_daemon_entrypoint.py::test_runtime_publishes_shared_and_legacy_coordination_state
+PASSED tests/runtime/test_daemon_entrypoint.py::test_runtime_explicit_instance_root_stays_isolated
+PASSED tests/runtime/test_daemon_entrypoint.py::test_runtime_instance_root_environment_creates_isolated_group
+PASSED tests/runtime/test_daemon_entrypoint.py::test_runtime_releases_acquired_locks_when_later_lock_errors
+PASSED tests/runtime/test_daemon_entrypoint.py::test_runtime_start_failure_preserves_state_owned_by_another_process
+PASSED tests/runtime/test_daemon_entrypoint.py::test_runtime_cleans_up_after_compatibility_state_write_failure
+PASSED tests/runtime/test_daemon_entrypoint.py::test_runtime_cleanup_attempts_every_resource_when_cleanup_steps_fail
+PASSED tests/runtime/test_daemon_entrypoint.py::test_cli_requires_source_default_options_as_a_pair[--source-default-application-root-application]
+PASSED tests/runtime/test_daemon_entrypoint.py::test_cli_requires_source_default_options_as_a_pair[--source-default-launcher-python]
+PASSED tests/runtime/test_daemon_entrypoint.py::test_cli_preserves_source_default_launcher_through_application_launcher
+PASSED tests/runtime/test_daemon_import_dependencies.py::test_daemon_initializes_without_loading_audio_codecs
+PASSED tests/runtime/test_daemon_logging.py::test_daemon_logs_are_bounded_queryable_and_persisted
+PASSED tests/runtime/test_daemon_reunite_runtime.py::test_manual_pairing_seeds_durable_binding
+PASSED tests/runtime/test_daemon_reunite_runtime.py::test_restart_autoreunites_without_pairing_code
+PASSED tests/runtime/test_daemon_reunite_runtime.py::test_desktop_disconnect_clears_the_binding
+PASSED tests/runtime/test_daemon_runtime_routing.py::test_default_runtime_metadata_uses_a_valid_structural_instance_identity
+PASSED tests/runtime/test_daemon_runtime_routing.py::test_same_daemon_switches_between_two_real_python_environments
+PASSED tests/runtime/test_daemon_runtime_routing.py::test_daemon_selects_only_a_launcher_inside_its_fixed_root
+PASSED tests/runtime/test_daemon_runtime_routing.py::test_preview_frames_prefer_the_active_application_device_channel
+PASSED tests/runtime/test_daemon_runtime_routing.py::test_daemon_starts_without_a_selected_application
+PASSED tests/runtime/test_daemon_runtime_routing.py::test_application_status_waits_for_supervisor_after_channel_loss
+PASSED tests/runtime/test_daemon_runtime_routing.py::test_active_application_owns_routing_then_desktop_control_recovers
+PASSED tests/runtime/test_daemon_runtime_routing.py::test_auto_start_runs_current_app_once_and_does_not_restart_after_exit
+PASSED tests/runtime/test_daemon_runtime_routing.py::test_daemon_pairing_control_does_not_stop_the_current_application
+PASSED tests/runtime/test_daemon_runtime_routing.py::test_device_session_end_releases_daemon_slot_without_stopping_application
+PASSED tests/runtime/test_daemon_stdio.py::test_prepare_bundle_returns_utf8_path[watcherobot.runtime.daemon-gbk]
+PASSED tests/runtime/test_daemon_stdio.py::test_prepare_bundle_returns_utf8_path[watcherobot.runtime.daemon-cp1252]
+PASSED tests/runtime/test_daemon_stdio.py::test_prepare_bundle_returns_utf8_path[watcherobot.runtime.daemon-utf-8]
+PASSED tests/runtime/test_daemon_stdio.py::test_prepare_bundle_returns_utf8_path[watcherobot.runtime.frozen_entry-gbk]
+PASSED tests/runtime/test_daemon_stdio.py::test_prepare_bundle_returns_utf8_path[watcherobot.runtime.frozen_entry-cp1252]
+PASSED tests/runtime/test_daemon_stdio.py::test_prepare_bundle_returns_utf8_path[watcherobot.runtime.frozen_entry-utf-8]
+PASSED tests/runtime/test_daemon_stdio.py::test_argument_errors_are_utf8[watcherobot.runtime.daemon]
+PASSED tests/runtime/test_daemon_stdio.py::test_argument_errors_are_utf8[watcherobot.runtime.frozen_entry]
+PASSED tests/runtime/test_device_bindings_store.py::test_load_creates_identity_file_on_first_use
+PASSED tests/runtime/test_device_bindings_store.py::test_load_is_idempotent_across_restarts
+PASSED tests/runtime/test_device_bindings_store.py::test_write_and_read_roundtrip_with_device
+PASSED tests/runtime/test_device_bindings_store.py::test_corrupt_file_regenerates_fresh_state
+PASSED tests/runtime/test_device_bindings_store.py::test_invalid_version_or_identity_is_treated_as_missing
+PASSED tests/runtime/test_device_bindings_store.py::test_device_entry_with_bad_secret_is_dropped_but_identity_kept
+PASSED tests/runtime/test_device_bindings_store.py::test_device_entry_with_unsupported_mode_or_non_ipv4_peer_is_dropped
+PASSED tests/runtime/test_device_bindings_store.py::test_clear_device_forgets_only_the_device
+PASSED tests/runtime/test_device_bindings_store.py::test_write_rejects_non_hex_credentials
+PASSED tests/runtime/test_device_bindings_store.py::test_no_temp_file_left_behind
+PASSED tests/runtime/test_external_websocket_routing.py::test_no_application_routes_desktop_and_device_frames_unchanged
+PASSED tests/runtime/test_external_websocket_routing.py::test_desktop_role_is_restricted_to_loopback_peers
+PASSED tests/runtime/test_external_websocket_routing.py::test_external_connection_requires_one_valid_role_declaration
+PASSED tests/runtime/test_external_websocket_routing.py::test_external_connection_requires_hello_within_configured_deadline
+PASSED tests/runtime/test_external_websocket_routing.py::test_hardware_hello_rejects_legacy_metadata_without_fallback
+PASSED tests/runtime/test_external_websocket_routing.py::test_daemon_handles_connection_ping_without_routing_it
+PASSED tests/runtime/test_external_websocket_routing.py::test_device_session_end_is_acknowledged_and_not_routed
+PASSED tests/runtime/test_face_tracking_preview_broker.py::test_preview_disconnect_stops_device_without_recentering
+PASSED tests/runtime/test_face_tracking_preview_broker.py::test_normal_preview_stop_disarms_disconnect_cleanup
+PASSED tests/runtime/test_face_tracking_preview_broker.py::test_application_channel_loss_stops_armed_preview
+PASSED tests/runtime/test_face_tracking_udp_feedback.py::test_ack_round_trip_authenticates_stream_and_sequence
+PASSED tests/runtime/test_face_tracking_udp_feedback.py::test_ack_rejects_tampering_wrong_key_and_unknown_flags
+PASSED tests/runtime/test_face_tracking_udp_protocol.py::test_udp_reassembler_accepts_out_of_order_fragments_and_duplicates
+PASSED tests/runtime/test_face_tracking_udp_protocol.py::test_newer_sequence_discards_incomplete_old_frame_and_old_packets
+PASSED tests/runtime/test_face_tracking_udp_protocol.py::test_timeout_and_crc_failure_never_publish_partial_frame
+PASSED tests/runtime/test_face_tracking_udp_protocol.py::test_protocol_rejects_invalid_limits_and_bundle_shape
+PASSED tests/runtime/test_face_tracking_udp_protocol.py::test_protocol_accepts_416_preview_capacity_but_rejects_oversize_bundle
+PASSED tests/runtime/test_face_tracking_udp_service.py::test_service_rejects_wrong_source_and_publishes_pair_to_desktop
+PASSED tests/runtime/test_face_tracking_udp_service.py::test_service_rejects_bad_authentication_and_inactive_session
+PASSED tests/runtime/test_face_tracking_udp_service.py::test_service_can_publish_to_managed_application_sink
+PASSED tests/runtime/test_frozen_entry.py::test_maintenance_esptool_serial_failure_returns_without_raising
+PASSED tests/runtime/test_frozen_entry.py::test_maintenance_esptool_preserves_normal_exit_code
+PASSED tests/runtime/test_frozen_windows_paths.py::test_extended_paths_preserve_drive_unc_and_existing_prefix[C:\\\u7528\u6237\\runtime-\\\\?\\C:\\\u7528\u6237\\runtime]
+PASSED tests/runtime/test_frozen_windows_paths.py::test_extended_paths_preserve_drive_unc_and_existing_prefix[\\\\server\\share\\runtime-\\\\?\\UNC\\server\\share\\runtime]
+PASSED tests/runtime/test_frozen_windows_paths.py::test_extended_paths_preserve_drive_unc_and_existing_prefix[\\\\?\\C:\\\u7528\u6237\\runtime-\\\\?\\C:\\\u7528\u6237\\runtime]
+PASSED tests/runtime/test_frozen_windows_paths.py::test_native_finder_does_not_search_outside_bundle
+PASSED tests/runtime/test_frozen_windows_paths.py::test_bare_executable_preserves_path_search
+PASSED tests/runtime/test_full_architecture_flow.py::test_complete_daemon_application_vertical_flow
+PASSED tests/runtime/test_installation.py::test_guard_holds_all_locks_until_installer_releases
+PASSED tests/runtime/test_installation.py::test_stop_failure_never_marks_installation_ready
+PASSED tests/runtime/test_installation.py::test_dead_installer_releases_without_waiting
+PASSED tests/runtime/test_installation.py::test_cancelled_guard_never_stops_runtime
+PASSED tests/runtime/test_installation.py::test_begin_timeout_waits_for_guard_cancellation
+PASSED tests/runtime/test_installation.py::test_real_guard_excludes_managers_and_daemons
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_protocol_vectors_fix_name_version_and_message_shapes
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_pair_request_accepts_six_digit_boundaries[000000]
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_pair_request_accepts_six_digit_boundaries[999999]
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_pair_request_accepts_each_supported_application_mode[desktop_link]
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_pair_request_accepts_each_supported_application_mode[python_sdk]
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_invalid_contract_values_are_rejected
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_unknown_and_legacy_fields_are_rejected
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_session_end_requires_current_request_shape
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_sensitive_fields_are_redacted_without_mutating_source
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_udp_encoder_matches_the_shared_wire_vectors
+PASSED tests/runtime/test_lan_pairing_protocol.py::test_hardware_ack_nack_and_state_event_have_stable_envelopes
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_golden_binding_secret_derivation
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_golden_response_mac
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_reunite_request_roundtrip_preserves_version_11
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_reunite_accept_roundtrip
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_reunite_fields_are_exactly_matched
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_reunite_rejects_legacy_version_and_vice_versa
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_reunite_validates_formats
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_mac_mismatch_is_detectable_by_caller
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_hello_accepts_both_protocol_generations[1.0]
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_hello_accepts_both_protocol_generations[1.1]
+PASSED tests/runtime/test_lan_pairing_reunite_protocol.py::test_hello_rejects_unknown_protocol_generation
+PASSED tests/runtime/test_local_registration.py::test_registration_is_exact_and_single_use
+PASSED tests/runtime/test_local_registration.py::test_registration_rejects_substitution_and_path_traversal
+PASSED tests/runtime/test_local_registration.py::test_registration_rejects_malformed_document
+PASSED tests/runtime/test_local_registration.py::test_registration_transfers_only_allowed_environment
+PASSED tests/runtime/test_maintenance_extensions.py::test_card_reader_reports_missing_windows_volume_api
+PASSED tests/runtime/test_maintenance_extensions.py::test_ready_device_info_keeps_old_firmware_compatible
+PASSED tests/runtime/test_maintenance_extensions.py::test_ready_device_info_reports_deferred_replacement_capability
+PASSED tests/runtime/test_maintenance_extensions.py::test_old_firmware_is_not_allowed_to_predelete_resources_on_tight_cards
+PASSED tests/runtime/test_maintenance_extensions.py::test_release_filter_only_exposes_burnable_assets
+PASSED tests/runtime/test_maintenance_extensions.py::test_firmware_release_list_falls_back_to_public_atom_when_github_api_is_rate_limited
+PASSED tests/runtime/test_maintenance_extensions.py::test_release_job_is_additive_and_does_not_require_a_local_path
+PASSED tests/runtime/test_maintenance_extensions.py::test_card_reader_install_replaces_official_resources_and_preserves_works
+PASSED tests/runtime/test_maintenance_extensions.py::test_card_reader_counts_only_missing_assets_when_checking_free_space
+PASSED tests/runtime/test_maintenance_extensions.py::test_card_reader_recovers_interrupted_rollback_before_managed_cleanup
+PASSED tests/runtime/test_maintenance_extensions.py::test_card_reader_lists_only_sd_work_documents
+PASSED tests/runtime/test_maintenance_extensions.py::test_invalid_sd_directories_do_not_hide_valid_works_after_the_list_limit
+PASSED tests/runtime/test_maintenance_extensions.py::test_serial_work_library_reassembles_chunked_documents
+PASSED tests/runtime/test_maintenance_extensions.py::test_serial_work_library_reports_the_missing_asset_from_firmware
+PASSED tests/runtime/test_maintenance_extensions.py::test_serial_work_library_rejects_overlapping_reads_before_opening_the_port
+PASSED tests/runtime/test_maintenance_extensions.py::test_card_reader_v2_work_round_trips_exact_creator_source
+PASSED tests/runtime/test_maintenance_extensions.py::test_work_document_rejects_obsolete_creator_composition
+PASSED tests/runtime/test_maintenance_extensions.py::test_reader_installs_and_updates_only_one_work_without_touching_official_or_other_works
+PASSED tests/runtime/test_maintenance_extensions.py::test_reader_installs_bundled_work_assets_inside_only_that_work
+PASSED tests/runtime/test_maintenance_extensions.py::test_portable_work_preserves_explicit_duration_and_creator_v3
+PASSED tests/runtime/test_maintenance_extensions.py::test_portable_work_rejects_same_lane_overlap
+PASSED tests/runtime/test_maintenance_extensions.py::test_portable_work_converts_custom_media_without_changing_the_timeline
+PASSED tests/runtime/test_maintenance_extensions.py::test_reader_import_restores_custom_media_and_exact_creator_timeline
+PASSED tests/runtime/test_maintenance_extensions.py::test_reader_reports_a_corrupted_work_local_action_without_blocking_edit_import
+PASSED tests/runtime/test_maintenance_extensions.py::test_reader_delete_removes_only_selected_user_work
+PASSED tests/runtime/test_maintenance_extensions.py::test_reader_rejects_a_new_work_after_the_64_work_limit
+PASSED tests/runtime/test_maintenance_extensions.py::test_portable_work_import_rejects_duplicate_zip_entries
+PASSED tests/runtime/test_maintenance_extensions.py::test_portable_work_import_preserves_validated_files_in_serial_archive
+PASSED tests/runtime/test_maintenance_extensions.py::test_work_serial_archive_is_reproducible
+PASSED tests/runtime/test_maintenance_service.py::test_esptool_command_uses_v5_option_names
+PASSED tests/runtime/test_maintenance_service.py::test_firmware_flash_prefers_fast_baud_and_keeps_safe_fallback
+PASSED tests/runtime/test_maintenance_service.py::test_esptool_command_can_preserve_manual_download_mode
+PASSED tests/runtime/test_maintenance_service.py::test_esptool_failure_is_classified_for_actionable_recovery[Failed to connect to ESP32-S3: No serial data received.-download_mode]
+PASSED tests/runtime/test_maintenance_service.py::test_esptool_failure_is_classified_for_actionable_recovery[Wrong boot mode detected (0x13)!-download_mode]
+PASSED tests/runtime/test_maintenance_service.py::test_esptool_failure_is_classified_for_actionable_recovery[could not open port 'COM29': PermissionError(13, '\u62d2\u7edd\u8bbf\u95ee\u3002')-port_busy]
+PASSED tests/runtime/test_maintenance_service.py::test_esptool_failure_is_classified_for_actionable_recovery[A fatal error occurred: Packet content transfer stopped-other]
+PASSED tests/runtime/test_maintenance_service.py::test_firmware_requests_device_bootloader_before_esptool
+PASSED tests/runtime/test_maintenance_service.py::test_firmware_retry_reenters_bootloader_before_safe_baud
+PASSED tests/runtime/test_maintenance_service.py::test_firmware_flash_reports_download_mode_instead_of_port_occupancy
+PASSED tests/runtime/test_maintenance_service.py::test_automatic_download_mode_uses_selected_dynamic_port
+PASSED tests/runtime/test_maintenance_service.py::test_automatic_download_mode_falls_back_for_legacy_firmware
+PASSED tests/runtime/test_maintenance_service.py::test_sd_transfer_negotiates_larger_chunks_without_exceeding_host_limit
+PASSED tests/runtime/test_maintenance_service.py::test_slow_sd_replacement_waits_for_device_cleanup
+PASSED tests/runtime/test_maintenance_service.py::test_sd_activation_keeps_transfer_baud_until_device_sends_done
+PASSED tests/runtime/test_maintenance_service.py::test_sd_install_status_requires_bounded_numeric_progress
+PASSED tests/runtime/test_maintenance_service.py::test_sd_activation_reports_last_heartbeat_when_device_stalls
+PASSED tests/runtime/test_maintenance_service.py::test_flash_zip_requires_complete_layout
+PASSED tests/runtime/test_maintenance_service.py::test_flash_zip_accepts_esptool_hyphenated_flash_options
+PASSED tests/runtime/test_maintenance_service.py::test_sd_package_is_inspected_without_extracting_to_disk
+PASSED tests/runtime/test_maintenance_service.py::test_service_rejects_missing_local_package
+PASSED tests/runtime/test_maintenance_service.py::test_maintenance_ports_only_expose_watcher_ch342_channel_b
+PASSED tests/runtime/test_maintenance_service.py::test_local_package_is_validated_before_job_is_queued
+PASSED tests/runtime/test_maintenance_service.py::test_esptool_progress_is_weighted_across_all_segments
+PASSED tests/runtime/test_maintenance_service.py::test_esptool_progress_never_moves_backwards_on_segment_summary_lines
+PASSED tests/runtime/test_maintenance_service.py::test_esptool_progress_uses_flash_addresses_when_zip_order_differs
+PASSED tests/runtime/test_maintenance_service.py::test_firmware_boot_probe_accepts_maintenance_ready
+PASSED tests/runtime/test_maintenance_service.py::test_firmware_boot_probe_rejects_assertion_before_ready
+PASSED tests/runtime/test_maintenance_service.py::test_firmware_boot_probe_rejects_restart_loop
+PASSED tests/runtime/test_maintenance_service.py::test_firmware_boot_probe_reports_legacy_animation_layout_failure
+PASSED tests/runtime/test_maintenance_service.py::test_work_package_uses_stable_work_id_and_embeds_editable_source
+PASSED tests/runtime/test_maintenance_service.py::test_work_package_bundles_creator_action_tracks_without_requiring_official_action
+PASSED tests/runtime/test_maintenance_service.py::test_work_package_rejects_invalid_explicit_work_id
+PASSED tests/runtime/test_maintenance_service.py::test_legacy_compositions_with_chinese_names_do_not_share_one_work_id
+PASSED tests/runtime/test_pairing_reunite_session.py::test_scan_occupies_idle_slot_and_exposes_reuniting
+PASSED tests/runtime/test_pairing_reunite_session.py::test_scan_requires_idle_slot
+PASSED tests/runtime/test_pairing_reunite_session.py::test_scan_validates_inputs
+PASSED tests/runtime/test_pairing_reunite_session.py::test_accept_reunite_verifies_mac_and_enters_connecting
+PASSED tests/runtime/test_pairing_reunite_session.py::test_accept_reunite_rejects_bad_mac_without_state_change
+PASSED tests/runtime/test_pairing_reunite_session.py::test_accept_reunite_binds_reply_to_challenge_fields
+PASSED tests/runtime/test_pairing_reunite_session.py::test_accept_reunite_ignored_outside_scan
+PASSED tests/runtime/test_pairing_reunite_session.py::test_manual_pairing_does_not_consume_slot_of_scan
+PASSED tests/runtime/test_pairing_reunite_session.py::test_manual_pairing_hands_out_binding_token_once
+PASSED tests/runtime/test_pairing_reunite_session.py::test_disconnect_clears_pending_manual_token
+PASSED tests/runtime/test_pairing_reunite_session.py::test_expired_scan_reports_reunite_unavailable
+PASSED tests/runtime/test_pairing_reunite_session.py::test_cancel_clears_reunite_flags
+PASSED tests/runtime/test_pairing_reunite_udp.py::test_broadcast_loop_emits_reunite_request_on_scan
+PASSED tests/runtime/test_pairing_reunite_udp.py::test_scan_unicasts_remembered_device_when_peer_ip_given
+PASSED tests/runtime/test_pairing_reunite_udp.py::test_valid_accept_moves_session_to_connecting
+PASSED tests/runtime/test_pairing_reunite_udp.py::test_bad_mac_is_swallowed_and_scan_continues
+PASSED tests/runtime/test_pairing_session.py::test_pairing_session_starts_idle_without_public_credentials
+PASSED tests/runtime/test_pairing_session.py::test_start_pairing_occupies_the_only_device_slot
+PASSED tests/runtime/test_pairing_session.py::test_start_pairing_accepts_each_supported_application_mode[desktop_link]
+PASSED tests/runtime/test_pairing_session.py::test_start_pairing_accepts_each_supported_application_mode[python_sdk]
+PASSED tests/runtime/test_pairing_session.py::test_start_pairing_rejects_invalid_entry_values[12345-python_sdk-invalid_pairing_code]
+PASSED tests/runtime/test_pairing_session.py::test_start_pairing_rejects_invalid_entry_values[123456-sdk-unsupported_target_mode]
+PASSED tests/runtime/test_pairing_session.py::test_accept_moves_to_connecting_and_never_exposes_secrets
+PASSED tests/runtime/test_pairing_session.py::test_hardware_hello_is_the_only_transition_to_online
+PASSED tests/runtime/test_pairing_session.py::test_hardware_hello_rejects_wrong_session_credentials[hello0-192.168.3.25]
+PASSED tests/runtime/test_pairing_session.py::test_hardware_hello_rejects_wrong_session_credentials[hello1-192.168.3.25]
+PASSED tests/runtime/test_pairing_session.py::test_hardware_hello_rejects_wrong_session_credentials[hello2-192.168.3.25]
+PASSED tests/runtime/test_pairing_session.py::test_hardware_hello_rejects_wrong_session_credentials[hello3-192.168.3.99]
+PASSED tests/runtime/test_pairing_session.py::test_abnormal_disconnect_reserves_slot_for_same_session_reconnect
+PASSED tests/runtime/test_pairing_session.py::test_timeouts_release_the_device_slot[advance0-pairing_not_found]
+PASSED tests/runtime/test_pairing_session.py::test_timeouts_release_the_device_slot[advance1-device_connect_timeout]
+PASSED tests/runtime/test_pairing_session.py::test_timeouts_release_the_device_slot[advance2-reconnect_timeout]
+PASSED tests/runtime/test_pairing_session.py::test_busy_cancel_and_explicit_release_return_to_idle
+PASSED tests/runtime/test_pairing_session.py::test_device_session_end_releases_only_the_current_connected_session
+PASSED tests/runtime/test_pairing_udp.py::test_udp_service_broadcasts_daemon_owned_pair_request_on_each_interface
+PASSED tests/runtime/test_pairing_udp.py::test_udp_service_sends_optional_unicast_probe_on_matching_interface
+PASSED tests/runtime/test_pairing_udp.py::test_udp_service_skips_unicast_when_target_interface_disappears
+PASSED tests/runtime/test_pairing_udp.py::test_udp_service_accepts_first_matching_device_and_stops_broadcasting
+PASSED tests/runtime/test_pairing_udp.py::test_udp_service_handles_busy_invalid_and_cancel_without_leaking_slot
+PASSED tests/runtime/test_pairing_udp.py::test_udp_service_expires_discovery_and_notifies_state
+PASSED tests/runtime/test_pairing_udp.py::test_udp_service_cancels_device_session_when_connecting_expires
+PASSED tests/runtime/test_pairing_udp.py::test_udp_service_connect_timeout_still_cleans_up_when_cancel_send_fails
+PASSED tests/runtime/test_pairing_udp_interfaces.py::test_collect_lan_interfaces_keeps_same_broadcast_on_distinct_interfaces
+PASSED tests/runtime/test_pairing_udp_interfaces.py::test_udp_service_reconciles_added_removed_and_changed_interfaces
+PASSED tests/runtime/test_pairing_udp_interfaces.py::test_udp_service_closes_stale_same_ip_channel_before_rebinding
+PASSED tests/runtime/test_pairing_udp_interfaces.py::test_udp_service_discovers_interface_added_after_daemon_start
+PASSED tests/runtime/test_pairing_udp_interfaces.py::test_udp_service_keeps_healthy_interface_when_another_bind_fails
+PASSED tests/runtime/test_pairing_udp_interfaces.py::test_udp_service_start_fails_when_every_visible_interface_cannot_bind
+PASSED tests/runtime/test_pairing_udp_interfaces.py::test_udp_service_reopens_channel_after_broadcast_failure
+PASSED tests/runtime/test_pairing_udp_interfaces.py::test_pair_accept_and_cancel_stay_on_the_receiving_interface
+PASSED tests/runtime/test_pairing_websocket_gate.py::test_hardware_hello_requires_the_active_pairing_session
+PASSED tests/runtime/test_pairing_websocket_gate.py::test_wrong_token_gets_nack_and_credential_close_code
+PASSED tests/runtime/test_pairing_websocket_gate.py::test_legacy_hardware_hello_is_rejected_without_fallback
+PASSED tests/runtime/test_pairing_websocket_gate.py::test_desktop_hello_remains_independent_from_device_pairing
+PASSED tests/runtime/test_process_shutdown.py::test_capture_runtime_supports_psutil_connection_apis[LISTEN-8767-True-connections]
+PASSED tests/runtime/test_process_shutdown.py::test_capture_runtime_supports_psutil_connection_apis[LISTEN-8767-True-net_connections]
+PASSED tests/runtime/test_process_shutdown.py::test_capture_runtime_supports_psutil_connection_apis[LISTEN-9999-False-connections]
+PASSED tests/runtime/test_process_shutdown.py::test_capture_runtime_supports_psutil_connection_apis[LISTEN-9999-False-net_connections]
+PASSED tests/runtime/test_process_shutdown.py::test_capture_runtime_supports_psutil_connection_apis[ESTABLISHED-8767-False-connections]
+PASSED tests/runtime/test_process_shutdown.py::test_capture_runtime_supports_psutil_connection_apis[ESTABLISHED-8767-False-net_connections]
+PASSED tests/runtime/test_process_shutdown.py::test_capture_runtime_prefers_modern_api_and_propagates_access_denied
+PASSED tests/runtime/test_process_shutdown.py::test_unrelated_listener_is_never_selected
+PASSED tests/runtime/test_process_shutdown.py::test_runtime_must_own_control_listener
+PASSED tests/runtime/test_process_shutdown.py::test_hung_verified_process_is_killed_and_waited
+PASSED tests/runtime/test_process_shutdown.py::test_isolated_launcher_cannot_migrate_default_runtime
+PASSED tests/runtime/test_process_shutdown.py::test_legacy_migration_ignores_connections_without_local_address
+PASSED tests/runtime/test_process_shutdown.py::test_legacy_migration_rejects_other_instances[identity0]
+PASSED tests/runtime/test_process_shutdown.py::test_legacy_migration_rejects_other_instances[identity1]
+PASSED tests/runtime/test_runtime_cancellation.py::test_validation_can_be_cancelled_while_candidate_is_loading
+PASSED tests/runtime/test_runtime_cancellation.py::test_cancelled_publication_does_not_publish_or_leave_staging
+PASSED tests/runtime/test_runtime_cancellation.py::test_cancelled_lock_wait_returns_before_lock_timeout
+PASSED tests/runtime/test_runtime_cleanup.py::test_missing_memory_maps_defers_cleanup_without_failing_launch
+PASSED tests/runtime/test_runtime_cleanup.py::test_publication_grace_starts_now_not_at_source_mtime
+PASSED tests/runtime/test_runtime_cleanup.py::test_cleanup_retains_current_rollback_and_application_references
+PASSED tests/runtime/test_runtime_cleanup.py::test_application_and_external_environment_are_registered_atomically
+PASSED tests/runtime/test_runtime_cleanup.py::test_automatic_cleanup_skips_busy_reference_lock_without_holding_lifecycle_lock
+PASSED tests/runtime/test_runtime_cleanup.py::test_uncertain_process_inventory_prevents_deletion
+PASSED tests/runtime/test_runtime_cleanup.py::test_store_references_trash_and_grace_period_are_preserved
+PASSED tests/runtime/test_runtime_cleanup.py::test_corrupt_reference_prevents_cleanup
+PASSED tests/runtime/test_runtime_cleanup.py::test_semantically_invalid_launcher_prevents_cleanup[content0-current-launcher.json]
+PASSED tests/runtime/test_runtime_cleanup.py::test_semantically_invalid_launcher_prevents_cleanup[content0-previous-launcher.json]
+PASSED tests/runtime/test_runtime_cleanup.py::test_semantically_invalid_launcher_prevents_cleanup[content1-current-launcher.json]
+PASSED tests/runtime/test_runtime_cleanup.py::test_semantically_invalid_launcher_prevents_cleanup[content1-previous-launcher.json]
+PASSED tests/runtime/test_runtime_cleanup.py::test_install_record_without_runtime_reference_prevents_cleanup
+PASSED tests/runtime/test_runtime_cleanup.py::test_invalid_registered_reference_prevents_cleanup
+PASSED tests/runtime/test_runtime_cleanup.py::test_unreadable_reference_directory_prevents_cleanup
+PASSED tests/runtime/test_runtime_cleanup.py::test_automatic_cleanup_skips_busy_repository_lock_and_releases_outer_locks
+PASSED tests/runtime/test_runtime_cleanup.py::test_invalid_virtual_environment_record_prevents_cleanup
+PASSED tests/runtime/test_runtime_cleanup.py::test_running_mapping_and_failed_delete_are_retained
+PASSED tests/runtime/test_runtime_cleanup.py::test_launcher_rotation_accepts_legacy_and_corrupt_pointer
+PASSED tests/runtime/test_runtime_identity.py::test_frozen_identity_reuses_publication_verification
+PASSED tests/runtime/test_runtime_identity.py::test_source_identity_tracks_edits_but_not_location_or_bytecode
+PASSED tests/runtime/test_runtime_identity.py::test_source_identity_tracks_packaged_resources_and_normalizes_text
+PASSED tests/runtime/test_runtime_instance.py::test_runtime_instance_root_is_independent_from_data_root
+PASSED tests/runtime/test_runtime_instance.py::test_runtime_instance_root_can_be_isolated_explicitly
+PASSED tests/runtime/test_runtime_instance.py::test_system_runtime_roots_ignore_isolation_overrides
+PASSED tests/runtime/test_runtime_instance.py::test_runtime_instance_root_ignores_windows_environment_on_posix
+PASSED tests/runtime/test_runtime_instance.py::test_runtime_state_root_ignores_windows_environment_on_posix
+PASSED tests/runtime/test_runtime_instance.py::test_runtime_instance_lock_rejects_a_second_owner
+PASSED tests/runtime/test_runtime_instance.py::test_runtime_instance_lock_rejects_another_process
+PASSED tests/runtime/test_runtime_instance.py::test_runtime_state_store_round_trips_and_removes_state
+PASSED tests/runtime/test_runtime_instance.py::test_runtime_state_store_removes_only_matching_owner_state
+PASSED tests/runtime/test_runtime_manager.py::test_frozen_self_validation_does_not_spawn_another_extractor
+PASSED tests/runtime/test_runtime_manager.py::test_candidate_validation_loads_service_dependencies
+PASSED tests/runtime/test_runtime_manager.py::test_candidate_validation_uses_selected_environment
+PASSED tests/runtime/test_runtime_manager.py::test_live_runtime_reuse_ignores_corrupt_launcher
+PASSED tests/runtime/test_runtime_manager.py::test_cold_start_validates_saved_launcher_and_environment
+PASSED tests/runtime/test_runtime_manager.py::test_same_version_reuses_running_application_despite_different_build
+PASSED tests/runtime/test_runtime_manager.py::test_sdk_application_start_delegates_to_shared_manager
+PASSED tests/runtime/test_runtime_manager.py::test_sdk_application_start_delegates_discovery_failure_to_manager
+PASSED tests/runtime/test_runtime_manager.py::test_normal_ensure_discovery_failure_uses_verified_shutdown_before_spawn
+PASSED tests/runtime/test_runtime_manager.py::test_candidate_probe_waits_for_slow_status_without_accepting_identity
+PASSED tests/runtime/test_runtime_manager.py::test_candidate_probe_uses_explicit_state_root
+PASSED tests/runtime/test_runtime_manager.py::test_force_activation_stops_same_version_and_refuses_second_process
+PASSED tests/runtime/test_runtime_manager.py::test_version_change_stops_active_application
+PASSED tests/runtime/test_runtime_manager.py::test_invalid_candidate_does_not_stop_old_runtime
+PASSED tests/runtime/test_runtime_manager.py::test_activation_discovery_failure_uses_verified_shutdown_before_spawn
+PASSED tests/runtime/test_runtime_manager.py::test_activation_discovery_failure_spawns_only_after_verified_shutdown
+PASSED tests/runtime/test_runtime_manager.py::test_cancelled_activation_does_not_stop_old_runtime
+PASSED tests/runtime/test_runtime_manager.py::test_shutdown_waits_for_process_release
+PASSED tests/runtime/test_runtime_manager.py::test_shutdown_success_is_independent_of_original_launcher
+PASSED tests/runtime/test_runtime_manager.py::test_failed_readiness_reaps_only_the_candidate_tree
+PASSED tests/runtime/test_runtime_manager.py::test_process_tree_reaps_observed_child_after_parent_exit
+PASSED tests/runtime/test_runtime_manager.py::test_process_tree_discovers_grandchild_after_parent_exit
+PASSED tests/runtime/test_runtime_manager.py::test_launcher_command_replaces_existing_state_root
+PASSED tests/runtime/test_runtime_manager.py::test_launcher_command_rejects_state_root_without_value
+PASSED tests/runtime/test_runtime_manager.py::test_rollback_timeout_reaps_previous_runtime
+PASSED tests/runtime/test_runtime_manager.py::test_cli_reports_lifecycle_failure_without_traceback[start-ensure_command]
+PASSED tests/runtime/test_runtime_manager.py::test_cli_reports_lifecycle_failure_without_traceback[activate-ensure_command]
+PASSED tests/runtime/test_runtime_manager.py::test_cli_reports_lifecycle_failure_without_traceback[stop-stop_shared_runtime]
+PASSED tests/runtime/test_runtime_manager.py::test_slow_candidate_has_no_readiness_deadline[False]
+PASSED tests/runtime/test_runtime_manager.py::test_slow_candidate_has_no_readiness_deadline[True]
+PASSED tests/runtime/test_runtime_manager.py::test_candidate_exit_is_not_hidden_by_status_retry
+PASSED tests/runtime/test_runtime_repository.py::test_unreadable_subtree_cannot_produce_a_verification_receipt
+PASSED tests/runtime/test_runtime_repository.py::test_unchanged_publication_does_not_reread_bundle_contents
+PASSED tests/runtime/test_runtime_repository.py::test_same_size_rewrite_with_restored_mtime_invalidates_verification[False]
+PASSED tests/runtime/test_runtime_repository.py::test_same_size_rewrite_with_restored_mtime_invalidates_verification[True]
+PASSED tests/runtime/test_runtime_repository.py::test_colliding_change_metadata_cannot_reuse_verification[False]
+PASSED tests/runtime/test_runtime_repository.py::test_colliding_change_metadata_cannot_reuse_verification[True]
+PASSED tests/runtime/test_runtime_repository.py::test_verification_receipt_damage_falls_back_to_content_hash
+PASSED tests/runtime/test_runtime_repository.py::test_unavailable_change_metadata_never_skips_hashing
+PASSED tests/runtime/test_runtime_repository.py::test_windows_metadata_api_rejects_other_platforms[linux]
+PASSED tests/runtime/test_runtime_repository.py::test_windows_metadata_api_rejects_other_platforms[darwin]
+PASSED tests/runtime/test_runtime_repository.py::test_change_during_verification_is_not_published
+PASSED tests/runtime/test_runtime_repository.py::test_bundle_versions_coexist_and_reuse_verified_content
+PASSED tests/runtime/test_runtime_repository.py::test_corrupt_published_bundle_is_never_overwritten
+PASSED tests/runtime/test_runtime_repository.py::test_operation_lock_serializes_launchers
+PASSED tests/runtime/test_runtime_repository.py::test_internal_symlink_is_preserved_and_external_link_rejected
+PASSED tests/runtime/test_runtime_repository.py::test_bundle_digest_covers_executable_permission
+PASSED tests/runtime/test_runtime_repository.py::test_bundle_digest_distinguishes_each_executable_bit
+PASSED tests/runtime/test_runtime_repository.py::test_windows_bundle_copy_uses_extended_paths
+PASSED tests/runtime/test_runtime_repository.py::test_windows_bundle_cleanup_uses_extended_path
+PASSED tests/runtime/test_runtime_repository.py::test_windows_published_path_keeps_long_paths_addressable
+PASSED tests/runtime/test_runtime_repository.py::test_bundle_digest_ignores_regenerable_python_bytecode
+PASSED tests/runtime/test_runtime_repository.py::test_published_bundle_rejects_executable_permission_damage
+PASSED tests/runtime/test_sd_resource_contract_end_to_end.py::test_v033_contract_closes_official_work_clip_and_whole_work_playback
+PASSED tests/runtime/test_sd_resource_contract_end_to_end.py::test_new_expression_calls_fail_safely_on_old_firmware_without_breaking_work_play
+PASSED tests/runtime/test_sd_resource_contract_end_to_end.py::test_old_v1_work_without_clip_id_remains_readable
+PASSED tests/runtime/test_shared_manager.py::test_shared_launch_orders_and_registered_project[True]
+PASSED tests/runtime/test_shared_manager.py::test_shared_launch_orders_and_registered_project[False]
+PASSED tests/runtime/test_shared_manager.py::test_real_version_takeover_and_downgrade
+PASSED tests/runtime/test_shared_manager.py::test_ensure_runtime_with_custom_state_root_and_ephemeral_ports
+PASSED tests/runtime/test_standalone_application_routing_contract.py::test_application_routes_device_frames_without_external_desktop
+PASSED tests/test_robot_intercom.py::test_start_enables_actual_playback_mouth_before_audio
+PASSED tests/test_robot_intercom.py::test_audio_only_robot_can_start_without_camera_capability
+PASSED tests/test_robot_intercom.py::test_default_demo_disables_photo_routes_without_interrupting_call
+PASSED tests/test_robot_intercom.py::test_photo_can_be_explicitly_enabled_for_development
+PASSED tests/test_robot_intercom.py::test_photo_failure_explains_camera_problem_and_keeps_call[device_failure]
+PASSED tests/test_robot_intercom.py::test_photo_failure_explains_camera_problem_and_keeps_call[timeout]
+PASSED tests/test_robot_intercom.py::test_connect_uses_daemon_management_and_waits_for_actual_online_status
+PASSED tests/test_robot_intercom.py::test_invalid_pairing_input_never_reaches_daemon[12345-None]
+PASSED tests/test_robot_intercom.py::test_invalid_pairing_input_never_reaches_daemon[12a456-None]
+PASSED tests/test_robot_intercom.py::test_invalid_pairing_input_never_reaches_daemon[\uff11\uff12\uff13\uff14\uff15\uff16-None]
+PASSED tests/test_robot_intercom.py::test_invalid_pairing_input_never_reaches_daemon[123456-not-an-ip]
+PASSED tests/test_robot_intercom.py::test_pairing_cannot_replace_an_online_robot_or_a_call_pending_cleanup
+PASSED tests/test_robot_intercom.py::test_cancel_pairing_is_scoped_to_this_app_accepted_request
+PASSED tests/test_robot_intercom.py::test_pairing_adapter_posts_only_to_injected_daemon_management
+PASSED tests/test_robot_intercom.py::test_page_open_after_pairing_refreshes_capabilities_before_enabling_start
+PASSED tests/test_robot_intercom.py::test_missing_capability_or_offline_never_starts_hardware
+PASSED tests/test_robot_intercom.py::test_failed_start_releases_mouth_and_retry_is_possible
+PASSED tests/test_robot_intercom.py::test_failed_enable_still_attempts_disable
+PASSED tests/test_robot_intercom.py::test_photo_does_not_stop_audio_and_uses_unique_files
+PASSED tests/test_robot_intercom.py::test_stale_tab_cannot_stop_signal_or_capture_new_call
+PASSED tests/test_robot_intercom.py::test_stop_failure_retains_owner_and_blocks_restart_until_retry
+PASSED tests/test_robot_intercom.py::test_device_switch_cannot_send_cleanup_to_other_robot
+PASSED tests/test_robot_intercom.py::test_new_pairing_request_cannot_receive_old_session_heartbeat
+PASSED tests/test_robot_intercom.py::test_new_pairing_cannot_receive_cleanup_even_when_device_id_is_reused
+PASSED tests/test_robot_intercom.py::test_stop_waits_for_photo_but_heartbeat_stays_responsive
+PASSED tests/test_robot_intercom.py::test_browser_crash_expires_session
+PASSED tests/test_robot_intercom.py::test_device_keepalive_survives_a_short_browser_timer_pause
+PASSED tests/test_robot_intercom.py::test_device_keepalive_is_not_blocked_by_photo_or_sent_to_new_pairing
+PASSED tests/test_robot_intercom.py::test_browser_presence_survives_timer_suspension_and_disconnect_releases
+PASSED tests/test_robot_intercom.py::test_presence_rejects_stale_or_duplicate_connections
+PASSED tests/test_robot_intercom.py::test_unexpected_presence_disconnect_is_not_reported_as_page_exit
+PASSED tests/test_robot_intercom.py::test_presence_disconnect_has_its_own_reason_and_bounded_evidence
+PASSED tests/test_robot_intercom.py::test_presence_disconnect_preserves_explicit_page_exit_reason_and_cannot_touch_new_call
+PASSED tests/test_robot_intercom.py::test_presence_loss_reason_survives_concurrent_maintenance_cleanup
+PASSED tests/test_robot_intercom.py::test_presence_disconnect_redacts_untrusted_reason_and_records_shutdown
+PASSED tests/test_robot_intercom.py::test_cancelled_presence_registration_or_handshake_releases_robot[registration]
+PASSED tests/test_robot_intercom.py::test_cancelled_presence_registration_or_handshake_releases_robot[registration_double_cancel]
+PASSED tests/test_robot_intercom.py::test_cancelled_presence_registration_or_handshake_releases_robot[handshake]
+PASSED tests/test_robot_intercom.py::test_device_terminal_releases_call_without_browser_requests[failed-connecting]
+PASSED tests/test_robot_intercom.py::test_device_terminal_releases_call_without_browser_requests[failed-running]
+PASSED tests/test_robot_intercom.py::test_device_terminal_releases_call_without_browser_requests[stopping-connecting]
+PASSED tests/test_robot_intercom.py::test_device_terminal_releases_call_without_browser_requests[stopping-running]
+PASSED tests/test_robot_intercom.py::test_device_terminal_releases_call_without_browser_requests[stopped-connecting]
+PASSED tests/test_robot_intercom.py::test_device_terminal_releases_call_without_browser_requests[stopped-running]
+PASSED tests/test_robot_intercom.py::test_cleanup_retry_preserves_first_exit_reason[user]
+PASSED tests/test_robot_intercom.py::test_cleanup_retry_preserves_first_exit_reason[page_closed]
+PASSED tests/test_robot_intercom.py::test_diagnostics_retain_terminal_reason_and_never_record_signal_payload
+PASSED tests/test_robot_intercom.py::test_presence_scope_cancellation_waits_for_cleanup
+PASSED tests/test_robot_intercom.py::test_presence_websocket_checks_origin_and_cleans_up_on_close
+PASSED tests/test_robot_intercom.py::test_presence_websocket_retains_abnormal_disconnect_metadata
+PASSED tests/test_robot_intercom.py::test_presence_browser_diagnostic_fields_are_validated_and_redacted
+PASSED tests/test_robot_intercom.py::test_audio_diagnostic_segments_validate_ranges_and_keep_unknown_distinct
+PASSED tests/test_robot_intercom.py::test_local_origin_is_reused_after_restart
+PASSED tests/test_robot_intercom.py::test_busy_origin_uses_temporary_port_without_overwriting_preference
+PASSED tests/test_robot_intercom.py::test_invalid_origin_preferences_are_replaced_safely
+PASSED tests/test_robot_intercom.py::test_stop_before_late_start_cannot_reallocate_hardware
+PASSED tests/test_robot_intercom.py::test_online_device_without_pairing_identity_cannot_start_hardware
+PASSED tests/test_robot_intercom.py::test_slow_offer_within_negotiation_deadline_is_not_expired
+PASSED tests/test_robot_intercom.py::test_connected_call_switches_to_heartbeat_expiry
+PASSED tests/test_robot_intercom.py::test_presence_cannot_extend_the_negotiation_deadline
+PASSED tests/test_robot_intercom.py::test_presence_keeps_a_timely_connected_call_alive_during_browser_pause
+PASSED tests/test_robot_intercom.py::test_presence_keeps_negotiating_device_alive_without_extending_deadline
+PASSED tests/test_robot_intercom.py::test_backend_ping_rechecks_deadline_after_slow_device_status
+PASSED tests/test_robot_intercom.py::test_connected_snapshot_at_or_after_deadline_is_released[30]
+PASSED tests/test_robot_intercom.py::test_connected_snapshot_at_or_after_deadline_is_released[31]
+PASSED tests/test_robot_intercom.py::test_connection_just_before_deadline_can_run
+PASSED tests/test_robot_intercom.py::test_blocked_start_cannot_accept_connected_after_deadline
+PASSED tests/test_robot_intercom.py::test_expired_negotiation_rejects_requests_before_maintenance[signal]
+PASSED tests/test_robot_intercom.py::test_expired_negotiation_rejects_requests_before_maintenance[heartbeat]
+PASSED tests/test_robot_intercom.py::test_expired_negotiation_rejects_requests_before_maintenance[feedback]
+PASSED tests/test_robot_intercom.py::test_expired_negotiation_rejects_requests_before_maintenance[events]
+PASSED tests/test_robot_intercom.py::test_expired_negotiation_rejects_requests_before_maintenance[capture]
+PASSED tests/test_robot_intercom.py::test_expired_negotiation_rejects_requests_before_maintenance[start]
+PASSED tests/test_robot_intercom.py::test_inflight_signal_crossing_deadline_requires_cleanup
+PASSED tests/test_robot_intercom.py::test_start_deadline_before_rtc_does_not_allocate_and_preserves_cleanup[False-follow]
+PASSED tests/test_robot_intercom.py::test_start_deadline_before_rtc_does_not_allocate_and_preserves_cleanup[False-online]
+PASSED tests/test_robot_intercom.py::test_start_deadline_before_rtc_does_not_allocate_and_preserves_cleanup[True-follow]
+PASSED tests/test_robot_intercom.py::test_start_deadline_before_rtc_does_not_allocate_and_preserves_cleanup[True-online]
+PASSED tests/test_robot_intercom.py::test_device_status_crossing_deadline_cannot_issue_new_operation[signal]
+PASSED tests/test_robot_intercom.py::test_device_status_crossing_deadline_cannot_issue_new_operation[heartbeat]
+PASSED tests/test_robot_intercom.py::test_device_status_crossing_deadline_cannot_issue_new_operation[feedback]
+PASSED tests/test_robot_intercom.py::test_device_status_crossing_deadline_cannot_issue_new_operation[capture]
+PASSED tests/test_robot_intercom.py::test_device_status_crossing_deadline_cannot_issue_new_operation[start]
+PASSED tests/test_robot_intercom.py::test_pending_heartbeat_is_not_expired_while_it_holds_signal_lock
+PASSED tests/test_robot_intercom.py::test_http_rejects_foreign_origin_and_private_files
+SKIPPED [1] tests/runtime/test_background_process.py:20: Windows console inheritance
+SKIPPED [1] tests/runtime/test_frozen_windows_paths.py:33: Windows extended paths
+SKIPPED [1] tests/runtime/test_frozen_windows_paths.py:40: Windows native extension loader
+SKIPPED [1] tests/runtime/test_frozen_windows_paths.py:70: Windows CreateProcess
+SKIPPED [1] tests/runtime/test_runtime_repository.py:147: Windows MAX_PATH regression
+543 passed, 5 skipped, 2 warnings in 101.91s (0:01:41)
