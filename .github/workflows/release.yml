@@ -104,6 +104,12 @@ jobs:
         run: python -m build
       - if: needs.gate.outputs.reuse-artifact != 'true'
         run: python -m twine check dist/*
+      - name: Verify SDK management release resources
+        if: needs.gate.outputs.reuse-artifact != 'true'
+        run: sh tools/verify-sdk-management-release.sh --wheel dist/*.whl
+      - name: Require SDK update trust for a new stable release
+        if: needs.gate.outputs.reuse-artifact != 'true' && needs.gate.outputs.prerelease == 'false'
+        run: sh tools/verify-sdk-management-release.sh --wheel dist/*.whl --require-update-trust
       - name: Verify wheel installation
         if: needs.gate.outputs.reuse-artifact != 'true'
         run: |

@@ -97,7 +97,7 @@ def init_application_project(
     watcherobot_version: str | None = None,
     template: str = DEFAULT_TEMPLATE,
 ) -> ApplicationProjectInitResult:
-    """Create one new publish-ready project without overwriting a target."""
+    """Create one new scaffold without overwriting a target; freeze dependencies before publishing."""
 
     target = Path(directory).resolve()
     try:
@@ -222,10 +222,13 @@ def _manifest_document(
         .joinpath("templates/base/app.json")
         .read_text(encoding="utf-8")
     )
+    from watcherobot.management.compatibility import APPLICATION_CONTRACT
+
     payload.update({
+        "requires_daemon": {"application_protocol": f">={APPLICATION_CONTRACT},<{APPLICATION_CONTRACT + 1}"},
         "id": app_id.strip(),
         "name": name.strip(),
-        "requires_watcherobot": requires_watcherobot,
+        "requires_sdk": requires_watcherobot,
         "supported_host_platforms": supported_host_platforms,
         "description": description,
         "author": author,

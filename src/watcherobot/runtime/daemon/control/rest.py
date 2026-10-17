@@ -744,6 +744,8 @@ class DaemonControlAPI:
         return {"job": job}
 
     def _status_response(self) -> dict[str, Any]:
+        from watcherobot.management.compatibility import runtime_contracts
+
         response: dict[str, Any] = {
             "application": self._controller.application_status(),
         }
@@ -754,8 +756,9 @@ class DaemonControlAPI:
                 "sdk_version": __version__,
                 "draining": self._draining,
                 "launch_id": os.environ.get("WATCHER_RUNTIME_LAUNCH_ID", ""),
-                "application_protocol": 1,
-                "management_protocol": 1,
+                "application_protocol": runtime_contracts()["application"],
+                "management_protocol": runtime_contracts()["management"],
+                "contracts": runtime_contracts(),
                 "executable": sys.executable,
                 "source": "bundle" if getattr(sys, "frozen", False) else "python",
                 "instance_group": metadata["instance_group"],

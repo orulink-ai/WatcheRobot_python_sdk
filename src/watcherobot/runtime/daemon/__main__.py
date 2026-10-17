@@ -48,6 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stop-shared", action="store_true")
     parser.add_argument("--describe-runtime", action="store_true")
     parser.add_argument("--check-runtime", action="store_true")
+    parser.add_argument("--sdk-manager-stream", action="store_true", help="Reuse SDK management over multiplexed JSONL without starting Daemon")
+    parser.add_argument("--sdk-manager", action="store_true", help="Run the SDK-owned management JSONL interface without starting Daemon")
     parser.add_argument("--begin-installation", nargs=2, metavar=("PID", "HANDSHAKE"))
     parser.add_argument(
         "--guard-installation",
@@ -259,6 +261,14 @@ def main(argv: list[str] | None = None) -> int:
     configure_frozen_native_paths()
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.sdk_manager_stream:
+        from watcherobot.management.stream import serve
+
+        return serve()
+    if args.sdk_manager:
+        from watcherobot.management.cli import main as manage
+
+        return manage()
     if args.begin_installation or args.guard_installation:
         from watcherobot.runtime.installation import begin_installation, guard_installer
 
@@ -275,7 +285,9 @@ def main(argv: list[str] | None = None) -> int:
             from watcherobot.runtime.daemon.runtime import DaemonRuntime as _DaemonRuntime
 
             del _DaemonRuntime
-        print(json.dumps(runtime_identity()))
+        from watcherobot.management.compatibility import runtime_contracts
+
+        print(json.dumps({**runtime_identity(), "contracts": runtime_contracts()}))
         return 0
     if args.stop_shared:
         from watcherobot.runtime.manager import stop_shared_runtime

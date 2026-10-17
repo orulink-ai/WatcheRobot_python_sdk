@@ -106,7 +106,8 @@ def _is_link(path: Path) -> bool:
 def _register_reference(path: Path, *, store: bool = False) -> None:
     path = path.resolve()
     if not store and any(
-        parent.parent.name in ("bundles", "runtimes")
+        (parent.parent.name in ("bundles", "runtimes")
+         or (parent.parent.name == "environments" and parent.parent.parent.name == "sdk-management"))
         and re.fullmatch(r"[0-9a-f]{64}", parent.name)
         for parent in (path, *path.parents)
     ):
@@ -128,7 +129,9 @@ def store_operation(function: F) -> F:
 
     @wraps(function)
     def wrapped(*args: Any, **kwargs: Any) -> Any:
-        with reference_lock():
+        from watcherobot.management.activity import ActivityRegistry
+
+        with ActivityRegistry().switch(), reference_lock():
             _register_reference(Path(kwargs["store_root"]), store=True)
             result = function(*args, **kwargs)
         collect_runtime_garbage()
@@ -231,6 +234,17 @@ def _inventory() -> tuple[list[Path], list[Path]]:
         if pointer.exists():
             references.extend(_launcher_paths(pointer))
     roots: list[Path] = []
+    sdk_root = instance / "sdk-management"
+    if (sdk_root / "state.json").is_file():
+        from watcherobot.management.state import ManagerStore
+
+        state = ManagerStore(sdk_root).snapshot()
+        for name in ("selection", "previous", "candidate"):
+            item = state.get(name)
+            if item and item.get("root"):
+                references.append(Path(item["root"]))
+        # Base Python resources must remain alive while any SDK venv uses them.
+        roots.append(sdk_root / "environments")
     for record in _reference_records(instance / "runtime-references"):
         item = json.loads(record.read_text(encoding="utf-8"))
         path = Path(item["path"])

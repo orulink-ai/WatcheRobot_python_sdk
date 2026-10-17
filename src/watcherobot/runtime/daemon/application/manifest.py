@@ -14,9 +14,7 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 
-_VERSION_PATTERN = re.compile(
-    r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
-)
+_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 _APPLICATION_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _V1_REQUIRED_FIELDS = frozenset(
     {
@@ -28,12 +26,13 @@ _V1_REQUIRED_FIELDS = frozenset(
         "dependencies",
     }
 )
-_V2_REQUIRED_FIELDS = _V1_REQUIRED_FIELDS | frozenset(
-    {"supported_host_platforms"}
-)
+_V2_REQUIRED_FIELDS = _V1_REQUIRED_FIELDS | frozenset({"supported_host_platforms"})
 _OPTIONAL_FIELDS = frozenset({"description", "author", "icon"})
 _ALLOWED_FIELDS = _V2_REQUIRED_FIELDS | _OPTIONAL_FIELDS
-_V3_REQUIRED_FIELDS = (_V2_REQUIRED_FIELDS - {"requires_watcherobot"}) | {"requires_sdk", "requires_daemon"}
+_V3_REQUIRED_FIELDS = (_V2_REQUIRED_FIELDS - {"requires_watcherobot"}) | {
+    "requires_sdk",
+    "requires_daemon",
+}
 _SUPPORTED_HOST_PLATFORMS = frozenset({"windows", "macos"})
 
 
@@ -77,6 +76,7 @@ class ApplicationManifestMetadata:
     requires_watcherobot: str
     dependencies: tuple[str, ...]
     application_protocol: str = ""
+    desktop_contracts: tuple[tuple[str, int], ...] = ()
     supported_host_platforms: tuple[str, ...] = ()
     description: str = ""
     author: str = ""
@@ -94,7 +94,9 @@ class ApplicationManifestMetadata:
         """Return whether this Application declares support for this host."""
 
         host_platform = current_host_platform()
-        return host_platform is not None and host_platform in self.supported_host_platforms
+        return (
+            host_platform is not None and host_platform in self.supported_host_platforms
+        )
 
     def to_dict(self) -> dict[str, object]:
         result: dict[str, object] = {
@@ -111,7 +113,11 @@ class ApplicationManifestMetadata:
         }
         if self.schema_version == 3:
             result["requires_sdk"] = result.pop("requires_watcherobot")
-            result["requires_daemon"] = {"application_protocol": self.application_protocol}
+            result["requires_daemon"] = {
+                "application_protocol": self.application_protocol
+            }
+            if self.desktop_contracts:
+                result["desktop_contracts"] = dict(self.desktop_contracts)
         return result
 
 
@@ -125,6 +131,7 @@ class ApplicationManifest:
     dependencies: tuple[str, ...]
     entrypoint: Path
     application_protocol: str = ""
+    desktop_contracts: tuple[tuple[str, int], ...] = ()
     supported_host_platforms: tuple[str, ...] = ()
     description: str = ""
     author: str = ""
@@ -160,11 +167,20 @@ class ApplicationManifest:
             ) from exc
         metadata = parse_application_manifest(document)
         if daemon and metadata.schema_version == 3:
-            if not SpecifierSet(metadata.application_protocol).contains("1"):
-                raise ApplicationCompatibilityError("Application protocol requires a different Daemon")
+            from watcherobot.management.compatibility import check_application_daemon
+
+            if (
+                check_application_daemon(metadata.application_protocol).status
+                != "compatible"
+            ):
+                raise ApplicationCompatibilityError(
+                    "Application protocol requires a different Daemon"
+                )
         else:
             metadata = parse_application_manifest(
-                document, watcherobot_version=watcherobot_version or _installed_watcherobot_version(),
+                document,
+                watcherobot_version=watcherobot_version
+                or _installed_watcherobot_version(),
             )
 
         icon = metadata.icon
@@ -188,6 +204,7 @@ class ApplicationManifest:
             dependencies=metadata.dependencies,
             entrypoint=entrypoint_path,
             application_protocol=metadata.application_protocol,
+            desktop_contracts=metadata.desktop_contracts,
             supported_host_platforms=metadata.supported_host_platforms,
             description=metadata.description,
             author=metadata.author,
@@ -205,9 +222,7 @@ def parse_application_manifest(
     try:
         payload = json.loads(document.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ApplicationManifestError(
-            "invalid Application manifest document"
-        ) from exc
+        raise ApplicationManifestError("invalid Application manifest document") from exc
     if not isinstance(payload, dict):
         raise ApplicationManifestError("Application manifest must be an object")
     return _metadata_from_payload(
@@ -232,37 +247,49 @@ def _metadata_from_payload(
     allowed_fields = _ALLOWED_FIELDS
     if schema_version == 3:
         required_fields = _V3_REQUIRED_FIELDS
-        allowed_fields = _V3_REQUIRED_FIELDS | _OPTIONAL_FIELDS
+        allowed_fields = _V3_REQUIRED_FIELDS | _OPTIONAL_FIELDS | {"desktop_contracts"}
     unknown_fields = sorted(set(payload) - allowed_fields)
     missing_fields = sorted(required_fields - set(payload))
     if unknown_fields:
-        raise ApplicationManifestError(
-            f"unknown fields: {', '.join(unknown_fields)}"
-        )
+        raise ApplicationManifestError(f"unknown fields: {', '.join(unknown_fields)}")
     if missing_fields:
-        raise ApplicationManifestError(
-            f"missing fields: {', '.join(missing_fields)}"
-        )
+        raise ApplicationManifestError(f"missing fields: {', '.join(missing_fields)}")
 
     app_id = str(payload.get("id") or "").strip()
     name = str(payload.get("name") or "").strip()
     version = str(payload.get("version") or "").strip()
     requires_watcherobot = str(
-        payload.get("requires_sdk" if schema_version == 3 else "requires_watcherobot") or ""
+        payload.get("requires_sdk" if schema_version == 3 else "requires_watcherobot")
+        or ""
     ).strip()
     dependencies = payload.get("dependencies")
     application_protocol = ""
+    desktop_contracts: tuple[tuple[str, int], ...] = ()
     if schema_version == 3:
+        from watcherobot.management.compatibility import parse_business_contracts
+
+        try:
+            desktop_contracts = parse_business_contracts(
+                payload.get("desktop_contracts", {})
+            )
+        except ValueError as exc:
+            raise ApplicationManifestError(str(exc)) from exc
         daemon_requirement = payload.get("requires_daemon")
-        if not isinstance(daemon_requirement, dict) or set(daemon_requirement) != {"application_protocol"}:
-            raise ApplicationManifestError("requires_daemon must declare application_protocol")
+        if not isinstance(daemon_requirement, dict) or set(daemon_requirement) != {
+            "application_protocol"
+        }:
+            raise ApplicationManifestError(
+                "requires_daemon must declare application_protocol"
+            )
         application_protocol = str(daemon_requirement["application_protocol"])
         try:
             if not application_protocol:
                 raise InvalidSpecifier("empty protocol")
             SpecifierSet(application_protocol)
         except InvalidSpecifier as exc:
-            raise ApplicationManifestError("invalid application_protocol range") from exc
+            raise ApplicationManifestError(
+                "invalid application_protocol range"
+            ) from exc
 
     if _APPLICATION_ID_PATTERN.fullmatch(app_id) is None:
         raise ApplicationManifestError(
@@ -273,9 +300,7 @@ def _metadata_from_payload(
     if not _VERSION_PATTERN.fullmatch(version):
         raise ApplicationManifestError("version must use semantic version format")
     if not requires_watcherobot:
-        raise ApplicationManifestError(
-            "requires_watcherobot must not be empty"
-        )
+        raise ApplicationManifestError("requires_watcherobot must not be empty")
     try:
         requirement = SpecifierSet(requires_watcherobot)
     except InvalidSpecifier as exc:
@@ -332,6 +357,7 @@ def _metadata_from_payload(
         requires_watcherobot=requires_watcherobot,
         dependencies=tuple(normalized_dependencies),
         application_protocol=application_protocol,
+        desktop_contracts=desktop_contracts,
         supported_host_platforms=supported_host_platforms,
         description=str(payload.get("description") or "").strip(),
         author=str(payload.get("author") or "").strip(),

@@ -153,13 +153,13 @@ class DaemonRuntime:
         self._instance_group = instance_group
         if instance_id is None and instance_group != "default":
             raise ValueError("isolated DaemonRuntime requires an explicit instance_id")
-        self._instance_id = instance_id or runtime_instance_id(default_runtime_instance_root())
+        self._instance_id = instance_id or runtime_instance_id(
+            default_runtime_instance_root()
+        )
         self._started_at = time.time()
         self.connection_registry = connection_registry
         self.face_tracking_preview = FaceTrackingPreviewBroker(connection_registry)
-        self.application.bridge.set_frame_callback(
-            self._route_application_frame
-        )
+        self.application.bridge.set_frame_callback(self._route_application_frame)
         self.application.bridge.add_channel_lost_listener(
             self.face_tracking_preview.application_channel_lost
         )
@@ -257,13 +257,17 @@ class DaemonRuntime:
         await self.pairing_udp.stop()
         await self.external_server.stop()
 
-    async def start_application(self, *, expected_selection_id: str | None = None) -> ApplicationRun:
+    async def start_application(
+        self, *, expected_selection_id: str | None = None
+    ) -> ApplicationRun:
         self.logs.record(
             "Application start requested "
             f"(app_id={self.application.registry.current_app})"
         )
         try:
-            run = await self.application.start(expected_selection_id=expected_selection_id)
+            run = await self.application.start(
+                expected_selection_id=expected_selection_id
+            )
         except Exception as exc:
             self.logs.record(f"Application start failed ({exc})")
             raise
@@ -365,7 +369,9 @@ class DaemonRuntime:
     def maintenance_volumes(self) -> list[dict[str, object]]:
         return self.maintenance.volumes()
 
-    def validate_maintenance_package(self, kind: str, package_path: str) -> dict[str, object]:
+    def validate_maintenance_package(
+        self, kind: str, package_path: str
+    ) -> dict[str, object]:
         return self.maintenance.validate_package(kind, package_path)
 
     def maintenance_device_info(self, port: str) -> dict[str, object]:
@@ -378,7 +384,9 @@ class DaemonRuntime:
         port: str = "",
         volume_id: str = "",
     ) -> list[dict[str, object]]:
-        return self.maintenance.works(transport=transport, port=port, volume_id=volume_id)
+        return self.maintenance.works(
+            transport=transport, port=port, volume_id=volume_id
+        )
 
     def read_maintenance_work(
         self,
@@ -439,7 +447,9 @@ class DaemonRuntime:
             volume_id=volume_id,
         )
 
-    def export_maintenance_work(self, composition: dict[str, object]) -> dict[str, object]:
+    def export_maintenance_work(
+        self, composition: dict[str, object]
+    ) -> dict[str, object]:
         return self.maintenance.export_work_package(composition)
 
     def import_maintenance_work(self, package_path: str) -> dict[str, object]:
@@ -551,6 +561,7 @@ class DaemonRuntime:
             "state": state.value,
             "process_id": self.application.process_id,
             "last_exit_code": self.application.last_exit_code,
+            "desktop_contracts": dict(self.application.desktop_contracts),
         }
 
     def device_status(self) -> dict[str, object]:
@@ -581,8 +592,7 @@ class DaemonRuntime:
             now=self._clock(),
         )
         self.logs.record(
-            "Device connected "
-            f"(peer_ip={peer_ip}, request_id={hello.pair_request_id})"
+            f"Device connected (peer_ip={peer_ip}, request_id={hello.pair_request_id})"
         )
         self._save_device_binding(hello, peer_ip)
         await self._publish_device_state(self.device_pairing.snapshot())

@@ -12,7 +12,7 @@ import re
 import subprocess
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import BinaryIO
 
@@ -93,12 +93,13 @@ def run_dependency_install(
     *,
     cwd: Path,
     env: Mapping[str, str] | None,
-    events: EventSink,
+    events: EventSink | None,
+    checkpoint: Callable[[], None] | None = None,
     timeout: float = 300,
     max_output_bytes: int = 1024 * 1024,
 ) -> subprocess.CompletedProcess[bytes]:
     """Drain both pipes while emitting real activity; terminate on any failure."""
-    activity = _DependencyActivity(events)
+    activity = _DependencyActivity(events) if events is not None else None
     process = subprocess.Popen(
         list(arguments),
         cwd=cwd,
@@ -142,6 +143,8 @@ def run_dependency_install(
     deadline = time.monotonic() + timeout
     try:
         while len(ended) < 2:
+            if checkpoint is not None:
+                checkpoint()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(arguments, timeout)
@@ -157,12 +160,12 @@ def run_dependency_install(
             if len(output[index]) + len(chunk) > max_output_bytes:
                 raise ValueError("Application environment output exceeds limit")
             output[index].extend(chunk)
-            if index == 1:
+            if index == 1 and activity is not None:
                 lines = re.split(rb"[\r\n]", pending + chunk)
                 pending = lines.pop()
                 for line in lines:
                     activity.line(line)
-        if pending:
+        if pending and activity is not None:
             activity.line(pending)
         code = process.wait(timeout=max(0.001, deadline - time.monotonic()))
         return subprocess.CompletedProcess(

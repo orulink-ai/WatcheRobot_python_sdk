@@ -807,6 +807,7 @@ def _print_application_init_result(
     print(f'  cd "{result.directory}"')
     if setup_hint:
         print(f"  {setup_hint}")
+    print("  watcherobot-app-lock .  # freeze the tested Application environment")
     print("  watcherobot app run")
 
 

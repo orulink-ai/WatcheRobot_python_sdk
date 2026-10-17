@@ -92,6 +92,7 @@ jobs:
           python -m venv .venv-wheel-check
           .venv-wheel-check/bin/python -m pip install --force-reinstall dist/*.whl
           .venv-wheel-check/bin/python -m pip check
+          python tools/verify_sdk_management_release.py --wheel dist/*.whl
           .venv-wheel-check/bin/python -c "import watcherobot; print(watcherobot.__version__)"
           .venv-wheel-check/bin/watcherobot --help
           .venv-wheel-check/bin/watcherobot demo --help
@@ -239,6 +240,7 @@ jobs:
           python -m venv .venv-wheel-check
           .venv-wheel-check/bin/python -m pip install --force-reinstall dist/*.whl
           .venv-wheel-check/bin/python -m pip check
+          python tools/verify_sdk_management_release.py --wheel dist/*.whl
           .venv-wheel-check/bin/watcherobot --help
           .venv-wheel-check/bin/watcherobot demo --help
           .venv-wheel-check/bin/python -I -c "import tempfile; from pathlib import Path; from watcherobot.bundled_apps import DEMO_NAMES, prepare_demo; t = tempfile.TemporaryDirectory(); [prepare_demo(name, Path(t.name)) for name in DEMO_NAMES]; t.cleanup()"

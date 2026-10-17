@@ -112,7 +112,7 @@ def _stop_and_wait(state_root: Path | None = None) -> None:
     import psutil
     from urllib.parse import urlsplit
     from watcherobot.cli import CliError, _live_runtime_state, stop_runtime
-    from .process_shutdown import capture_runtime, force_stop
+    from .process_shutdown import capture_runtime, force_stop, unreleased_processes
 
     try:
         live = _live_runtime_state(state_root)
@@ -139,6 +139,7 @@ def _stop_and_wait(state_root: Path | None = None) -> None:
         stopped = False
     if not stopped and not processes:
         raise RuntimeError("Previous Runtime has not exited; inspect runtime.log")
+    processes = unreleased_processes(processes)
     _, alive = psutil.wait_procs(processes, timeout=15 if stopped else 0)
     if alive:
         force_stop(alive)
@@ -341,98 +342,188 @@ def ensure_command(
     The pointer is committed only after the target has answered its status endpoint.
     Only the documented path/configuration environment whitelist is persisted.
     """
-    from watcherobot.cli import CliError, _live_runtime_state, _request_json
     from .cleanup import register_environment
 
     # Protect source venvs and default application resources before publication GC.
     if Path(command[0]).is_file():
         register_environment(Path(command[0]))
 
-    resolved_state_root = (
-        Path(state_root).resolve()
-        if state_root is not None
-        else default_runtime_state_root()
-    )
-    root = default_runtime_instance_root()
-    pointer = root / "current-launcher.json"
     with operation_lock(timeout=120):
-        _check_activation_cancelled()
-        discovery_failed = False
-        try:
-            live = _live_runtime_state(resolved_state_root)
-        except CliError as error:
-            candidate_error = error
-            discovery_failed = True
-            live = None
-        if live is not None:
-            if not activate:
-                return True
+        return _ensure_command_locked(
+            command, activate=activate, force=force, state_root=state_root
+        )
 
-        target_identity = describe_command(command) if activate else None
-        _check_activation_cancelled()
-        try:
-            previous = read_launcher(pointer) if pointer.is_file() else None
-        except (OSError, ValueError):
-            if not activate:
-                raise
-            previous = None
 
-        selected = _with_runtime_state_root(command, resolved_state_root)
-        launch_environment = {
-            key: os.environ[key] for key in _LAUNCH_ENVIRONMENT if key in os.environ
-        }
-        if not activate and pointer.is_file():
-            saved_command, launch_environment = read_launcher(pointer)
-            selected = _with_runtime_state_root(saved_command, resolved_state_root)
+def _ensure_command_locked(
+    command: list[str],
+    *,
+    activate: bool = False,
+    force: bool = False,
+    state_root: Path | None = None,
+    expected_identity: dict[str, str] | None = None,
+) -> bool:
+    """Internal activation core; caller must hold the shared operation lock."""
+    from watcherobot.cli import CliError, _live_runtime_state, _request_json
 
-        environment = dict(os.environ)
-        for key in _LAUNCH_ENVIRONMENT:
-            environment.pop(key, None)
-        environment.update(launch_environment)
-        environment["WATCHER_RUNTIME_STATE_ROOT"] = str(resolved_state_root)
+    resolved_state_root = Path(state_root).resolve() if state_root is not None else default_runtime_state_root()
+    pointer = default_runtime_instance_root() / "current-launcher.json"
+    _check_activation_cancelled()
+    discovery_failed = False
+    try:
+        live = _live_runtime_state(resolved_state_root)
+    except CliError as error:
+        candidate_error = error
+        discovery_failed = True
+        live = None
+    if live is not None:
         if not activate:
-            try:
-                target_identity = describe_command(selected, environment)
-            except Exception:
-                if discovery_failed:
-                    raise candidate_error
-                raise
+            return True
 
-        log_root = resolved_state_root
-        log_root.mkdir(parents=True, exist_ok=True)
-        options: dict[str, Any] = {}
-        options.update(background_process_options())
+    target_identity = describe_command(command) if activate else None
+    if expected_identity is not None and (
+        target_identity is None
+        or any(
+            target_identity.get(key) != expected_identity[key]
+            for key in ("sdk_version", "build_id")
+        )
+    ):
+        raise ValueError("Candidate no longer matches the verified SDK identity; current Daemon was preserved")
+    _check_activation_cancelled()
+    try:
+        previous = read_launcher(pointer) if pointer.is_file() else None
+    except (OSError, ValueError):
+        if not activate:
+            raise
+        previous = None
 
-        process = None
-        process_tree = None
-        stopped_existing = False
+    selected = _with_runtime_state_root(command, resolved_state_root)
+    launch_environment = {
+        key: os.environ[key] for key in _LAUNCH_ENVIRONMENT if key in os.environ
+    }
+    if not activate and pointer.is_file():
+        saved_command, launch_environment = read_launcher(pointer)
+        selected = _with_runtime_state_root(saved_command, resolved_state_root)
+
+    environment = dict(os.environ)
+    for key in _LAUNCH_ENVIRONMENT:
+        environment.pop(key, None)
+    environment.update(launch_environment)
+    environment["WATCHER_RUNTIME_STATE_ROOT"] = str(resolved_state_root)
+    if not activate:
         try:
-            if live is not None:
-                status = _request_json(live.control_url, "/daemon/status")
-                if (
-                    not force
-                    and target_identity is not None
-                    and status.get("runtime", {}).get("sdk_version")
-                    == target_identity["sdk_version"]
-                ):
-                    return True
-            if live is not None or discovery_failed:
-                _check_activation_cancelled()
-                # Discovery failures still require the verified legacy shutdown
-                # path before a candidate may contend for the listening port.
-                _stop_and_wait(resolved_state_root)
-                stopped_existing = True
+            target_identity = describe_command(selected, environment)
+        except Exception:
+            if discovery_failed:
+                raise candidate_error
+            raise
 
+    log_root = resolved_state_root
+    log_root.mkdir(parents=True, exist_ok=True)
+    options: dict[str, Any] = {}
+    options.update(background_process_options())
+
+    process = None
+    process_tree = None
+    stopped_existing = False
+    try:
+        if live is not None:
+            status = _request_json(live.control_url, "/daemon/status")
+            if (
+                not force
+                and target_identity is not None
+                and status.get("runtime", {}).get("sdk_version")
+                == target_identity["sdk_version"]
+            ):
+                return True
+        if live is not None or discovery_failed:
             _check_activation_cancelled()
-            # A detached frozen child must own its extraction directory. Otherwise
-            # the short-lived manager can remove DLLs still used by the Daemon.
-            environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-            launch_id = uuid.uuid4().hex
-            environment["WATCHER_RUNTIME_LAUNCH_ID"] = launch_id
+            # Discovery failures still require the verified legacy shutdown
+            # path before a candidate may contend for the listening port.
+            _stop_and_wait(resolved_state_root)
+            stopped_existing = True
+
+        _check_activation_cancelled()
+        # A detached frozen child must own its extraction directory. Otherwise
+        # the short-lived manager can remove DLLs still used by the Daemon.
+        environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        launch_id = uuid.uuid4().hex
+        environment["WATCHER_RUNTIME_LAUNCH_ID"] = launch_id
+        with (log_root / "runtime.log").open("ab") as log:
+            process = subprocess.Popen(
+                selected,
+                **native_executable_options(selected),
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                close_fds=True,
+                env=environment,
+                **options,
+            )
+            process_tree = _SpawnedProcessTree(process)
+        # Cold extraction and file scanning have no predictable duration.
+        # Fail on process exit or identity errors, not elapsed startup time.
+        while True:
+            _check_activation_cancelled()
+            process_tree.refresh()
+            live = _candidate_live_state(resolved_state_root)
+            if live is not None:
+                try:
+                    status = _request_json(live.control_url, "/daemon/status")
+                except CliError:
+                    if process.poll() is not None:
+                        raise RuntimeError(
+                            "Runtime launcher exited before readiness; see runtime.log"
+                        )
+                    time.sleep(0.05)
+                    continue
+                if status.get("runtime", {}).get("launch_id") != launch_id:
+                    raise RuntimeError(
+                        "Another launcher won the Runtime lock; activation was not committed"
+                    )
+                if (
+                    target_identity is not None
+                    and status.get("runtime", {}).get("build_id")
+                    != target_identity["build_id"]
+                ):
+                    raise RuntimeError(
+                        "Runtime build changed between validation and readiness"
+                    )
+                save_launcher(selected, launch_environment)
+                return False
+            if process.poll() is not None:
+                raise RuntimeError(
+                    "Runtime launcher exited before readiness; see runtime.log"
+                )
+            time.sleep(0.05)
+    except Exception as error:
+        # Reap only our own candidate, including frozen/venv child processes.
+        if process is not None:
+            _terminate_process_tree(process, process_tree)
+        if (
+            not isinstance(error, RuntimeActivationCancelled)
+            and activate
+            and stopped_existing
+            and previous is not None
+            and _live_runtime_state(resolved_state_root) is None
+        ):
+            # The pointer still describes the previous healthy deployment.
+            # A subsequent ensure uses it, rather than the failed candidate.
+            old_command, old_environment = previous
+            old_command = _with_runtime_state_root(
+                old_command, resolved_state_root
+            )
+            for key in _LAUNCH_ENVIRONMENT:
+                environment.pop(key, None)
+            environment.update(old_environment)
+            environment["WATCHER_RUNTIME_STATE_ROOT"] = str(
+                resolved_state_root
+            )
+            recovery_id = uuid.uuid4().hex
+            environment["WATCHER_RUNTIME_LAUNCH_ID"] = recovery_id
             with (log_root / "runtime.log").open("ab") as log:
-                process = subprocess.Popen(
-                    selected,
-                    **native_executable_options(selected),
+                restored = subprocess.Popen(
+                    old_command,
+                    **native_executable_options(old_command),
                     stdin=subprocess.DEVNULL,
                     stdout=log,
                     stderr=log,
@@ -440,111 +531,39 @@ def ensure_command(
                     env=environment,
                     **options,
                 )
-                process_tree = _SpawnedProcessTree(process)
-            # Cold extraction and file scanning have no predictable duration.
-            # Fail on process exit or identity errors, not elapsed startup time.
-            while True:
-                _check_activation_cancelled()
-                process_tree.refresh()
-                live = _candidate_live_state(resolved_state_root)
-                if live is not None:
-                    try:
-                        status = _request_json(live.control_url, "/daemon/status")
-                    except CliError:
-                        if process.poll() is not None:
-                            raise RuntimeError(
-                                "Runtime launcher exited before readiness; see runtime.log"
+            restored_tree = _SpawnedProcessTree(restored)
+            deadline = time.monotonic() + _ROLLBACK_READINESS_TIMEOUT_SECONDS
+            try:
+                while True:
+                    _check_activation_cancelled()
+                    restored_tree.refresh()
+                    recovered = _candidate_live_state(resolved_state_root)
+                    if recovered is not None:
+                        try:
+                            recovered_status = _request_json(
+                                recovered.control_url, "/daemon/status"
                             )
-                        time.sleep(0.05)
-                        continue
-                    if status.get("runtime", {}).get("launch_id") != launch_id:
-                        raise RuntimeError(
-                            "Another launcher won the Runtime lock; activation was not committed"
-                        )
-                    if (
-                        target_identity is not None
-                        and status.get("runtime", {}).get("build_id")
-                        != target_identity["build_id"]
-                    ):
-                        raise RuntimeError(
-                            "Runtime build changed between validation and readiness"
-                        )
-                    save_launcher(selected, launch_environment)
-                    return False
-                if process.poll() is not None:
-                    raise RuntimeError(
-                        "Runtime launcher exited before readiness; see runtime.log"
-                    )
-                time.sleep(0.05)
-        except Exception as error:
-            # Reap only our own candidate, including frozen/venv child processes.
-            if process is not None:
-                _terminate_process_tree(process, process_tree)
-            if (
-                not isinstance(error, RuntimeActivationCancelled)
-                and activate
-                and stopped_existing
-                and previous is not None
-                and _live_runtime_state(resolved_state_root) is None
-            ):
-                # The pointer still describes the previous healthy deployment.
-                # A subsequent ensure uses it, rather than the failed candidate.
-                old_command, old_environment = previous
-                old_command = _with_runtime_state_root(
-                    old_command, resolved_state_root
-                )
-                for key in _LAUNCH_ENVIRONMENT:
-                    environment.pop(key, None)
-                environment.update(old_environment)
-                environment["WATCHER_RUNTIME_STATE_ROOT"] = str(
-                    resolved_state_root
-                )
-                recovery_id = uuid.uuid4().hex
-                environment["WATCHER_RUNTIME_LAUNCH_ID"] = recovery_id
-                with (log_root / "runtime.log").open("ab") as log:
-                    restored = subprocess.Popen(
-                        old_command,
-                        **native_executable_options(old_command),
-                        stdin=subprocess.DEVNULL,
-                        stdout=log,
-                        stderr=log,
-                        close_fds=True,
-                        env=environment,
-                        **options,
-                    )
-                restored_tree = _SpawnedProcessTree(restored)
-                deadline = time.monotonic() + _ROLLBACK_READINESS_TIMEOUT_SECONDS
-                try:
-                    while True:
-                        _check_activation_cancelled()
-                        restored_tree.refresh()
-                        recovered = _candidate_live_state(resolved_state_root)
-                        if recovered is not None:
-                            try:
-                                recovered_status = _request_json(
-                                    recovered.control_url, "/daemon/status"
+                        except CliError:
+                            recovered_status = None
+                        if recovered_status is not None:
+                            if (
+                                recovered_status.get("runtime", {}).get("launch_id")
+                                != recovery_id
+                            ):
+                                raise RuntimeError(
+                                    "Rollback identity mismatch; inspect runtime.log"
                                 )
-                            except CliError:
-                                recovered_status = None
-                            if recovered_status is not None:
-                                if (
-                                    recovered_status.get("runtime", {}).get("launch_id")
-                                    != recovery_id
-                                ):
-                                    raise RuntimeError(
-                                        "Rollback identity mismatch; inspect runtime.log"
-                                    )
-                                break
-                        if restored.poll() is not None:
-                            raise RuntimeError(
-                                "Activation failed and previous Runtime could not recover; see runtime.log"
-                            )
-                        if time.monotonic() >= deadline:
-                            raise RuntimeError(
-                                "Activation failed and previous Runtime recovery timed out; see runtime.log"
-                            )
-                        time.sleep(0.05)
-                except Exception:
-                    _terminate_process_tree(restored, restored_tree)
-                    raise
-            raise
+                            break
+                    if restored.poll() is not None:
+                        raise RuntimeError(
+                            "Activation failed and previous Runtime could not recover; see runtime.log"
+                        )
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            "Activation failed and previous Runtime recovery timed out; see runtime.log"
+                        )
+                    time.sleep(0.05)
+            except Exception:
+                _terminate_process_tree(restored, restored_tree)
+                raise
+        raise

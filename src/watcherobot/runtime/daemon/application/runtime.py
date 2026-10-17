@@ -76,12 +76,11 @@ class ApplicationRuntimeManager:
         log_service: ApplicationLogService | None = None,
     ) -> None:
         self._application_dir = (
-            Path(application_dir).resolve()
-            if current_app is not None
-            else None
+            Path(application_dir).resolve() if current_app is not None else None
         )
         self._application_launcher = application_launcher
         self._launch_spec: ApplicationLaunchSpec | None = None
+        self.desktop_contracts: tuple[tuple[str, int], ...] = ()
         self._startup_timeout = startup_timeout
         self._channel_loss_grace_timeout = channel_loss_grace_timeout
         self._stop_timeout = stop_timeout
@@ -100,7 +99,9 @@ class ApplicationRuntimeManager:
         self._process: asyncio.subprocess.Process | None = None
         self._monitor_task: asyncio.Task[None] | None = None
         self._operation_lock = asyncio.Lock()
-        self.selection_id: str | None = uuid.uuid4().hex if current_app is not None else None
+        self.selection_id: str | None = (
+            uuid.uuid4().hex if current_app is not None else None
+        )
         self._closing = False
         self._log_tasks: list[asyncio.Task[None]] = []
         self._device_status_url: str | None = None
@@ -183,6 +184,7 @@ class ApplicationRuntimeManager:
         self.registry.set_current_app(manifest.app_id)
         self._application_dir = selected_dir
         self._launch_spec = launch_spec
+        self.desktop_contracts = manifest.desktop_contracts
         self.selection_id = uuid.uuid4().hex
         self.last_state = ApplicationState.NOT_RUNNING
         self.last_exit_code = None
@@ -203,13 +205,30 @@ class ApplicationRuntimeManager:
         self.registry.clear_current_app(expected_app_id)
         self._application_dir = None
         self._launch_spec = None
+        self.desktop_contracts = ()
         self.selection_id = None
         self.last_state = ApplicationState.NOT_SELECTED
         self.last_exit_code = None
 
-    async def start(self, *, expected_selection_id: str | None = None) -> ApplicationRun:
+    async def start(
+        self, *, expected_selection_id: str | None = None
+    ) -> ApplicationRun:
+        from watcherobot.management.activity import ActivityRegistry, ActivityBusy
+
+        try:
+            with ActivityRegistry().switch():
+                return await self._start(expected_selection_id=expected_selection_id)
+        except ActivityBusy as exc:
+            raise SessionOccupiedError(str(exc)) from exc
+
+    async def _start(
+        self, *, expected_selection_id: str | None = None
+    ) -> ApplicationRun:
         async with self._operation_lock:
-            if expected_selection_id is not None and expected_selection_id != self.selection_id:
+            if (
+                expected_selection_id is not None
+                and expected_selection_id != self.selection_id
+            ):
                 raise ApplicationSelectionChangedError(
                     "Application selection changed; retry the requested demo"
                 )
@@ -224,6 +243,7 @@ class ApplicationRuntimeManager:
                 )
 
             manifest = ApplicationManifest.load(self._application_dir, daemon=True)
+            self.desktop_contracts = manifest.desktop_contracts
             if manifest.app_id != self.registry.current_app:
                 raise ApplicationStartError(
                     "Application manifest id does not match current app"
@@ -240,6 +260,21 @@ class ApplicationRuntimeManager:
                 raise ApplicationStartError(
                     "Application launch spec does not match current app"
                 )
+            if refreshed_spec.kind is ApplicationLauncherKind.PYTHON:
+                from watcherobot.management.application_environment import (
+                    verify_application_environment,
+                )
+
+                try:
+                    await verify_application_environment(
+                        self._application_dir,
+                        refreshed_spec.command_executable,
+                        manifest.requires_watcherobot,
+                        manifest.schema_version,
+                        manifest.dependencies,
+                    )
+                except (OSError, ValueError, TimeoutError) as exc:
+                    raise ApplicationStartError(str(exc)) from exc
             self._launch_spec = refreshed_spec
             command = tuple(os.fspath(item) for item in refreshed_spec.command)
 

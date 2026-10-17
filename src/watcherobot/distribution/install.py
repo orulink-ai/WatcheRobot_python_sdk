@@ -86,8 +86,9 @@ class ApplicationEnvironmentRunner(Protocol):
 class SystemApplicationEnvironmentRunner:
     """The production runner for the locked Python and uv Runtime resources."""
 
-    def __init__(self, events: EventSink | None = None) -> None:
+    def __init__(self, events: EventSink | None = None, *, checkpoint: Callable[[], None] | None = None) -> None:
         self.events = events
+        self.checkpoint = checkpoint
 
     def run(
         self,
@@ -122,12 +123,12 @@ class SystemApplicationEnvironmentRunner:
             # Parse only uv's plain, locale-independent summaries, never ANSI/TTY output.
             for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
                 try:
-                    if command.stage == "installing_dependencies" and self.events is not None:
+                    if self.checkpoint is not None or (command.stage == "installing_dependencies" and self.events is not None):
                         from .dependency_progress import run_dependency_install
 
                         completed = run_dependency_install(
-                            [str(command.executable), "--color", "never", *command.arguments],
-                            cwd=command.current_dir, env=environment, events=self.events,
+                            [str(command.executable), *(["--color", "never"] if command.stage == "installing_dependencies" else []), *command.arguments],
+                            cwd=command.current_dir, env=environment, events=self.events, checkpoint=self.checkpoint,
                             max_output_bytes=_MAX_OUTPUT_BYTES,
                         )
                     else:

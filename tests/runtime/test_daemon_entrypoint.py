@@ -57,7 +57,9 @@ def test_check_runtime_reports_identity_after_service_import(
     monkeypatch.setattr(identity, "runtime_identity", lambda: expected)
 
     assert daemon_entrypoint.main(["--check-runtime"]) == 0
-    assert json.loads(capsys.readouterr().out) == expected
+    from watcherobot.management.compatibility import runtime_contracts
+
+    assert json.loads(capsys.readouterr().out) == {**expected, "contracts": runtime_contracts()}
 
 
 def test_stop_shared_uses_requested_state_root(

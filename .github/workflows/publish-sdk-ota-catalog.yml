@@ -1,0 +1,65 @@
+name: Publish signed SDK OTA catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      sdk_tag:
+        description: Already verified stable SDK tag (vX.Y.Z)
+        required: true
+        type: string
+      catalog_version:
+        description: Version of the signed watcherobot-desktop-release wheel attached to that SDK Release
+        required: true
+        type: string
+
+concurrency:
+  group: sdk-ota-catalog-publication
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Linux, X64, sdk-release]
+    environment:
+      name: pypi
+      url: https://pypi.org/p/watcherobot-desktop-release
+    permissions:
+      contents: read
+      id-token: write
+    timeout-minutes: 20
+    env:
+      SDK_TAG: ${{ inputs.sdk_tag }}
+      CATALOG_VERSION: ${{ inputs.catalog_version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+      - name: Prepare verifier without publishing SDK again
+        run: python -m pip install .
+      - name: Validate release inputs before reading assets
+        run: sh tools/publish-sdk-ota-release.sh --validate-inputs --sdk-tag "$SDK_TAG" --catalog-version "$CATALOG_VERSION"
+      - name: Download original SDK and signed data-only catalog
+        run: |
+          mkdir -p "$RUNNER_TEMP/sdk-ota-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gh release download "$SDK_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'watcherobot-*.whl' \
+            --pattern "watcherobot_desktop_release-${CATALOG_VERSION}-py3-none-any.whl" \
+            --dir "$RUNNER_TEMP/sdk-ota-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Verify SDK binding, publish through protected OIDC, then verify Tsinghua mirror
+        run: |
+          sh tools/publish-sdk-ota-release.sh \
+            --sdk-tag "$SDK_TAG" --catalog-version "$CATALOG_VERSION" \
+            --sdk-wheel "$RUNNER_TEMP/sdk-ota-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"/watcherobot-*.whl \
+            --catalog-wheel "$RUNNER_TEMP/sdk-ota-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/watcherobot_desktop_release-${CATALOG_VERSION}-py3-none-any.whl" \
+            --publish
+      - name: Remove only this run's downloaded public artifacts
+        if: always()
+        run: rm -rf -- "$RUNNER_TEMP/sdk-ota-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"

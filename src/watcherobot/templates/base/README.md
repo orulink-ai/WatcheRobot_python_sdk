@@ -26,6 +26,7 @@ my_app/
 ```powershell
 watcherobot robot pair 123456
 watcherobot robot status
+watcherobot-app-lock .
 watcherobot app check .
 watcherobot app run
 ```
@@ -34,3 +35,7 @@ watcherobot app run
 使用 `watcherobot app run` 启动，由 Runtime 注入应用身份和通道，不要直接运行 `python app.py`。
 修改代码后停止再运行；Ctrl+C 停止，也可在另一个终端执行 `watcherobot app stop`。
 需要分享时，完善元数据后使用现有的 `watcherobot app publish .` 和 `watcherobot app submit` 流程。
+
+应用清单使用 schema 3：`requires_sdk` 约束应用自身环境的 SDK，`requires_daemon.application_protocol` 约束共享 Daemon 的连接合同；两者分别检查。SDK CLI 显式启动的接管规则仍然保留。桌面运行已安装应用时只请求 Daemon 启动固定入口，不另起应用环境中的 SDK CLI。
+
+先在应用独立 Python 环境安装并测试所需依赖，再运行 `watcherobot-app-lock .` 生成 `app.lock.json`；把锁文件一并提交。增加或升级依赖后重新验证和冻结。没有锁文件、实际环境与精确锁不一致时会阻止安装或启动；不会静默改用桌面当前 SDK。

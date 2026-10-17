@@ -122,6 +122,7 @@ watcherobot robot setup
 确认 robot status 显示设备已连接后运行：
 
 ```powershell
+watcherobot-app-lock .
 watcherobot app run
 ```
 
@@ -250,3 +251,5 @@ credentials/ 被 SDK 强制排除；空白 credential-examples/ 会保留。模�
 | 有收音但没有回复 | 查看终端的 ASR/LLM/TTS 阶段错误，检查对应服务 |
 | 修改配置后仍是旧效果 | 停止旧应用，再从当前项目目录 app run |
 | app check 通过但对话失败 | app check 不调用云服务；继续按阶段检查凭据和设备 |
+
+应用初始化使用 schema 3。`requires_sdk` 只约束应用自己的 Python 环境；共享 Daemon 的要求放在 `requires_daemon.application_protocol`。在测试通过的独立应用环境运行 `watcherobot-app-lock .` 并提交生成的 `app.lock.json`，添加依赖或升级依赖后重新验证和冻结。

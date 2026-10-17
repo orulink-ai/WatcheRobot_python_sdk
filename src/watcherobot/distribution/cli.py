@@ -311,6 +311,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Run one short-lived distribution command without starting the Daemon."""
 
+    from watcherobot.management.bootstrap import distribution_command
+
+    command = distribution_command()
+    if command is not None:
+        import subprocess
+        import sys
+
+        return subprocess.call([*command, *(sys.argv[1:] if argv is None else argv)])
     return run_command(build_parser().parse_args(argv))
 
 

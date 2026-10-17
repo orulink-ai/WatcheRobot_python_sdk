@@ -10,6 +10,7 @@
 {
   "runtime": {
     "sdk_version": "<watcherobot.__version__>",
+    "contracts": {"manager": 1, "management": 1, "distribution": 1, "application": 1, "state": 1},
     "build_id": "<Runtime 内容身份>",
     "launch_id": "<本次启动身份>",
     "draining": false,
@@ -35,7 +36,9 @@
 
 `instance_id` 的唯一算法是：对协调根目录先执行用户目录展开和绝对路径解析，再使用当前平台的 `normcase` 规范化大小写与分隔符，对结果的 UTF-8 字节计算 SHA-256，最后加上 `sha256:` 前缀。Desktop 不重复实现该路径算法，而是验证 Daemon 发布的结构和默认实例组，避免跨语言规范化分叉。
 
-管理接口不再维护 `v2`、`v3` 一类数字控制协议。当前结构本身就是唯一合同：上述身份与发现元数据均为必填字段；新增可选诊断字段时，旧调用方应安全忽略。缺少任何必填字段、字段类型错误或格式无效时均不得复用。它不改变 Application 分发命令，不改变业务帧路由，也不新增 Application 日志读取接口。
+SDK 独立更新新增 `runtime.contracts`，分别声明管理入口、管理 REST、分发 JSONL、Application 连接和管理数据合同；唯一来源为 SDK 中央兼容模块。SDK 管理工具依据调用方支持声明计算兼容结果，缺少声明返回未验证，不默认兼容。包版本用于发行和显式启动接管，合同版本用于判断行为兼容，两者分别管理。旧 `application_protocol` / `management_protocol` 诊断字段保持中央常量同值。
+
+原有身份结构仍保留：上述身份与发现元数据均为必填字段；新增可选诊断字段时，旧调用方应安全忽略。缺少任何必填字段、字段类型错误或格式无效时均不得复用。它不改变 Application 分发命令，不改变业务帧路由，也不新增 Application 日志读取接口。
 
 ## Desktop 更新调用顺序
 
@@ -121,3 +124,15 @@ Windows Daemon 验证、启动、回退及安装守卫在调用 subprocess 时�
 - 旧 Runtime 没有此接口时，桌面应明确要求更新，不能伪造空目录或 `select(null)`，也不能自动切换到不存在的内置默认应用。
 
 卸载当前选中的空闲应用时，Desktop 先验证取消选择成功，再调用 SDK 分发卸载，最后仅在卸载成功后删除对应本地选择记录。卸载失败时保留记录供恢复；不影响其他当前应用。正式 Desktop 包必须固定到已经提交且包含本接口的 SDK commit，并通过源码能力预检。本地工作区修改不等于已更新正式发行锁。
+
+## SDK 更新入口的内容确认
+
+SDK OTA 激活在停止旧 Daemon 前，把候选准备时验证的 `sdk_version/build_id` 交给共享生命周期核心再次比较。候选文件发生变化时保留旧 Daemon；就绪后继续校验本次 launch_id 和 build_id，原子提交 SDK 选择。管理入口和持久事务见 [SDK 管理合同](../sdk-management.zh-CN.md)。这些字段和检查不改变业务 WebSocket、WSPK、通道选择或按来源透明转发。
+
+## Application 业务合同声明（新增管理元数据）
+
+`application` 状态新增 `desktop_contracts`，值来自被选择并启动的 schema 3 Application 清单，例如 `{"device_control":1,"application_settings":1,"voice_chat":1}`。组名是不透明合同标识；Daemon 仅保存和返回声明，不映射业务消息 type，也不据此分流业务帧。清除应用选择时声明为空。合同号必须为正整数，布尔值无效；缺失声明不得推断为版本 1。
+
+SDK 管理入口接收桌面支持范围 `desktop_business`，比较实际 Daemon 管理合同及当前 Application 声明，返回 `business.groups.<组名>.{status,enabled,reason,issues}`。应用未运行时由 SDK 给出透明设备控制组，应用运行时完全采用该应用的声明。未知、未声明或不兼容的组返回 disabled。桌面只声明需求、展示结果和控制对应功能入口，不自行比较合同版本。
+
+该检查验证显式合同声明及版本范围，不会执行应用代码证明其实现正确；开发者仍须通过业务合同测试。默认 Application 与第三方 Application 同等处理，不设兼容白名单，本轮不修改默认 Application。新增元数据属于管理 REST 的附加字段，既有 WebSocket 业务帧结构、内容无关路由及麦克风链路不变。

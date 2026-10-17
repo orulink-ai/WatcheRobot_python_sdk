@@ -134,3 +134,24 @@ def test_legacy_migration_rejects_other_instances(monkeypatch, identity):
     with pytest.raises(RuntimeError, match="belongs to"):
         process_shutdown.stop_legacy_listener()
     capture.assert_not_called()
+
+
+def test_exited_foreign_child_zombie_does_not_block_sdk_takeover(monkeypatch):
+    process = Mock()
+    process.status.return_value = process_shutdown.psutil.STATUS_ZOMBIE
+    monkeypatch.setattr(process_shutdown.psutil, "wait_procs", lambda *a, **k: ([], [process]))
+    process_shutdown.force_stop([process])
+    process.kill.assert_not_called()
+
+
+@pytest.mark.parametrize("status", ["running", "access_denied"])
+def test_live_or_uninspectable_process_still_blocks_takeover(monkeypatch, status):
+    process = Mock()
+    if status == "access_denied":
+        process.status.side_effect = process_shutdown.psutil.AccessDenied(123)
+    else:
+        process.status.return_value = process_shutdown.psutil.STATUS_RUNNING
+    monkeypatch.setattr(process_shutdown.psutil, "wait_procs", lambda *a, **k: ([], [process]))
+    with pytest.raises(RuntimeError, match="holds files"):
+        process_shutdown.force_stop([process])
+    process.kill.assert_called_once()

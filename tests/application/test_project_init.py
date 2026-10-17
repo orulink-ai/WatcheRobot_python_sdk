@@ -47,11 +47,12 @@ def test_init_creates_one_publish_ready_application_project(
         target.joinpath("app.json").read_text(encoding="utf-8")
     )
     assert manifest_document == {
-        "schema_version": 2,
+        "schema_version": 3,
         "id": "com.example.robot_demo",
         "name": "Robot Demo",
         "version": "0.1.0",
-        "requires_watcherobot": ">=0.1.1a3,<0.2",
+        "requires_sdk": ">=0.1.1a3,<0.2",
+        "requires_daemon": {"application_protocol": ">=1,<2"},
         "dependencies": [],
         "supported_host_platforms": ["windows", "macos"],
         "description": "A generated WatcheRobot Application.",

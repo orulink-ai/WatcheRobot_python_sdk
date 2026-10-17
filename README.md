@@ -1,5 +1,7 @@
 # WatcheRobot Python SDK
 
+SDK independent update implementation status / SDK 独立更新实施状态：[management contract](docs/sdk-management.zh-CN.md)。
+
 Runtime maintainers: [Shared Daemon, application dependencies and upgrade guide](docs/shared-runtime.zh-CN.md).
 
 Control your WatcheRobot desktop robot with Python: a few lines of code to make it move, speak, and see.

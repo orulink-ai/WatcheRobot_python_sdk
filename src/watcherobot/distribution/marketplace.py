@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from packaging.specifiers import SpecifierSet
+
+from watcherobot.management.compatibility import check_application_daemon
 
 from watcherobot import __version__
 from watcherobot.runtime.daemon.application.manifest import (
@@ -85,7 +86,11 @@ class MarketplaceApplication:
             description=metadata.description,
             author=metadata.author,
             icon=metadata.icon,
-            compatible=(SpecifierSet(metadata.application_protocol).contains('1') if metadata.schema_version == 3 else metadata.supports_watcherobot(watcherobot_version)),
+            compatible=(
+                check_application_daemon(metadata.application_protocol).status == "compatible"
+                if metadata.schema_version == 3
+                else metadata.supports_watcherobot(watcherobot_version)
+            ),
             host_compatible=metadata.supports_current_host_platform(),
         )
 

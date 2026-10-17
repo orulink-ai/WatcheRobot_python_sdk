@@ -38,32 +38,53 @@ def capture_runtime(pid: int, control_port: int) -> list[psutil.Process]:
     return processes
 
 
+def unreleased_processes(processes: list[psutil.Process]) -> list[psutil.Process]:
+    """A zombie has exited and released resources even if another parent must reap it."""
+    active = []
+    for process in processes:
+        try:
+            if process.status() != psutil.STATUS_ZOMBIE:
+                active.append(process)
+        except psutil.NoSuchProcess:
+            pass
+        except psutil.AccessDenied:
+            # Uncertain visibility must never permit a second live Daemon.
+            active.append(process)
+    return active
+
+
 def force_stop(processes: list[psutil.Process]) -> None:
     """Terminate captured processes, then kill stragglers and await file release."""
+    processes = unreleased_processes(processes)
+    if not processes:
+        return
     for process in processes:
         try:
             process.terminate()
         except psutil.NoSuchProcess:
             pass
     _, alive = psutil.wait_procs(processes, timeout=5)
+    alive = unreleased_processes(alive)
     for process in alive:
         try:
             process.kill()
         except psutil.NoSuchProcess:
             pass
     _, alive = psutil.wait_procs(alive, timeout=5)
+    alive = unreleased_processes(alive)
     if alive:
         raise RuntimeError("Previous Runtime still holds files; operation cancelled")
 
 
 def stop_legacy_listener() -> bool:
     """Migrate a legacy default listener only after OS-level verification."""
+    from watcherobot.cli import CliError, _request_json
+
     from .daemon.instance import (
         default_runtime_instance_root,
-        system_runtime_instance_root,
         runtime_instance_id,
+        system_runtime_instance_root,
     )
-    from watcherobot.cli import CliError, _request_json
 
     if default_runtime_instance_root() != system_runtime_instance_root():
         return False
