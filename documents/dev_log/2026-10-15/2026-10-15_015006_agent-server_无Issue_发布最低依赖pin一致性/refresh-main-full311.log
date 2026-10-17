@@ -1,0 +1,74 @@
+........................................................................ [  3%]
+..................................................................s..... [  7%]
+......................................s................................. [ 10%]
+........................................................................ [ 14%]
+........................................................................ [ 18%]
+s....................................................................... [ 21%]
+........................................................................ [ 25%]
+........................................................................ [ 29%]
+........................................................................ [ 32%]
+......................................................s................. [ 36%]
+........................................................................ [ 40%]
+........sss............................................................. [ 43%]
+........................................................................ [ 47%]
+........................................................................ [ 50%]
+...........................F......s..................................... [ 54%]
+........................................................................ [ 58%]
+........................................................................ [ 61%]
+........................................................................ [ 65%]
+........................................................................ [ 69%]
+........................................................................ [ 72%]
+........................................................................ [ 76%]
+........................................................................ [ 80%]
+........................................................................ [ 83%]
+........................................................................ [ 87%]
+........................................................................ [ 90%]
+........................................................................ [ 94%]
+........................................................................ [ 98%]
+....................................                                     [100%]
+=================================== FAILURES ===================================
+__ test_same_size_rewrite_with_restored_mtime_invalidates_verification[False] __
+
+tmp_path = PosixPath('/tmp/pytest-of-hermesadmin/pytest-3/test_same_size_rewrite_with_re0')
+damage_target = False
+
+    @pytest.mark.parametrize("damage_target", [False, True])
+    def test_same_size_rewrite_with_restored_mtime_invalidates_verification(tmp_path, damage_target):
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "runtime.exe").write_bytes(b"good")
+        target = prepare_bundle(source, tmp_path / "shared")
+        changed = (target if damage_target else source) / "runtime.exe"
+        before = changed.stat()
+        changed.write_bytes(b"evil")
+        os.utime(changed, ns=(before.st_atime_ns, before.st_mtime_ns))
+        if damage_target:
+            with pytest.raises(ValueError, match="integrity"):
+                prepare_bundle(source, tmp_path / "shared")
+        else:
+>           assert prepare_bundle(source, tmp_path / "shared") != target
+E           AssertionError: assert PosixPath('/tmp/pytest-of-hermesadmin/pytest-3/test_same_size_rewrite_with_re0/shared/149a7a43f58bfe9c3c6e0f321b7808ad8f67c9e449067983ebd265b146643060') != PosixPath('/tmp/pytest-of-hermesadmin/pytest-3/test_same_size_rewrite_with_re0/shared/149a7a43f58bfe9c3c6e0f321b7808ad8f67c9e449067983ebd265b146643060')
+E            +  where PosixPath('/tmp/pytest-of-hermesadmin/pytest-3/test_same_size_rewrite_with_re0/shared/149a7a43f58bfe9c3c6e0f321b7808ad8f67c9e449067983ebd265b146643060') = prepare_bundle(PosixPath('/tmp/pytest-of-hermesadmin/pytest-3/test_same_size_rewrite_with_re0/source'), (PosixPath('/tmp/pytest-of-hermesadmin/pytest-3/test_same_size_rewrite_with_re0') / 'shared'))
+
+tests/runtime/test_runtime_repository.py:65: AssertionError
+=============================== warnings summary ===============================
+../sdk-pr148-repair/.venv/lib/python3.11/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/runtime/test_maintenance_extensions.py::test_portable_work_import_rejects_duplicate_zip_entries
+  /home/hermesadmin/.local/share/uv/python/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/zipfile.py:1580: UserWarning: Duplicate name: 'work.json'
+    return self._open_to_write(zinfo, force_zip64=force_zip64)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/distribution/test_download.py:371: Windows MAX_PATH regression
+SKIPPED [1] tests/distribution/test_gitee_git.py:275: Windows MAX_PATH regression
+SKIPPED [1] tests/distribution/test_install.py:642: Windows environment startup
+SKIPPED [1] tests/runtime/test_background_process.py:20: Windows console inheritance
+SKIPPED [1] tests/runtime/test_frozen_windows_paths.py:33: Windows extended paths
+SKIPPED [1] tests/runtime/test_frozen_windows_paths.py:40: Windows native extension loader
+SKIPPED [1] tests/runtime/test_frozen_windows_paths.py:70: Windows CreateProcess
+SKIPPED [1] tests/runtime/test_runtime_repository.py:126: Windows MAX_PATH regression
+FAILED tests/runtime/test_runtime_repository.py::test_same_size_rewrite_with_restored_mtime_invalidates_verification[False]
+1 failed, 1971 passed, 8 skipped, 2 warnings in 197.96s (0:03:17)

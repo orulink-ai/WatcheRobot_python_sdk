@@ -6,6 +6,7 @@ import importlib.machinery
 import ntpath
 import os
 import sys
+from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Sequence, TypedDict
 
@@ -23,6 +24,15 @@ def _extended_path(path: str) -> str:
     if path.startswith("\\\\"):
         return "\\\\?\\UNC\\" + path[2:]
     return "\\\\?\\" + path
+
+
+def filesystem_path(path: Path) -> Path:
+    """Use Windows extended-length I/O paths without following symbolic links.
+
+    Keep this representation internal to filesystem operations; repository paths
+    and public identities must still pass their existing validation.
+    """
+    return Path(_extended_path(str(path))) if os.name == "nt" else path
 
 
 class NativeExecutableOptions(TypedDict, total=False):

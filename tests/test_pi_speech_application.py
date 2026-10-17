@@ -49,10 +49,8 @@ def test_timeout_retires_process_and_cannot_reuse_stale_events(tmp_path):
             # asyncio.TimeoutError only aliases the builtin on Python 3.11+.
             with pytest.raises(asyncio.TimeoutError):
                 await pi.ask("hello", timeout=0.02)
-            assert pi.process.returncode is not None
-            # This unresponsive process must be killed, not allowed to finish
-            # its sleep and exit normally after the shutdown deadline.
-            assert pi.process.returncode != 0
+            # A timed-out process must be reaped and must not exit normally.
+            assert pi.process.returncode not in (None, 0)
             with pytest.raises(RuntimeError):
                 await pi.ask("again")
 

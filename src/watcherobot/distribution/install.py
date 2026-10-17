@@ -7,33 +7,37 @@ isolated environment creation, install records, inventory, and removal.
 
 from __future__ import annotations
 
-from .providers import get_provider
-
 import hashlib
 import json
 import os
 import platform
 import re
+import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Protocol
+
+from watcherobot.runtime.cleanup import reference_lock, store_operation
+from watcherobot.runtime.daemon.application.manifest import ApplicationManifestError
+from watcherobot.runtime.windows_paths import filesystem_path
 
 from .download import (
     DownloadError,
     DownloadResult,
     download_application_snapshot,
 )
-from .events import ErrorCode, EventSink, ProgressEvent
+from .events import DistributionEvent, ErrorCode, EventSink, ProgressEvent
 from .ports import MarketplaceHubClient
-from watcherobot.runtime.cleanup import store_operation
-from watcherobot.runtime.daemon.application.manifest import ApplicationManifestError
+from .providers import get_provider
 
 _RUNTIME_MANIFEST = "runtime.json"
 _RUNTIME_TREE_PREFIX = b"watcher-application-runtime-tree-sha256-v1\0"
@@ -82,6 +86,9 @@ class ApplicationEnvironmentRunner(Protocol):
 class SystemApplicationEnvironmentRunner:
     """The production runner for the locked Python and uv Runtime resources."""
 
+    def __init__(self, events: EventSink | None = None) -> None:
+        self.events = events
+
     def run(
         self,
         command: ApplicationEnvironmentCommand,
@@ -112,19 +119,28 @@ class SystemApplicationEnvironmentRunner:
                 }
             )
             environment.update(dict(command.environment))
+            # Parse only uv's plain, locale-independent summaries, never ANSI/TTY output.
             for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
                 try:
-                    completed = subprocess.run(
-                        [str(command.executable), *command.arguments],
-                        cwd=command.current_dir,
-                        env=environment,
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        check=False,
-                        timeout=300,
-                    )
-                except subprocess.TimeoutExpired as exc:
+                    if command.stage == "installing_dependencies" and self.events is not None:
+                        from .dependency_progress import run_dependency_install
+
+                        completed = run_dependency_install(
+                            [str(command.executable), "--color", "never", *command.arguments],
+                            cwd=command.current_dir, env=environment, events=self.events,
+                            max_output_bytes=_MAX_OUTPUT_BYTES,
+                        )
+                    else:
+                        completed = subprocess.run(
+                            [str(command.executable), *command.arguments],
+                            cwd=command.current_dir,
+                            env=environment,
+                            stdin=subprocess.DEVNULL,
+                            capture_output=True,
+                            check=False,
+                            timeout=300,
+                        )
+                except (subprocess.TimeoutExpired, ValueError) as exc:
                     raise ApplicationInstallError(
                         ErrorCode.INTERNAL_ERROR,
                         "Application environment command failed",
@@ -276,11 +292,12 @@ def install_application(
     """Install one immutable remote Application into a single managed root."""
 
     get_provider(provider)
+    events = _InstallationEvents(events) if events is not None else None
     paths = _open_store(store_root)
+    _cleanup_uninstall_residue(paths)
     _emit(events, "preparing_runtime", "Preparing locked Application Runtime")
-    runtime = _prepare_runtime(paths, runtime_root)
-    transaction_id = uuid.uuid4().hex
-    transaction = paths.staging / transaction_id
+    runtime = _prepare_runtime(paths, runtime_root, events=events)
+    transaction_id, transaction = _create_install_transaction(paths)
     candidate = transaction / "candidate"
     source = candidate / "source"
     source.mkdir(parents=True, exist_ok=False)
@@ -305,7 +322,7 @@ def install_application(
                     "Application ID belongs to a different source; uninstall it before switching provider or publisher",
                 )
         environment = candidate / ".venv"
-        runner = environment_runner or SystemApplicationEnvironmentRunner()
+        runner = environment_runner or SystemApplicationEnvironmentRunner(events=events)
         dependencies = snapshot.application.dependencies
         if snapshot.application.schema_version == 3:
             from .dependency_lock import read_dependency_lock
@@ -334,6 +351,7 @@ def install_application(
         destination = paths.app(application_id)
         replaced_existing = _promote_candidate(paths, transaction_id, candidate, destination)
         _remove_empty_directory(transaction)
+        _emit(events, "installation_complete", "Application installation complete")
         return ApplicationInstallResult(
             application_id=application_id,
             name=snapshot.application.name,
@@ -395,12 +413,15 @@ def uninstall_application(
     *,
     store_root: Path,
     application_id: str,
+    events: EventSink | None = None,
 ) -> ApplicationUninstallResult:
-    """Move one managed Application root to recoverable local trash."""
+    """Remove the managed source/environment and verify physical removal."""
 
     paths = _open_store(store_root)
+    _cleanup_uninstall_residue(paths)
     destination = paths.app(application_id)
-    if destination.is_symlink() or not destination.is_dir():
+    if (destination.is_symlink() or getattr(destination, "is_junction", lambda: False)()
+            or not destination.is_dir()):
         raise ApplicationInstallError(
             ErrorCode.APP_CONTENT_FORBIDDEN,
             "Application is not installed",
@@ -408,7 +429,15 @@ def uninstall_application(
     trash_root = paths.trash / f"{uuid.uuid4().hex}-uninstall"
     try:
         os.replace(destination, trash_root)
+        _delete_application_tree(trash_root, events)
+        if destination.exists() or destination.is_symlink() or trash_root.exists():
+            raise OSError("Application removal is incomplete")
     except OSError as exc:
+        if trash_root.exists() and not destination.exists():
+            try:
+                os.replace(trash_root, destination)
+            except OSError:
+                pass
         raise ApplicationInstallError(
             ErrorCode.INTERNAL_ERROR,
             "Unable to remove installed Application",
@@ -416,17 +445,115 @@ def uninstall_application(
     return ApplicationUninstallResult(application_id=application_id, trash_root=trash_root)
 
 
+def cleanup_uninstalled_applications(*, store_root: Path) -> dict[str, int]:
+    """Retry disposable historical uninstall roots; never collect rollback roots."""
+    with reference_lock():
+        return _cleanup_uninstall_residue(_open_store(store_root))
+
+
+def _cleanup_uninstall_residue(paths: _StorePaths) -> dict[str, int]:
+    removed = failed = 0
+    try:
+        roots = sorted(paths.trash.iterdir())
+    except OSError:
+        return {"removed_count": 0, "failed_count": 1}
+    for root in roots:
+        if not re.fullmatch(r"[0-9a-f]{32}-uninstall", root.name):
+            continue
+        try:
+            info = root.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or root.is_symlink()
+                    or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                continue
+            _delete_application_tree(root, None)
+            removed += 1
+        except OSError:
+            failed += 1
+    return {"removed_count": removed, "failed_count": failed}
+
+
+def _remove_owned_entry(path: Path, *, directory: bool, link: bool, windows: bool) -> None:
+    remove = path.rmdir if directory else path.unlink
+    try:
+        remove()
+    except PermissionError:
+        # Do not chmod links/junctions: that could affect an external target.
+        if not windows or link:
+            raise
+        path.chmod(path.lstat().st_mode | stat.S_IWRITE)
+        remove()
+
+
+def _delete_application_tree(root: Path, events: EventSink | None) -> None:
+    root = filesystem_path(root)
+    entries: list[tuple[Path, bool, bool]] = []
+    def collect(path: Path) -> None:
+        info = path.lstat()
+        reparse = bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+        directory = stat.S_ISDIR(info.st_mode)
+        if directory and not reparse and not path.is_symlink():
+            for child in path.iterdir():
+                collect(child)
+        entries.append((path, directory, reparse or stat.S_ISLNK(info.st_mode)))
+    collect(root)
+    total = len(entries)
+    last_report = 0.0
+    def report(completed: int) -> None:
+        if events is not None:
+            events.emit(ProgressEvent("uninstalling_application", "Removing Application files and environment",
+                                      {"completed_items": completed, "total_items": total}))
+    report(0)
+    for completed, (path, directory, link) in enumerate(entries, 1):
+        _remove_owned_entry(path, directory=directory, link=link, windows=os.name == "nt")
+        now = time.monotonic()
+        if completed == total or now - last_report >= 0.1:
+            report(completed)
+            last_report = now
+
+
+_INSTALL_STAGES = (
+    "preparing_runtime", "downloading_snapshot", "validating_snapshot", "delivering_snapshot",
+    "creating_environment", "installing_dependencies", "checking_dependencies",
+    "compiling_entrypoint", "importing_watcherobot", "listing_dependencies",
+    "freezing_dependencies", "promoting_installation", "installation_complete",
+)
+_DEPENDENCY_STAGES = frozenset({
+    "resolving_dependencies", "preparing_dependencies",
+    "downloading_dependencies", "installing_dependency_files",
+})
+
+
+class _InstallationEvents:
+    """Report completed checkpoints, not an estimate of remaining time."""
+    def __init__(self, destination: EventSink) -> None:
+        self.destination = destination
+
+    def emit(self, event: DistributionEvent) -> None:
+        if isinstance(event, ProgressEvent) and (event.stage in _INSTALL_STAGES or event.stage in _DEPENDENCY_STAGES):
+            stage = "installing_dependencies" if event.stage in _DEPENDENCY_STAGES else event.stage
+            event = ProgressEvent(event.stage, event.message, {
+                **event.data,
+                "completed_steps": _INSTALL_STAGES.index(stage),
+                "total_steps": len(_INSTALL_STAGES) - 1,
+            })
+        self.destination.emit(event)
+
+
 def _open_store(store_root: Path) -> _StorePaths:
     root = Path(store_root)
     try:
         root.mkdir(parents=True, exist_ok=True)
-        if root.is_symlink() or not root.is_dir():
+        if (root.is_symlink()
+                or getattr(root.lstat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                or not root.is_dir()):
             raise OSError("store root is not a regular directory")
         root = root.resolve()
         paths = _StorePaths(root)
         for directory in (paths.apps, paths.staging, paths.trash):
             directory.mkdir(parents=True, exist_ok=True)
-            if directory.is_symlink() or not directory.is_dir():
+            if (directory.is_symlink()
+                    or getattr(directory.lstat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                    or not directory.is_dir()):
                 raise OSError("store directory is not a regular directory")
         return paths
     except OSError as exc:
@@ -436,25 +563,88 @@ def _open_store(store_root: Path) -> _StorePaths:
         ) from exc
 
 
-def _prepare_runtime(paths: _StorePaths, source_root: Path) -> _RuntimeResources:
+def _create_install_transaction(paths: _StorePaths) -> tuple[str, Path]:
+    """Reserve a 32-bit transaction ID without overwriting staging or rollback."""
+    for _ in range(16):
+        transaction_id = secrets.token_hex(4)
+        transaction = paths.staging / transaction_id
+        retained = (
+            paths.trash / transaction_id,
+            paths.trash / f"{transaction_id}-previous",
+        )
+        if any(path.exists() or path.is_symlink() for path in retained):
+            continue
+        try:
+            transaction.mkdir(exist_ok=False)
+        except FileExistsError:
+            continue
+        except OSError as exc:
+            raise ApplicationInstallError(
+                ErrorCode.INTERNAL_ERROR,
+                "Unable to create Application installation staging",
+            ) from exc
+        return transaction_id, transaction
+    raise ApplicationInstallError(
+        ErrorCode.INTERNAL_ERROR,
+        "Unable to reserve a unique Application installation transaction",
+    )
+
+
+def _prepare_windows_environment(environment: Path) -> None:
+    """Normalize import roots at startup in this SDK-owned environment only.
+
+    A long pyvenv.cfg home may be canonicalized back to a regular path by
+    CPython. FileFinder can then miss standard-library packages beyond
+    MAX_PATH. A relative, location-independent site hook also survives promotion.
+    """
+    if os.name != "nt":
+        return
+    site_packages = filesystem_path(environment / "Lib" / "site-packages")
+    site_packages.mkdir(parents=True, exist_ok=True)
+    prefix = chr(92) * 2 + "?" + chr(92)
+    unc = prefix + "UNC" + chr(92)
+    network = chr(92) * 2
+    bootstrap = (
+        "import os,sys; sys.path[:] = [p if not os.path.isabs(p) "
+        f"or p.startswith({prefix!r}) else {unc!r}+p[2:] "
+        f"if p.startswith({network!r}) else {prefix!r}+p for p in sys.path]\n"
+    )
+    (site_packages / "_w.pth").write_text(bootstrap, encoding="utf-8")
+
+
+def _prepare_runtime(
+    paths: _StorePaths, source_root: Path, *, events: EventSink | None = None,
+) -> _RuntimeResources:
     from watcherobot.runtime.repository import prepare_bundle
 
-    source = _load_runtime(source_root)
+    def report(pass_index: int) -> Callable[[int, int], None]:
+        def progress(completed: int, total: int) -> None:
+            if events is not None:
+                events.emit(ProgressEvent("preparing_runtime", "Verifying locked Application Runtime", {
+                    "stage_completed": pass_index * total + completed,
+                    "stage_total": 3 * total,
+                }))
+        return progress
+
+    source = _load_runtime(source_root, on_progress=report(0) if events else None)
     for attempt in range(_MAX_LOCAL_OPERATION_ATTEMPTS):
         try:
             published = prepare_bundle(source.root, paths.runtime.parent / "runtimes")
-            return _load_runtime(published)
+            return _load_runtime(published, on_progress=report(2) if events else None)
         except (OSError, ValueError) as exc:
             if isinstance(exc, OSError) and attempt + 1 < _MAX_LOCAL_OPERATION_ATTEMPTS:
                 time.sleep(_LOCAL_OPERATION_RETRY_DELAY_SECONDS)
                 continue
             raise ApplicationInstallError(
-                ErrorCode.INTERNAL_ERROR, "Unable to prepare immutable Application Runtime",
+                ErrorCode.INTERNAL_ERROR,
+                "Unable to prepare immutable Application Runtime",
             ) from exc
     raise AssertionError("unreachable")
 
 
-def _load_runtime(runtime_root: Path) -> _RuntimeResources:
+def _load_runtime(
+    runtime_root: Path, *, on_progress: Callable[[int, int], None] | None = None,
+) -> _RuntimeResources:
     root = Path(runtime_root)
     try:
         if root.is_symlink() or not root.is_dir():
@@ -523,7 +713,7 @@ def _load_runtime(runtime_root: Path) -> _RuntimeResources:
         )
 
     try:
-        if _runtime_tree_sha256(python_root) != manifest["python"]["tree_sha256"]:
+        if _runtime_tree_sha256(python_root, on_progress=on_progress) != manifest["python"]["tree_sha256"]:
             raise ApplicationInstallError(
                 ErrorCode.RUNTIME_PYTHON_INTEGRITY_FAILED,
                 "Application Runtime Python integrity verification failed",
@@ -753,6 +943,8 @@ def _create_environment(
                 ErrorCode.INTERNAL_ERROR,
                 "Application environment command failed",
             )
+        if command.stage == "creating_environment":
+            _prepare_windows_environment(environment)
         outputs[command.stage] = output
     return _resolved_dependencies(
         outputs["listing_dependencies"].stdout,
@@ -910,7 +1102,9 @@ def _manifest_path(root: Path, value: object, label: str) -> Path:
     return resolved
 
 
-def _runtime_tree_sha256(root: Path) -> str:
+def _runtime_tree_sha256(
+    root: Path, *, on_progress: Callable[[int, int], None] | None = None,
+) -> str:
     digest = hashlib.sha256(_RUNTIME_TREE_PREFIX)
     files: list[Path] = []
     for path in root.rglob("*"):
@@ -922,6 +1116,11 @@ def _runtime_tree_sha256(root: Path) -> str:
             files.append(path)
         elif not path.is_dir():
             raise ValueError("Runtime contains an unsupported entry")
+    total = sum(path.stat().st_size for path in files)
+    completed = 0
+    last_report = 0.0
+    if on_progress:
+        on_progress(0, total)
     for path in sorted(files, key=lambda value: value.relative_to(root).as_posix()):
         relative = path.relative_to(root).as_posix().encode("utf-8")
         digest.update(len(relative).to_bytes(8, "little"))
@@ -930,6 +1129,13 @@ def _runtime_tree_sha256(root: Path) -> str:
         with path.open("rb") as file:
             while block := file.read(64 * 1024):
                 digest.update(block)
+                completed += len(block)
+                now = time.monotonic()
+                if on_progress and now - last_report >= 0.1:
+                    on_progress(completed, total)
+                    last_report = now
+    if on_progress:
+        on_progress(completed, total)
     return digest.hexdigest()
 
 

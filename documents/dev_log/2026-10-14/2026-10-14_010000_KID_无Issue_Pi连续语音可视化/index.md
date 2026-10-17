@@ -26,3 +26,7 @@
 - SDK 版本保持 0.1.11，Daemon 未增加业务消息类型路由分支；固件源码和 workspace gitlink 不在此次提交范围。
 - 交付状态：准备提交；合入后通过两个 parent 和远程 main SHA 验证实际结果。推送期间临时关闭仓库 Actions，完成后恢复原设置。
 - 补充验证：语音、Pi 示例与三组 Daemon/Application 路由回归共 38 passed；完整 mypy：Success，125 source files。初次 mypy 因本机 tomli 缺失及 NumPy stub 语法不兼容失败，补齐本机依赖并将本机 NumPy 调整至 2.2.6 后通过；未修改项目依赖声明。
+
+## 后续变更：2026-10-15 Python 3.10 兼容修复
+
+[PR #146 本地验收](../../2026-10-15/2026-10-15_KID_无Issue_PR146本地验收/index.md) 在全量回归中发现 Pi 进程超时清理捕获类型不兼容，修正为 asyncio.TimeoutError 并强化强制终止断言；连续语音设计保持。

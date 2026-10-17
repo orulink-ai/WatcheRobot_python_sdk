@@ -373,6 +373,10 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
     assert installed.application_root == store_root / "apps/com.example.demo"
     assert installed.application_root.joinpath("source/app.py").is_file()
     assert installed.application_root.joinpath(".venv").is_dir()
+    if platform.system() == "Windows":
+        bootstrap = installed.application_root / ".venv/Lib/site-packages/_w.pth"
+        assert bootstrap.is_file()
+        assert str(store_root) not in bootstrap.read_text()
     record = json.loads(installed.application_root.joinpath("install.json").read_text())
     assert record["source"]["repo_id"] == SPACE_ID
     assert record["source"]["commit"] == COMMIT
@@ -417,7 +421,7 @@ def test_install_list_and_uninstall_keep_one_application_root(tmp_path: Path) ->
     removed = uninstall_application(store_root=store_root, application_id="com.example.demo")
 
     assert not installed.application_root.exists()
-    assert removed.trash_root.is_dir()
+    assert not removed.trash_root.exists()
     assert list_installed_applications(store_root) == ()
 
 
@@ -585,3 +589,145 @@ def test_runtime_tree_hash_ignores_regenerable_python_bytecode(tmp_path: Path) -
     assert install_module._runtime_tree_sha256(runtime_python) == clean_hash
     cache.joinpath("owned.txt").write_text("unexpected", encoding="utf-8")
     assert install_module._runtime_tree_sha256(runtime_python) != clean_hash
+
+
+def test_install_transaction_uses_short_id_and_reserves_directory(tmp_path):
+    paths = install_module._open_store(tmp_path / "store")
+    transaction_id, transaction = install_module._create_install_transaction(paths)
+    assert len(transaction_id) == 8
+    assert all(c in "0123456789abcdef" for c in transaction_id)
+    assert transaction == paths.staging / transaction_id
+    assert transaction.is_dir()
+
+
+def test_install_transaction_collision_keeps_staging_and_rollback_data(
+    tmp_path, monkeypatch
+):
+    paths = install_module._open_store(tmp_path / "store")
+    ids = ["a" * 8, "b" * 8, "c" * 8, "d" * 8]
+    protected = [
+        paths.staging / ids[0],
+        paths.trash / ids[1],
+        paths.trash / (ids[2] + "-previous"),
+    ]
+    for directory in protected:
+        directory.mkdir()
+        (directory / "keep").write_text("original")
+    choices = iter(ids)
+    monkeypatch.setattr(
+        install_module.secrets, "token_hex", lambda count: next(choices)
+    )
+    selected, transaction = install_module._create_install_transaction(paths)
+    assert selected == ids[-1]
+    assert transaction.is_dir()
+    for directory in protected:
+        assert (directory / "keep").read_text() == "original"
+
+
+def test_install_transaction_collision_limit_preserves_existing_files(
+    tmp_path, monkeypatch
+):
+    paths = install_module._open_store(tmp_path / "store")
+    existing = paths.staging / ("a" * 8)
+    existing.mkdir()
+    (existing / "keep").write_text("original")
+    monkeypatch.setattr(install_module.secrets, "token_hex", lambda count: "a" * 8)
+    with pytest.raises(ApplicationInstallError) as error:
+        install_module._create_install_transaction(paths)
+    assert error.value.code is ErrorCode.INTERNAL_ERROR
+    assert (existing / "keep").read_text() == "original"
+    assert list(paths.staging.iterdir()) == [existing]
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows environment startup")
+def test_managed_environment_bootstrap_normalizes_long_paths_without_fixed_locations(
+    tmp_path,
+):
+    import ntpath
+    from types import SimpleNamespace
+
+    environment = tmp_path / "managed-env"
+    install_module._prepare_windows_environment(environment)
+    bootstrap = environment / "Lib/site-packages/_w.pth"
+    paths = [r"C:\deep\Lib", r"\\server\share\Lib", r"\\?\C:\already", "relative", ""]
+    fake_sys = SimpleNamespace(path=list(paths))
+    fake_os = SimpleNamespace(path=ntpath)
+
+    def importer(name, *args, **kwargs):
+        return {"os": fake_os, "sys": fake_sys}[name]
+
+    exec(bootstrap.read_text(), {"__builtins__": {"__import__": importer}})
+    assert fake_sys.path == [
+        r"\\?\C:\deep\Lib",
+        r"\\?\UNC\server\share\Lib",
+        r"\\?\C:\already",
+        "relative",
+        "",
+    ]
+    assert str(tmp_path) not in bootstrap.read_text()
+
+
+def test_uninstall_deletes_files_and_reports_measured_items(tmp_path):
+    from types import SimpleNamespace
+    paths = install_module._open_store(tmp_path / "store")
+    app = paths.app("com.example.demo")
+    (app / "source").mkdir(parents=True)
+    (app / "source/app.py").write_text("pass")
+    (app / "install.json").write_text("{}")
+    events = []
+    result = uninstall_application(store_root=paths.root, application_id="com.example.demo",
+                                   events=SimpleNamespace(emit=events.append))
+    assert not app.exists()
+    assert not result.trash_root.exists()
+    counts = [e.data["completed_items"] for e in events if "completed_items" in e.data]
+    assert counts == sorted(counts)
+    assert counts[0] == 0 and counts[-1] == 4
+    assert events[-1].data["total_items"] == 4
+
+
+def test_uninstall_failure_restores_remaining_root_and_reports_failure(tmp_path, monkeypatch):
+    paths = install_module._open_store(tmp_path / "store")
+    app = paths.app("com.example.demo")
+    app.mkdir()
+    (app / "keep").write_text("retained")
+    original = Path.unlink
+    def fail(path, *args, **kwargs):
+        if path.name == "keep":
+            raise PermissionError("locked")
+        return original(path, *args, **kwargs)
+    monkeypatch.setattr(Path, "unlink", fail)
+    with pytest.raises(ApplicationInstallError):
+        uninstall_application(store_root=paths.root, application_id="com.example.demo")
+    assert (app / "keep").read_text() == "retained"
+
+
+def test_install_progress_reports_completed_checkpoints_after_success(tmp_path):
+    from types import SimpleNamespace
+    source = tmp_path / "source"
+    _write_source(source)
+    runtime = tmp_path / "runtime"
+    _write_runtime(runtime)
+    events = []
+    install_application(provider="huggingface", repo_id=SPACE_ID, commit=COMMIT,
+                        store_root=tmp_path / "store", runtime_root=runtime,
+                        hub=FakeHub(source), environment_runner=FakeEnvironmentRunner(),
+                        events=SimpleNamespace(emit=events.append))
+    checkpoints = [e.data["completed_steps"] for e in events if "completed_steps" in e.data]
+    assert checkpoints == sorted(checkpoints)
+    assert checkpoints[0] == 0 and checkpoints[-1] == 12
+    assert events[-1].stage == "installation_complete"
+    assert events[-1].data["total_steps"] == 12
+
+
+def test_runtime_verification_reports_bytes_without_changing_digest(tmp_path):
+    runtime = tmp_path / "python"
+    runtime.mkdir()
+    (runtime / "a.py").write_bytes(b"abc")
+    (runtime / "b.dll").write_bytes(b"12345")
+    expected = install_module._runtime_tree_sha256(runtime)
+    reports = []
+    actual = install_module._runtime_tree_sha256(runtime, on_progress=lambda done, total: reports.append((done, total)))
+    assert actual == expected
+    assert reports[0] == (0, 8)
+    assert reports[-1] == (8, 8)
+    assert [done for done, _ in reports] == sorted(done for done, _ in reports)
