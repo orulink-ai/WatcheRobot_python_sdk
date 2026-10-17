@@ -1,0 +1,59 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_______ test_colliding_change_metadata_cannot_reuse_verification[False] ________
+
+tmp_path = PosixPath('/tmp/pytest-of-hermesadmin/pytest-43/test_colliding_change_metadata0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f9dfd8bd850>
+damage_target = False
+
+    @pytest.mark.parametrize("damage_target", [False, True])
+    def test_colliding_change_metadata_cannot_reuse_verification(tmp_path, monkeypatch, damage_target):
+        from watcherobot.runtime import bundle_verification
+
+        # Model filesystems where an immediate rewrite retains the change time.
+        monkeypatch.setattr(bundle_verification, "_change_time", lambda path, metadata: 123)
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "runtime.exe").write_bytes(b"good")
+        target = prepare_bundle(source, tmp_path / "shared")
+        changed = (target if damage_target else source) / "runtime.exe"
+        before = changed.stat()
+        changed.write_bytes(b"evil")
+        os.utime(changed, ns=(before.st_atime_ns, before.st_mtime_ns))
+        if damage_target:
+            with pytest.raises(ValueError, match="integrity"):
+                prepare_bundle(source, tmp_path / "shared")
+        else:
+>           assert prepare_bundle(source, tmp_path / "shared") != target
+E           AssertionError: assert PosixPath('/tmp/pytest-of-hermesadmin/pytest-43/test_colliding_change_metadata0/shared/149a7a43f58bfe9c3c6e0f321b7808ad8f67c9e449067983ebd265b146643060') != PosixPath('/tmp/pytest-of-hermesadmin/pytest-43/test_colliding_change_metadata0/shared/149a7a43f58bfe9c3c6e0f321b7808ad8f67c9e449067983ebd265b146643060')
+E            +  where PosixPath('/tmp/pytest-of-hermesadmin/pytest-43/test_colliding_change_metadata0/shared/149a7a43f58bfe9c3c6e0f321b7808ad8f67c9e449067983ebd265b146643060') = prepare_bundle(PosixPath('/tmp/pytest-of-hermesadmin/pytest-43/test_colliding_change_metadata0/source'), (PosixPath('/tmp/pytest-of-hermesadmin/pytest-43/test_colliding_change_metadata0') / 'shared'))
+
+tests/runtime/test_runtime_repository.py:86: AssertionError
+________ test_colliding_change_metadata_cannot_reuse_verification[True] ________
+
+tmp_path = PosixPath('/tmp/pytest-of-hermesadmin/pytest-43/test_colliding_change_metadata1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f9dfd8a7110>
+damage_target = True
+
+    @pytest.mark.parametrize("damage_target", [False, True])
+    def test_colliding_change_metadata_cannot_reuse_verification(tmp_path, monkeypatch, damage_target):
+        from watcherobot.runtime import bundle_verification
+
+        # Model filesystems where an immediate rewrite retains the change time.
+        monkeypatch.setattr(bundle_verification, "_change_time", lambda path, metadata: 123)
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "runtime.exe").write_bytes(b"good")
+        target = prepare_bundle(source, tmp_path / "shared")
+        changed = (target if damage_target else source) / "runtime.exe"
+        before = changed.stat()
+        changed.write_bytes(b"evil")
+        os.utime(changed, ns=(before.st_atime_ns, before.st_mtime_ns))
+        if damage_target:
+>           with pytest.raises(ValueError, match="integrity"):
+E           Failed: DID NOT RAISE ValueError
+
+tests/runtime/test_runtime_repository.py:83: Failed
+=========================== short test summary info ============================
+FAILED tests/runtime/test_runtime_repository.py::test_colliding_change_metadata_cannot_reuse_verification[False]
+FAILED tests/runtime/test_runtime_repository.py::test_colliding_change_metadata_cannot_reuse_verification[True]

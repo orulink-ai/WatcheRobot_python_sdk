@@ -1,7 +1,8 @@
-"""Metadata receipts for previously content-verified immutable bundles.
+"""Content-bound receipts for previously verified immutable bundles.
 
-Receipts are an I/O cache, not an authenticity/signature boundary. Every lookup
-enumerates the tree again. Unsupported metadata always falls back to hashing.
+Receipts cache bundle identity, not file reads or authenticity/signatures. Every
+lookup fingerprints contents: even change timestamps can collide after a rewrite.
+Unsupported metadata always falls back to the full bundle identity calculation.
 """
 
 from __future__ import annotations
@@ -88,8 +89,8 @@ def bundle_paths(root: Path) -> Iterator[Path]:
 
 
 def tree_stamp(root: Path) -> str | None:
-    """Cover names, identity, content-change times, link targets and permissions."""
-    digest = hashlib.sha256(b"watcher-bundle-metadata-v1\0")
+    """Cover metadata, link targets and bytes, including colliding timestamps."""
+    digest = hashlib.sha256(b"watcher-bundle-content-stamp-v2\0")
     try:
         for path in sorted(bundle_paths(root)):
             metadata = path.lstat()
@@ -101,10 +102,20 @@ def tree_stamp(root: Path) -> str | None:
                 continue
             if not is_link and path.suffix.lower() in {".pyc", ".pyo"}:
                 continue
+            content = None
+            if not is_link and stat.S_ISREG(metadata.st_mode):
+                # No portable metadata field is a reliable content generation.
+                # Stream rather than loading potentially large runtimes in RAM.
+                fingerprint = hashlib.sha256()
+                with path.open("rb") as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        check_cancelled()
+                        fingerprint.update(block)
+                content = fingerprint.hexdigest()
             record = [
                 path.relative_to(root).as_posix(), metadata.st_dev, metadata.st_ino,
                 metadata.st_size, metadata.st_mtime_ns, _change_time(path, metadata),
-                metadata.st_mode, os.readlink(path) if is_link else None,
+                metadata.st_mode, os.readlink(path) if is_link else None, content,
             ]
             digest.update(json.dumps(record, ensure_ascii=True, separators=(",", ":")).encode())
             digest.update(b"\0")

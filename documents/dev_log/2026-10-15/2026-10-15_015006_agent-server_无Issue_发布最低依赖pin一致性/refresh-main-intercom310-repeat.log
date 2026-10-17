@@ -1,0 +1,283 @@
+
+--- main attempt 1 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.68s
+
+--- main attempt 2 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.50s
+
+--- main attempt 3 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.51s
+
+--- main attempt 4 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.54s
+
+--- main attempt 5 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.54s
+
+--- main attempt 6 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.53s
+
+--- main attempt 7 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.52s
+
+--- main attempt 8 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.51s
+
+--- main attempt 9 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.51s
+
+--- main attempt 10 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.52s
+
+--- main attempt 11 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.50s
+
+--- main attempt 12 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.51s
+
+--- main attempt 13 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.51s
+
+--- main attempt 14 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.52s
+
+--- main attempt 15 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.52s
+
+--- main attempt 16 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.50s
+
+--- main attempt 17 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.53s
+
+--- main attempt 18 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.55s
+
+--- main attempt 19 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.61s
+
+--- main attempt 20 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.53s
+
+--- main attempt 21 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.54s
+
+--- main attempt 22 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.54s
+
+--- main attempt 23 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.56s
+
+--- main attempt 24 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.51s
+
+--- main attempt 25 ---
+.                                                                        [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 1 warning in 0.50s
+
+--- main attempt 26 ---
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_presence_websocket_checks_origin_and_cleans_up_on_close _________
+
+rig = namespace(module=<module 'intercom_service' from '/home/hermesadmin/sdk-pr148-main-baseline/examples/robot_intercom/se...1.10:80/preview'}, clock=[0.0], path=PosixPath('/tmp/pytest-of-hermesadmin/pytest-37/test_presence_websocket_checks0'))
+
+    def test_presence_websocket_checks_origin_and_cleans_up_on_close(rig):
+        with TestClient(rig.module.create_web_app(rig.service, web_root=ROOT / "web")) as client:
+            client.post("/api/call/start", json={"request_id": "request-a"})
+            from starlette.websockets import WebSocketDisconnect
+            with pytest.raises(WebSocketDisconnect):
+                with client.websocket_connect("/api/call/presence?request_id=request-a", headers={"Origin": "https://evil.example"}):
+                    pass
+            with client.websocket_connect("/api/call/presence?request_id=request-a", headers={"Origin": "http://testserver"}) as ws:
+                assert ws.receive_json() == {"ready": True}
+>           assert rig.service.status()["state"] == "idle"
+E           AssertionError: assert 'running' == 'idle'
+E             
+E             - idle
+E             + running
+
+tests/test_robot_intercom.py:613: AssertionError
+=============================== warnings summary ===============================
+../sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-latest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_robot_intercom.py::test_presence_websocket_checks_origin_and_cleans_up_on_close
+1 failed, 1 warning in 0.62s

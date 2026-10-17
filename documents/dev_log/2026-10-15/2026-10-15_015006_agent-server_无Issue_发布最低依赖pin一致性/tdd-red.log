@@ -1,0 +1,40 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/hermesadmin/work/sdk-0112-ci-fix
+configfile: pyproject.toml
+collected 1 item
+
+tests/test_release.py F                                                  [100%]
+
+=================================== FAILURES ===================================
+______ test_release_minimum_dependency_pins_satisfy_runtime_requirements _______
+
+    def test_release_minimum_dependency_pins_satisfy_runtime_requirements() -> None:
+        pyproject = tomli.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        requirements = {
+            canonicalize_name(requirement.name): requirement
+            for requirement in map(Requirement, pyproject["project"]["dependencies"])
+        }
+        workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+        minimum_step = workflow.split(
+            "      - name: Select minimum supported runtime dependencies", maxsplit=1
+        )[1].split("      - name:", maxsplit=1)[0]
+        pins = re.findall(r'"([A-Za-z0-9_.-]+==[0-9.]+\*)"', minimum_step)
+
+        assert pins, "The minimum dependency profile must contain explicit runtime pins"
+        for pin_text in pins:
+            pin = Requirement(pin_text)
+            requirement = requirements[canonicalize_name(pin.name)]
+            specifier, = pin.specifier
+            minimum_version = Version(specifier.version.removesuffix(".*"))
+>           assert minimum_version in requirement.specifier, (
+                f"CI minimum pin {pin_text} conflicts with runtime requirement {requirement}"
+            )
+E           AssertionError: CI minimum pin huggingface-hub==1.26.* conflicts with runtime requirement huggingface-hub<2,>=1.32
+E           assert <Version('1.26')> in <SpecifierSet('<2,>=1.32')>
+E            +  where <SpecifierSet('<2,>=1.32')> = <Requirement('huggingface-hub<2,>=1.32')>.specifier
+
+tests/test_release.py:266: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_release.py::test_release_minimum_dependency_pins_satisfy_runtime_requirements
+============================== 1 failed in 0.17s ===============================

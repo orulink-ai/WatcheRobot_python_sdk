@@ -46,8 +46,10 @@ def test_timeout_retires_process_and_cannot_reuse_stale_events(tmp_path):
 
     async def run():
         async with module().PiAgent([sys.executable, str(fake)]) as pi:
+            # asyncio.TimeoutError only aliases the builtin on Python 3.11+.
             with pytest.raises(asyncio.TimeoutError):
                 await pi.ask("hello", timeout=0.02)
+            # A timed-out process must be reaped and must not exit normally.
             assert pi.process.returncode not in (None, 0)
             with pytest.raises(RuntimeError):
                 await pi.ask("again")

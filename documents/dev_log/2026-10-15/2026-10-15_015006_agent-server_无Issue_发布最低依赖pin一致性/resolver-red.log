@@ -1,0 +1,24 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/hermesadmin/work/sdk-0112-ci-fix
+configfile: pyproject.toml
+collected 1 item
+
+tests/test_release.py F                                                  [100%]
+
+=================================== FAILURES ===================================
+_______ test_release_minimum_dependencies_are_resolved_together_with_sdk _______
+
+    def test_release_minimum_dependencies_are_resolved_together_with_sdk() -> None:
+        workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+        minimum_step = workflow.split(
+            "      - name: Select minimum supported runtime dependencies", maxsplit=1
+        )[1].split("      - name:", maxsplit=1)[0]
+
+>       assert 'python -m pip install -e ".[test]" \\' in minimum_step
+E       assert 'python -m pip install -e ".[test]" \\' in '\n        if: matrix.dependency-profile == \'lowest\'\n        run: |\n          python -m pip install \\\n          ...l==3.5.*" \\\n            "starlette==0.51.*" \\\n            "uvicorn==0.30.*" \\\n            "websockets==14.*"\n\n'
+
+tests/test_release.py:277: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_release.py::test_release_minimum_dependencies_are_resolved_together_with_sdk
+============================== 1 failed in 0.16s ===============================

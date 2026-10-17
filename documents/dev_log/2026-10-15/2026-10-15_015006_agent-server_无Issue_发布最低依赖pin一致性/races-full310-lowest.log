@@ -1,0 +1,56 @@
+........................................................................ [  3%]
+..................................................................s..... [  7%]
+......................................s................................. [ 10%]
+........................................................................ [ 14%]
+........................................................................ [ 18%]
+s....................................................................... [ 21%]
+........................................................................ [ 25%]
+........................................................................ [ 29%]
+........................................................................ [ 32%]
+......................................................s................. [ 36%]
+........................................................................ [ 39%]
+........sss............................................................. [ 43%]
+........................................................................ [ 47%]
+........................................................................ [ 50%]
+....................................s................................... [ 54%]
+........................................................................ [ 58%]
+........................................................................ [ 61%]
+........................................................................ [ 65%]
+........................................................................ [ 68%]
+........................................................................ [ 72%]
+........................................................................ [ 76%]
+........................................................................ [ 79%]
+........................................................................ [ 83%]
+........................................................................ [ 87%]
+........................................................................ [ 90%]
+........................................................................ [ 94%]
+........................................................................ [ 97%]
+.........................................                                [100%]
+=============================== warnings summary ===============================
+../sdk-pr148-env-lowest310/lib/python3.10/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-env-lowest310/lib/python3.10/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/runtime/test_maintenance_extensions.py::test_portable_work_import_rejects_duplicate_zip_entries
+  /usr/lib/python3.10/zipfile.py:1541: UserWarning: Duplicate name: 'work.json'
+    return self._open_to_write(zinfo, force_zip64=force_zip64)
+
+tests/test_media_lab_shutdown.py::test_active_http_pressure_test_drains_after_daemon_shutdown
+  /home/hermesadmin/sdk-pr148-env-lowest310/lib/python3.10/site-packages/websockets/legacy/__init__.py:6: DeprecationWarning: websockets.legacy is deprecated; see https://websockets.readthedocs.io/en/stable/howto/upgrade.html for upgrade instructions
+    warnings.warn(  # deprecated in 14.0 - 2024-11-09
+
+tests/test_media_lab_shutdown.py::test_active_http_pressure_test_drains_after_daemon_shutdown
+  /home/hermesadmin/sdk-pr148-env-lowest310/lib/python3.10/site-packages/uvicorn/protocols/websockets/websockets_impl.py:16: DeprecationWarning: websockets.server.WebSocketServerProtocol is deprecated
+    from websockets.server import WebSocketServerProtocol
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/distribution/test_download.py:371: Windows MAX_PATH regression
+SKIPPED [1] tests/distribution/test_gitee_git.py:275: Windows MAX_PATH regression
+SKIPPED [1] tests/distribution/test_install.py:642: Windows environment startup
+SKIPPED [1] tests/runtime/test_background_process.py:20: Windows console inheritance
+SKIPPED [1] tests/runtime/test_frozen_windows_paths.py:33: Windows extended paths
+SKIPPED [1] tests/runtime/test_frozen_windows_paths.py:40: Windows native extension loader
+SKIPPED [1] tests/runtime/test_frozen_windows_paths.py:70: Windows CreateProcess
+SKIPPED [1] tests/runtime/test_runtime_repository.py:147: Windows MAX_PATH regression
+1977 passed, 8 skipped, 4 warnings in 197.57s (0:03:17)

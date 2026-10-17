@@ -1,0 +1,1369 @@
+..............................                                           [100%]
+=============================== warnings summary ===============================
+.venv/lib/python3.11/site-packages/starlette/testclient.py:45
+  /home/hermesadmin/sdk-pr148-repair/.venv/lib/python3.11/site-packages/starlette/testclient.py:45: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+30 passed, 1 warning in 1.21s
+TAP version 13
+# Subtest: accepted animation request remains pending until a device frame is active
+ok 1 - accepted animation request remains pending until a device frame is active
+  ---
+  duration_ms: 2.105543
+  type: 'test'
+  ...
+# Subtest: device animation activity confirms the accepted request
+ok 2 - device animation activity confirms the accepted request
+  ---
+  duration_ms: 0.236107
+  type: 'test'
+  ...
+# Subtest: missing device activity fails after the prepare deadline
+ok 3 - missing device activity fails after the prepare deadline
+  ---
+  duration_ms: 0.213903
+  type: 'test'
+  ...
+# animation_random_tests: PASS
+# Subtest: tests/js/test_animation_random.mjs
+ok 2 - tests/js/test_animation_random.mjs
+  ---
+  duration_ms: 64.384739
+  type: 'test'
+  ...
+# Subtest: audio RTC and procedural animation permit concurrent capture without interrupting audio
+ok 5 - audio RTC and procedural animation permit concurrent capture without interrupting audio
+  ---
+  duration_ms: 4.499972
+  type: 'test'
+  ...
+# Subtest: unsupported firmware never offers procedural start or animation-preserving photo
+ok 6 - unsupported firmware never offers procedural start or animation-preserving photo
+  ---
+  duration_ms: 0.360547
+  type: 'test'
+  ...
+# Subtest: pending starts, camera owners, video and disconnected states disable conflicting actions
+ok 7 - pending starts, camera owners, video and disconnected states disable conflicting actions
+  ---
+  duration_ms: 0.390211
+  type: 'test'
+  ...
+# Subtest: scene measurements retain actual firmware memory, mouth and FPS telemetry
+ok 8 - scene measurements retain actual firmware memory, mouth and FPS telemetry
+  ---
+  duration_ms: 0.527298
+  type: 'test'
+  ...
+# Subtest: missing or invalid measurements stay unknown instead of becoming zero or a healthy verdict
+ok 9 - missing or invalid measurements stay unknown instead of becoming zero or a healthy verdict
+  ---
+  duration_ms: 0.445331
+  type: 'test'
+  ...
+# Subtest: chart history is bounded, deduplicates polls and distinguishes devices
+ok 10 - chart history is bounded, deduplicates polls and distinguishes devices
+  ---
+  duration_ms: 0.752893
+  type: 'test'
+  ...
+# Subtest: sample summary reports observed lows and ignores unavailable values
+ok 11 - sample summary reports observed lows and ignores unavailable values
+  ---
+  duration_ms: 0.457574
+  type: 'test'
+  ...
+# Subtest: device reboot starts a new chart instead of mixing samples from two boots
+ok 12 - device reboot starts a new chart instead of mixing samples from two boots
+  ---
+  duration_ms: 0.256654
+  type: 'test'
+  ...
+# Subtest: same device request_id change starts a separate resource window
+ok 13 - same device request_id change starts a separate resource window
+  ---
+  duration_ms: 0.773687
+  type: 'test'
+  ...
+# Subtest: same device connection_id change starts a separate resource window
+ok 14 - same device connection_id change starts a separate resource window
+  ---
+  duration_ms: 0.675598
+  type: 'test'
+  ...
+# Subtest: same device generation change starts a separate resource window
+ok 15 - same device generation change starts a separate resource window
+  ---
+  duration_ms: 0.363632
+  type: 'test'
+  ...
+# Subtest: an empty recording label has a valid default and long labels stay bounded
+ok 16 - an empty recording label has a valid default and long labels stay bounded
+  ---
+  duration_ms: 0.22038
+  type: 'test'
+  ...
+# Subtest: stale device telemetry does not become a new memory or animation measurement
+ok 17 - stale device telemetry does not become a new memory or animation measurement
+  ---
+  duration_ms: 0.192615
+  type: 'test'
+  ...
+# Subtest: a start acknowledgement after page exit triggers cleanup, including browser history restoration
+ok 18 - a start acknowledgement after page exit triggers cleanup, including browser history restoration
+  ---
+  duration_ms: 0.51509
+  type: 'test'
+  ...
+# Subtest: an accepted animation lease cannot claim rendering when the device reports update failures
+ok 19 - an accepted animation lease cannot claim rendering when the device reports update failures
+  ---
+  duration_ms: 0.287505
+  type: 'test'
+  ...
+# Subtest: device pre-RTP and speaker queue drops remain visible and missing counters stay unknown
+ok 20 - device pre-RTP and speaker queue drops remain visible and missing counters stay unknown
+  ---
+  duration_ms: 0.242701
+  type: 'test'
+  ...
+# Subtest: idle SD playback FPS cannot be attributed to the procedural audio-follow scene
+ok 21 - idle SD playback FPS cannot be attributed to the procedural audio-follow scene
+  ---
+  duration_ms: 0.218982
+  type: 'test'
+  ...
+# Subtest: combined start confirms the default animation before audio and ignores double clicks
+ok 22 - combined start confirms the default animation before audio and ignores double clicks
+  ---
+  duration_ms: 4.663018
+  type: 'test'
+  ...
+# Subtest: an independently enabled animation is reused and preserved on combined end or failure
+ok 23 - an independently enabled animation is reused and preserved on combined end or failure
+  ---
+  duration_ms: 1.082283
+  type: 'test'
+  ...
+# Subtest: a concurrent expression acquisition is borrowed even with a stale page snapshot
+ok 24 - a concurrent expression acquisition is borrowed even with a stale page snapshot
+  ---
+  duration_ms: 0.530204
+  type: 'test'
+  ...
+# Subtest: cancellation before a borrowed expression acknowledgement never releases its owner
+ok 25 - cancellation before a borrowed expression acknowledgement never releases its owner
+  ---
+  duration_ms: 0.37801
+  type: 'test'
+  ...
+# Subtest: combined cleanup forwards the acquired generation and accepts a replaced server owner
+ok 26 - combined cleanup forwards the acquired generation and accepts a replaced server owner
+  ---
+  duration_ms: 0.425666
+  type: 'test'
+  ...
+# Subtest: a missing animation acknowledgement prevents audio startup
+ok 27 - a missing animation acknowledgement prevents audio startup
+  ---
+  duration_ms: 0.656135
+  type: 'test'
+  ...
+# Subtest: microphone failure releases an animation acquired by this combined start
+ok 28 - microphone failure releases an animation acquired by this combined start
+  ---
+  duration_ms: 0.532634
+  type: 'test'
+  ...
+# Subtest: cancellation during a pending animation acknowledgement releases its late acquisition
+ok 29 - cancellation during a pending animation acknowledgement releases its late acquisition
+  ---
+  duration_ms: 0.436165
+  type: 'test'
+  ...
+# Subtest: late audio startup after cancellation cannot leave audio or animation running
+ok 30 - late audio startup after cancellation cannot leave audio or animation running
+  ---
+  duration_ms: 0.715844
+  type: 'test'
+  ...
+# Subtest: page exit invalidates pending combined startup while the page lifecycle handles beacons
+ok 31 - page exit invalidates pending combined startup while the page lifecycle handles beacons
+  ---
+  duration_ms: 0.75214
+  type: 'test'
+  ...
+# Subtest: asynchronous call failure releases only a combined-owned animation
+ok 32 - asynchronous call failure releases only a combined-owned animation
+  ---
+  duration_ms: 0.455967
+  type: 'test'
+  ...
+# Subtest: an unconfirmed animation stop retains ownership for a safe retry
+ok 33 - an unconfirmed animation stop retains ownership for a safe retry
+  ---
+  duration_ms: 1.905443
+  type: 'test'
+  ...
+# Subtest: cancelling a hung microphone request permits a new scene and its late result cannot stop the new scene
+ok 34 - cancelling a hung microphone request permits a new scene and its late result cannot stop the new scene
+  ---
+  duration_ms: 0.416252
+  type: 'test'
+  ...
+# Subtest: a lost animation acknowledgement is cleaned up and an empty stop acknowledgement stays unconfirmed
+ok 35 - a lost animation acknowledgement is cleaned up and an empty stop acknowledgement stays unconfirmed
+  ---
+  duration_ms: 0.57775
+  type: 'test'
+  ...
+# Subtest: measures unique forward-sequence canvas draws
+ok 36 - measures unique forward-sequence canvas draws
+  ---
+  duration_ms: 10.010046
+  type: 'test'
+  ...
+# Subtest: reports stalls, non-VGA images, backwards sequences and idle tail
+ok 37 - reports stalls, non-VGA images, backwards sequences and idle tail
+  ---
+  duration_ms: 0.229758
+  type: 'test'
+  ...
+# Subtest: bounds evidence memory and flags incomplete statistics
+ok 38 - bounds evidence memory and flags incomplete statistics
+  ---
+  duration_ms: 0.218632
+  type: 'test'
+  ...
+# Subtest: 25 speech bars cover every selected FFT bin exactly once, including the final bars
+ok 39 - 25 speech bars cover every selected FFT bin exactly once, including the final bars
+  ---
+  duration_ms: 2.822071
+  type: 'test'
+  ...
+# Subtest: FFT ranges stay within the analyser buffer and reject invalid band counts
+ok 40 - FFT ranges stay within the analyser buffer and reject invalid band counts
+  ---
+  duration_ms: 0.815807
+  type: 'test'
+  ...
+# Subtest: partial analyser initialization closes owned resources while preserving borrowed tracks
+ok 41 - partial analyser initialization closes owned resources while preserving borrowed tracks
+  ---
+  duration_ms: 11.743706
+  type: 'test'
+  ...
+# Subtest: normal cleanup is idempotent and handles rejected close promises
+ok 42 - normal cleanup is idempotent and handles rejected close promises
+  ---
+  duration_ms: 2.281624
+  type: 'test'
+  ...
+# Subtest: accepted pairing is not success until Daemon reports the same robot online
+ok 43 - accepted pairing is not success until Daemon reports the same robot online
+  ---
+  duration_ms: 3.04421
+  type: 'test'
+  ...
+# Subtest: invalid codes and repeated submission do not issue requests
+ok 44 - invalid codes and repeated submission do not issue requests
+  ---
+  duration_ms: 0.381956
+  type: 'test'
+  ...
+# Subtest: failed discovery explains retry and waiting has a deadline
+ok 45 - failed discovery explains retry and waiting has a deadline
+  ---
+  duration_ms: 1.319104
+  type: 'test'
+  ...
+# Subtest: all sound controls and hints have English translations
+ok 46 - all sound controls and hints have English translations
+  ---
+  duration_ms: 4.430384
+  type: 'test'
+  ...
+# Subtest: browser language is used until a saved choice overrides it
+ok 47 - browser language is used until a saved choice overrides it
+  ---
+  duration_ms: 0.492687
+  type: 'test'
+  ...
+# Subtest: switching translates current states and nested errors in both directions
+ok 48 - switching translates current states and nested errors in both directions
+  ---
+  duration_ms: 0.35442
+  type: 'test'
+  ...
+# Subtest: storage denial and unsupported preferences keep the UI usable
+ok 49 - storage denial and unsupported preferences keep the UI usable
+  ---
+  duration_ms: 0.885408
+  type: 'test'
+  ...
+# Subtest: duration starts on connection, survives recovery, and resets for another call
+ok 50 - duration starts on connection, survives recovery, and resets for another call
+  ---
+  duration_ms: 1.278715
+  type: 'test'
+  ...
+# Subtest: raw playback skips processor entirely and stale loads cannot replace it
+ok 51 - raw playback skips processor entirely and stale loads cannot replace it
+  ---
+  duration_ms: 7.8552
+  type: 'test'
+  ...
+# Subtest: stop during processor load never plays a late processed stream
+ok 52 - stop during processor load never plays a late processed stream
+  ---
+  duration_ms: 1.719564
+  type: 'test'
+  ...
+# Subtest: playback clock stays attached across switches and stops only at teardown
+ok 53 - playback clock stays attached across switches and stops only at teardown
+  ---
+  duration_ms: 2.248068
+  type: 'test'
+  ...
+# Subtest: pitch effects change pitch while output duration and ring storage stay fixed
+ok 54 - pitch effects change pitch while output duration and ring storage stay fixed
+  ---
+  duration_ms: 151.473286
+  type: 'test'
+  ...
+# Subtest: original DSP is sample-exact and robot modulation remains bounded
+ok 55 - original DSP is sample-exact and robot modulation remains bounded
+  ---
+  duration_ms: 1.490909
+  type: 'test'
+  ...
+# Subtest: voice graph bypasses effects for original, bounds gain and owns only generated tracks
+ok 56 - voice graph bypasses effects for original, bounds gain and owns only generated tracks
+  ---
+  duration_ms: 1.934753
+  type: 'test'
+  ...
+# Subtest: non-speech smoothly attenuates with a floor; quiet detected speech opens immediately
+ok 57 - non-speech smoothly attenuates with a floor; quiet detected speech opens immediately
+  ---
+  duration_ms: 14.319812
+  type: 'test'
+  ...
+# Subtest: real RNNoise human focus suppresses steady noise more than natural mix without boosting
+ok 58 - real RNNoise human focus suppresses steady noise more than natural mix without boosting
+  ---
+  duration_ms: 624.013423
+  type: 'test'
+  ...
+# Subtest: speech focus retains quiet speech energy with real model and existing one-frame alignment
+ok 59 - speech focus retains quiet speech energy with real model and existing one-frame alignment
+  ---
+  duration_ms: 935.547823
+  type: 'test'
+  ...
+# Subtest: feedback capture requires free display and audio while atomic capture stays independent
+ok 60 - feedback capture requires free display and audio while atomic capture stays independent
+  ---
+  duration_ms: 7.257272
+  type: 'test'
+  ...
+# Subtest: pending feedback capture prevents audio and RTC starts
+ok 61 - pending feedback capture prevents audio and RTC starts
+  ---
+  duration_ms: 0.283555
+  type: 'test'
+  ...
+# Subtest: audio RTC keeps camera capture available but owns both audio directions
+ok 62 - audio RTC keeps camera capture available but owns both audio directions
+  ---
+  duration_ms: 0.321307
+  type: 'test'
+  ...
+# Subtest: video RTC keeps standalone speaker and microphone actions available
+ok 63 - video RTC keeps standalone speaker and microphone actions available
+  ---
+  duration_ms: 0.257714
+  type: 'test'
+  ...
+# Subtest: standalone speaker playback reserves both ordinary audio directions
+ok 64 - standalone speaker playback reserves both ordinary audio directions
+  ---
+  duration_ms: 0.251605
+  type: 'test'
+  ...
+# Subtest: pending standalone microphone recording reserves both ordinary audio directions
+ok 65 - pending standalone microphone recording reserves both ordinary audio directions
+  ---
+  duration_ms: 0.222666
+  type: 'test'
+  ...
+# Subtest: combined RTC owns camera, microphone, and speaker
+ok 66 - combined RTC owns camera, microphone, and speaker
+  ---
+  duration_ms: 0.215154
+  type: 'test'
+  ...
+# Subtest: a pending local RTC start reserves media without blocking actuators
+ok 67 - a pending local RTC start reserves media without blocking actuators
+  ---
+  duration_ms: 0.226945
+  type: 'test'
+  ...
+# Subtest: an established audio RTC ignores its start marker and keeps camera available
+ok 68 - an established audio RTC ignores its start marker and keeps camera available
+  ---
+  duration_ms: 0.607329
+  type: 'test'
+  ...
+# Subtest: a local motion request does not disable lights or media
+ok 69 - a local motion request does not disable lights or media
+  ---
+  duration_ms: 0.660724
+  type: 'test'
+  ...
+# Subtest: offline state disables starts but preserves interrupt buttons
+ok 70 - offline state disables starts but preserves interrupt buttons
+  ---
+  duration_ms: 0.305149
+  type: 'test'
+  ...
+# Subtest: combined RTC mode is represented by one audio-video session
+ok 71 - combined RTC mode is represented by one audio-video session
+  ---
+  duration_ms: 0.171217
+  type: 'test'
+  ...
+# Subtest: an orphaned browser session recovers its RTC mode from server state
+ok 72 - an orphaned browser session recovers its RTC mode from server state
+  ---
+  duration_ms: 0.204602
+  type: 'test'
+  ...
+# Subtest: a stopped server snapshot cannot keep the browser media controls locked
+ok 73 - a stopped server snapshot cannot keep the browser media controls locked
+  ---
+  duration_ms: 0.763298
+  type: 'test'
+  ...
+# Subtest: an active server snapshot can restore RTC mode without a browser-local peer
+ok 74 - an active server snapshot can restore RTC mode without a browser-local peer
+  ---
+  duration_ms: 0.156849
+  type: 'test'
+  ...
+# Subtest: late events from a previous browser RTC generation are rejected
+ok 75 - late events from a previous browser RTC generation are rejected
+  ---
+  duration_ms: 0.163946
+  type: 'test'
+  ...
+# Subtest: LAN preview uses JPEG socket without a peer; audio modes retain WebRTC
+ok 76 - LAN preview uses JPEG socket without a peer; audio modes retain WebRTC
+  ---
+  duration_ms: 1.378101
+  type: 'test'
+  ...
+# Subtest: passes legacy complete WJPG packets through unchanged
+ok 77 - passes legacy complete WJPG packets through unchanged
+  ---
+  duration_ms: 1.570555
+  type: 'test'
+  ...
+# Subtest: reassembles unordered data chunks into one complete frame
+ok 78 - reassembles unordered data chunks into one complete frame
+  ---
+  duration_ms: 1.787489
+  type: 'test'
+  ...
+# Subtest: recovers one missing data chunk from XOR parity
+ok 79 - recovers one missing data chunk from XOR parity
+  ---
+  duration_ms: 1.314288
+  type: 'test'
+  ...
+# Subtest: bounds stale and concurrent transfer state
+ok 80 - bounds stale and concurrent transfer state
+  ---
+  duration_ms: 2.0701
+  type: 'test'
+  ...
+# Subtest: reconnects the transport without starting another product session
+ok 81 - reconnects the transport without starting another product session
+  ---
+  duration_ms: 2.937359
+  type: 'test'
+  ...
+# Subtest: handshake and repeated opens without decoded frames cannot extend recovery
+ok 82 - handshake and repeated opens without decoded frames cannot extend recovery
+  ---
+  duration_ms: 0.366099
+  type: 'test'
+  ...
+# Subtest: stop cancels pending retries and ignores late events
+ok 83 - stop cancels pending retries and ignores late events
+  ---
+  duration_ms: 2.052205
+  type: 'test'
+  ...
+# Subtest: superseded session cannot reconnect
+ok 84 - superseded session cannot reconnect
+  ---
+  duration_ms: 0.37095
+  type: 'test'
+  ...
+# Subtest: initial connection also has a bounded wait
+ok 85 - initial connection also has a bounded wait
+  ---
+  duration_ms: 0.496311
+  type: 'test'
+  ...
+# Subtest: late decoding from an old socket cannot acknowledge the replacement
+ok 86 - late decoding from an old socket cannot acknowledge the replacement
+  ---
+  duration_ms: 0.375747
+  type: 'test'
+  ...
+# Subtest: a later interruption gets a new bounded recovery window
+ok 87 - a later interruption gets a new bounded recovery window
+  ---
+  duration_ms: 0.35868
+  type: 'test'
+  ...
+# Subtest: gesture labels follow the confirmed slot 3 order only
+ok 88 - gesture labels follow the confirmed slot 3 order only
+  ---
+  duration_ms: 2.184351
+  type: 'test'
+  ...
+# Subtest: test bench keeps gesture and face models without inventing missing slots
+ok 89 - test bench keeps gesture and face models without inventing missing slots
+  ---
+  duration_ms: 0.31041
+  type: 'test'
+  ...
+# Subtest: preview expires even while no request completes
+ok 90 - preview expires even while no request completes
+  ---
+  duration_ms: 0.314555
+  type: 'test'
+  ...
+# Subtest: late responses after stop or restart cannot refresh the preview
+ok 91 - late responses after stop or restart cannot refresh the preview
+  ---
+  duration_ms: 0.265423
+  type: 'test'
+  ...
+# Subtest: older firmware without animation allocation telemetry remains unknown
+ok 92 - older firmware without animation allocation telemetry remains unknown
+  ---
+  duration_ms: 2.799039
+  type: 'test'
+  ...
+# Subtest: confirmed zero allocations and stopped workers report released
+ok 93 - confirmed zero allocations and stopped workers report released
+  ---
+  duration_ms: 0.43941
+  type: 'test'
+  ...
+# Subtest: a running procedural framebuffer is normal resident memory
+ok 94 - a running procedural framebuffer is normal resident memory
+  ---
+  duration_ms: 0.245365
+  type: 'test'
+  ...
+# Subtest: feature table keeps start, failure and completion edges, excluding polling
+ok 95 - feature table keeps start, failure and completion edges, excluding polling
+  ---
+  duration_ms: 1.338232
+  type: 'test'
+  ...
+# Subtest: resource lifecycle waits for both current and baseline snapshots
+ok 96 - resource lifecycle waits for both current and baseline snapshots
+  ---
+  duration_ms: 0.54462
+  type: 'test'
+  ...
+# Subtest: missing and invalid heap measurements cannot masquerade as zero-byte evidence
+ok 97 - missing and invalid heap measurements cannot masquerade as zero-byte evidence
+  ---
+  duration_ms: 0.441645
+  type: 'test'
+  ...
+# Subtest: release within baseline tolerance is recovered
+ok 98 - release within baseline tolerance is recovered
+  ---
+  duration_ms: 0.35637
+  type: 'test'
+  ...
+# Subtest: release result failures override memory recovery
+ok 99 - release result failures override memory recovery
+  ---
+  duration_ms: 0.215636
+  type: 'test'
+  ...
+# Subtest: large retained allocation is degraded after release
+ok 100 - large retained allocation is degraded after release
+  ---
+  duration_ms: 0.555619
+  type: 'test'
+  ...
+# Subtest: animation started during RTC makes the release baseline incomparable instead of a false leak
+ok 101 - animation started during RTC makes the release baseline incomparable instead of a false leak
+  ---
+  duration_ms: 0.64642
+  type: 'test'
+  ...
+# Subtest: animation runtime warmed during RTC is a lifecycle context change even without a visible frame
+ok 102 - animation runtime warmed during RTC is a lifecycle context change even without a visible frame
+  ---
+  duration_ms: 0.328919
+  type: 'test'
+  ...
+# Subtest: matching animation context still detects a retained RTC allocation
+ok 103 - matching animation context still detects a retained RTC allocation
+  ---
+  duration_ms: 0.268517
+  type: 'test'
+  ...
+# Subtest: animation cache churn does not masquerade as an RTC PSRAM leak
+ok 104 - animation cache churn does not masquerade as an RTC PSRAM leak
+  ---
+  duration_ms: 0.296388
+  type: 'test'
+  ...
+# Subtest: DMA largest-block regression is degraded even when internal heap recovers
+ok 105 - DMA largest-block regression is degraded even when internal heap recovers
+  ---
+  duration_ms: 0.187472
+  type: 'test'
+  ...
+# Subtest: PSRAM largest-block regression is visible instead of hidden by free bytes
+ok 106 - PSRAM largest-block regression is visible instead of hidden by free bytes
+  ---
+  duration_ms: 0.226595
+  type: 'test'
+  ...
+# Subtest: monotonic post-release decline is flagged as a fragmentation trend
+ok 107 - monotonic post-release decline is flagged as a fragmentation trend
+  ---
+  duration_ms: 0.596079
+  type: 'test'
+  ...
+# Subtest: latest release sample remains the lifecycle verdict after periodic telemetry resumes
+ok 108 - latest release sample remains the lifecycle verdict after periodic telemetry resumes
+  ---
+  duration_ms: 0.242049
+  type: 'test'
+  ...
+# Subtest: RTC lifecycle uses its own pre-start baseline instead of connection baseline
+ok 109 - RTC lifecycle uses its own pre-start baseline instead of connection baseline
+  ---
+  duration_ms: 0.233056
+  type: 'test'
+  ...
+# Subtest: empty RTC baseline falls back to the connection baseline
+ok 110 - empty RTC baseline falls back to the connection baseline
+  ---
+  duration_ms: 0.19983
+  type: 'test'
+  ...
+# Subtest: cancel during microphone processing releases late graph without starting device
+ok 111 - cancel during microphone processing releases late graph without starting device
+  ---
+  duration_ms: 14.482692
+  type: 'test'
+  ...
+# Subtest: visuals receive the existing microphone and release it with the call
+ok 112 - visuals receive the existing microphone and release it with the call
+  ---
+  duration_ms: 2.909134
+  type: 'test'
+  ...
+# Subtest: a cancelled late microphone never reaches the visual layer
+ok 113 - a cancelled late microphone never reaches the visual layer
+  ---
+  duration_ms: 0.51619
+  type: 'test'
+  ...
+# Subtest: cancelled microphone permission cannot allocate hardware or leak the late stream
+ok 114 - cancelled microphone permission cannot allocate hardware or leak the late stream
+  ---
+  duration_ms: 0.328042
+  type: 'test'
+  ...
+# Subtest: cancel during device start waits for acknowledgement before scoped release
+ok 115 - cancel during device start waits for acknowledgement before scoped release
+  ---
+  duration_ms: 5.307864
+  type: 'test'
+  ...
+# Subtest: unconfirmed release retains identity and a retry cannot start another call
+ok 116 - unconfirmed release retains identity and a retry cannot start another call
+  ---
+  duration_ms: 1.674595
+  type: 'test'
+  ...
+# Subtest: mute controls only local microphone and dispose releases all tracks
+ok 117 - mute controls only local microphone and dispose releases all tracks
+  ---
+  duration_ms: 0.882861
+  type: 'test'
+  ...
+# Subtest: page exit releases tracks and reports page_closed for the owned call
+ok 118 - page exit releases tracks and reports page_closed for the owned call
+  ---
+  duration_ms: 1.035783
+  type: 'test'
+  ...
+# Subtest: cancelled presence handshake closes its late socket without reviving a call
+ok 119 - cancelled presence handshake closes its late socket without reviving a call
+  ---
+  duration_ms: 5.626457
+  type: 'test'
+  ...
+# Subtest: presence remains open until scoped stop completes and its old close cannot end a new call
+ok 120 - presence remains open until scoped stop completes and its old close cannot end a new call
+  ---
+  duration_ms: 1.957088
+  type: 'test'
+  ...
+# Subtest: presence requires server acknowledgement and intentional close is not a failure
+ok 121 - presence requires server acknowledgement and intentional close is not a failure
+  ---
+  duration_ms: 1.015154
+  type: 'test'
+  ...
+# Subtest: presence timeout releases the pending connection and later socket errors fail once
+ok 122 - presence timeout releases the pending connection and later socket errors fail once
+  ---
+  duration_ms: 0.671512
+  type: 'test'
+  ...
+# Subtest: presence error waits for the real close metadata and repeated notifications fail once
+ok 123 - presence error waits for the real close metadata and repeated notifications fail once
+  ---
+  duration_ms: 0.331978
+  type: 'test'
+  ...
+# Subtest: presence close without an error retains its evidence and redacts untrusted reasons
+ok 124 - presence close without an error retains its evidence and redacts untrusted reasons
+  ---
+  duration_ms: 0.372535
+  type: 'test'
+  ...
+# Subtest: controller reports presence evidence once and ignores a retired socket
+ok 125 - controller reports presence evidence once and ignores a retired socket
+  ---
+  duration_ms: 6.565324
+  type: 'test'
+  ...
+# Subtest: a hung start times out, releases its identity, and ignores a late response
+ok 126 - a hung start times out, releases its identity, and ignores a late response
+  ---
+  duration_ms: 2.173567
+  type: 'test'
+  ...
+# Subtest: a hung offer times out and closes browser media before scoped release
+ok 127 - a hung offer times out and closes browser media before scoped release
+  ---
+  duration_ms: 2.417484
+  type: 'test'
+  ...
+# Subtest: a hung stop retains ownership for a retry without leaving the UI stopping
+ok 128 - a hung stop retains ownership for a retry without leaving the UI stopping
+  ---
+  duration_ms: 5.563503
+  type: 'test'
+  ...
+# Subtest: concealment feedback converts codec samples into 20 ms frames
+ok 129 - concealment feedback converts codec samples into 20 ms frames
+  ---
+  duration_ms: 5.833232
+  type: 'test'
+  ...
+# Subtest: the total connection deadline covers a pending microphone grant
+ok 130 - the total connection deadline covers a pending microphone grant
+  ---
+  duration_ms: 1.553245
+  type: 'test'
+  ...
+# Subtest: a connected call retires its setup deadline before connection recovery
+ok 131 - a connected call retires its setup deadline before connection recovery
+  ---
+  duration_ms: 0.889708
+  type: 'test'
+  ...
+# Subtest: heartbeat starts after allocation while offer signalling is still pending
+ok 132 - heartbeat starts after allocation while offer signalling is still pending
+  ---
+  duration_ms: 6.214415
+  type: 'test'
+  ...
+# Subtest: photo starts immediately with a two second estimate and blocks duplicate clicks
+ok 133 - photo starts immediately with a two second estimate and blocks duplicate clicks
+  ---
+  duration_ms: 2.552442
+  type: 'test'
+  ...
+# Subtest: an elapsed estimate remains waiting and never reports photo success
+ok 134 - an elapsed estimate remains waiting and never reports photo success
+  ---
+  duration_ms: 1.907729
+  type: 'test'
+  ...
+# Subtest: capture acknowledgement changes phase but success waits for decoded pixels
+ok 135 - capture acknowledgement changes phase but success waits for decoded pixels
+  ---
+  duration_ms: 9.104136
+  type: 'test'
+  ...
+# Subtest: camera and image failures release timers and permit a retry
+ok 136 - camera and image failures release timers and permit a retry
+  ---
+  duration_ms: 1.686231
+  type: 'test'
+  ...
+# Subtest: timeout aborts the HTTP request and a late photo cannot revive a finished operation
+ok 137 - timeout aborts the HTTP request and a late photo cannot revive a finished operation
+  ---
+  duration_ms: 4.315558
+  type: 'test'
+  ...
+# Subtest: page exit cancels an old decode without clearing or overwriting a newer photo
+ok 138 - page exit cancels an old decode without clearing or overwriting a newer photo
+  ---
+  duration_ms: 1.670635
+  type: 'test'
+  ...
+# Subtest: completed captures update the next estimate within a bounded range
+ok 139 - completed captures update the next estimate within a bounded range
+  ---
+  duration_ms: 0.751331
+  type: 'test'
+  ...
+# Subtest: a call ending or being replaced invalidates its pending photo before display
+ok 140 - a call ending or being replaced invalidates its pending photo before display
+  ---
+  duration_ms: 3.646416
+  type: 'test'
+  ...
+# Subtest: call state updates cancel capture immediately for stop, failure, and replacement
+ok 141 - call state updates cancel capture immediately for stop, failure, and replacement
+  ---
+  duration_ms: 1.898824
+  type: 'test'
+  ...
+# Subtest: normal calls request echo cancellation and microphone level adaptation
+ok 142 - normal calls request echo cancellation and microphone level adaptation
+  ---
+  duration_ms: 2.006326
+  type: 'test'
+  ...
+# Subtest: processed calls adapt quiet microphone levels
+ok 143 - processed calls adapt quiet microphone levels
+  ---
+  duration_ms: 0.315603
+  type: 'test'
+  ...
+# Subtest: raw microphone capture requires an explicit diagnostic choice
+ok 144 - raw microphone capture requires an explicit diagnostic choice
+  ---
+  duration_ms: 0.277208
+  type: 'test'
+  ...
+# Subtest: call profile selects echo cancellation for the ordinary page
+ok 145 - call profile selects echo cancellation for the ordinary page
+  ---
+  duration_ms: 1.552862
+  type: 'test'
+  ...
+# Subtest: call profile selects echo cancellation for ?rtc_audio_processing=1
+ok 146 - call profile selects echo cancellation for ?rtc_audio_processing=1
+  ---
+  duration_ms: 1.043282
+  type: 'test'
+  ...
+# Subtest: call profile selects echo cancellation for ?rtc_audio_processing=0
+ok 147 - call profile selects echo cancellation for ?rtc_audio_processing=0
+  ---
+  duration_ms: 0.843876
+  type: 'test'
+  ...
+# Subtest: call profile selects echo cancellation for ?rtc_audio_processing=invalid
+ok 148 - call profile selects echo cancellation for ?rtc_audio_processing=invalid
+  ---
+  duration_ms: 0.983999
+  type: 'test'
+  ...
+# Subtest: audio diagnostics bound device snapshots and omit unrelated video and arbitrary fields
+ok 149 - audio diagnostics bound device snapshots and omit unrelated video and arbitrary fields
+  ---
+  duration_ms: 2.408078
+  type: 'test'
+  ...
+# Subtest: diagnostic records all three streams, saves bounded evidence, and never stops RTC tracks
+ok 150 - diagnostic records all three streams, saves bounded evidence, and never stops RTC tracks
+  ---
+  duration_ms: 12.31384
+  type: 'test'
+  ...
+# Subtest: a partial diagnostic upload never publishes a saved batch
+ok 151 - a partial diagnostic upload never publishes a saved batch
+  ---
+  duration_ms: 4.645445
+  type: 'test'
+  ...
+# Subtest: a recorder setup failure stops only already-started recorders and does not upload misleading evidence
+ok 152 - a recorder setup failure stops only already-started recorders and does not upload misleading evidence
+  ---
+  duration_ms: 0.604425
+  type: 'test'
+  ...
+# Subtest: playback level exposes received and processed PCM without inventing old firmware measurements
+ok 153 - playback level exposes received and processed PCM without inventing old firmware measurements
+  ---
+  duration_ms: 1.733131
+  type: 'test'
+  ...
+# Subtest: transport connected is not enough to claim full duplex
+ok 154 - transport connected is not enough to claim full duplex
+  ---
+  duration_ms: 2.291225
+  type: 'test'
+  ...
+# Subtest: missing Watcher microphone uplink fails after the deadline
+ok 155 - missing Watcher microphone uplink fails after the deadline
+  ---
+  duration_ms: 0.221194
+  type: 'test'
+  ...
+# Subtest: both directions and device capture are required for healthy
+ok 156 - both directions and device capture are required for healthy
+  ---
+  duration_ms: 0.227998
+  type: 'test'
+  ...
+# Subtest: send errors are visible even when packets get through
+ok 157 - send errors are visible even when packets get through
+  ---
+  duration_ms: 0.228431
+  type: 'test'
+  ...
+# Subtest: packets containing silence cannot claim healthy full duplex
+ok 158 - packets containing silence cannot claim healthy full duplex
+  ---
+  duration_ms: 0.261597
+  type: 'test'
+  ...
+# Subtest: paused browser playback cannot claim audible full duplex
+ok 159 - paused browser playback cannot claim audible full duplex
+  ---
+  duration_ms: 0.315582
+  type: 'test'
+  ...
+# Subtest: older firmware without signal metrics remains in verification
+ok 160 - older firmware without signal metrics remains in verification
+  ---
+  duration_ms: 0.359364
+  type: 'test'
+  ...
+# Subtest: browser RTP send alone cannot prove robot speaker playback
+ok 161 - browser RTP send alone cannot prove robot speaker playback
+  ---
+  duration_ms: 0.593758
+  type: 'test'
+  ...
+# Subtest: robot audio renderer failures degrade an otherwise audible call
+ok 162 - robot audio renderer failures degrade an otherwise audible call
+  ---
+  duration_ms: 0.638647
+  type: 'test'
+  ...
+# Subtest: silence after audible full-duplex verification is a quiet call, not a failed connection
+ok 163 - silence after audible full-duplex verification is a quiet call, not a failed connection
+  ---
+  duration_ms: 0.359079
+  type: 'test'
+  ...
+# Subtest: device audio drops degrade an otherwise audible call even without send or render errors
+ok 164 - device audio drops degrade an otherwise audible call even without send or render errors
+  ---
+  duration_ms: 2.685661
+  type: 'test'
+  ...
+# Subtest: measures RTC round trip from the device pong instead of local POST completion
+ok 165 - measures RTC round trip from the device pong instead of local POST completion
+  ---
+  duration_ms: 1.449619
+  type: 'test'
+  ...
+# Subtest: prefers the nominated WebRTC media path round trip
+ok 166 - prefers the nominated WebRTC media path round trip
+  ---
+  duration_ms: 0.366731
+  type: 'test'
+  ...
+# Subtest: requests a 20 ms jitter target across current and legacy Chromium receivers
+ok 167 - requests a 20 ms jitter target across current and legacy Chromium receivers
+  ---
+  duration_ms: 0.364919
+  type: 'test'
+  ...
+# Subtest: uses interval deltas instead of lifetime averages for current playout delay
+ok 168 - uses interval deltas instead of lifetime averages for current playout delay
+  ---
+  duration_ms: 0.432786
+  type: 'test'
+  ...
+# Subtest: counter reset starts a fresh latency baseline
+ok 169 - counter reset starts a fresh latency baseline
+  ---
+  duration_ms: 3.637101
+  type: 'test'
+  ...
+# Subtest: transient disconnect recovers without terminating conversation
+ok 170 - transient disconnect recovers without terminating conversation
+  ---
+  duration_ms: 1.528108
+  type: 'test'
+  ...
+# Subtest: persistent loss, failed connection and teardown are bounded
+ok 171 - persistent loss, failed connection and teardown are bounded
+  ---
+  duration_ms: 1.230687
+  type: 'test'
+  ...
+# Subtest: repeated disconnects share a deadline and an old timer cannot end a later recovery
+ok 172 - repeated disconnects share a deadline and an old timer cannot end a later recovery
+  ---
+  duration_ms: 1.833958
+  type: 'test'
+  ...
+# Subtest: closing during recovery cancels the timer and fails exactly once
+ok 173 - closing during recovery cancels the timer and fails exactly once
+  ---
+  duration_ms: 0.348303
+  type: 'test'
+  ...
+# Subtest: production peer handler recovers briefly, then terminates a persistent loss
+ok 174 - production peer handler recovers briefly, then terminates a persistent loss
+  ---
+  duration_ms: 3.275329
+  type: 'test'
+  ...
+# Subtest: production recovery timeout cannot terminate a replaced peer or generation
+ok 175 - production recovery timeout cannot terminate a replaced peer or generation
+  ---
+  duration_ms: 3.779009
+  type: 'test'
+  ...
+# Subtest: PCM energy includes negative samples and reports saturation without overflow
+ok 176 - PCM energy includes negative samples and reports saturation without overflow
+  ---
+  duration_ms: 1.456639
+  type: 'test'
+  ...
+# Subtest: silence or unavailable browser processing never proves successful cancellation
+ok 177 - silence or unavailable browser processing never proves successful cancellation
+  ---
+  duration_ms: 0.338604
+  type: 'test'
+  ...
+# Subtest: successful comparison keeps processing settings but excludes microphone identifiers
+ok 178 - successful comparison keeps processing settings but excludes microphone identifiers
+  ---
+  duration_ms: 2.045833
+  type: 'test'
+  ...
+# Subtest: failed playback releases microphone, nodes, context and local source URL
+ok 179 - failed playback releases microphone, nodes, context and local source URL
+  ---
+  duration_ms: 9.325051
+  type: 'test'
+  ...
+# Subtest: comparison normalizes different sample counts and preserves degradation
+ok 180 - comparison normalizes different sample counts and preserves degradation
+  ---
+  duration_ms: 0.382579
+  type: 'test'
+  ...
+# Subtest: processed playback owns only its output and disposes once without stopping RTC tracks
+ok 181 - processed playback owns only its output and disposes once without stopping RTC tracks
+  ---
+  duration_ms: 7.58747
+  type: 'test'
+  ...
+# Subtest: call cancellation during worklet load releases the context and never connects a late graph
+ok 182 - call cancellation during worklet load releases the context and never connects a late graph
+  ---
+  duration_ms: 0.423918
+  type: 'test'
+  ...
+# Subtest: load failure falls back explicitly without leaking context or touching remote tracks
+ok 183 - load failure falls back explicitly without leaking context or touching remote tracks
+  ---
+  duration_ms: 8.698575
+  type: 'test'
+  ...
+# Subtest: actual browser processing status keeps missing and disabled settings distinct
+ok 184 - actual browser processing status keeps missing and disabled settings distinct
+  ---
+  duration_ms: 0.343532
+  type: 'test'
+  ...
+# Subtest: actual RNNoise suppresses steady noise without clipping or introducing a gain boost
+ok 185 - actual RNNoise suppresses steady noise without clipping or introducing a gain boost
+  ---
+  duration_ms: 224.205652
+  type: 'test'
+  ...
+# Subtest: bypass preserves every sample with a fixed 20ms delay across 128-sample quanta
+ok 186 - bypass preserves every sample with a fixed 20ms delay across 128-sample quanta
+  ---
+  duration_ms: 47.845509
+  type: 'test'
+  ...
+# Subtest: strength switches keep the model alive and preserve quiet input without a hard gate
+ok 187 - strength switches keep the model alive and preserve quiet input without a hard gate
+  ---
+  duration_ms: 21.640216
+  type: 'test'
+  ...
+# Subtest: bundled quiet speech and short pauses retain voiced energy with the actual model
+ok 188 - bundled quiet speech and short pauses retain voiced energy with the actual model
+  ---
+  duration_ms: 774.322827
+  type: 'test'
+  ...
+# Subtest: diagnostic retains receive loss, concealment and measured worklet input rather than a zero RTC meter
+ok 189 - diagnostic retains receive loss, concealment and measured worklet input rather than a zero RTC meter
+  ---
+  duration_ms: 9.343723
+  type: 'test'
+  ...
+# Subtest: BFCache restore retries the retained RTC release identity before allowing a new call
+ok 190 - BFCache restore retries the retained RTC release identity before allowing a new call
+  ---
+  duration_ms: 4.107517
+  type: 'test'
+  ...
+# Subtest: a stale procedural cleanup preserves a newer local expression identity
+ok 191 - a stale procedural cleanup preserves a newer local expression identity
+  ---
+  duration_ms: 14.069876
+  type: 'test'
+  ...
+# Subtest: capture status uses actual browser gain settings: active
+ok 192 - capture status uses actual browser gain settings: active
+  ---
+  duration_ms: 2.686635
+  type: 'test'
+  ...
+# Subtest: capture status uses actual browser gain settings: inactive
+ok 193 - capture status uses actual browser gain settings: inactive
+  ---
+  duration_ms: 9.870589
+  type: 'test'
+  ...
+# Subtest: capture status uses actual browser gain settings: unreported
+ok 194 - capture status uses actual browser gain settings: unreported
+  ---
+  duration_ms: 2.158833
+  type: 'test'
+  ...
+# Subtest: production RTC start branch cannot globally stop a newer call when the old device ACK arrives late
+ok 195 - production RTC start branch cannot globally stop a newer call when the old device ACK arrives late
+  ---
+  duration_ms: 4.169878
+  type: 'test'
+  ...
+# Subtest: production RTC stop returns unconfirmed instead of reporting success on a failed device release
+ok 196 - production RTC stop returns unconfirmed instead of reporting success on a failed device release
+  ---
+  duration_ms: 1.252664
+  type: 'test'
+  ...
+# Subtest: production late RTC cleanup blocks a new start until the global stop completes
+ok 197 - production late RTC cleanup blocks a new start until the global stop completes
+  ---
+  duration_ms: 1.762022
+  type: 'test'
+  ...
+# Subtest: cancelled pending microphone cleanup cannot stop an external diagnostic RTC session
+ok 198 - cancelled pending microphone cleanup cannot stop an external diagnostic RTC session
+  ---
+  duration_ms: 2.04578
+  type: 'test'
+  ...
+# Subtest: old controller cleanup preserves a newer independent local RTC peer
+ok 199 - old controller cleanup preserves a newer independent local RTC peer
+  ---
+  duration_ms: 14.641875
+  type: 'test'
+  ...
+# Subtest: an idle unowned page never stops a status-only external RTC session
+ok 200 - an idle unowned page never stops a status-only external RTC session
+  ---
+  duration_ms: 1.035696
+  type: 'test'
+  ...
+# Subtest: audio entry forwards the combined controller's captured request identity
+ok 201 - audio entry forwards the combined controller's captured request identity
+  ---
+  duration_ms: 8.305757
+  type: 'test'
+  ...
+# Subtest: failed stop can retry its retained identity after status no longer supplies a mode
+ok 202 - failed stop can retry its retained identity after status no longer supplies a mode
+  ---
+  duration_ms: 1.051568
+  type: 'test'
+  ...
+# Subtest: End Scene retries only a retained combined-owned request after local audio was cleaned up
+ok 203 - End Scene retries only a retained combined-owned request after local audio was cleaned up
+  ---
+  duration_ms: 9.50408
+  type: 'test'
+  ...
+# Subtest: production scene wrapper cannot overwrite a newer call result with an old cancelled start
+ok 204 - production scene wrapper cannot overwrite a newer call result with an old cancelled start
+  ---
+  duration_ms: 1.260863
+  type: 'test'
+  ...
+# Subtest: quiet speech has an eight second silent gap and never connects to local speakers
+ok 205 - quiet speech has an eight second silent gap and never connects to local speakers
+  ---
+  duration_ms: 3.284086
+  type: 'test'
+  ...
+# Subtest: missing fixture closes the context and stops destination tracks
+ok 206 - missing fixture closes the context and stops destination tracks
+  ---
+  duration_ms: 0.960701
+  type: 'test'
+  ...
+# Subtest: resume failure also closes the context
+ok 207 - resume failure also closes the context
+  ---
+  duration_ms: 0.562209
+  type: 'test'
+  ...
+# Subtest: live expressions and SD playback have distinct bilingual product names
+ok 208 - live expressions and SD playback have distinct bilingual product names
+  ---
+  duration_ms: 3.350844
+  type: 'test'
+  ...
+# Subtest: SDK Test Bench keeps English source copy and translates legacy diagnostics
+ok 209 - SDK Test Bench keeps English source copy and translates legacy diagnostics
+  ---
+  duration_ms: 1.751282
+  type: 'test'
+  ...
+# Subtest: Chinese locale translates the English-first product copy
+ok 210 - Chinese locale translates the English-first product copy
+  ---
+  duration_ms: 0.77949
+  type: 'test'
+  ...
+# Subtest: technical protocol names are preserved in both locales
+ok 211 - technical protocol names are preserved in both locales
+  ---
+  duration_ms: 0.462996
+  type: 'test'
+  ...
+# Subtest: combined scene controls and guidance translate into Chinese
+ok 212 - combined scene controls and guidance translate into Chinese
+  ---
+  duration_ms: 1.373905
+  type: 'test'
+  ...
+# Subtest: JoyInside combined startup and separate SD tests have explicit translated copy
+ok 213 - JoyInside combined startup and separate SD tests have explicit translated copy
+  ---
+  duration_ms: 15.729719
+  type: 'test'
+  ...
+# Subtest: combined scene captions and observed states translate without losing source copy
+ok 214 - combined scene captions and observed states translate without losing source copy
+  ---
+  duration_ms: 2.428654
+  type: 'test'
+  ...
+# Subtest: language rendering does not overwrite the canonical source copy
+ok 215 - language rendering does not overwrite the canonical source copy
+  ---
+  duration_ms: 0.232592
+  type: 'test'
+  ...
+# Subtest: page and controller sources contain no Chinese UI hardcoding
+ok 216 - page and controller sources contain no Chinese UI hardcoding
+  ---
+  duration_ms: 4.175364
+  type: 'test'
+  ...
+# Subtest: one historical drop does not latch congestion forever
+ok 217 - one historical drop does not latch congestion forever
+  ---
+  duration_ms: 1.846023
+  type: 'test'
+  ...
+# Subtest: device receives only current pressure instead of the browser clear latch
+ok 218 - device receives only current pressure instead of the browser clear latch
+  ---
+  duration_ms: 0.326948
+  type: 'test'
+  ...
+# Subtest: sustained drops become severe congestion
+ok 219 - sustained drops become severe congestion
+  ---
+  duration_ms: 0.221402
+  type: 'test'
+  ...
+# Subtest: slow display without drops reports moderate congestion
+ok 220 - slow display without drops reports moderate congestion
+  ---
+  duration_ms: 0.249383
+  type: 'test'
+  ...
+# Subtest: session startup without a first frame is not reported as congestion
+ok 221 - session startup without a first frame is not reported as congestion
+  ---
+  duration_ms: 13.880928
+  type: 'test'
+  ...
+# Subtest: a slow device source is not mistaken for browser congestion
+ok 222 - a slow device source is not mistaken for browser congestion
+  ---
+  duration_ms: 0.302683
+  type: 'test'
+  ...
+# Subtest: first frame owns the decoder
+ok 223 - first frame owns the decoder
+  ---
+  duration_ms: 2.223506
+  type: 'test'
+  ...
+# Subtest: latest frame replaces only one pending frame
+ok 224 - latest frame replaces only one pending frame
+  ---
+  duration_ms: 0.251965
+  type: 'test'
+  ...
+# Subtest: only the decoder owner clears the busy flag
+ok 225 - only the decoder owner clears the busy flag
+  ---
+  duration_ms: 0.304309
+  type: 'test'
+  ...
+1..225
+# tests 225
+# suites 0
+# pass 225
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2568.428698
