@@ -15,3 +15,6 @@
 - Application运行环境使用此SDK源码，实体v2请求已收到ACK，四种情绪由固件资源快照报告；不以SDK ACK声明LCD呈现或舵机到位。
 - 配套固件发现ready占位ID，改复用既有唯一身份服务；本仓SDK清理身份guard不再依赖所有机器共用身份。ready缓存更新仍非原子跨设备隔离。
 - 任务验收完成，源码与本档案纳入本地提交；配套Application/ESP32/Client分别提交，不推送或合入。实体质量10/10为本轮软件范围，硬件限制另行保留。
+
+## 后续变更
+2026-10-18｜Mr-KID-github｜补充：[Pi动作表情与语音延迟](../../2026-10-18/2026-10-18_092500_Mr-KID-github_无Issue_Pi动作表情与语音延迟/index.md)，增加local_pcm能力说明和Application联动，旧RTC/情绪合同保持。

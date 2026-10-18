@@ -65,8 +65,11 @@ class SDKVoiceDevice:
                 pcm = frame.data
                 if not pcm or len(pcm) % 2:
                     raise VoiceError('ASR 设备 PCM 数据无效')
-                if microphone.dropped_frames or microphone.decode_failures:
-                    raise VoiceError('ASR 麦克风丢帧或解码失败，请重试')
+                dropped, failed = microphone.dropped_frames, microphone.decode_failures
+                if dropped or failed:
+                    cause = '解码失败' if failed else '缓存溢出'
+                    raise VoiceError(f'ASR 麦克风{cause}（dropped_frames={dropped}, '
+                                     f'decode_failures={failed}），请重试')
                 samples = struct.unpack('<' + 'h' * (len(pcm) // 2), pcm)
                 active = math.sqrt(sum(x * x for x in samples) / len(samples)) >= cfg.speech_threshold
                 seconds = len(pcm) / 32000

@@ -77,6 +77,7 @@ class ExternalWebSocketServer:
         business_frame_listener: BusinessFrameListener | None = None,
         external_disconnect_listener: ExternalDisconnectListener | None = None,
         hello_timeout_seconds: float = 5.0,
+        event_logger: Callable[[str], object] | None = None,
     ) -> None:
         if hello_timeout_seconds <= 0:
             raise ValueError("hello_timeout_seconds must be positive")
@@ -91,7 +92,16 @@ class ExternalWebSocketServer:
         self._business_frame_listener = business_frame_listener
         self._external_disconnect_listener = external_disconnect_listener
         self._hello_timeout_seconds = hello_timeout_seconds
+        self._event_logger = event_logger
         self._server: Server | None = None
+
+    def _record_connection_event(self, message: str) -> None:
+        if self._event_logger is not None:
+            try:
+                self._event_logger(message)
+            except Exception:
+                # Observability must never change connection or routing behavior.
+                pass
 
     @property
     def url(self) -> str:
@@ -134,6 +144,7 @@ class ExternalWebSocketServer:
 
     async def _handle_connection(self, websocket: ServerConnection) -> None:
         connection = self.registry.add(websocket)
+        self._record_connection_event(f"WebSocket connection opened (peer_ip={self._peer_ip(websocket)})")
         try:
             try:
                 try:
@@ -142,6 +153,9 @@ class ExternalWebSocketServer:
                         timeout=self._hello_timeout_seconds,
                     )
                 except asyncio.TimeoutError:
+                    self._record_connection_event(
+                        f"Client hello timeout (peer_ip={self._peer_ip(websocket)})"
+                    )
                     await websocket.send(
                         json.dumps(
                             build_hardware_hello_nack(
@@ -157,6 +171,9 @@ class ExternalWebSocketServer:
                     )
                     return
                 if not await self._handle_hello(connection, first_frame):
+                    self._record_connection_event(
+                        f"Client hello not accepted (peer_ip={self._peer_ip(websocket)})"
+                    )
                     return
 
                 async for frame in websocket:
@@ -425,6 +442,10 @@ class ExternalWebSocketServer:
         error: str,
         close_code: int,
     ) -> None:
+        self._record_connection_event(
+            f"Hardware hello rejected (peer_ip={self._peer_ip(connection.websocket)}, "
+            f"error={error}, close_code={close_code})"
+        )
         await connection.websocket.send(
             json.dumps(
                 build_hardware_hello_nack(code=code, error=error),

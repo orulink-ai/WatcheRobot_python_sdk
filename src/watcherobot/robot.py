@@ -225,7 +225,7 @@ class ExpressionRuntimeDomain(_Domain):
                 raise cleanup_error
 
     def set_audio_follow(self, enabled: bool, *, emotion: int | None = None) -> None:
-        """Draw the device's procedural mouth from successfully played RTC PCM.
+        """Draw the device's procedural mouth from successfully played PCM.
 
         Requires ``expression.audio_follow.v1``. Firmware owns the audio clock
         and mouth calculation; no browser microphone levels are transmitted.
@@ -233,6 +233,8 @@ class ExpressionRuntimeDomain(_Domain):
         closes the mouth and returns display ownership to the built-in state.
         Optional emotion (0..6) requires ``expression.audio_follow.v2`` and changes
         only the retained eye target; the device's PCM mouth clock keeps running.
+        Non-RTC audio.play_pcm additionally needs firmware advertising
+        ``expression.audio_follow.local_pcm.v1``; v1/v2 alone guarantees RTC only.
         """
         if not isinstance(enabled, bool):
             raise TypeError("enabled must be a bool")
