@@ -405,7 +405,10 @@ def create_web_app(service: ConversationService, web_root: Path,
 
     @app.exception_handler(ConnectionError)
     async def connection_error(_request: Any, error: ConnectionError) -> Any:
-        return JSONResponse({"error": str(error)}, status_code=error.status_code)
+        payload = {"error": str(error)}
+        if error.code is not None:
+            payload["error_code"] = error.code
+        return JSONResponse(payload, status_code=error.status_code)
 
     @app.middleware("http")
     async def local_origin(request: Any, call_next: Any) -> Any:
@@ -460,8 +463,12 @@ def create_web_app(service: ConversationService, web_root: Path,
         code = validate_pairing_code(body.get("pairing_code") if isinstance(body, dict) else None)
         if connection is None:
             raise ConnectionError("当前运行环境未提供机器人连接服务")
+        if service.cleanup_pending and not (service.enabled or service.opening):
+            raise ConnectionError("上一轮语音资源未释放，请重启 Pi Application 后重新配对", 409,
+                                  code="speech_cleanup_required")
         if service.enabled or service.opening or service.session or service.cleanup_pending or pairing_lock.locked():
-            raise ConnectionError("请先暂停对话并等待当前操作结束，再连接机器人", 409)
+            raise ConnectionError("请先暂停对话并等待当前操作结束，再连接机器人", 409,
+                                  code="conversation_busy")
         async with pairing_lock:
             return await asyncio.to_thread(connection.pair, code)
 

@@ -172,3 +172,30 @@ def test_pairing_rejects_duplicate_and_start_while_request_pending(monkeypatch):
             release.set()
             thread.join(3)
         assert responses[0].status_code == 202
+
+
+def test_stale_cleanup_pairing_reports_restart_required_without_contacting_daemon(monkeypatch):
+    module = load(monkeypatch, "service")
+    service = module.ConversationService(SimpleNamespace(robot=SimpleNamespace(device_info={})))
+    service.cleanup_pending = True
+    service.session = object()
+    connection = SimpleNamespace(pair=lambda code: pytest.fail("unconfirmed cleanup must retain ownership"))
+    with TestClient(module.create_web_app(service, ROOT / "web", connection=connection)) as client:
+        response = client.post("/api/pair", json={"pairing_code": "123456"})
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "speech_cleanup_required"
+    assert "重启" in response.json()["error"]
+    assert service.cleanup_pending is True
+    assert service.session is not None
+
+
+def test_active_conversation_pairing_reports_busy_without_contacting_daemon(monkeypatch):
+    module = load(monkeypatch, "service")
+    service = module.ConversationService(SimpleNamespace(robot=SimpleNamespace(device_info={})))
+    service.enabled = True
+    service.cleanup_pending = True
+    connection = SimpleNamespace(pair=lambda code: pytest.fail("active conversation must retain ownership"))
+    with TestClient(module.create_web_app(service, ROOT / "web", connection=connection)) as client:
+        response = client.post("/api/pair", json={"pairing_code": "123456"})
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "conversation_busy"

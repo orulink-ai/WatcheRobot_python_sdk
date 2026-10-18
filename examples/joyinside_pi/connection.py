@@ -10,9 +10,10 @@ from urllib.request import Request, urlopen
 
 
 class ConnectionError(RuntimeError):
-    def __init__(self, message: str, status_code: int = 503) -> None:
+    def __init__(self, message: str, status_code: int = 503, *, code: str | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 def validate_pairing_code(code: Any) -> str:

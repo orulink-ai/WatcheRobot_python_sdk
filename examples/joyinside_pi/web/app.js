@@ -31,6 +31,8 @@ const behaviorPhases = { connecting: "准备联动", listening: "聆听联动", 
 const motionEmotions = { chat_v1_talk: 0, chat_v1_smile: 1, chat_v1_happy: 2, chat_v1_angry: 3, chat_v1_focus: 4, chat_v1_sad: 5, chat_v1_resigned: 6 };
 const busyConnectionStates = new Set(["discovering", "pairing", "connecting", "reconnecting", "reuniting"]);
 const connectionErrors = {
+  speech_cleanup_required: "上一轮语音资源未释放，请重启 Pi Application 后重新配对。",
+  conversation_busy: "对话正在进行或暂停中，请先暂停对话并等待麦克风释放后再配对。",
   device_connect_timeout: "已找到机器人，但连接未完成，请重新打开 Desktop Link 后重试。",
   pairing_not_found: "未找到机器人，请检查电脑与机器人是否连接同一 Wi-Fi，并使用机器人当前显示的配对码重试。",
   discovery_timeout: "没有找到机器人。请确认连接同一 Wi-Fi，并使用机器人当前显示的新配对码重试。",
@@ -59,7 +61,11 @@ async function request(path, method = "GET", body) {
   }
   const response = await fetch(path, options);
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error || "操作未完成，请稍后重试");
+  if (!response.ok) {
+    const error = new Error(result.error || "操作未完成，请稍后重试");
+    if (typeof result.error_code === "string") error.code = result.error_code;
+    throw error;
+  }
   return result;
 }
 function updateControls() {
@@ -200,8 +206,9 @@ $("pairing-form").addEventListener("submit", async (event) => {
     pairingFeedback = "配对请求已提交，正在等待机器人连接。";
     renderConnection(next);
   } catch (error) {
-    pairingFeedback = connectionErrorMessage(error.message);
-    renderConnection({ ...connection, last_error: error.message });
+    const code = error.code || error.message;
+    pairingFeedback = connectionErrorMessage(code);
+    renderConnection({ ...connection, last_error: code });
   } finally {
     pairingPending = false;
     renderConnection(connection);

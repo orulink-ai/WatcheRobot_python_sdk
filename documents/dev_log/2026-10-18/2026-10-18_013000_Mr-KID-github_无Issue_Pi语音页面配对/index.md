@@ -52,3 +52,7 @@
 - 在标准 Daemon 管理的临时诊断 Application 中，设备信息查询获得 sys.ack；当前实物 v0.5.8 / protocol 1.0，声明 speech.joyinside.v1。随后 ctrl.speech.open、ctrl.speech.close 均无 ACK/NACK/evt.speech 并超时。再次确认问题发生在设备语音命令响应阶段，未获得设备端云鉴权失败证据。
 - 当前 ESP32 checkout 仅在能力表找到 speech.joyinside.v1，未检出 ctrl.speech 或专用 TTS 处理实现；这是源码检查及接口缺失的重要线索，不能当成已核验实际 Flash 二进制的证明。固件实现/功能启用应优先排查；机器人保存的 Bot 配置仍未读取确认。
 - 当前仍未枚举机器人 USB 串口，无法读取串口身份/NVS 或验证固件日志；未烧录固件、未重注册或替换设备 Bot。诊断后恢复 Pi Application，默认待机。
+
+## 后续变更
+
+- 2026-10-18 13:47:00 Asia/Shanghai｜Mr-KID-github / Codex：补充[2026-10-18_134233_Mr-KID-github_无Issue_Pi断线后配对被清理状态阻塞](../2026-10-18_134233_Mr-KID-github_无Issue_Pi断线后配对被清理状态阻塞/index.md)。新一轮失败发生在Application清理门禁前，原Wi-Fi提示掩盖HTTP409；重启Application后同码配对成功。保留本档案先前UDP accepted后连接超时的历史结论，不以本次结果替代未知历史根因。

@@ -1,5 +1,7 @@
 # JoyInside 本地 Pi 语音 Application
 
+源码交接与 Windows/macOS 启动步骤见 [从源码运行](SOURCE_RUN.zh-CN.md)。
+
 机器人负责麦克风和扬声器，电脑 Application 把识别文字交给本地 Pi。页面可选择机器人 JoyInside 语音，或由 Application 调用豆包 ASR/TTS。Daemon 仅转发业务帧；Pi 的模型和手机 MCP 配置不随语音后端切换。
 
 JoyInside 路径需要包含 `robot.speech` 的 SDK 和真正实现 `ctrl.speech.*` 的固件，仅声明 `speech.joyinside.v1` 不够；机器人也需配置 JoyInside。豆包路径使用 SDK 的机器人 PCM 采音与播放接口，不调用 `robot.speech`，但仍需固件支持麦克风和音频播放。机器人与电脑应处于同一局域网。安装 Pi 并配置其模型与登录，再从 SDK 仓库根目录执行：
@@ -121,3 +123,7 @@ Pi 在开始收音前预启动进程，正常轮次复用上下文，不自动�
 候选文本最多16384字符、最多32段待合成文本；PCM仍遵守8段 / 8 MiB预算（含合成预留和消费者持有）。候选超限或提交前合成失败时，回退为最终文本的正常TTS；已开始播放后的错误不会自动重播，以免重复。JoyInside 后端保持最终文本分句播报，不做本机预合成。
 
 性能日志 `speech_preview stage=prepare/discard/commit/fallback` 仅记录阶段、分段数与耗时，不记录文本或凭据。Pi 生成期间的合成耗时已与“Pi处理”重叠，页面“合成与播报”表示最终确认后的剩余等待及实际朗读，不能把各阶段相加当作没有重叠的纯延迟。若模型将全文集中在少数 delta 返回，能节约的等待也会较少；未宣称模型未生成完就朗读最终正文，或同一句云端音频首包直通扬声器。
+
+### Pairing after an interrupted conversation
+
+If the robot exits Desktop Link while speaking or listening, audio cleanup may remain unconfirmed. The local page reports that Pi Application must be restarted before pairing again. Restart this Application through the Daemon/Desktop application manager, then open Desktop Link and pair using the robot’s current code. An active or stopping conversation instead asks you to pause and wait. These local resource checks run before network discovery; they do not imply a Wi-Fi failure.
