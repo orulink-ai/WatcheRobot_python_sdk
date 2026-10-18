@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from ._internal.audio_status import AudioStatusKind, classify_audio_status
 from .errors import CameraCaptureError, CommandError, WatcheRobotError
-from .audio import AudioPlayback, PCMAudio, load_audio_file
+from .audio import AudioPlayback, ContinuousAudioPlayback, MAX_AUDIO_BYTES, PCMAudio, load_audio_file
 from .job import Job, JobState
 from .inputs import InputDomain, parse_input_event
 from .media import AudioFormat, AudioRecording, ImageFrame, MicrophoneSession
@@ -716,6 +716,10 @@ class AudioDomain(_Domain):
             )
         )
 
+    def open_stream(self, *, max_bytes: int = MAX_AUDIO_BYTES) -> ContinuousAudioPlayback:
+        """Open one continuous 24 kHz mono S16LE stream (firmware capability required)."""
+        return self._robot._start_continuous_audio(max_bytes)
+
     def stop(self) -> None:
         self._robot._stop_audio_playback()
 
@@ -1165,8 +1169,12 @@ class WatcheRobot:
         with self._audio_playback_lock:
             playback = self._audio_playback
             send_future = self._audio_send_future
-            self._audio_playback = None
-            self._audio_send_future = None
+        if isinstance(playback, ContinuousAudioPlayback):
+            playback._close_sender()
+        with self._audio_playback_lock:
+            if self._audio_playback is playback:
+                self._audio_playback = None
+                self._audio_send_future = None
         if playback is not None and not playback.state.terminal:
             playback._update(JobState.CANCELLED)
         if send_future is not None and not send_future.done():
@@ -1179,8 +1187,45 @@ class WatcheRobot:
         if send_future is not None and not send_future.done():
             send_future.cancel()
 
+    def _assert_no_continuous_audio(self) -> None:
+        with self._audio_playback_lock:
+            if isinstance(self._audio_playback, ContinuousAudioPlayback):
+                raise WatcheRobotError("continuous audio owns playback; stop it before starting another")
+
+    def _start_continuous_audio(self, max_bytes: int) -> ContinuousAudioPlayback:
+        if type(max_bytes) is not int or not 0 < max_bytes <= MAX_AUDIO_BYTES or max_bytes % 2:
+            raise ValueError("max_bytes must be a positive even integer no greater than 4 MiB")
+        if "audio.stream.continuous.v1" not in self.capabilities:
+            raise WatcheRobotError("robot firmware does not advertise audio.stream.continuous.v1")
+        with self._audio_api_lock:
+            with self._audio_playback_lock:
+                if self._audio_playback is not None:
+                    raise WatcheRobotError("another audio playback owns the device")
+            self._begin_audio_transition()
+            stream_id = self._next_audio_stream_id
+            self._next_audio_stream_id = 1 if stream_id >= 0xFFFF else stream_id + 1
+            playback = ContinuousAudioPlayback(stream_id, self._transport, max_bytes, self._cancel_audio_playback)
+            try:
+                self._command("ctrl.audio.stream.begin", {
+                    "stream_id": stream_id, "mode": "continuous", "max_bytes": max_bytes,
+                    "sample_rate_hz": 24000, "channels": 1, "sample_width_bytes": 2,
+                })
+                with self._audio_playback_lock:
+                    self._audio_playback = playback
+                self._transport.open_audio_stream(stream_id).result(
+                    timeout=getattr(self._transport, "command_timeout", 5) + 1)
+            except Exception:
+                # begin may have succeeded: retain ownership until stop confirms release.
+                with self._audio_playback_lock:
+                    self._audio_playback = playback
+                self._end_audio_transition(command_succeeded=False)
+                raise
+            self._end_audio_transition(command_succeeded=True)
+            return playback
+
     def _start_local_audio(self, sound_id: str) -> Job:
         with self._audio_api_lock:
+            self._assert_no_continuous_audio()
             self._begin_audio_transition()
             try:
                 job = self._start_job("ctrl.audio.play", {"sound_id": sound_id})
@@ -1195,6 +1240,7 @@ class WatcheRobot:
         if "audio.stream" not in self.capabilities:
             raise WatcheRobotError("robot firmware does not advertise audio.stream")
         with self._audio_api_lock:
+            self._assert_no_continuous_audio()
             self._begin_audio_transition()
             with self._audio_playback_lock:
                 stream_id = self._next_audio_stream_id
@@ -1310,7 +1356,8 @@ class WatcheRobot:
     def _cancel_audio_playback(self, playback: AudioPlayback) -> None:
         with self._audio_api_lock:
             with self._audio_playback_lock:
-                if self._audio_playback is not playback or playback.state.terminal:
+                if self._audio_playback is not playback or (playback.state.terminal and
+                        not isinstance(playback, ContinuousAudioPlayback)):
                     return
             self._begin_audio_transition()
             try:
@@ -1318,7 +1365,13 @@ class WatcheRobot:
             except Exception:
                 self._end_audio_transition(command_succeeded=False)
                 raise
-            self._cancel_audio_sender()
+            try:
+                self._cancel_audio_sender()
+                if isinstance(playback, ContinuousAudioPlayback):
+                    playback._close_sender()
+            except Exception:
+                self._end_audio_transition(command_succeeded=False)
+                raise
             playback._update(JobState.CANCELLED)
             with self._audio_playback_lock:
                 if self._audio_playback is playback:
@@ -1333,7 +1386,11 @@ class WatcheRobot:
             except Exception:
                 self._end_audio_transition(command_succeeded=False)
                 raise
-            self._replace_audio_playback()
+            try:
+                self._replace_audio_playback()
+            except Exception:
+                self._end_audio_transition(command_succeeded=False)
+                raise
             self._end_audio_transition(command_succeeded=True)
 
     def _open_microphone(self, *, queue_size: int, decode_opus: bool) -> MicrophoneSession:
@@ -1653,8 +1710,17 @@ class WatcheRobot:
         status = classify_audio_status(reason)
         if status is AudioStatusKind.COMPLETED:
             actual_sha256 = data.get("audio_sha256")
-            if isinstance(actual_sha256, str) and actual_sha256 != playback.expected_sha256:
+            if ((isinstance(playback, ContinuousAudioPlayback) and
+                 (not playback.expected_sha256 or actual_sha256 != playback.expected_sha256)) or
+                (isinstance(actual_sha256, str) and actual_sha256 != playback.expected_sha256)):
                 playback._update(JobState.FAILED, reason="checksum_mismatch")
+            elif isinstance(playback, ContinuousAudioPlayback) and any(
+                isinstance(data.get(key), int) and data[key] > 0
+                for key in ("dropped_frames", "drop_timeout_frames", "seq_gap_frames")
+            ):
+                # RX hashing can precede the device queue: a matching checksum
+                # alone does not prove every accepted frame reached playback.
+                playback._update(JobState.FAILED, reason="audio_frames_lost")
             else:
                 playback._update(JobState.COMPLETED)
         elif status is AudioStatusKind.FAILED:
@@ -1664,6 +1730,8 @@ class WatcheRobot:
         else:
             playback._update(JobState.RUNNING)
         if playback.state.terminal:
+            if isinstance(playback, ContinuousAudioPlayback) and playback.state is not JobState.COMPLETED:
+                return
             send_future = None
             with self._audio_playback_lock:
                 if self._audio_playback is playback:

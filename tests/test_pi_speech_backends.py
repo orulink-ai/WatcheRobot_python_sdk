@@ -2,6 +2,7 @@
 import asyncio
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,7 +17,11 @@ ROOT = Path(__file__).resolve().parents[1] / "examples" / "joyinside_pi"
 def module():
     spec = importlib.util.spec_from_file_location("pi_speech_backends", ROOT / "speech_backends.py")
     loaded = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(loaded)
+    sys.path.insert(0, str(ROOT))
+    try:
+        spec.loader.exec_module(loaded)
+    finally:
+        sys.path.pop(0)
     return loaded
 
 

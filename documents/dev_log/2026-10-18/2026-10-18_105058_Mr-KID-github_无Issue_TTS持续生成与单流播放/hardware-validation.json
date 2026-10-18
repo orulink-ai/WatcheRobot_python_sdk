@@ -1,0 +1,343 @@
+{
+  "scope": "Controlled same-PCM comparison, real cloud TTS, real Pi reply and robot playback telemetry; no acoustic recording or new ASR test",
+  "modes": {
+    "baseline": {
+      "passed": true,
+      "elapsed_ms": 12511,
+      "segments": [
+        {
+          "bytes": 105762,
+          "pcm_ms": 2203
+        },
+        {
+          "bytes": 164120,
+          "pcm_ms": 3419
+        },
+        {
+          "bytes": 133848,
+          "pcm_ms": 2788
+        }
+      ],
+      "commands": [
+        {
+          "command": "begin",
+          "started_ms": 418,
+          "returned_ms": 955
+        },
+        {
+          "command": "stop",
+          "started_ms": 3765,
+          "returned_ms": 3916
+        },
+        {
+          "command": "begin",
+          "started_ms": 3916,
+          "returned_ms": 4535
+        },
+        {
+          "command": "stop",
+          "started_ms": 8331,
+          "returned_ms": 8684
+        },
+        {
+          "command": "begin",
+          "started_ms": 8685,
+          "returned_ms": 9074
+        },
+        {
+          "command": "stop",
+          "started_ms": 12382,
+          "returned_ms": 12929
+        }
+      ],
+      "resources_released": true,
+      "reason_counts": {
+        "buffering": 12,
+        "playback": 33,
+        "draining": 3,
+        "complete": 3,
+        "aborted": 5
+      },
+      "complete_events": [
+        {
+          "at_ms": 3764,
+          "reason": "complete",
+          "playing": false,
+          "pending_frames": 0,
+          "free_frames": 64,
+          "enqueued_frames": 26,
+          "played_frames": 26,
+          "dropped_frames": 0,
+          "drop_timeout_frames": 0,
+          "stream_id": 1,
+          "seq_gap_frames": 0,
+          "audio_sha256": "30c1b0c225f27dd17dfec9d79ae77e9638371f70f1d4fe0530c2889f854d44cb"
+        },
+        {
+          "at_ms": 8331,
+          "reason": "complete",
+          "playing": false,
+          "pending_frames": 0,
+          "free_frames": 64,
+          "enqueued_frames": 41,
+          "played_frames": 41,
+          "dropped_frames": 0,
+          "drop_timeout_frames": 0,
+          "stream_id": 2,
+          "seq_gap_frames": 0,
+          "audio_sha256": "6b9a518bc0b00334bcbdde6b49d2860a20d1aa86a7416b32382da458bb715c84"
+        },
+        {
+          "at_ms": 12382,
+          "reason": "complete",
+          "playing": false,
+          "pending_frames": 0,
+          "free_frames": 64,
+          "enqueued_frames": 33,
+          "played_frames": 33,
+          "dropped_frames": 0,
+          "drop_timeout_frames": 0,
+          "stream_id": 3,
+          "seq_gap_frames": 0,
+          "audio_sha256": "167005add8cd1c68c55d2de85235cab5f81090f0c4b26dc6b2fa25e85edf6371"
+        }
+      ],
+      "midplay_buffering_reports": 0
+    },
+    "continuous": {
+      "passed": true,
+      "elapsed_ms": 11134,
+      "segments": [
+        {
+          "bytes": 105762,
+          "pcm_ms": 2203
+        },
+        {
+          "bytes": 164120,
+          "pcm_ms": 3419
+        },
+        {
+          "bytes": 133848,
+          "pcm_ms": 2788
+        }
+      ],
+      "commands": [
+        {
+          "command": "begin_continuous",
+          "started_ms": 1184,
+          "returned_ms": 1496
+        }
+      ],
+      "stats": {
+        "uploaded_bytes": 403730,
+        "begin_ms": 311.4774169953307,
+        "first_frame_ms": 312.2537919989554,
+        "upload_ms": 8471.388166988618,
+        "complete_ms": 11133.606916991994,
+        "elapsed_ms": 11133.621958986623
+      },
+      "resources_released": true,
+      "reason_counts": {
+        "aborted": 1,
+        "buffering": 11,
+        "playback": 34,
+        "draining": 1,
+        "complete": 1
+      },
+      "complete_events": [
+        {
+          "at_ms": 12317,
+          "reason": "complete",
+          "playing": false,
+          "pending_frames": 0,
+          "free_frames": 64,
+          "enqueued_frames": 99,
+          "played_frames": 99,
+          "dropped_frames": 0,
+          "drop_timeout_frames": 0,
+          "stream_id": 1,
+          "seq_gap_frames": 0,
+          "audio_sha256": "157e499c45d2f10d2ab28e9840a8aa530b8d250beced657bc58da7f4e8e7cadd"
+        }
+      ],
+      "midplay_buffering_reports": 7
+    },
+    "pipeline": {
+      "passed": true,
+      "elapsed_ms": 11291,
+      "segments": [
+        {
+          "bytes": 105762,
+          "pcm_ms": 2203
+        },
+        {
+          "bytes": 164120,
+          "pcm_ms": 3419
+        },
+        {
+          "bytes": 133848,
+          "pcm_ms": 2788
+        }
+      ],
+      "commands": [
+        {
+          "command": "begin_continuous",
+          "started_ms": 1462,
+          "returned_ms": 2943
+        }
+      ],
+      "stats": {
+        "uploaded_bytes": 403336,
+        "begin_ms": 1480.850374995498,
+        "first_frame_ms": 1481.9713750039227,
+        "upload_ms": 7680.32050000329,
+        "complete_ms": 10569.562167002005,
+        "elapsed_ms": 10569.569416999002
+      },
+      "resources_released": true,
+      "reason_counts": {
+        "aborted": 1,
+        "buffering": 9,
+        "playback": 33,
+        "draining": 1,
+        "complete": 1
+      },
+      "complete_events": [
+        {
+          "at_ms": 12031,
+          "reason": "complete",
+          "playing": false,
+          "pending_frames": 0,
+          "free_frames": 64,
+          "enqueued_frames": 99,
+          "played_frames": 99,
+          "dropped_frames": 0,
+          "drop_timeout_frames": 0,
+          "stream_id": 1,
+          "seq_gap_frames": 0,
+          "audio_sha256": "93410d5062ad047c50e084b27d8b4849294ad91cbe59470fd091708fab149000"
+        }
+      ],
+      "midplay_buffering_reports": 0
+    },
+    "integrated": {
+      "passed": true,
+      "elapsed_ms": 16227,
+      "segments": [
+        {
+          "bytes": 105762,
+          "pcm_ms": 2203
+        },
+        {
+          "bytes": 164120,
+          "pcm_ms": 3419
+        },
+        {
+          "bytes": 133848,
+          "pcm_ms": 2788
+        }
+      ],
+      "commands": [
+        {
+          "command": "begin_continuous",
+          "started_ms": 5664,
+          "returned_ms": 6079
+        }
+      ],
+      "stats": {
+        "uploaded_bytes": 419634,
+        "begin_ms": 415.9980000113137,
+        "first_frame_ms": 416.9334590114886,
+        "upload_ms": 7500.626959008514,
+        "complete_ms": 10026.171792007517,
+        "elapsed_ms": 10026.184625006863
+      },
+      "mouth_pcm_frames_max": 103,
+      "mouth_after_reply": 0,
+      "resources_released": true,
+      "reason_counts": {
+        "aborted": 1,
+        "buffering": 6,
+        "playback": 34,
+        "draining": 1,
+        "complete": 1
+      },
+      "complete_events": [
+        {
+          "at_ms": 15689,
+          "reason": "complete",
+          "playing": false,
+          "pending_frames": 0,
+          "free_frames": 64,
+          "enqueued_frames": 103,
+          "played_frames": 103,
+          "dropped_frames": 0,
+          "drop_timeout_frames": 0,
+          "stream_id": 1,
+          "seq_gap_frames": 0,
+          "audio_sha256": "5b28efd18b169267317ce7ab2e420a2ed6cc34be5748dab6ae6242bfcb0866a8"
+        }
+      ],
+      "midplay_buffering_reports": 0
+    },
+    "cancel": {
+      "passed": true,
+      "elapsed_ms": 1547,
+      "segments": [
+        {
+          "bytes": 105762,
+          "pcm_ms": 2203
+        },
+        {
+          "bytes": 164120,
+          "pcm_ms": 3419
+        },
+        {
+          "bytes": 133848,
+          "pcm_ms": 2788
+        }
+      ],
+      "commands": [
+        {
+          "command": "begin_continuous",
+          "started_ms": 410,
+          "returned_ms": 716
+        },
+        {
+          "command": "stop",
+          "started_ms": 1588,
+          "returned_ms": 1957
+        }
+      ],
+      "cancelled_owner_released": true,
+      "resources_released": true,
+      "reason_counts": {
+        "aborted": 2,
+        "buffering": 5,
+        "playback": 2
+      },
+      "complete_events": [],
+      "midplay_buffering_reports": 0
+    }
+  },
+  "limitations": [
+    "No acoustic first-sample measurement; no promise of zero Wi-Fi jitter or natural punctuation pauses.",
+    "A first old-firmware v1 run failed with audio_send_failed and was excluded from timing comparison."
+  ],
+  "firmware": {
+    "bytes": 6184080,
+    "sha256": "f06ea3e023a2a6d1e7c99dc4351e56c39a661cfe06dd32af1283740add5cf2a9",
+    "app_only_verified": true,
+    "persistent_configuration_preserved": true
+  },
+  "same_pcm_previous_continuous_elapsed_ms": [
+    9720
+  ],
+  "deployment": {
+    "application": "com.orulink.joyinside_pi",
+    "connected": true,
+    "backend": "doubao",
+    "phase": "paused",
+    "resources_released": true
+  }
+}

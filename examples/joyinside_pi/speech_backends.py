@@ -20,6 +20,8 @@ from watcherobot.voice.device import SDKVoiceDevice
 from watcherobot.voice.providers.asr import StreamingASR
 from watcherobot.voice.providers.http import CloudTTS
 
+from tts_pipeline import run_tts_pipeline
+
 ROOT = Path(__file__).resolve().parent
 LOGGER = logging.getLogger("watcherobot.pi.speech")
 
@@ -250,6 +252,7 @@ class DoubaoSession:
         self._acknowledgement_cache = acknowledgement_cache or _AcknowledgementCache()
         self._tts_fingerprint = tts_fingerprint
         self._cancel_generation = 0
+        self._speech_kind = "direct"
 
     async def _run(self, operation: Callable[[], Awaitable[Any]], timeout: float | None = None) -> Any:
         if self._closing or self.closed:
@@ -322,13 +325,15 @@ class DoubaoSession:
         await self._run(lambda: self._say(text))
 
     async def _say(self, text: str) -> None:
+        self._speech_kind = "direct"
         await self._play_pcm(await self._synthesize(text, 1), 1)
 
     async def acknowledge(self, text: str) -> None:
-        """Play a fixed short confirmation; only this API populates the cache."""
+        """Play a model-authored short preface; only this API caches matching audio."""
         await self._run(lambda: self._acknowledge(text))
 
     async def _acknowledge(self, text: str) -> None:
+        self._speech_kind = "preface"
         if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > 900:
             raise VoiceError("确认语必须是非空短文本")
         generation = self._cancel_generation
@@ -349,59 +354,35 @@ class DoubaoSession:
         self._acknowledgement_cache.entry = (self._tts_fingerprint, text, pcm)
 
     async def say_segments(self, segments: Iterable[str]) -> None:
-        """Prepare at most one next sentence while the current sentence plays."""
+        """Generate ahead; capable devices play the whole reply on one stream."""
         await self._run(lambda: self._say_segments(segments))
 
     async def _say_segments(self, segments: Iterable[str]) -> None:
-        queue: asyncio.Queue[tuple[int, bytes] | None] = asyncio.Queue(maxsize=1)
-        # The slot is acquired before synthesis, not after it: a full queue
-        # must not leave a third, fully synthesized sentence waiting outside it.
-        available = asyncio.Semaphore(1)
-        stopping = False
+        self._speech_kind = "final"
+        continuous = bool(getattr(self.device, "supports_continuous_playback", False))
+        self.logger.info("speech_pipeline kind=final mode=%s", "continuous" if continuous else "legacy_batch")
+        await run_tts_pipeline(
+            segments, synthesize=self._synthesize, play_segment=self._play_pcm,
+            play_stream=self._play_continuous if continuous else None, logger=self.logger,
+        )
 
-        def check() -> None:
-            if stopping or self._closing or self.closed:
-                raise asyncio.CancelledError
-
-        async def produce() -> None:
-            for number, text in enumerate(segments, 1):
-                if not isinstance(text, str):
-                    raise VoiceError("TTS 播报分段必须是文本")
-                if not text.strip():
-                    continue
-                await available.acquire()
-                check()
-                pcm = await self._synthesize(text, number)
-                check()
-                await queue.put((number, pcm))
-            await queue.put(None)
-
-        async def play() -> None:
-            while True:
-                item = await queue.get()
-                if item is None:
-                    return
-                number, pcm = item
-                available.release()
-                check()
-                await self._play_pcm(pcm, number)
-                check()
-
-        tasks = [asyncio.create_task(produce()), asyncio.create_task(play())]
+    async def _play_continuous(self, frames) -> None:
+        started = asyncio.get_running_loop().time()
         try:
-            await asyncio.gather(*tasks)
+            await asyncio.wait_for(self.device.play_stream(frames), MAX_AUDIO_BYTES / 48000 + self.tts_timeout + 20)
+        except TimeoutError:
+            await self.device.stop()
+            raise VoiceError("机器人连续音频播放超时，请检查设备连接") from None
         finally:
-            # Mark the pipeline invalid before cancelling providers which may
-            # suppress cancellation while completing their final network read.
-            stopping = True
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            self._timing("continuous_end", started, 0)
+            for name, value in getattr(self.device, "last_playback_stats", {}).items():
+                if isinstance(value, (int, float)):
+                    self.logger.info("speech_device kind=final metric=%s value=%s", name, value)
 
     def _timing(self, stage: str, started: float, segment: int) -> None:
         elapsed = round((asyncio.get_running_loop().time() - started) * 1000)
-        self.logger.info("speech_timing stage=%s segment=%d elapsed_ms=%d", stage, segment, elapsed)
+        self.logger.info("speech_timing stage=%s segment=%d elapsed_ms=%d kind=%s",
+                         stage, segment, elapsed, self._speech_kind)
 
     async def _synthesize(self, text: str, segment: int) -> bytes:
         started = asyncio.get_running_loop().time()

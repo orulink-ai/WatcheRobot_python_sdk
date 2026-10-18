@@ -2,6 +2,7 @@
 import asyncio
 import importlib.util
 import logging
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,11 @@ ROOT = Path(__file__).resolve().parents[1] / "examples" / "joyinside_pi"
 def module(name):
     spec = importlib.util.spec_from_file_location("pi_latency_" + name, ROOT / (name + ".py"))
     loaded = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(loaded)
+    sys.path.insert(0, str(ROOT))
+    try:
+        spec.loader.exec_module(loaded)
+    finally:
+        sys.path.pop(0)
     return loaded
 
 
@@ -57,7 +62,7 @@ def session(device, tts):
     return module("speech_backends").DoubaoSession(device, None, tts, 1, 1)
 
 
-def test_next_segment_prefetches_but_third_waits_for_playback():
+def test_ready_segments_keep_generating_and_merge_for_legacy():
     async def run():
         second_ready, first_playing, release_first = asyncio.Event(), asyncio.Event(), asyncio.Event()
         synthesized = []
@@ -82,10 +87,10 @@ def test_next_segment_prefetches_but_third_waits_for_playback():
         await asyncio.wait_for(first_playing.wait(), 1)
         await asyncio.wait_for(second_ready.wait(), 1)
         await asyncio.sleep(0)
-        assert synthesized == ["a", "b"]
+        assert synthesized == ["a", "b", "c"]
         release_first.set()
         await asyncio.wait_for(playing, 1)
-        assert device.played == [b"aa", b"bb", b"cc"]
+        assert device.played == [b"aa", b"bbcc"]
 
     asyncio.run(run())
 
@@ -252,4 +257,41 @@ def test_pipeline_close_failure_retains_lease_until_retry():
         await speech.close()
         assert speech.closed and device.played == []
 
+    asyncio.run(run())
+
+
+def test_negotiated_continuous_reply_uses_exactly_one_device_stream():
+    async def run():
+        class StreamingDevice(Device):
+            supports_continuous_playback = True
+            def __init__(self): super().__init__(); self.streams=[]
+            async def play_stream(self,frames): self.streams.append([pcm async for pcm in frames])
+            async def play(self,pcm): raise AssertionError('Must not restart per segment')
+        device=StreamingDevice();speech=session(device,TTS())
+        await speech.say_segments(['a','b','c'])
+        assert device.streams==[[b'aa',b'bb',b'cc']]
+    asyncio.run(run())
+
+
+def test_continuous_reply_cancellation_joins_synthesis_and_stream():
+    async def run():
+        started,producer_ended,stream_ended=asyncio.Event(),asyncio.Event(),asyncio.Event()
+        class StreamingDevice(Device):
+            supports_continuous_playback=True
+            async def play_stream(self,frames):
+                try:
+                    async for pcm in frames:
+                        started.set();await asyncio.Event().wait()
+                finally:stream_ended.set()
+        class SlowTTS(TTS):
+            async def synthesize(self,text):
+                if text=='b':
+                    try:await asyncio.Event().wait()
+                    finally:producer_ended.set()
+                yield AudioChunk(b'aa')
+        speech=session(StreamingDevice(),SlowTTS())
+        playing=asyncio.create_task(speech.say_segments(['a','b']))
+        await asyncio.wait_for(started.wait(),1)
+        await speech.cancel();await asyncio.gather(playing,return_exceptions=True)
+        assert producer_ended.is_set() and stream_ended.is_set()
     asyncio.run(run())
