@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from agent import PiAgent, speech_chunks
 from connection import ConnectionError, DaemonConnection, validate_pairing_code
+from streaming_text import TextSpeechPreview
 
 
 class Interrupted(Exception):
@@ -209,15 +210,22 @@ class ConversationService:
         if not self._alive(generation):
             raise Interrupted
 
-    async def _ask(self, generation: int, text: str) -> str:
+    async def _ask(self, generation: int, text: str, *, on_event: Callable | None = None,
+                   before_speak: Callable | None = None) -> str:
         self._prewarm_agent()
         if self.agent_open_task is not None:
             await asyncio.shield(self.agent_open_task)
         if not self._alive(generation):
             raise Interrupted
+        async def speak(spoken: str) -> None:
+            if before_speak is not None:
+                await before_speak()
+            await self._acknowledge(generation, spoken)
+
         task = asyncio.create_task(self.agent.ask(
             self.voice_instructions + "\n\n用户语音识别原文：\n" + text,
-            on_speak=lambda spoken: self._acknowledge(generation, spoken)))
+            on_speak=speak,
+            **({"on_event": on_event} if on_event is not None else {})))
         try:
             while not task.done():
                 if not self._alive(generation):
@@ -262,6 +270,7 @@ class ConversationService:
                 self.error = ""
                 self.phase = "connecting"
                 operation = "机器人语音连接"
+                preview = None
                 try:
                     if not os.environ.get("WATCHER_SPEECH_TEST_TEXT") and os.environ.get("WATCHER_SPEECH_AGENT") != "echo":
                         self._prewarm_agent()
@@ -299,8 +308,13 @@ class ConversationService:
                     await self._phase("thinking")
                     pi_started = asyncio.get_running_loop().time()
                     operation = "Pi 回复"
+                    if (getattr(self.session, "supports_text_preview", False)
+                            and os.environ.get("WATCHER_SPEECH_AGENT") != "echo"):
+                        preview = TextSpeechPreview(self.session.say_segments, logger=self.context.logger)
                     reply = ("你说的是：" + text if os.environ.get("WATCHER_SPEECH_AGENT") == "echo"
-                             else await self._ask(generation, text))
+                             else await self._ask(generation, text,
+                                                  on_event=preview.handle if preview else None,
+                                                  before_speak=preview.join if preview else None))
                     if not self._alive(generation):
                         raise Interrupted
                     self._timing("pi", pi_started)
@@ -308,7 +322,9 @@ class ConversationService:
                     await self._phase("speaking", text=reply)
                     speech_started = asyncio.get_running_loop().time()
                     operation = "机器人语音播报"
-                    if hasattr(self.session, "say_segments"):
+                    if preview is not None and await self._call(generation, preview.play, final=reply):
+                        pass
+                    elif hasattr(self.session, "say_segments"):
                         await self._call(generation, self.session.say_segments, segments=speech_chunks(reply))
                     else:
                         for chunk in speech_chunks(reply):
@@ -330,6 +346,8 @@ class ConversationService:
                     await self._close_agent()
                 finally:
                     try:
+                        if preview is not None:
+                            await preview.close()
                         await self._close_session()
                     except Exception as error:
                         reason = str(error) or type(error).__name__

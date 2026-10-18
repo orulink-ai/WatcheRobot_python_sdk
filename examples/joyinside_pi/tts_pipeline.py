@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable
+from contextlib import aclosing
 import logging
 import time
 
@@ -51,11 +52,28 @@ class _PreparedPCM:
             self.changed.notify_all()
 
 
+async def _text_segments(segments: Iterable[str] | AsyncIterable[str]) -> AsyncIterator[str]:
+    """Own the async iterator, including when it is suspended after yielding."""
+    if isinstance(segments, AsyncIterable):
+        iterator = aiter(segments)
+        try:
+            async for text in iterator:
+                yield text
+        finally:
+            close = getattr(iterator, 'aclose', None)
+            if close is not None:
+                await close()
+    else:
+        for text in segments:
+            yield text
+
+
 async def run_tts_pipeline(
-    segments: Iterable[str], *,
+    segments: Iterable[str] | AsyncIterable[str], *,
     synthesize: Callable[[str, int], Awaitable[bytes]],
     play_segment: Callable[[bytes, int], Awaitable[None]],
     play_stream: Callable | None = None,
+    before_play: Callable[[], Awaitable[None]] | None = None,
     max_segment_bytes: int = MAX_AUDIO_BYTES,
     buffer_bytes: int = 2 * MAX_AUDIO_BYTES,
     max_segments: int = 8,
@@ -66,23 +84,28 @@ async def run_tts_pipeline(
     The reservation includes synthesis in progress and PCM held by the consumer.
     Continuous devices consume one iterator for the entire reply. A v1 device
     starts its first segment immediately, then coalesces already prepared PCM.
+    An optional playback gate waits after the first PCM is ready, without
+    blocking bounded synthesis or opening a device stream prematurely.
     """
     queue = _PreparedPCM(max_segment_bytes, buffer_bytes, max_segments)
 
     async def produce() -> None:
-        for number, text in enumerate(segments, 1):
-            if not isinstance(text, str):
-                raise ValueError('TTS 播报分段必须是文本')
-            if not text.strip():
-                continue
-            await queue.reserve()
-            pcm = await synthesize(text, number)
-            if not isinstance(pcm, bytes) or not pcm or len(pcm) % 2 or len(pcm) > max_segment_bytes:
-                raise ValueError('TTS 分段 PCM 无效或超过预算')
-            await queue.put(number, pcm)
-            if logger:
-                logger.info('speech_queue stage=ready segment=%d buffered_segments=%d buffered_bytes=%d',
-                            number, queue.count, queue.bytes)
+        async with aclosing(_text_segments(segments)) as texts:
+            number = 0
+            async for text in texts:
+                number += 1
+                if not isinstance(text, str):
+                    raise ValueError('TTS 播报分段必须是文本')
+                if not text.strip():
+                    continue
+                await queue.reserve()
+                pcm = await synthesize(text, number)
+                if not isinstance(pcm, bytes) or not pcm or len(pcm) % 2 or len(pcm) > max_segment_bytes:
+                    raise ValueError('TTS 分段 PCM 无效或超过预算')
+                await queue.put(number, pcm)
+                if logger:
+                    logger.info('speech_queue stage=ready segment=%d buffered_segments=%d buffered_bytes=%d',
+                                number, queue.count, queue.bytes)
         async with queue.changed:
             queue.ended = True
             queue.changed.notify_all()
@@ -104,8 +127,12 @@ async def run_tts_pipeline(
         first = await queue.take()
         if first is None:
             return
+        if before_play is not None:
+            await before_play()
+        if queue.stopping:
+            # A user gate may suppress CancelledError during its own cleanup.
+            raise asyncio.CancelledError
         if play_stream is not None:
-            from contextlib import aclosing
             async with aclosing(frames(first)) as audio:
                 await play_stream(audio)
             return
@@ -129,12 +156,15 @@ async def run_tts_pipeline(
             item = await queue.take()
 
     tasks = [asyncio.create_task(produce()), asyncio.create_task(consume())]
+    completion = asyncio.gather(*tasks)
     try:
-        await asyncio.gather(*tasks)
+        # Mark stopping before forwarding cancellation to resistant callbacks.
+        await asyncio.shield(completion)
     finally:
         queue.stopping = True
         for task in tasks:
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(completion, return_exceptions=True)
         queue.ready.clear()

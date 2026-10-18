@@ -1,0 +1,26 @@
+{
+  "prepare_ms": 3732,
+  "commit_ms": 3896,
+  "tts_first_audio_ms": 4278,
+  "tts_complete_ms": 4577,
+  "ready_ms": 4577,
+  "continuous_end_ms": 16629,
+  "device_uploaded_bytes": 516056.0,
+  "device_begin_ms": 442.72108298901003,
+  "device_first_frame_ms": 443.22029199975077,
+  "device_upload_ms": 9875.952249989496,
+  "device_complete_ms": 12050.695375000942,
+  "device_elapsed_ms": 12050.737832993036,
+  "ok": true,
+  "turns": 1,
+  "error": "",
+  "timings_ms": {
+    "pi_start": 5,
+    "recognition": 51,
+    "pi": 2974,
+    "speech": 12745
+  },
+  "physical_device": true,
+  "asr_tested": false,
+  "cleanup_confirmed": true
+}

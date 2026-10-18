@@ -248,7 +248,9 @@ def test_one_start_runs_multiple_turns_and_pause_drains_microphone(monkeypatch):
         assert robot.sessions[1].played == ["reply 2"]
         assert all(s.closed for s in robot.sessions[:2])
         service.pause()
-        await wait_until(lambda: robot.sessions[2].closed)
+        # Audio close precedes behavior cleanup; wait for the full pause before
+        # asserting its terminal state, rather than racing the service owner.
+        await wait_until(lambda: robot.sessions[2].closed and service.snapshot()["phase"] == "paused")
         assert robot.sessions[2].cancelled.is_set()
         assert service.snapshot()["phase"] == "paused"
         assert len(service.snapshot()["messages"]) == 4

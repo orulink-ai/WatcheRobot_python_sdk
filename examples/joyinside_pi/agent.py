@@ -102,6 +102,8 @@ class PiAgent:
         self.cwd = cwd
         self.process: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
+        self._request_task: asyncio.Task | None = None
 
     async def __aenter__(self) -> PiAgent:
         self.process = await asyncio.create_subprocess_exec(
@@ -118,17 +120,24 @@ class PiAgent:
         await self.process.stdin.drain()
 
     async def ask(self, text: str, *, timeout: float = 120,
-                  on_speak: Callable[[str], Awaitable[None]] | None = None) -> str:
+                  on_speak: Callable[[str], Awaitable[None]] | None = None,
+                  on_event: Callable[[dict], Awaitable[None]] | None = None) -> str:
         async with self._lock:
+            task = asyncio.create_task(self._ask(text, on_speak=on_speak, on_event=on_event))
+            self._request_task = task
             try:
-                return await asyncio.wait_for(self._ask(text, on_speak=on_speak), timeout)
+                return await asyncio.wait_for(task, timeout)
             except BaseException:
                 # Retire this process so late session events cannot complete
                 # a later prompt. The next Application run creates a new Pi.
                 await self.close()
                 raise
+            finally:
+                if self._request_task is task:
+                    self._request_task = None
 
-    async def _ask(self, text: str, *, on_speak: Callable[[str], Awaitable[None]] | None = None) -> str:
+    async def _ask(self, text: str, *, on_speak: Callable[[str], Awaitable[None]] | None = None,
+                   on_event: Callable[[dict], Awaitable[None]] | None = None) -> str:
         request = uuid.uuid4().hex
         await self._send({"id": request, "type": "prompt", "message": text})
         assert self.process is not None and self.process.stdout is not None
@@ -141,6 +150,10 @@ class PiAgent:
             if not isinstance(record, dict):
                 raise RuntimeError("Invalid Pi RPC record")
             kind = record.get("type")
+            # Observers may enqueue bounded speculative text, but must never
+            # wait for cloud synthesis or playback: RPC must keep draining.
+            if on_event is not None:
+                await on_event(record)
             if kind == "response" and record.get("id") == request:
                 if record.get("success") is not True:
                     raise RuntimeError("Pi rejected the prompt")
@@ -180,6 +193,14 @@ class PiAgent:
                 return reply
 
     async def close(self) -> None:
+        async with self._close_lock:
+            await self._close()
+
+    async def _close(self) -> None:
+        request = self._request_task
+        if request is not None and not request.done():
+            request.cancel()
+            await asyncio.gather(request, return_exceptions=True)
         process = self.process
         if process is None or process.returncode is not None:
             return

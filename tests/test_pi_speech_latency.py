@@ -295,3 +295,59 @@ def test_continuous_reply_cancellation_joins_synthesis_and_stream():
         await speech.cancel();await asyncio.gather(playing,return_exceptions=True)
         assert producer_ended.is_set() and stream_ended.is_set()
     asyncio.run(run())
+
+
+def test_session_synthesizes_async_text_before_gate_and_retains_single_owner():
+    async def run():
+        gate_entered, release_gate, prepared = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        class Synth(TTS):
+            async def synthesize(self, text):
+                yield AudioChunk(text.encode() * 2)
+                if text == 'b':
+                    prepared.set()
+        async def source():
+            yield 'a'
+            yield 'b'
+        async def gate():
+            gate_entered.set()
+            await release_gate.wait()
+        device = Device()
+        speech = session(device, Synth())
+        operation = asyncio.create_task(speech.say_segments(source(), before_play=gate))
+        try:
+            await asyncio.wait_for(gate_entered.wait(), 1)
+            await asyncio.wait_for(prepared.wait(), 1)
+            assert device.played == []
+            with pytest.raises(VoiceError, match='已有'):
+                await speech.say_segments(['c'])
+            release_gate.set()
+            await asyncio.wait_for(operation, 1)
+            assert b''.join(device.played) == b'aabb' and speech._task is None
+        finally:
+            release_gate.set()
+            operation.cancel()
+            await asyncio.gather(operation, return_exceptions=True)
+    asyncio.run(run())
+
+
+def test_session_cancel_while_gate_waits_closes_async_text_before_returning():
+    async def run():
+        gate_entered, source_closed = asyncio.Event(), asyncio.Event()
+        async def source():
+            try:
+                yield 'a'
+                await asyncio.Event().wait()
+            finally:
+                source_closed.set()
+        async def gate():
+            gate_entered.set()
+            await asyncio.Event().wait()
+        device = Device()
+        speech = session(device, TTS())
+        operation = asyncio.create_task(speech.say_segments(source(), before_play=gate))
+        await asyncio.wait_for(gate_entered.wait(), 1)
+        await asyncio.wait_for(speech.cancel(), 1)
+        result = await asyncio.gather(operation, return_exceptions=True)
+        assert isinstance(result[0], asyncio.CancelledError)
+        assert source_closed.is_set() and device.played == [] and speech._task is None
+    asyncio.run(run())

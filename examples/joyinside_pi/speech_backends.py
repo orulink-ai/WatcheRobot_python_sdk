@@ -5,7 +5,7 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import AsyncIterable, Iterable
 from contextlib import aclosing
 from dataclasses import asdict
 from pathlib import Path
@@ -239,6 +239,8 @@ class _UtteranceCapture:
 class DoubaoSession:
     """One half-duplex lease; cancel joins active work before touching device cleanup."""
 
+    supports_text_preview = True
+
     def __init__(self, device: Any, asr: Any, tts: Any, asr_timeout: float, tts_timeout: float,
                  *, logger: Any = None, acknowledgement_cache: _AcknowledgementCache | None = None,
                  tts_fingerprint: bytes = b"") -> None:
@@ -353,17 +355,20 @@ class DoubaoSession:
         # Ordinary answers never call this path or populate this one-entry cache.
         self._acknowledgement_cache.entry = (self._tts_fingerprint, text, pcm)
 
-    async def say_segments(self, segments: Iterable[str]) -> None:
+    async def say_segments(self, segments: Iterable[str] | AsyncIterable[str], *,
+                           before_play: Callable[[], Awaitable[None]] | None = None) -> None:
         """Generate ahead; capable devices play the whole reply on one stream."""
-        await self._run(lambda: self._say_segments(segments))
+        await self._run(lambda: self._say_segments(segments, before_play=before_play))
 
-    async def _say_segments(self, segments: Iterable[str]) -> None:
+    async def _say_segments(self, segments: Iterable[str] | AsyncIterable[str], *,
+                            before_play: Callable[[], Awaitable[None]] | None = None) -> None:
         self._speech_kind = "final"
         continuous = bool(getattr(self.device, "supports_continuous_playback", False))
         self.logger.info("speech_pipeline kind=final mode=%s", "continuous" if continuous else "legacy_batch")
         await run_tts_pipeline(
             segments, synthesize=self._synthesize, play_segment=self._play_pcm,
-            play_stream=self._play_continuous if continuous else None, logger=self.logger,
+            play_stream=self._play_continuous if continuous else None,
+            before_play=before_play, logger=self.logger,
         )
 
     async def _play_continuous(self, frames) -> None:

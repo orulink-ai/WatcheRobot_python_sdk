@@ -57,3 +57,7 @@ TDD覆盖顺序、预算/背压、提前持续生成、单stream、hash/EOS/超�
 - 配套固件提交：`618bdb2dc46e0ad626fee9ebf749878ab01b1e12`（codex/macos-joyinside-provision），提供audio.stream.continuous.v1显式mode/预算/FIRST/EOS合同。SDK按capability启用，旧固件继续降级，不修改Daemon透明路由。
 - 验证复用最后源码对应430项合并回归、216项SDK专项、37项固件Host、mypy与Node/UI结果；源文件自上次验证未变化，本轮不重复测试、构建或烧录。所有计数按各执行范围记录，不累加为独立测试总量。
 - 提交前git diff/新增文件/敏感资料扫描通过，没有凭据、个人绝对路径/端口、PCM制品、临时脚本、运行时日志或缓存。仅本地提交，无push/PR/合入。
+
+## 后续变更
+
+2026-10-18｜Mr-KID-github / Codex｜补充 [Pi流式文本提前合成](../2026-10-18_111939_Mr-KID-github_无Issue_Pi流式文本提前合成/index.md)：把TTS合成提前到Pi生成期间；原有单流播放、预算、最终settled及操作前播报屏障仍保留。
