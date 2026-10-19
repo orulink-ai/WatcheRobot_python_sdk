@@ -1,0 +1,26 @@
+...F.....s...........                                                    [100%]
+=================================== FAILURES ===================================
+__ test_same_size_rewrite_with_restored_mtime_invalidates_verification[True] ___
+
+tmp_path = PosixPath('/tmp/pytest-of-hermesadmin/pytest-10/test_same_size_rewrite_with_re1')
+damage_target = True
+
+    @pytest.mark.parametrize("damage_target", [False, True])
+    def test_same_size_rewrite_with_restored_mtime_invalidates_verification(tmp_path, damage_target):
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "runtime.exe").write_bytes(b"good")
+        target = prepare_bundle(source, tmp_path / "shared")
+        changed = (target if damage_target else source) / "runtime.exe"
+        before = changed.stat()
+        changed.write_bytes(b"evil")
+        os.utime(changed, ns=(before.st_atime_ns, before.st_mtime_ns))
+        if damage_target:
+>           with pytest.raises(ValueError, match="integrity"):
+E           Failed: DID NOT RAISE ValueError
+
+tests/runtime/test_runtime_repository.py:62: Failed
+=========================== short test summary info ============================
+SKIPPED [1] tests/runtime/test_runtime_repository.py:126: Windows MAX_PATH regression
+FAILED tests/runtime/test_runtime_repository.py::test_same_size_rewrite_with_restored_mtime_invalidates_verification[True]
+1 failed, 19 passed, 1 skipped in 0.20s

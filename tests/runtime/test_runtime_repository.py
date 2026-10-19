@@ -65,6 +65,27 @@ def test_same_size_rewrite_with_restored_mtime_invalidates_verification(tmp_path
         assert prepare_bundle(source, tmp_path / "shared") != target
 
 
+@pytest.mark.parametrize("damage_target", [False, True])
+def test_colliding_change_metadata_cannot_reuse_verification(tmp_path, monkeypatch, damage_target):
+    from watcherobot.runtime import bundle_verification
+
+    # Model filesystems where an immediate rewrite retains the change time.
+    monkeypatch.setattr(bundle_verification, "_change_time", lambda path, metadata: 123)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "runtime.exe").write_bytes(b"good")
+    target = prepare_bundle(source, tmp_path / "shared")
+    changed = (target if damage_target else source) / "runtime.exe"
+    before = changed.stat()
+    changed.write_bytes(b"evil")
+    os.utime(changed, ns=(before.st_atime_ns, before.st_mtime_ns))
+    if damage_target:
+        with pytest.raises(ValueError, match="integrity"):
+            prepare_bundle(source, tmp_path / "shared")
+    else:
+        assert prepare_bundle(source, tmp_path / "shared") != target
+
+
 def test_verification_receipt_damage_falls_back_to_content_hash(tmp_path, monkeypatch):
     from watcherobot.runtime import repository
 

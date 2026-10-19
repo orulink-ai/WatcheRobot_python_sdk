@@ -1,6 +1,9 @@
 import re
 from pathlib import Path
 
+import tomli
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 
@@ -226,7 +229,7 @@ def test_release_version_pr_runs_the_full_supported_compatibility_matrix() -> No
     assert "max-parallel: 2" in release
     assert "python-version: ${{ matrix.python-version }}" in release
     assert '"fastapi==0.129.*"' in release
-    assert '"huggingface-hub==1.26.*"' in release
+    assert '"huggingface-hub==1.32.*"' in release
     assert '"packaging==24.*"' in release
     assert '"uvicorn==0.30.*"' in release
     assert '"starlette==0.51.*"' in release
@@ -240,6 +243,38 @@ def test_release_version_pr_runs_the_full_supported_compatibility_matrix() -> No
     assert "matrix.dependency-profile == 'latest'" in release
     assert "python -m build" in release
     assert "python -m twine check dist/*" in release
+
+
+def test_release_minimum_dependency_pins_satisfy_runtime_requirements() -> None:
+    pyproject = tomli.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    requirements = {
+        canonicalize_name(requirement.name): requirement
+        for requirement in map(Requirement, pyproject["project"]["dependencies"])
+    }
+    workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+    minimum_step = workflow.split(
+        "      - name: Select minimum supported runtime dependencies", maxsplit=1
+    )[1].split("      - name:", maxsplit=1)[0]
+    pins = re.findall(r'"([A-Za-z0-9_.-]+==[^"\n]+)"', minimum_step)
+
+    assert pins, "The minimum dependency profile must contain explicit runtime pins"
+    for pin_text in pins:
+        pin = Requirement(pin_text)
+        requirement = requirements[canonicalize_name(pin.name)]
+        (specifier,) = pin.specifier
+        minimum_version = Version(specifier.version.removesuffix(".*"))
+        assert minimum_version in requirement.specifier, (
+            f"CI minimum pin {pin_text} conflicts with runtime requirement {requirement}"
+        )
+
+
+def test_release_minimum_dependencies_are_resolved_together_with_sdk() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "sdk-ci.yml").read_text(encoding="utf-8")
+    minimum_step = workflow.split(
+        "      - name: Select minimum supported runtime dependencies", maxsplit=1
+    )[1].split("      - name:", maxsplit=1)[0]
+
+    assert 'python -m pip install -e ".[test]" \\' in minimum_step
 
 
 def test_fake_ble_tests_run_in_development_ci_on_self_hosted_linux() -> None:

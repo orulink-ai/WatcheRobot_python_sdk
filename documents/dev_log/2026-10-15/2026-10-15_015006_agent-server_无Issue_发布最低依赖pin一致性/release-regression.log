@@ -1,0 +1,15 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/hermesadmin/work/sdk-0112-ci-fix
+configfile: pyproject.toml
+plugins: anyio-4.15.1
+collected 59 items
+
+tests/test_release.py ..............                                     [ 23%]
+tests/tools/test_check_release_availability.py ........                  [ 37%]
+tests/tools/test_check_release_gate.py ............                      [ 57%]
+tests/tools/test_check_release_version.py ............                   [ 77%]
+tests/tools/test_prepare_release.py ...                                  [ 83%]
+tests/tools/test_verify_release_artifacts.py ..........                  [100%]
+
+============================== 59 passed in 0.19s ==============================

@@ -1,0 +1,58 @@
+实际执行输出摘录，完整本机输出见 /home/hermesadmin/work/sdk-0112-validation-logs/。
+
+[旧 pin 真实解析：exit 1；--dry-run，不执行降级]
+COMMAND: /home/hermesadmin/work/sdk-0112-validation-venv/bin/python -m pip install --dry-run -e '.[test]' 'av==16.*' 'bleak==3.*' 'esptool==4.8.*' 'fastapi==0.129.*' 'huggingface-hub==1.26.*' 'keyring==25.7.*' 'packaging==24.*' 'Pillow==11.*' 'psutil==5.9.*' 'pyserial==3.5.*' 'starlette==0.51.*' 'uvicorn==0.30.*' 'websockets==14.*'
+INFO: pip is looking at multiple versions of watcherobot to determine which version is compatible with other requirements. This could take a while.
+ERROR: Cannot install None and huggingface-hub==1.26.* because these package versions have conflicting dependencies.
+
+The conflict is caused by:
+    The user requested huggingface-hub==1.26.*
+    watcherobot 0.1.12 depends on huggingface-hub<2 and >=1.32
+
+Additionally, some packages in these conflicts have no matching distributions available for your environment:
+    huggingface-hub
+
+To fix this you could try to:
+1. loosen the range of package versions you've specified
+2. remove package versions to allow pip to attempt to solve the dependency conflict
+
+ERROR: ResolutionImpossible: for help visit https://pip.pypa.io/en/latest/topics/dependency-resolution/#dealing-with-dependency-conflicts
+
+[修复后最低依赖真实安装：exit 0]
+COMMAND: /home/hermesadmin/work/sdk-0112-validation-venv/bin/python -m pip install -e '.[test]' 'av==16.*' 'bleak==3.*' 'esptool==4.8.*' 'fastapi==0.129.*' 'huggingface-hub==1.32.*' 'keyring==25.7.*' 'packaging==24.*' 'Pillow==11.*' 'psutil==5.9.*' 'pyserial==3.5.*' 'starlette==0.51.*' 'uvicorn==0.30.*' 'websockets==14.*' --report /home/hermesadmin/work/sdk-0112-validation-logs/lowest-install-report.json
+  Building editable for watcherobot (pyproject.toml): finished with status 'done'
+  Created wheel for watcherobot: filename=watcherobot-0.1.12-py3-none-any.whl size=5943109 sha256=b334025891e5eaaf7d7543600c198f717fb008aac41dc3e038e0b8a5b029c575
+  Stored in directory: /tmp/pip-ephem-wheel-cache-4daps9gf/wheels/09/65/fc/55f0ee5045978472457b0b43505aab7a27937bfebd84972cf4
+  Building wheel for esptool (pyproject.toml): started
+  Building wheel for esptool (pyproject.toml): finished with status 'done'
+  Created wheel for esptool: filename=esptool-4.8.1-py3-none-any.whl size=534271 sha256=6333c33386fcd72306f7b5d7a9633b84b272fd8309b31ffb06bcce6eff68e71f
+  Stored in directory: /home/hermesadmin/.cache/pip/wheels/f0/39/a7/e213946ae315a441aa182ca5a8a92a3bf5a31f1a60d4559423
+Successfully built watcherobot esptool
+Installing collected packages: reedsolo, pyserial, intelhex, zipp, websockets, typing-extensions, types-pyserial, types-psutil, tqdm, tibs, six, PyYAML, pycparser, psutil, Pillow, pathspec, packaging, mypy_extensions, more-itertools, librt, jeepney, idna, hf-xet, h11, fsspec, filelock, dbus-fast, colorama, click, certifi, backports.tarfile, av, argcomplete, annotated-types, annotated-doc, uvicorn, typing-inspection, pydantic-core, mypy, jaraco.functools, jaraco.context, jaraco.classes, importlib_metadata, httpcore, ecdsa, cffi, bleak, bitstring, anyio, starlette, pydantic, httpx, cryptography, SecretStorage, huggingface-hub, fastapi, esptool, keyring, watcherobot
+  Attempting uninstall: packaging
+    Found existing installation: packaging 26.3
+    Uninstalling packaging-26.3:
+      Successfully uninstalled packaging-26.3
+
+Successfully installed Pillow-11.3.0 PyYAML-6.0.3 SecretStorage-3.5.0 annotated-doc-0.0.5 annotated-types-0.8.0 anyio-4.15.1 argcomplete-3.7.2 av-16.1.0 backports.tarfile-1.2.0 bitstring-5.0.0 bleak-3.0.2 certifi-2026.7.22 cffi-2.1.1 click-8.5.0 colorama-0.4.6 cryptography-50.0.2 dbus-fast-5.2.0 ecdsa-0.19.2 esptool-4.8.1 fastapi-0.129.2 filelock-4.1.2 fsspec-2026.9.0 h11-0.16.0 hf-xet-1.7.0 httpcore-1.0.9 httpx-0.28.1 huggingface-hub-1.32.0 idna-3.20 importlib_metadata-9.0.1 intelhex-2.3.0 jaraco.classes-3.4.0 jaraco.context-6.1.2 jaraco.functools-4.6.0 jeepney-0.9.0 keyring-25.7.0 librt-0.16.0 more-itertools-11.2.0 mypy-1.20.2 mypy_extensions-1.1.0 packaging-24.2 pathspec-1.1.1 psutil-5.9.8 pycparser-3.11 pydantic-2.14.1 pydantic-core-2.50.1 pyserial-3.5 reedsolo-1.7.0 six-1.17.0 starlette-0.51.0 tibs-2.0.2 tqdm-4.70.1 types-psutil-7.2.2.20260906 types-pyserial-3.5.0.20260712 typing-extensions-4.16.0 typing-inspection-0.4.4 uvicorn-0.30.6 watcherobot-0.1.12 websockets-14.2 zipp-4.1.1
+
+COMMAND: /home/hermesadmin/work/sdk-0112-validation-venv/bin/python -m pip check
+No broken requirements found.
+
+
+[安装版本]
+COMMAND: /home/hermesadmin/work/sdk-0112-validation-venv/bin/python -m pip list --format=json
+[{"name": "annotated-doc", "version": "0.0.5"}, {"name": "annotated-types", "version": "0.8.0"}, {"name": "anyio", "version": "4.15.1"}, {"name": "argcomplete", "version": "3.7.2"}, {"name": "av", "version": "16.1.0"}, {"name": "backports.tarfile", "version": "1.2.0"}, {"name": "bitstring", "version": "5.0.0"}, {"name": "bleak", "version": "3.0.2"}, {"name": "certifi", "version": "2026.7.22"}, {"name": "cffi", "version": "2.1.1"}, {"name": "click", "version": "8.5.0"}, {"name": "colorama", "version": "0.4.6"}, {"name": "cryptography", "version": "50.0.2"}, {"name": "dbus-fast", "version": "5.2.0"}, {"name": "ecdsa", "version": "0.19.2"}, {"name": "esptool", "version": "4.8.1"}, {"name": "fastapi", "version": "0.129.2"}, {"name": "filelock", "version": "4.1.2"}, {"name": "fsspec", "version": "2026.9.0"}, {"name": "h11", "version": "0.16.0"}, {"name": "hf-xet", "version": "1.7.0"}, {"name": "httpcore", "version": "1.0.9"}, {"name": "httpx", "version": "0.28.1"}, {"name": "huggingface_hub", "version": "1.32.0"}, {"name": "idna", "version": "3.20"}, {"name": "importlib_metadata", "version": "9.0.1"}, {"name": "iniconfig", "version": "2.3.1"}, {"name": "intelhex", "version": "2.3.0"}, {"name": "jaraco.classes", "version": "3.4.0"}, {"name": "jaraco.context", "version": "6.1.2"}, {"name": "jaraco.functools", "version": "4.6.0"}, {"name": "jeepney", "version": "0.9.0"}, {"name": "keyring", "version": "25.7.0"}, {"name": "librt", "version": "0.16.0"}, {"name": "more-itertools", "version": "11.2.0"}, {"name": "mypy", "version": "1.20.2"}, {"name": "mypy_extensions", "version": "1.1.0"}, {"name": "packaging", "version": "24.2"}, {"name": "pathspec", "version": "1.1.1"}, {"name": "pillow", "version": "11.3.0"}, {"name": "pip", "version": "26.2.1"}, {"name": "pluggy", "version": "1.6.0"}, {"name": "psutil", "version": "5.9.8"}, {"name": "pycparser", "version": "3.11"}, {"name": "pydantic", "version": "2.14.1"}, {"name": "pydantic_core", "version": "2.50.1"}, {"name": "Pygments", "version": "2.21.0"}, {"name": "pyserial", "version": "3.5"}, {"name": "pytest", "version": "9.1.1"}, {"name": "PyYAML", "version": "6.0.3"}, {"name": "reedsolo", "version": "1.7.0"}, {"name": "SecretStorage", "version": "3.5.0"}, {"name": "setuptools", "version": "79.0.1"}, {"name": "six", "version": "1.17.0"}, {"name": "starlette", "version": "0.51.0"}, {"name": "tibs", "version": "2.0.2"}, {"name": "tomli", "version": "2.5.0"}, {"name": "tqdm", "version": "4.70.1"}, {"name": "types-psutil", "version": "7.2.2.20260906"}, {"name": "types-pyserial", "version": "3.5.0.20260712"}, {"name": "typing_extensions", "version": "4.16.0"}, {"name": "typing-inspection", "version": "0.4.4"}, {"name": "uvicorn", "version": "0.30.6"}, {"name": "watcherobot", "version": "0.1.12", "editable_project_location": "/home/hermesadmin/work/sdk-0112-ci-fix"}, {"name": "websockets", "version": "14.2"}, {"name": "zipp", "version": "4.1.1"}]
+
+
+[JS 测试输出尾部；exit 0]
+  ...
+1..225
+# tests 225
+# suites 0
+# pass 225
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3440.864375

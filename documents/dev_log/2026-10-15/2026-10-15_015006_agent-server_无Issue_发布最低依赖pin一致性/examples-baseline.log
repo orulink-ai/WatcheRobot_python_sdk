@@ -1,0 +1,18 @@
+F.....                                                                   [100%]
+=================================== FAILURES ===================================
+_____________ test_every_example_is_a_complete_managed_application _____________
+
+    def test_every_example_is_a_complete_managed_application() -> None:
+        example_directories = {
+            path.parent.name for path in (ROOT / "examples").glob("*/app.json")
+        }
+>       assert example_directories == set(EXAMPLE_IDS)
+E       AssertionError: assert {'expression_...dk_media_lab'} == {'expression_...dk_media_lab'}
+E
+E         Extra items in the left set:
+E         'joyinside_pi'
+E         Use -v to get more diff
+
+tests/test_examples.py:20: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_examples.py::test_every_example_is_a_complete_managed_application
