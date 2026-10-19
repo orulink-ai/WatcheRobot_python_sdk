@@ -5,8 +5,11 @@
   "version": "0.1.0",
   "requires_watcherobot": ">=0.1.11,<0.2",
   "dependencies": [],
-  "supported_host_platforms": ["windows", "macos"],
-  "description": "复用机器人 JoyInside ASR/TTS，在电脑上运行 Pi Agent；语音会话独占机器人音频。",
+  "supported_host_platforms": [
+    "windows",
+    "macos"
+  ],
+  "description": "可切换机器人 JoyInside 或 Application 豆包 ASR/TTS；机器人采音与播放，本地 Pi 负责思考与工具执行。",
   "author": "Orulink AI",
   "icon": "icon.svg"
 }

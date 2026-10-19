@@ -1,0 +1,101 @@
+{
+  "scope": "Controlled text injection; real Pi, Doubao TTS, robot playback and Android MCP; no ASR fixture",
+  "rounds": [
+    {
+      "kind": "chat",
+      "prefaces": [],
+      "events": [],
+      "pi_started_ms": 616,
+      "pi_settled_ms": 1889,
+      "reply": "我心情挺好的，谢谢关心。你今天怎么样呢？",
+      "final_playback_completed_ms": 9193
+    },
+    {
+      "kind": "action",
+      "prefaces": [
+        {
+          "text": "好，我帮你打开小红书，只看一下页面。",
+          "started_ms": 10233,
+          "completed_ms": 16460
+        }
+      ],
+      "events": [
+        {
+          "type": "tool_execution_start",
+          "tool": "voice_reply",
+          "is_error": null,
+          "at_ms": 10230
+        },
+        {
+          "type": "tool_execution_end",
+          "tool": "voice_reply",
+          "is_error": false,
+          "at_ms": 16499
+        },
+        {
+          "type": "tool_execution_start",
+          "tool": "mcp__watcher_android__android_open_app",
+          "is_error": null,
+          "at_ms": 17422
+        },
+        {
+          "type": "tool_execution_end",
+          "tool": "mcp__watcher_android__android_open_app",
+          "is_error": false,
+          "at_ms": 17782
+        },
+        {
+          "type": "tool_execution_start",
+          "tool": "mcp__watcher_android__android_get_screen_state",
+          "is_error": null,
+          "at_ms": 18406
+        },
+        {
+          "type": "tool_execution_end",
+          "tool": "mcp__watcher_android__android_get_screen_state",
+          "is_error": false,
+          "at_ms": 18706
+        },
+        {
+          "type": "tool_execution_start",
+          "tool": "mcp__watcher_android__android_open_app",
+          "is_error": null,
+          "at_ms": 20019
+        },
+        {
+          "type": "tool_execution_end",
+          "tool": "mcp__watcher_android__android_open_app",
+          "is_error": false,
+          "at_ms": 20230
+        },
+        {
+          "type": "tool_execution_start",
+          "tool": "mcp__watcher_android__android_get_screen_state",
+          "is_error": null,
+          "at_ms": 21065
+        },
+        {
+          "type": "tool_execution_end",
+          "tool": "mcp__watcher_android__android_get_screen_state",
+          "is_error": false,
+          "at_ms": 21435
+        }
+      ],
+      "pi_started_ms": 9249,
+      "pi_settled_ms": 22970,
+      "final_playback_completed_ms": 37783,
+      "final_reply_characters": 56,
+      "final_reply_summary": "Opened app and read current note-detail page; account name omitted from archive."
+    }
+  ],
+  "passed": true,
+  "resources_released": true,
+  "deployment": {
+    "application": "com.orulink.joyinside_pi",
+    "connected": true,
+    "backend": "doubao",
+    "phase": "paused",
+    "updated_assets_served": true,
+    "audio_and_behavior_released": true
+  }
+}

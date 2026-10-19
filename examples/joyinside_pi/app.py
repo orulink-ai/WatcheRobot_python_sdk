@@ -8,6 +8,9 @@ from pathlib import Path
 import uvicorn
 from watcherobot.application import ApplicationContext
 from service import ConversationService, create_web_app
+from connection import DaemonConnection
+from speech_preferences import load_backend, save_backend
+from watcherobot.voice.configuration import default_credential_directory
 
 ROOT = Path(__file__).resolve().parent
 
@@ -17,10 +20,13 @@ async def main():
         listener.listen(128)
         port = listener.getsockname()[1]
         async with ApplicationContext.from_environment() as context:
-            service = ConversationService(context)
+            preferences = default_credential_directory(ROOT, context.app_id, installed=True).parent / "speech-settings.json"
+            service = ConversationService(context, backend_name=load_backend(preferences),
+                                          save_backend=lambda name: save_backend(preferences, name))
+            connection = DaemonConnection(os.environ.get("WATCHER_APP_DEVICE_STATUS_URL", ""))
             if os.environ.get("WATCHER_SPEECH_AUTOSTART") == "1" or os.environ.get("WATCHER_SPEECH_TEST_TEXT"):
                 service.start()
-            server = uvicorn.Server(uvicorn.Config(create_web_app(service, ROOT / "web"),
+            server = uvicorn.Server(uvicorn.Config(create_web_app(service, ROOT / "web", connection=connection),
                 host="127.0.0.1", port=port, access_log=False, log_level="warning"))
             http_task = asyncio.create_task(server.serve(sockets=[listener]))
             runner = asyncio.create_task(service.run())

@@ -13,6 +13,7 @@ from websockets.asyncio.client import connect
 
 from ._internal.audio_credit import AudioInFlightWindow
 from ._internal.audio_status import AudioStatusKind, classify_audio_status
+from .audio import ContinuousAudioSender
 from .errors import CommandError, WatcheRobotError
 from .protocol import (
     FLAG_FIRST,
@@ -27,6 +28,7 @@ from .protocol import (
 
 AUDIO_DEVICE_SLOT_BYTES = 4096
 AUDIO_MAX_CREDIT_PACKETS = 8
+CONTINUOUS_AUDIO_MAX_CREDIT_PACKETS = 32
 
 
 class DesktopRobotSession:
@@ -64,6 +66,8 @@ class DesktopRobotSession:
         self._audio_credits = 0
         self._audio_inflight = AudioInFlightWindow()
         self._audio_slots_per_packet = 1
+        self._continuous_audio_sender: ContinuousAudioSender | None = None
+        self._continuous_first_frame: tuple[int, float | None] = (0, None)
         self._audio_error: str | None = None
 
     def set_callbacks(
@@ -112,6 +116,72 @@ class DesktopRobotSession:
 
     def send_command_nowait(self, message_type: str, data: dict[str, Any]) -> Future[dict[str, Any]]:
         return self._submit(self._send_command(message_type, data, self.command_timeout))
+
+    def open_audio_stream(self, stream_id: int) -> Future[None]:
+        return self._submit(self._open_continuous_audio(stream_id))
+
+    def audio_stream_first_frame_at(self, stream_id: int) -> float | None:
+        sender = getattr(self, "_continuous_audio_sender", None)
+        if sender is not None and sender.stream_id == stream_id:
+            return sender.first_frame_sent_at
+        return self._continuous_first_frame[1] if self._continuous_first_frame[0] == stream_id else None
+
+    def close_audio_stream(self, stream_id: int) -> Future[None]:
+        return self._submit(self._close_continuous_audio(stream_id))
+
+    async def _close_continuous_audio(self, stream_id: int) -> None:
+        condition = self._audio_condition
+        if condition is not None:
+            async with condition:
+                if self._audio_stream_id == stream_id:
+                    self._audio_stream_id = 0
+                    self._audio_credits = 0
+                    condition.notify_all()
+        sender = getattr(self, "_continuous_audio_sender", None)
+        if sender is not None and sender.stream_id == stream_id:
+            sender.close()
+            self._continuous_audio_sender = None
+
+    def write_audio_stream(self, pcm: bytes, *, stream_id: int, last: bool = False) -> Future[None]:
+        return self._submit(self._write_continuous_audio(bytes(pcm), stream_id, last))
+
+    async def _open_continuous_audio(self, stream_id: int) -> None:
+        if self._audio_condition is None:
+            self._audio_condition = asyncio.Condition()
+        async with self._audio_condition:
+            if self._audio_stream_id:
+                raise WatcheRobotError("another audio sender is active")
+            self._audio_stream_id = stream_id
+            self._audio_slots_per_packet = 1
+            self._audio_credits = 4
+            self._audio_inflight = AudioInFlightWindow()
+            self._audio_error = None
+            async def send(packet: bytes) -> None:
+                await self._send(packet)
+            self._continuous_audio_sender = ContinuousAudioSender(stream_id, self._take_audio_credit, send)
+
+    async def _write_continuous_audio(self, pcm: bytes, stream_id: int, last: bool) -> None:
+        sender = getattr(self, "_continuous_audio_sender", None)
+        if sender is None or sender.stream_id != stream_id or self._audio_stream_id != stream_id:
+            raise WatcheRobotError("continuous audio stream is not active")
+        try:
+            await sender.write(pcm, last=last)
+        finally:
+            assert sender is not None
+            first_frame_at = sender.first_frame_sent_at
+            sender_finished = sender.finished
+            if self._continuous_audio_sender is sender:
+                self._continuous_first_frame = (stream_id, first_frame_at)
+            if last or sender_finished:
+                condition = self._audio_condition
+                assert condition is not None
+                async with condition:
+                    if self._audio_stream_id == stream_id:
+                        self._audio_stream_id = 0
+                        self._audio_credits = 0
+                        condition.notify_all()
+                if getattr(self, "_continuous_audio_sender", None) is sender:
+                    self._continuous_audio_sender = None
 
     def send_audio_stream(self, pcm: bytes, *, stream_id: int, chunk_bytes: int = 4096) -> Future[None]:
         if chunk_bytes != AUDIO_DEVICE_SLOT_BYTES:
@@ -281,6 +351,9 @@ class DesktopRobotSession:
             if classify_audio_status(reason) is AudioStatusKind.FAILED:
                 self._audio_error = reason
             else:
+                sender = self._continuous_audio_sender
+                continuous = sender is not None and sender.stream_id == data.get("stream_id")
+                credit_limit = CONTINUOUS_AUDIO_MAX_CREDIT_PACKETS if continuous else AUDIO_MAX_CREDIT_PACKETS
                 reported_credits = self._audio_credits
                 free = data.get("free_frames")
                 pending = data.get("pending_frames")
@@ -291,7 +364,9 @@ class DesktopRobotSession:
                     slots = max(0, free)
                 else:
                     slots = 0
-                reported_credits = min(AUDIO_MAX_CREDIT_PACKETS, slots // self._audio_slots_per_packet)
+                if continuous and isinstance(free, int):
+                    slots = min(slots, max(0, free))
+                reported_credits = min(credit_limit, slots // self._audio_slots_per_packet)
                 credits = self._audio_inflight.available(data, reported_credits)
                 if credits is not None:
                     self._audio_credits = credits

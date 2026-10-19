@@ -31,6 +31,7 @@ class SDKVoiceDevice:
         self.robot, self.config = robot, config
         self.microphone: MicrophoneSession | None = None
         self._playing = False
+        self.last_playback_stats: dict[str, float | int] = {}
 
     async def ready(self) -> bool:
         try:
@@ -65,8 +66,11 @@ class SDKVoiceDevice:
                 pcm = frame.data
                 if not pcm or len(pcm) % 2:
                     raise VoiceError('ASR 设备 PCM 数据无效')
-                if microphone.dropped_frames or microphone.decode_failures:
-                    raise VoiceError('ASR 麦克风丢帧或解码失败，请重试')
+                dropped, failed = microphone.dropped_frames, microphone.decode_failures
+                if dropped or failed:
+                    cause = '解码失败' if failed else '缓存溢出'
+                    raise VoiceError(f'ASR 麦克风{cause}（dropped_frames={dropped}, '
+                                     f'decode_failures={failed}），请重试')
                 samples = struct.unpack('<' + 'h' * (len(pcm) // 2), pcm)
                 active = math.sqrt(sum(x * x for x in samples) / len(samples)) >= cfg.speech_threshold
                 seconds = len(pcm) / 32000
@@ -98,7 +102,62 @@ class SDKVoiceDevice:
             await blocking(microphone.close)
             self.microphone = None
 
+    @property
+    def supports_continuous_playback(self) -> bool:
+        return "audio.stream.continuous.v1" in self.robot.capabilities
+
+    async def play_stream(self, frames: AsyncIterator[bytes]) -> None:
+        """Drive a bounded stream on the caller loop and wait for verified completion."""
+        if not self.supports_continuous_playback:
+            raise VoiceError("playback 固件不支持连续 PCM")
+        if self._playing:
+            raise VoiceError("playback 设备已有音频会话")
+        self._playing = True
+        completed = False
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        self.last_playback_stats = {"uploaded_bytes": 0}
+        try:
+            playback = await blocking(self.robot.audio.open_stream)
+            self.last_playback_stats["begin_ms"] = (loop.time() - started) * 1000
+            async for pcm in frames:
+                await asyncio.wrap_future(playback.write(pcm))
+                self.last_playback_stats["uploaded_bytes"] += len(pcm)
+                first_frame = getattr(playback, "first_frame_sent_at", None)
+                if first_frame is not None:
+                    self.last_playback_stats.setdefault("first_frame_ms", (first_frame - started) * 1000)
+            await asyncio.wrap_future(playback.finish())
+            first_frame = getattr(playback, "first_frame_sent_at", None)
+            if first_frame is not None:
+                self.last_playback_stats.setdefault("first_frame_ms", (first_frame - started) * 1000)
+            self.last_playback_stats["upload_ms"] = (loop.time() - started) * 1000
+            deadline = asyncio.get_running_loop().time() + playback.expected_duration_seconds + 20
+            while asyncio.get_running_loop().time() < deadline:
+                try:
+                    await blocking(lambda: playback.wait(0.2))
+                    completed = True
+                    self.last_playback_stats["complete_ms"] = (loop.time() - started) * 1000
+                    break
+                except TimeoutError:
+                    pass
+            if not completed:
+                raise VoiceError("playback 连续音频播放超时")
+        finally:
+            close = getattr(frames, "aclose", None)
+            try:
+                if close is not None:
+                    await close()
+            finally:
+                if not completed:
+                    stop_started = loop.time()
+                    await blocking(self.robot.audio.stop)
+                    self.last_playback_stats["stop_ms"] = (loop.time() - stop_started) * 1000
+                self._playing = False
+                self.last_playback_stats["elapsed_ms"] = (loop.time() - started) * 1000
+
     async def play(self, pcm: bytes) -> None:
+        if self._playing:
+            raise VoiceError("playback 设备已有音频会话")
         self._playing = True
         try:
             playback = await blocking(lambda: self.robot.audio.play_pcm(pcm, sample_rate_hz=24000))
