@@ -1,6 +1,6 @@
 # Device-side procedural expressions
 
-## RTC playback mouth follow
+## Playback mouth follow
 
 Firmware advertising `expression.audio_follow.v1` can render its radial mouth
 from RTC PCM that has actually been written to the speaker. Use the managed
@@ -36,6 +36,18 @@ unavailable, rather than being interpreted as a closed mouth or zero activity.
 `robot.resource_snapshot_received_at` supplies the host monotonic receipt time
 of the latest resource event; a reconnect does not update it. This timestamp
 can distinguish new events from cached data even when the device payload repeats.
+
+Firmware additionally advertising `expression.audio_follow.local_pcm.v1` feeds
+successful 24 kHz mono PCM writes from `robot.audio.play_pcm` into the same mouth
+clock. This supports Application-hosted ASR/TTS such as the Pi + Doubao example;
+`expression.audio_follow.v1/v2` alone only guarantees the original RTC path.
+Local playback and RTC have separate source leases, so one source's teardown or
+late callback does not clear the other source's current clock. Playback end,
+cancel and error clear the local mouth timeline. The historical ACK field
+`source: "rtc_playback"` remains a compatibility value, not transport detection.
+Use the negotiated capability and fresh resource telemetry to check support.
+PCM accepted by the audio driver and successful renderer submissions still do
+not prove physical speaker/LCD synchronization.
 
 This additive capability is independent of the parameter renderer below.
 

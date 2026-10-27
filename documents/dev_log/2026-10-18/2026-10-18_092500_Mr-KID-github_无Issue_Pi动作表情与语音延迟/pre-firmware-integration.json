@@ -1,0 +1,63 @@
+{
+  "stage": "before_local_pcm_firmware",
+  "source": "Daemon-managed Application live integration",
+  "actions": [
+    {
+      "emotion": 0,
+      "action_id": "chat_v1_talk",
+      "commands": 1,
+      "degraded": false,
+      "error": ""
+    },
+    {
+      "emotion": 1,
+      "action_id": "chat_v1_smile",
+      "commands": 2,
+      "degraded": false,
+      "error": ""
+    },
+    {
+      "emotion": 2,
+      "action_id": "chat_v1_happy",
+      "commands": 3,
+      "degraded": false,
+      "error": ""
+    },
+    {
+      "emotion": 3,
+      "action_id": "chat_v1_angry",
+      "commands": 4,
+      "degraded": false,
+      "error": ""
+    },
+    {
+      "emotion": 4,
+      "action_id": "chat_v1_focus",
+      "commands": 5,
+      "degraded": false,
+      "error": ""
+    },
+    {
+      "emotion": 5,
+      "action_id": "chat_v1_sad",
+      "commands": 6,
+      "degraded": false,
+      "error": ""
+    },
+    {
+      "emotion": 6,
+      "action_id": "chat_v1_resigned",
+      "commands": 7,
+      "degraded": false,
+      "error": ""
+    }
+  ],
+  "pi_ms": 1679,
+  "speech_ms_including_playback": 11726,
+  "spoken_segments": 2,
+  "playback_complete": true,
+  "cleanup_pending": false,
+  "mouth_sync_available": false,
+  "physical_motion_feedback": false,
+  "human_acoustic_or_lcd_confirmation": false
+}

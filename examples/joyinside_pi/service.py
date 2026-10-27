@@ -3,31 +3,47 @@ from __future__ import annotations
 
 import asyncio
 import json
+import inspect
 import os
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request as AnyRequest
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from agent import PiAgent
-from sentences import SentenceBuffer
+from agent import PiAgent, speech_chunks
+from connection import ConnectionError, DaemonConnection, validate_pairing_code
+from streaming_text import TextSpeechPreview
 
 
 class Interrupted(Exception):
     """A pause or shutdown invalidated the current turn."""
 
 
-class PiReplyTimeout(TimeoutError):
-    """Distinguish generation timeouts from concurrent playback timeouts."""
-
-
 class ConversationService:
-    def __init__(self, context: Any, *, agent_factory: Callable[..., Any] | None = None) -> None:
+    def __init__(self, context: Any, *, agent_factory: Callable[..., Any] | None = None,
+                 speech_backends: dict[str, Any] | None = None, backend_name: str = "joyinside",
+                 save_backend: Callable[[str], None] | None = None, behavior: Any = None) -> None:
         self.context = context
+        if speech_backends is None:
+            from speech_backends import DoubaoBackend, JoyInsideBackend
+            speech_backends = {"joyinside": JoyInsideBackend(context.robot),
+                               "doubao": DoubaoBackend(context.robot, logger=getattr(context, "logger", None))}
+        self.speech_backends = speech_backends
+        if backend_name not in self.speech_backends:
+            raise ValueError("无效的语音后端")
+        self.backend_name = backend_name
+        self.save_backend = save_backend
+        if behavior is None:
+            from behavior import RobotBehavior
+            behavior = RobotBehavior(context.robot)
+        self.behavior = behavior
+        self.timings_ms: dict[str, int] = {}
+        self.agent_open_task: asyncio.Task | None = None
         self.agent_factory = agent_factory or (lambda: PiAgent(cwd=os.environ.get("PI_WORKDIR")))
+        self.voice_instructions = Path(__file__).with_name("voice_prompt.md").read_text(encoding="utf-8").strip()
         self.enabled = False
         self.stopping = False
         self.phase = "paused"
@@ -38,12 +54,9 @@ class ConversationService:
         self.messages: deque[dict[str, Any]] = deque(maxlen=80)
         self.message_id = 0
         self.session: Any = None
-        self.agent: Any = None
         self.session_requests = 0
-        self.revision = 0
-        self.timings: dict[str, int] = {}
-        self.operation = "connecting"
-        self.playback_finished_at: float | None = None
+        self.agent: Any = None
+        self.opening = False
         self.cleanup_pending = False
 
     def snapshot(self) -> dict[str, Any]:
@@ -52,14 +65,43 @@ class ConversationService:
             "error": self.error, "turns": self.turns,
             "device_id": self.context.robot.device_info.get("device_id", ""),
             "messages": list(self.messages),
-            "revision": self.revision, "timings": dict(self.timings),
-            "cleanup_pending": self.cleanup_pending,
-            "speech_supported": "speech.joyinside.v1" in getattr(self.context.robot, "capabilities", ()),
+            "speech_backend": self.backend_name,
+            "speech_backends": [backend.snapshot() for backend in self.speech_backends.values()],
+            "behavior": self.behavior.snapshot(),
+            "timings_ms": dict(self.timings_ms),
+            "speech_switch_available": not (self.enabled or self.opening or self.session or self.cleanup_pending
+                                                or self.behavior.snapshot().get("cleanup_pending")),
         }
+
+    def select_backend(self, name: str) -> None:
+        if name not in self.speech_backends:
+            raise ConnectionError("请选择受支持的语音后端", 400)
+        if (self.enabled or self.opening or self.session or self.cleanup_pending or self.stopping
+                or self.behavior.snapshot().get("cleanup_pending")):
+            raise ConnectionError("请先暂停对话并等待音频资源释放，再切换语音后端", 409)
+        if not self.speech_backends[name].snapshot().get("configured"):
+            raise ConnectionError("该语音后端尚未配置可用凭据", 400)
+        if self.save_backend is not None:
+            try:
+                self.save_backend(name)
+            except Exception:
+                raise ConnectionError("无法保存语音后端设置，请检查本机文件权限", 503) from None
+        self.backend_name = name
+        self.error = ""
+        self.phase = "paused"
+
+    @staticmethod
+    async def _invoke(function: Callable[..., Any], **kwargs: Any) -> Any:
+        if inspect.iscoroutinefunction(function):
+            return await function(**kwargs)
+        result = await asyncio.to_thread(function, **kwargs)
+        return await result if inspect.isawaitable(result) else result
 
     def start(self) -> None:
         if self.stopping:
             raise RuntimeError("Application is shutting down")
+        if not self.enabled and (self.cleanup_pending or self.behavior.snapshot().get("cleanup_pending")):
+            raise ConnectionError("上一轮音频资源尚未释放，请停止并重启 Application 后重试", 409)
         if not self.enabled:
             self.generation += 1
             self.enabled = True
@@ -69,7 +111,7 @@ class ConversationService:
     def pause(self) -> None:
         self.enabled = False
         self.generation += 1
-        self.phase = "stopping" if self.session else "paused"
+        self.phase = "stopping" if self.session or self.opening or self.behavior.snapshot().get("active") else ("error" if self.error else "paused")
 
     def shutdown(self) -> None:
         self.stopping = True
@@ -79,32 +121,27 @@ class ConversationService:
         return (self.enabled and not self.stopping and not self.context.shutdown_requested
                 and self.generation == generation)
 
-    def _message(self, role: str, text: str, *, streaming: bool = False) -> dict[str, Any]:
+    def _message(self, role: str, text: str, *, kind: str = "reply") -> None:
         self.message_id += 1
-        message = {"id": self.message_id, "role": role, "text": text, "streaming": streaming}
-        self.messages.append(message)
-        self.revision += 1
-        return message
+        self.messages.append({"id": self.message_id, "role": role, "text": text, "kind": kind})
 
     async def _cancel_capture(self) -> None:
         if self.session:
             try:
-                await asyncio.to_thread(self.session.cancel)
+                await self._invoke(self.session.cancel)
             except Exception:
                 # A failed cancellation must not leave a recording owner alive.
-                await asyncio.to_thread(self.session.close)
-        else:
-            await asyncio.to_thread(self.context.robot.speech.close)
+                await self._invoke(self.session.close)
 
     async def _call(self, generation: int, function: Callable[..., Any], **kwargs: Any) -> Any:
-        task = asyncio.create_task(asyncio.to_thread(function, **kwargs))
+        task = asyncio.create_task(self._invoke(function, **kwargs))
         try:
             while not task.done():
                 if not self._alive(generation):
                     await self._cancel_capture()
                     await asyncio.gather(task, return_exceptions=True)
                     raise Interrupted
-                await asyncio.wait((task,), timeout=.05)
+                await asyncio.sleep(.05)
             result = await task
             if not self._alive(generation):
                 raise Interrupted
@@ -113,143 +150,123 @@ class ConversationService:
             await self._cancel_capture()
             await asyncio.gather(task, return_exceptions=True)
             raise
-        except Exception:
-            if not self._alive(generation):
-                raise Interrupted from None
-            raise
 
-    async def _ask(self, generation: int, text: str, on_text: Callable[..., Any]) -> str:
-        if self.agent is None:
-            self.agent = await self.agent_factory().__aenter__()
+    def _reuse_session(self) -> bool:
+        return bool(getattr(self.speech_backends[self.backend_name], "reuse_session", False)
+                    and "speech.joyinside.v1" in getattr(self.context.robot, "capabilities", ()))
+
+    async def _session_call(self, generation: int, method: str, **kwargs: Any) -> Any:
+        if self._reuse_session() and self.session_requests >= 32:
+            # The firmware retains a bounded request ledger. Rotate only after
+            # the previous request completes, before sending the next one.
+            await self._close_session()
+            self.opening = True
+            try:
+                self.session = await self._invoke(self.speech_backends[self.backend_name].open)
+            finally:
+                self.opening = False
+            if not self._alive(generation):
+                raise Interrupted
+        self.session_requests += 1
+        return await self._call(generation, getattr(self.session, method), **kwargs)
+
+    async def _open_agent(self) -> None:
+        started = asyncio.get_running_loop().time()
+        self.agent = await self.agent_factory().__aenter__()
+        self._timing("pi_start", started)
+
+    def _prewarm_agent(self) -> None:
+        if self.agent is None and self.agent_open_task is None:
+            self.agent_open_task = asyncio.create_task(self._open_agent())
+
+    async def _close_agent(self) -> None:
+        if self.agent_open_task is not None:
+            await asyncio.gather(self.agent_open_task, return_exceptions=True)
+            self.agent_open_task = None
+        if self.agent is not None:
+            await self.agent.close()
+            self.agent = None
+
+    def _timing(self, stage: str, started: float) -> None:
+        elapsed = round((asyncio.get_running_loop().time() - started) * 1000)
+        self.timings_ms[stage] = elapsed
+        logger = getattr(self.context, "logger", None)
+        if logger is not None:
+            logger.info("voice_timing stage=%s elapsed_ms=%d", stage, elapsed)
+
+    async def _phase(self, phase: str, *, text: str = "") -> None:
+        self.phase = phase
+        await self.behavior.set_phase("speaking" if phase == "acknowledging" else phase, text=text)
+
+    async def _stop_behavior(self) -> None:
+        try:
+            await self.behavior.stop()
+        except Exception:
+            self.enabled = False
+            self.error = (self.error + "；" if self.error else "") + "动作表情尚未释放，请检查机器人连接后重试"
+            self.phase = "error"
+            logger = getattr(self.context, "logger", None)
+            if logger is not None:
+                logger.exception("动作表情清理未确认")
+
+    async def _acknowledge(self, generation: int, text: str) -> None:
+        started = asyncio.get_running_loop().time()
+        if not self._alive(generation):
+            raise Interrupted
+        await self._phase("acknowledging", text=text)
+        if not self._alive(generation):
+            raise Interrupted
+        self._message("assistant", text, kind="preface")
+        # Pi authored the text; completing playback releases its waiting tool.
+        acknowledge = "acknowledge" if hasattr(self.session, "acknowledge") else "say"
+        try:
+            await self._session_call(generation, acknowledge, text=text)
+        except Interrupted:
+            raise
+        except Exception as error:
+            raise RuntimeError(f"机器人操作前播报失败：{str(error) or type(error).__name__}") from error
+        self._timing("acknowledgement", started)
+        await self._phase("thinking")
+        if not self._alive(generation):
+            raise Interrupted
+
+    async def _ask(self, generation: int, text: str, *, on_event: Callable | None = None,
+                   before_speak: Callable | None = None) -> str:
+        self._prewarm_agent()
+        if self.agent_open_task is not None:
+            await asyncio.shield(self.agent_open_task)
+        if not self._alive(generation):
+            raise Interrupted
+        async def speak(spoken: str) -> None:
+            if before_speak is not None:
+                await before_speak()
+            await self._acknowledge(generation, spoken)
+
         task = asyncio.create_task(self.agent.ask(
-            "这是机器人语音输入。请用简短中文纯文本回答，方便语音播报。\n" + text,
-            on_text=on_text))
-        completed = False
+            self.voice_instructions + "\n\n用户语音识别原文：\n" + text,
+            on_speak=speak,
+            **({"on_event": on_event} if on_event is not None else {})))
         try:
             while not task.done():
                 if not self._alive(generation):
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
+                    await self._close_agent()
                     raise Interrupted
-                await asyncio.wait((task,), timeout=.05)
+                await asyncio.sleep(.05)
             reply = await task
             if not self._alive(generation):
                 raise Interrupted
-            completed = True
             return reply
-        except TimeoutError as error:
-            raise PiReplyTimeout from error
         finally:
             if not task.done():
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
-            if not completed and self.agent:
-                await self.agent.close()
-                self.agent = None
-
-    async def _speech_call(self, generation: int, kind: str, **kwargs: Any) -> Any:
-        if self.cleanup_pending:
-            self.phase = self.operation = "connecting"
-            await self._close_session()
-        if self.session is None or self.session_requests >= 32:
-            self.phase = self.operation = "connecting"
-            if self.session is not None:
-                await self._close_session()
-            self.context.logger.info("启动机器人语音会话，设备=%s",
-                                     self.context.robot.device_info.get("device_id", ""))
-            self.session = await self._call(generation, self.context.robot.speech.open)
-            self.session_requests = 0
-        self.phase = self.operation = "listening" if kind == "recognize" else "speaking"
-        self.session_requests += 1
-        if kind == "recognize" and self.playback_finished_at is not None:
-            self.timings["rearm_dispatch_ms"] = round((asyncio.get_running_loop().time() - self.playback_finished_at) * 1000)
-            self.context.logger.info("播报完成到下一次聆听请求（ms）：%s", self.timings["rearm_dispatch_ms"])
-            self.playback_finished_at = None
-        return await self._call(generation, getattr(self.session, kind), **kwargs)
-
-    async def _reply(self, generation: int, text: str) -> None:
-        """Bounded producer -> sentence assembler -> single playback owner."""
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-        raw: asyncio.Queue[str | None] = asyncio.Queue(maxsize=8)
-        speech: asyncio.Queue[str | None] = asyncio.Queue(maxsize=2)
-        message = self._message("assistant", "", streaming=True)
-        self.timings = {}
-
-        def mark(name: str) -> None:
-            self.timings.setdefault(name, round((loop.time() - started) * 1000))
-
-        async def on_text(delta: str) -> None:
-            if not self._alive(generation):
-                raise Interrupted
-            mark("pi_first_text_ms")
-            message["text"] += delta
-            self.revision += 1
-            await raw.put(delta)
-
-        async def generate() -> None:
-            if os.environ.get("WATCHER_SPEECH_AGENT") == "echo":
-                await on_text("你说的是：" + text)
-            else:
-                reply = await self._ask(generation, text, on_text)
-                self.context.logger.info("Pi 回复：%s", reply)
-            mark("pi_complete_ms")
-            await raw.put(None)
-
-        async def assemble() -> None:
-            buffer = SentenceBuffer()
-            while True:
-                try:
-                    delta = await asyncio.wait_for(raw.get(), .7)
-                except asyncio.TimeoutError:
-                    chunks = buffer.flush(idle=True)
-                else:
-                    chunks = buffer.flush() if delta is None else buffer.feed(delta)
-                    if delta is None:
-                        for chunk in chunks:
-                            await speech.put(chunk)
-                        await speech.put(None)
-                        return
-                for chunk in chunks:
-                    await speech.put(chunk)
-
-        async def play() -> None:
-            while (chunk := await speech.get()) is not None:
-                if not self._alive(generation):
-                    raise Interrupted
-                mark("first_tts_request_ms")
-                # The cloud may trim sentence-leading whitespace in its
-                # subtitle. Keep display text intact but make TTS correlation
-                # compare the same normalized sentence.
-                chunk = chunk.strip()
-                self.context.logger.info("流式分句播报：%s", chunk)
-                await self._speech_call(generation, "say", text=chunk)
-            mark("playback_complete_ms")
-
-        tasks = [asyncio.create_task(fn()) for fn in (generate, assemble, play)]
-        completed = False
-        try:
-            await asyncio.gather(*tasks)
-            if not self._alive(generation):
-                raise Interrupted
-            self.playback_finished_at = loop.time()
-            completed = True
-            self.context.logger.info("语音流水线耗时（自 ASR 完成起，ms）：%s", self.timings)
-        finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            message["streaming"] = False
-            message["interrupted"] = not completed
-            self.revision += 1
 
     async def _close_session(self) -> None:
-        # Keep the owner and pending flag if cleanup fails. The next attempt
-        # must finish this cleanup before opening or sending another request.
         self.cleanup_pending = True
-        # Also retire a timed-out open retained by the SDK domain.
-        await asyncio.to_thread(self.session.close if self.session else self.context.robot.speech.close)
+        # Keep ownership on failure: switching must not bypass unconfirmed cleanup.
+        await self._invoke(self.session.close if self.session else self.speech_backends[self.backend_name].close)
         self.session = None
         self.session_requests = 0
         self.cleanup_pending = False
@@ -259,7 +276,7 @@ class ConversationService:
         try:
             while not self.stopping and not self.context.shutdown_requested:
                 now = asyncio.get_running_loop().time()
-                if now >= next_refresh and not (self.enabled and self.session is not None):
+                if now >= next_refresh:
                     try:
                         await asyncio.to_thread(self.context.robot.refresh_device_info, timeout=1)
                         self.connected = True
@@ -267,71 +284,111 @@ class ConversationService:
                         self.connected = False
                     next_refresh = now + 2
                 if not self.enabled:
+                    if self.session is not None and not self.cleanup_pending:
+                        try:
+                            await self._close_session()
+                        except Exception as error:
+                            self.error = "语音资源释放失败：" + (str(error) or type(error).__name__)
+                        await self._stop_behavior()
                     self.phase = "error" if self.error else "paused"
                     await asyncio.sleep(.1)
                     continue
                 generation = self.generation
                 self.error = ""
+                self.phase = "connecting"
+                operation = "机器人语音连接"
+                preview = None
                 retire_session = False
                 try:
+                    if not os.environ.get("WATCHER_SPEECH_TEST_TEXT") and os.environ.get("WATCHER_SPEECH_AGENT") != "echo":
+                        self._prewarm_agent()
+                    self.opening = True
+                    try:
+                        if self.session is None:
+                            self.session = await self._invoke(self.speech_backends[self.backend_name].open)
+                    finally:
+                        self.opening = False
+                    if not self._alive(generation):
+                        raise Interrupted
+                    if not self.behavior.snapshot().get("active"):
+                        await self.behavior.start()
+                    if not self._alive(generation):
+                        raise Interrupted
                     test_text = os.environ.get("WATCHER_SPEECH_TEST_TEXT")
                     if test_text:
-                        await self._speech_call(generation, "say", text=test_text)
+                        await self._phase("speaking", text=test_text)
+                        operation = "机器人语音播报"
+                        await self._session_call(generation, "say", text=test_text)
                         self.context.logger.info("TTS physical playback completed")
                         self.pause()
                         continue
-                    if self.agent is None and os.environ.get("WATCHER_SPEECH_AGENT") != "echo":
-                        # Let Pi initialize while the device connects and the
-                        # user speaks, instead of starting it after final ASR.
-                        self.agent = await self.agent_factory().__aenter__()
+                    await self._phase("listening")
+                    recognition_started = asyncio.get_running_loop().time()
+                    operation = "机器人语音识别"
                     self.context.logger.info("正在通过机器人麦克风识别（conversation_asr）")
-                    text = await self._speech_call(generation, "recognize", timeout=30)
+                    try:
+                        text = await self._session_call(generation, "recognize", timeout=30)
+                    except TimeoutError:
+                        # Only recognition keeps the existing silence/re-arm policy.
+                        retire_session = True
+                        continue
+                    self._timing("recognition", recognition_started)
                     self._message("user", text)
-                    self.context.logger.info("识别完成：%s", text)
-                    self.phase = self.operation = "thinking"
-                    await self._reply(generation, text)
+                    self.behavior.user_cue(text)
+                    await self._phase("thinking")
+                    pi_started = asyncio.get_running_loop().time()
+                    operation = "Pi 回复"
+                    if (getattr(self.session, "supports_text_preview", False)
+                            and os.environ.get("WATCHER_SPEECH_AGENT") != "echo"):
+                        preview = TextSpeechPreview(self.session.say_segments, logger=self.context.logger)
+                    reply = ("你说的是：" + text if os.environ.get("WATCHER_SPEECH_AGENT") == "echo"
+                             else await self._ask(generation, text,
+                                                  on_event=preview.handle if preview else None,
+                                                  before_speak=preview.join if preview else None))
+                    if not self._alive(generation):
+                        raise Interrupted
+                    self._timing("pi", pi_started)
+                    self._message("assistant", reply)
+                    await self._phase("speaking", text=reply)
+                    speech_started = asyncio.get_running_loop().time()
+                    operation = "机器人语音播报"
+                    if preview is not None and await self._call(generation, preview.play, final=reply):
+                        pass
+                    elif hasattr(self.session, "say_segments"):
+                        await self._session_call(generation, "say_segments", segments=speech_chunks(reply))
+                    else:
+                        for chunk in speech_chunks(reply):
+                            if chunk.strip():
+                                await self._session_call(generation, "say", text=chunk)
+                    self._timing("speech", speech_started)
                     self.turns += 1
                     self.context.logger.info("Agent reply playback completed")
                     if os.environ.get("WATCHER_SPEECH_ONCE") == "1":
                         self.pause()
                 except Interrupted:
                     pass
-                except TimeoutError as error:
-                    if not isinstance(error, PiReplyTimeout) and self.operation == "listening":
-                        # Silence is ordinary; re-arm rather than stopping conversation.
-                        self.phase = "connecting"
-                        retire_session = True
-                    else:
-                        if isinstance(error, PiReplyTimeout):
-                            self.error = "Pi 回复超时，请检查 Pi 的模型连接后重新开始。"
-                        else:
-                            operation = {"connecting": "启动语音会话", "thinking": "Pi 回复",
-                                         "speaking": "机器人播报"}.get(self.operation, "语音操作")
-                            self.error = operation + "超时，请确认设备固件与 JoyInside 配置后重新开始。"
-                        self.phase = "error"
-                        self.enabled = False
-                        self.context.logger.exception(self.error)
-                        if self.agent:
-                            await self.agent.close()
-                            self.agent = None
                 except Exception as error:
-                    self.error = str(error) or type(error).__name__
+                    reason = str(error) or type(error).__name__
+                    self.error = f"{operation}失败：{reason}"
                     self.phase = "error"
                     self.enabled = False
-                    self.context.logger.exception("语音轮次失败，等待重新开始")
-                    if self.agent:
-                        await self.agent.close()
-                        self.agent = None
+                    self.context.logger.exception("语音轮次失败，请检查错误后重试")
+                    await self._close_agent()
                 finally:
-                    if retire_session or not self._alive(generation) or self.error:
-                        try:
+                    try:
+                        if preview is not None:
+                            await preview.close()
+                        if retire_session or not self._reuse_session() or not self._alive(generation) or self.error:
                             await self._close_session()
-                        except Exception as error:
-                            detail = str(error) or type(error).__name__
-                            self.error = (self.error.rstrip("。") + "；" if self.error else "") + "语音资源释放失败：" + detail
-                            self.phase = "error"
-                            self.enabled = False
-                            self.context.logger.exception("语音资源释放失败，请暂停后重试")
+                    except Exception as error:
+                        reason = str(error) or type(error).__name__
+                        cleanup_error = f"语音资源释放失败：{reason}"
+                        self.error = f"{self.error}；{cleanup_error}" if self.error else cleanup_error
+                        self.phase = "error"
+                        self.enabled = False
+                        self.context.logger.exception("语音资源释放失败，请暂停后重试")
+                    if not self.enabled:
+                        await self._stop_behavior()
                     if not self.enabled and not self.error:
                         self.phase = "paused"
                 if self.error:
@@ -341,10 +398,15 @@ class ConversationService:
             try:
                 await self._close_session()
             finally:
-                if self.agent:
-                    await self.agent.close()
-                    self.agent = None
-                self.phase = "error" if self.cleanup_pending or self.error else "paused"
+                await self._stop_behavior()
+                try:
+                    await self._close_agent()
+                finally:
+                    for backend in self.speech_backends.values():
+                        shutdown = getattr(backend, "shutdown", None)
+                        if shutdown is not None:
+                            await self._invoke(shutdown)
+            self.phase = "error" if self.error else "paused"
 
     async def desktop_controls(self) -> None:
         while not self.stopping and not self.context.shutdown_requested:
@@ -358,13 +420,26 @@ class ConversationService:
                 continue
             if isinstance(message, dict):
                 if message.get("type") == "ctrl.microphone.open":
-                    self.start()
+                    try:
+                        self.start()
+                    except ConnectionError as error:
+                        self.error = str(error)
+                        self.phase = "error"
                 elif message.get("type") == "ctrl.microphone.close":
                     self.pause()
 
 
-def create_web_app(service: ConversationService, web_root: Path) -> FastAPI:
+def create_web_app(service: ConversationService, web_root: Path,
+                   *, connection: DaemonConnection | None = None) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    pairing_lock = asyncio.Lock()
+
+    @app.exception_handler(ConnectionError)
+    async def connection_error(_request: Any, error: ConnectionError) -> Any:
+        payload = {"error": str(error)}
+        if error.code is not None:
+            payload["error_code"] = error.code
+        return JSONResponse(payload, status_code=error.status_code)
 
     @app.middleware("http")
     async def local_origin(request: Any, call_next: Any) -> Any:
@@ -389,12 +464,58 @@ def create_web_app(service: ConversationService, web_root: Path) -> FastAPI:
 
     @app.post("/api/start")
     async def start() -> Any:
-        service.start()
+        if pairing_lock.locked():
+            return JSONResponse({"error": "正在发起配对，请等待机器人连接"}, status_code=409)
+        async with pairing_lock:
+            if connection is not None:
+                status = await asyncio.to_thread(connection.status)
+                if not status.get("online"):
+                    raise ConnectionError("请先连接机器人，再开始对话", 409)
+            service.start()
         return service.snapshot()
 
     @app.post("/api/pause")
     async def pause() -> Any:
         service.pause()
+        return service.snapshot()
+
+    @app.get("/api/connection")
+    async def device_connection() -> Any:
+        if connection is None:
+            raise ConnectionError("当前运行环境未提供机器人连接服务")
+        return await asyncio.to_thread(connection.status)
+
+    @app.post("/api/pair", status_code=202)
+    async def pair(request: AnyRequest) -> Any:
+        try:
+            body = await request.json()
+        except ValueError:
+            raise ConnectionError("请输入机器人屏幕上的六位数字配对码", 400) from None
+        code = validate_pairing_code(body.get("pairing_code") if isinstance(body, dict) else None)
+        if connection is None:
+            raise ConnectionError("当前运行环境未提供机器人连接服务")
+        if service.cleanup_pending and not (service.enabled or service.opening):
+            raise ConnectionError("上一轮语音资源未释放，请重启 Pi Application 后重新配对", 409,
+                                  code="speech_cleanup_required")
+        if service.enabled or service.opening or service.session or service.cleanup_pending or pairing_lock.locked():
+            raise ConnectionError("请先暂停对话并等待当前操作结束，再连接机器人", 409,
+                                  code="conversation_busy")
+        async with pairing_lock:
+            return await asyncio.to_thread(connection.pair, code)
+
+    @app.post("/api/speech/backend")
+    async def select_speech_backend(request: AnyRequest) -> Any:
+        try:
+            body = await request.json()
+        except ValueError:
+            raise ConnectionError("请选择受支持的语音后端", 400) from None
+        name = body.get("backend") if isinstance(body, dict) else None
+        if not isinstance(name, str):
+            raise ConnectionError("请选择受支持的语音后端", 400)
+        if pairing_lock.locked():
+            raise ConnectionError("正在连接机器人，请等待后再切换", 409)
+        async with pairing_lock:
+            service.select_backend(name)
         return service.snapshot()
 
     app.mount("/assets", StaticFiles(directory=web_root), name="assets")

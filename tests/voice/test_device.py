@@ -108,3 +108,28 @@ def test_speaker_stop_can_be_retried_after_transient_failure():
         assert len(calls) == 2, "Recovery must retry the unconfirmed stop"
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(('dropped','decode','label'), [
+    (2, 0, '缓存溢出'), (0, 1, '解码失败'), (2, 1, '解码失败'),
+])
+def test_capture_fault_distinguishes_queue_overflow_from_decode_failure(dropped, decode, label):
+    from watcherobot.voice.contracts import VoiceError
+    async def run():
+        class Mic:
+            dropped_frames = dropped
+            decode_failures = decode
+            closed = False
+            def read(self, timeout):
+                return SimpleNamespace(data=b'\x00\x10' * 960)
+            def close(self): self.closed = True
+        mic = Mic()
+        robot = SimpleNamespace(microphone=SimpleNamespace(open_pcm=lambda **kw: mic))
+        device = SDKVoiceDevice(robot, ConversationConfig())
+        with pytest.raises(VoiceError) as result:
+            async for _ in device.utterance(): pass
+        assert label in str(result.value)
+        assert f'dropped_frames={dropped}' in str(result.value)
+        assert f'decode_failures={decode}' in str(result.value)
+        assert mic.closed and device.microphone is None
+    asyncio.run(run())

@@ -1,0 +1,63 @@
+{
+  "local_pcm_capability": true,
+  "pi_ms": 2573,
+  "speech_ms": 10898,
+  "playback_complete": true,
+  "cancel_complete": true,
+  "tts_http_client_reused": true,
+  "max_pcm_frames": 82,
+  "max_speaking_frames": 128,
+  "max_mouth_level": 472,
+  "max_update_errors": 0,
+  "normal_end": {
+    "sequence": 44,
+    "stage": "periodic",
+    "captured_at_ms": 234659,
+    "animation": {
+      "audio_follow": true,
+      "mouth_level_milli": 0,
+      "pcm_frames": 67,
+      "speaking_frames": 108,
+      "silent_frames": 186,
+      "update_errors": 0,
+      "emotion_target": 0,
+      "emotion_submitted": 0
+    },
+    "tts_playback": false
+  },
+  "cancel_end": {
+    "sequence": 63,
+    "stage": "periodic",
+    "captured_at_ms": 241810,
+    "animation": {
+      "audio_follow": true,
+      "mouth_level_milli": 0,
+      "pcm_frames": 82,
+      "speaking_frames": 128,
+      "silent_frames": 297,
+      "update_errors": 0,
+      "emotion_target": 0,
+      "emotion_submitted": 0
+    },
+    "tts_playback": false
+  },
+  "final_resource": {
+    "sequence": 65,
+    "stage": "periodic",
+    "captured_at_ms": 242871,
+    "animation": {
+      "audio_follow": false,
+      "mouth_level_milli": 0,
+      "pcm_frames": 0,
+      "speaking_frames": 0,
+      "silent_frames": 0,
+      "update_errors": 0,
+      "emotion_target": 0,
+      "emotion_submitted": 0
+    },
+    "tts_playback": false
+  },
+  "final_cleanup_pending": false,
+  "human_acoustic_or_lcd_confirmation": false,
+  "limitations": "Counters prove playback PCM and renderer submissions, not physical LCD/DAC synchronization or servo position."
+}
