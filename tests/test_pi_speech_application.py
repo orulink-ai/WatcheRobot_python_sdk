@@ -67,3 +67,65 @@ def test_speech_chunks_respect_utf8_and_preserve_text():
 def test_example_manifest_is_loadable_by_daemon():
     from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
     assert ApplicationManifest.load(ROOT).app_id == "com.orulink.joyinside_pi"
+
+
+def test_rpc_streams_only_visible_text_before_settled_without_duplicates(tmp_path):
+    marker = tmp_path / "heard"
+    fake = tmp_path / "stream.py"
+    fake.write_text('''import json, sys, time
+from pathlib import Path
+for line in sys.stdin.buffer:
+ c=json.loads(line)
+ if c['type']=='abort': break
+ if c['type']!='prompt': continue
+ def emit(e): print(json.dumps(e),flush=True)
+ emit({'type':'response','id':c['id'],'success':True})
+ emit({'type':'message_start','message':{'role':'assistant'}})
+ emit({'type':'message_update','assistantMessageEvent':{'type':'thinking_delta','delta':'secret'}})
+ emit({'type':'message_update','assistantMessageEvent':{'type':'toolcall_delta','delta':'private'}})
+ emit({'type':'message_update','assistantMessageEvent':{'type':'text_delta','contentIndex':0,'delta':'先说一句。'}})
+ deadline=time.monotonic()+2
+ while not Path(sys.argv[1]).exists() and time.monotonic()<deadline: time.sleep(.01)
+ if not Path(sys.argv[1]).exists(): sys.exit(2)
+ emit({'type':'message_update','assistantMessageEvent':{'type':'text_end','contentIndex':0,'content':'先说一句。再说一句。'}})
+ emit({'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'先说一句。再说一句。'}],'stopReason':'stop'}})
+ emit({'type':'agent_settled'})
+''', encoding="utf-8")
+
+    async def run():
+        pieces = []
+
+        async def on_text(text):
+            pieces.append(text)
+            marker.write_text("heard", encoding="utf-8")
+
+        async with module().PiAgent([sys.executable, str(fake), str(marker)]) as pi:
+            reply = await pi.ask("hello", timeout=3, on_text=on_text)
+        assert pieces == ["先说一句。", "再说一句。"]
+        assert reply == "".join(pieces)
+
+    asyncio.run(run())
+
+
+def test_stream_rewrite_fails_instead_of_replaying_changed_text(tmp_path):
+    fake = tmp_path / "rewrite.py"
+    fake.write_text('''import json, sys
+for line in sys.stdin.buffer:
+ c=json.loads(line)
+ if c['type']=='abort': break
+ if c['type']=='prompt':
+  for e in [{'type':'response','id':c['id'],'success':True},
+   {'type':'message_update','assistantMessageEvent':{'type':'text_delta','contentIndex':0,'delta':'already spoken'}},
+   {'type':'message_end','message':{'role':'assistant','content':[{'type':'text','text':'replacement'}]}},
+   {'type':'agent_settled'}]: print(json.dumps(e),flush=True)
+''', encoding="utf-8")
+
+    async def run():
+        pieces = []
+        async def on_text(text): pieces.append(text)
+        async with module().PiAgent([sys.executable, str(fake)]) as pi:
+            with pytest.raises(RuntimeError, match="changed.*streamed"):
+                await pi.ask("hello", timeout=2, on_text=on_text)
+            assert pi.process.returncode is not None
+        assert pieces == ["already spoken"]
+    asyncio.run(run())

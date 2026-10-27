@@ -1,5 +1,7 @@
 # Pi 连续语音可视化 Application
 
+后续问题：[2026-10-16 启动超时与错误提示修复](../../2026-10-16/2026-10-16_112431_KID_无Issue_Pi语音启动超时/index.md)，保留原验收范围，补充真实运行故障处理。
+
 - 建档作者：KID；参与者：KID / Codex；2026-10-14，Asia/Shanghai；无 Issue。
 - 分支：codex/realtime-expression；状态：进行中，本地未提交。
 - 需求：用户希望看见 Application 的网页效果，并点击一次后进行连续多轮对话。

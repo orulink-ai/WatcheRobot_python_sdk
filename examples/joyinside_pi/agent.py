@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
-from typing import Iterator
+from typing import Awaitable, Callable, Iterator
 import uuid
 
 
@@ -63,7 +63,7 @@ class PiAgent:
         self.process = await asyncio.create_subprocess_exec(
             *self.command, cwd=self.cwd, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            limit=8 * 1024 * 1024, **({"creationflags": 0x08000000} if os.name == "nt" else {}),
+            limit=8 * 1024 * 1024, creationflags=0x08000000 if os.name == "nt" else 0,
         )
         return self
 
@@ -73,21 +73,52 @@ class PiAgent:
         self.process.stdin.write(json.dumps(data, ensure_ascii=False).encode("utf-8") + b"\n")
         await self.process.stdin.drain()
 
-    async def ask(self, text: str, *, timeout: float = 120) -> str:
+    async def ask(self, text: str, *, timeout: float = 120,
+                  on_text: Callable[[str], Awaitable[None]] | None = None) -> str:
+        """Return the final answer; optionally await visible text deltas.
+
+        The callback receives assistant prose, including pre-tool messages.
+        Its await provides backpressure. Thinking and tool arguments are never
+        forwarded. Streamed speech cannot be retracted after a provider retry.
+        """
         async with self._lock:
             try:
-                return await asyncio.wait_for(self._ask(text), timeout)
+                return await asyncio.wait_for(self._ask(text, on_text), timeout)
+            except asyncio.TimeoutError as error:
+                await self.close()
+                raise TimeoutError("Pi reply timed out") from error
             except BaseException:
                 # Retire this process so late session events cannot complete
                 # a later prompt. The next Application run creates a new Pi.
                 await self.close()
                 raise
 
-    async def _ask(self, text: str) -> str:
+    async def _ask(self, text: str, on_text: Callable[[str], Awaitable[None]] | None) -> str:
         request = uuid.uuid4().hex
         await self._send({"id": request, "type": "prompt", "message": text})
         assert self.process is not None and self.process.stdout is not None
         reply, failed, accepted, settled = "", False, False, False
+        blocks: dict[int, str] = {}
+        streamed = ""
+        previous_message = False
+        total = 0
+
+        async def publish(visible: str) -> None:
+            nonlocal streamed, total
+            if on_text is None:
+                return
+            if not visible.startswith(streamed):
+                raise RuntimeError("Pi changed already streamed text; please retry the turn")
+            delta = visible[len(streamed):]
+            if delta:
+                total += len(delta)
+                if total > 16000:
+                    raise RuntimeError("Pi voice reply exceeds 16000 characters")
+                if not streamed and previous_message:
+                    await on_text("\n")
+                await on_text(delta)
+                streamed = visible
+
         while True:
             line = await self.process.stdout.readline()
             if not line:
@@ -103,12 +134,33 @@ class PiAgent:
                 if disposition == "handled":
                     raise RuntimeError("Pi handled the command without starting a reply")
                 accepted = True
+            elif kind == "message_start" and record.get("message", {}).get("role") == "assistant":
+                blocks, streamed = {}, ""
+            elif kind == "message_update" and on_text is not None:
+                update = record.get("assistantMessageEvent", {})
+                update_kind = update.get("type")
+                if update_kind not in {"text_delta", "text_end"}:
+                    continue
+                index = update.get("contentIndex")
+                if not isinstance(index, int) or not 0 <= index < 128:
+                    raise RuntimeError("Invalid Pi text block index")
+                value = update.get("delta" if update_kind == "text_delta" else "content")
+                if not isinstance(value, str):
+                    raise RuntimeError("Invalid Pi text update")
+                blocks[index] = blocks.get(index, "") + value if update_kind == "text_delta" else value
+                await publish("".join(blocks[i] for i in sorted(blocks)))
             elif kind == "message_end":
                 message = record.get("message", {})
                 if message.get("role") == "assistant":
                     failed = message.get("stopReason") in {"error", "aborted"}
                     reply = "".join(block["text"] for block in message.get("content", [])
                                     if block.get("type") == "text" and isinstance(block.get("text"), str))
+                    if on_text is not None:
+                        if failed:
+                            raise RuntimeError("Pi generation failed after partial output")
+                        await publish(reply)
+                        previous_message = previous_message or bool(streamed)
+                        blocks, streamed = {}, ""
             elif kind == "agent_settled":
                 settled = True
                 failed = failed or bool(record.get("aborted"))

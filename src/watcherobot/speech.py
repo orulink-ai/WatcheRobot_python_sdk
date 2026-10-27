@@ -197,7 +197,11 @@ class SpeechSession:
             self._error = ""
         try:
             self._domain._robot._command("ctrl.speech.close", {"session_id": self.id}, timeout=timeout)
-        except CommandError:
+        except CommandError as error:
+            if error.reason == "session_mismatch":
+                # The device explicitly no longer owns this ID. Retire only
+                # our handle; never close a different device-side session.
+                self._event({"kind": "closed", "reason": "session_not_owned"})
             with self._condition:
                 if not self._closed:
                     raise

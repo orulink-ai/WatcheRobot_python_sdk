@@ -2,11 +2,11 @@
   "schema_version": 2,
   "id": "com.orulink.joyinside_pi",
   "name": "JoyInside 本地 Pi 语音助手",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "requires_watcherobot": ">=0.1.11,<0.2",
   "dependencies": [],
   "supported_host_platforms": ["windows", "macos"],
-  "description": "复用机器人 JoyInside ASR/TTS，在电脑上运行 Pi Agent；语音会话独占机器人音频。",
+  "description": "使用机器人 JoyInside ASR/TTS 与本机 Pi Agent 连续对话，支持正文流式分句播报、连接复用和网页暂停；半双工语音模式。",
   "author": "Orulink AI",
   "icon": "icon.svg"
 }
