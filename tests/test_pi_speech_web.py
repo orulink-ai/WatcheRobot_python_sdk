@@ -6,6 +6,7 @@ import threading
 import logging
 
 from fastapi.testclient import TestClient
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1] / "examples" / "joyinside_pi"
 
@@ -26,14 +27,10 @@ class Session:
         self.played = []
 
     def recognize(self, timeout=30):
-        if isinstance(self.text, list):
-            text = self.text.pop(0) if self.text else None
-        else:
-            text = self.text
-        if text is None:
+        if self.text is None:
             self.cancelled.wait(3)
             raise RuntimeError("cancelled")
-        return text
+        return self.text
 
     def say(self, text, timeout=60):
         self.played.append(text)
@@ -55,7 +52,7 @@ class Robot:
         return self.device_info
 
     def open(self):
-        session = Session(["first", "second"] if not self.sessions else [])
+        session = Session(["first", "second"][len(self.sessions)] if len(self.sessions) < 2 else None)
         self.sessions.append(session)
         return session
 
@@ -64,21 +61,204 @@ class Agent:
     def __init__(self):
         self.prompts = []
         self.closed = False
-        self.entered = False
 
     async def __aenter__(self):
-        self.entered = True
         return self
 
-    async def ask(self, text, *, on_text=None):
+    async def ask(self, text, *, on_speak):
         self.prompts.append(text)
-        reply = "reply " + str(len(self.prompts))
-        if on_text:
-            await on_text(reply)
-        return reply
+        return "reply " + str(len(self.prompts))
 
     async def close(self):
         self.closed = True
+
+
+class AsyncBackend:
+    def __init__(self, configured=True):
+        self.configured = configured
+        self.session = None
+        self.opens = 0
+    def snapshot(self):
+        return {"id": "doubao", "label": "Application 豆包", "configured": self.configured}
+    async def open(self):
+        self.opens += 1
+        played = []
+        async def recognize(timeout=30): return "搜索小狮日记"
+        async def say(text): played.append(text)
+        async def cancel(): pass
+        async def close(): self.session.closed = True
+        self.session = SimpleNamespace(recognize=recognize, say=say, cancel=cancel,
+                                       close=close, played=played, closed=False)
+        return self.session
+    async def close(self):
+        if self.session: await self.session.close()
+
+
+def test_joyinside_reuses_session_across_successful_turns_and_closes_on_pause(monkeypatch):
+    module = load(monkeypatch)
+
+    async def check():
+        robot, agent = Robot(), Agent()
+        robot.capabilities = {"speech.joyinside.v1"}
+        replies = iter(["first", "second"])
+        session = Session(None)
+
+        def recognize(timeout=30):
+            try:
+                return next(replies)
+            except StopIteration:
+                session.cancelled.wait(3)
+                raise RuntimeError("cancelled")
+
+        session.recognize = recognize
+        robot.speech.open = lambda: robot.sessions.append(session) or session
+        service = module.ConversationService(
+            SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test")),
+            agent_factory=lambda: agent)
+        runner = asyncio.create_task(service.run())
+        try:
+            service.start()
+            await wait_until(lambda: service.turns == 2)
+            assert len(robot.sessions) == 1 and not session.closed
+            assert session.played == ["reply 1", "reply 2"]
+            service.pause()
+            await wait_until(lambda: session.closed and service.phase == "paused")
+        finally:
+            service.shutdown()
+            await runner
+
+    asyncio.run(check())
+
+
+def test_joyinside_rotates_session_before_request_budget_is_exhausted(monkeypatch):
+    module = load(monkeypatch)
+
+    async def check():
+        robot = Robot()
+        robot.capabilities = {"speech.joyinside.v1"}
+        service = module.ConversationService(
+            SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test")))
+        service.start()
+        old = service.session = robot.open()
+        service.session_requests = 32
+        await service._session_call(service.generation, "say", text="next")
+        assert old.closed and not old.played
+        assert len(robot.sessions) == 2 and robot.sessions[1].played == ["next"]
+        await service._close_session()
+
+    asyncio.run(check())
+
+
+def test_async_doubao_backend_runs_through_pi_without_device_speech(monkeypatch):
+    module = load(monkeypatch)
+    monkeypatch.setenv("WATCHER_SPEECH_ONCE", "1")
+    async def check():
+        robot, agent, backend = Robot(), Agent(), AsyncBackend()
+        service = module.ConversationService(
+            SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test")),
+            agent_factory=lambda: agent, speech_backends={"doubao": backend}, backend_name="doubao")
+        runner = asyncio.create_task(service.run())
+        try:
+            service.start()
+            await wait_until(lambda: service.turns == 1 and backend.session.closed)
+            assert robot.sessions == [], "Doubao must not open the firmware speech session"
+            assert backend.opens == 1
+            assert "搜索小狮日记" in agent.prompts[0]
+            assert backend.session.played == ["reply 1"]
+            assert service.snapshot()["speech_backend"] == "doubao"
+        finally:
+            service.shutdown()
+            await runner
+    asyncio.run(check())
+
+
+def test_backend_selection_api_validates_and_does_not_expose_credentials(monkeypatch):
+    module = load(monkeypatch)
+    backend, saved = AsyncBackend(), []
+    service = module.ConversationService(
+        SimpleNamespace(robot=Robot()), speech_backends={"doubao": backend},
+        backend_name="doubao", save_backend=saved.append)
+    with TestClient(module.create_web_app(service, ROOT / "web")) as client:
+        assert client.post("/api/speech/backend", json={"backend": "unknown"}).status_code == 400
+        assert client.post("/api/speech/backend", json={"backend": "doubao"}, headers={"Origin": "https://outside.example"}).status_code == 403
+        response = client.post("/api/speech/backend", json={"backend": "doubao"})
+        assert response.status_code == 200
+        assert response.json()["speech_backend"] == "doubao"
+        assert response.json()["speech_backends"][0]["configured"] is True
+        assert "access_token" not in response.text
+        assert saved == ["doubao"]
+        backend.configured = False
+        assert client.post("/api/speech/backend", json={"backend": "doubao"}).status_code == 400
+
+
+@pytest.mark.parametrize("busy", ["enabled", "opening", "session", "cleanup_pending"])
+def test_switch_rejected_while_audio_owned(monkeypatch, busy):
+    module = load(monkeypatch)
+    backend, saved = AsyncBackend(), []
+    service = module.ConversationService(SimpleNamespace(robot=Robot()),
+        speech_backends={"doubao": backend}, backend_name="doubao", save_backend=saved.append)
+    setattr(service, busy, True)
+    with TestClient(module.create_web_app(service, ROOT / "web")) as client:
+        assert client.post("/api/speech/backend", json={"backend": "doubao"}).status_code == 409
+        assert saved == []
+
+
+def test_failed_audio_cleanup_retains_owner_until_confirmed(monkeypatch):
+    module = load(monkeypatch)
+    async def check():
+        service = module.ConversationService(SimpleNamespace(robot=Robot()),
+            speech_backends={"doubao": AsyncBackend()}, backend_name="doubao")
+        calls = 0
+        async def close():
+            nonlocal calls
+            calls += 1
+            if calls == 1: raise TimeoutError("unconfirmed close")
+        session = SimpleNamespace(close=close)
+        service.session = session
+        with pytest.raises(TimeoutError): await service._close_session()
+        assert service.session is session and service.cleanup_pending
+        with pytest.raises(module.ConnectionError): service.select_backend("doubao")
+        await service._close_session()
+        service.select_backend("doubao")
+        assert service.session is None and not service.cleanup_pending
+    asyncio.run(check())
+
+
+def test_preference_save_failure_does_not_change_backend(monkeypatch):
+    module = load(monkeypatch)
+    def fail(_name): raise OSError("private filesystem error")
+    service = module.ConversationService(SimpleNamespace(robot=Robot()),
+        speech_backends={"joyinside": AsyncBackend(), "doubao": AsyncBackend()}, save_backend=fail)
+    with TestClient(module.create_web_app(service, ROOT / "web")) as client:
+        response = client.post("/api/speech/backend", json={"backend": "doubao"})
+        assert response.status_code == 503
+        assert "private filesystem" not in response.text
+        assert service.backend_name == "joyinside"
+
+
+def test_desktop_start_during_unconfirmed_cleanup_keeps_controls_alive(monkeypatch):
+    module = load(monkeypatch)
+    async def check():
+        received = 0
+        async def receive(timeout):
+            nonlocal received
+            received += 1
+            if received == 1: return '{"type":"ctrl.microphone.open"}'
+            await asyncio.sleep(.02)
+            raise TimeoutError
+        context = SimpleNamespace(robot=Robot(), shutdown_requested=False,
+                                  desktop=SimpleNamespace(receive=receive))
+        service = module.ConversationService(context)
+        service.cleanup_pending = True
+        task = asyncio.create_task(service.desktop_controls())
+        try:
+            await asyncio.sleep(.1)
+            assert not task.done(), "a rejected start must not terminate desktop controls"
+            assert not service.enabled and "尚未释放" in service.error
+        finally:
+            service.stopping = True
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(check())
 
 
 async def wait_until(check):
@@ -88,220 +268,50 @@ async def wait_until(check):
     raise AssertionError("condition not reached")
 
 
+@pytest.mark.parametrize("text", ["搜索小师日记的视频", "狮子正在做手工，不是在找账号"])
+def test_voice_prompt_supplies_canonical_names_and_keeps_original_input(monkeypatch, text):
+    module = load(monkeypatch)
+    async def check():
+        agent = Agent()
+        context = SimpleNamespace(robot=Robot(), shutdown_requested=False)
+        service = module.ConversationService(context, agent_factory=lambda: agent)
+        service.start()
+        assert await service._ask(service.generation, text) == "reply 1"
+        prompt = agent.prompts[0]
+        for name in ("小狮日记", "手工耿", "贪玩歌姬小宁子"):
+            assert name in prompt
+        assert "狮子的“狮”" in prompt
+        assert "不要把普通词语强行替换成专名" in prompt
+        assert prompt.endswith("用户语音识别原文：\n" + text)
+        await agent.close()
+    asyncio.run(check())
+
+
 def test_one_start_runs_multiple_turns_and_pause_drains_microphone(monkeypatch):
     module = load(monkeypatch)
     async def check():
         robot, agent = Robot(), Agent()
-        original_open = robot.speech.open
-        def open_after_pi_warmup():
-            assert agent.entered, "start Pi before waiting for the first microphone input"
-            return original_open()
-        robot.speech.open = open_after_pi_warmup
         c = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
         service = module.ConversationService(c, agent_factory=lambda: agent)
         runner = asyncio.create_task(service.run())
         await asyncio.sleep(.1)
         assert robot.sessions == [], "standby must not record"
         service.start()
-        await wait_until(lambda: service.turns == 2)
+        await wait_until(lambda: len(robot.sessions) == 3)
         assert len(agent.prompts) == 2
-        assert len(robot.sessions) == 1, "normal turns must reuse the reserved audio session"
-        assert robot.sessions[0].played == ["reply 1", "reply 2"]
-        assert not robot.sessions[0].closed
+        assert robot.sessions[0].played == ["reply 1"]
+        assert robot.sessions[1].played == ["reply 2"]
+        assert all(s.closed for s in robot.sessions[:2])
         service.pause()
-        await wait_until(lambda: robot.sessions[0].closed)
-        assert robot.sessions[0].cancelled.is_set()
+        # Audio close precedes behavior cleanup; wait for the full pause before
+        # asserting its terminal state, rather than racing the service owner.
+        await wait_until(lambda: robot.sessions[2].closed and service.snapshot()["phase"] == "paused")
+        assert robot.sessions[2].cancelled.is_set()
         assert service.snapshot()["phase"] == "paused"
         assert len(service.snapshot()["messages"]) == 4
         service.shutdown()
         await runner
         assert agent.closed
-    asyncio.run(check())
-
-
-def test_sentence_plays_while_pi_is_still_generating_and_pause_cancels_all(monkeypatch):
-    module = load(monkeypatch)
-
-    async def check():
-        robot = Robot()
-        class StreamingAgent(Agent):
-            async def ask(self, text, *, on_text):
-                await on_text("第一句话。")
-                await wait_until(lambda: robot.sessions[0].played == ["第一句话。"])
-                await on_text("第二句仍在生成")
-                await asyncio.Event().wait()
-
-        agent = StreamingAgent()
-        c = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
-        service = module.ConversationService(c, agent_factory=lambda: agent)
-        service.start()
-        runner = asyncio.create_task(service.run())
-        try:
-            await wait_until(lambda: robot.sessions and robot.sessions[0].played)
-            assert service.turns == 0, "first sentence must play before Pi settles"
-            assert service.snapshot()["messages"][-1]["streaming"] is True
-            service.pause()
-            await wait_until(lambda: robot.sessions[0].closed and agent.closed)
-            assert robot.sessions[0].played == ["第一句话。"], "pause must discard the queued tail"
-            assert not service.snapshot()["messages"][-1]["streaming"]
-            assert service.snapshot()["phase"] == "paused"
-        finally:
-            service.shutdown()
-            await runner
-    asyncio.run(check())
-
-
-def test_slow_playback_applies_backpressure_and_pause_discards_the_queue(monkeypatch):
-    module = load(monkeypatch)
-
-    async def check():
-        robot = Robot()
-        session = Session(["hello"])
-        def slow_say(text, timeout=60):
-            session.played.append(text)
-            session.cancelled.wait(3)
-            raise RuntimeError("cancelled")
-        session.say = slow_say
-        robot.speech.open = lambda: session
-
-        class FastAgent(Agent):
-            sent = 0
-            async def ask(self, text, *, on_text):
-                for _ in range(200):
-                    await on_text("这是需要逐句播报的内容。")
-                    self.sent += 1
-                return "这是需要逐句播报的内容。" * 200
-
-        agent = FastAgent()
-        c = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
-        service = module.ConversationService(c, agent_factory=lambda: agent)
-        service.start()
-        runner = asyncio.create_task(service.run())
-        try:
-            await wait_until(lambda: session.played)
-            await asyncio.sleep(.1)
-            assert agent.sent < 30, "slow TTS must bound pending generated segments"
-            service.pause()
-            await wait_until(lambda: session.closed and agent.closed)
-            assert len(session.played) == 1
-        finally:
-            service.shutdown()
-            await runner
-    asyncio.run(check())
-
-
-def test_session_rotates_at_request_budget_after_previous_audio_drains(monkeypatch):
-    module = load(monkeypatch)
-
-    async def check():
-        robot = Robot()
-        c = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
-        service = module.ConversationService(c)
-        service.start()
-        for _ in range(33):
-            await service._speech_call(service.generation, "say", text="test")
-        assert len(robot.sessions) == 2
-        assert robot.sessions[0].closed
-        assert len(robot.sessions[0].played) == 32
-        assert robot.sessions[1].played == ["test"]
-        assert not robot.sessions[1].closed
-        await service._close_session()
-    asyncio.run(check())
-
-
-def test_streamed_sentence_whitespace_is_displayed_but_not_sent_to_tts(monkeypatch):
-    module = load(monkeypatch)
-
-    async def check():
-        robot = Robot()
-        class SpacedAgent(Agent):
-            async def ask(self, text, *, on_text):
-                await on_text("第一句。 第二句。\n最后一句。")
-                return "第一句。 第二句。\n最后一句。"
-        c = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
-        service = module.ConversationService(c, agent_factory=SpacedAgent)
-        service.start()
-        try:
-            await service._reply(service.generation, "hello")
-            assert robot.sessions[0].played == ["第一句。", "第二句。", "最后一句。"]
-            assert service.messages[-1]["text"] == "第一句。 第二句。\n最后一句。"
-        finally:
-            await service._close_session()
-            if service.agent:
-                await service.agent.close()
-    asyncio.run(check())
-
-
-def test_failed_cleanup_is_retried_before_a_new_operation(monkeypatch):
-    import pytest
-    module = load(monkeypatch)
-
-    async def check():
-        robot = Robot()
-        c = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
-        service = module.ConversationService(c)
-        old = Session([])
-        service.session = old
-        attempts = []
-        def flaky_close():
-            attempts.append(True)
-            if len(attempts) == 1:
-                raise TimeoutError("cleanup pending")
-            old.closed = True
-        old.close = flaky_close
-        with pytest.raises(TimeoutError):
-            await service._close_session()
-        service.start()
-        await service._speech_call(service.generation, "say", text="new request")
-        assert len(attempts) == 2 and old.closed
-        assert len(robot.sessions) == 1
-        assert old.played == []
-        await service._close_session()
-    asyncio.run(check())
-
-
-def test_shutdown_retires_pi_even_when_device_cleanup_fails(monkeypatch):
-    import pytest
-    module = load(monkeypatch)
-
-    async def check():
-        robot, agent = Robot(), Agent()
-        def failed_close():
-            raise TimeoutError("cleanup pending")
-        robot.speech.close = failed_close
-        c = SimpleNamespace(robot=robot, shutdown_requested=True, logger=logging.getLogger("test"))
-        service = module.ConversationService(c)
-        service.agent = agent
-        with pytest.raises(TimeoutError):
-            await service.run()
-        assert agent.closed
-        assert service.cleanup_pending
-    asyncio.run(check())
-
-
-def test_pi_timeout_after_first_sentence_is_reported_as_pi_failure(monkeypatch):
-    module = load(monkeypatch)
-
-    async def check():
-        robot = Robot()
-        class ExpiringAgent(Agent):
-            async def ask(self, text, *, on_text):
-                await on_text("先说一句。")
-                await wait_until(lambda: robot.sessions[0].played)
-                raise TimeoutError("Pi expired")
-        agent = ExpiringAgent()
-        c = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
-        service = module.ConversationService(c, agent_factory=lambda: agent)
-        service.start()
-        runner = asyncio.create_task(service.run())
-        try:
-            await wait_until(lambda: not service.enabled)
-            assert "Pi" in service.error and "超时" in service.error
-            assert service.turns == 0
-            assert agent.closed and robot.sessions[0].closed
-        finally:
-            service.shutdown()
-            await runner
     asyncio.run(check())
 
 
@@ -318,29 +328,47 @@ def test_local_web_exposes_real_state_and_rejects_other_origins(monkeypatch):
         assert client.get("/api/state", headers={"Host": "outside.example"}).status_code == 403
 
 
-def test_open_timeout_stops_and_keeps_actionable_error(monkeypatch):
+@pytest.mark.parametrize("stage", ["open", "agent", "say"])
+@pytest.mark.parametrize("empty_message", [False, True], ids=["message", "empty_message"])
+def test_non_recognition_timeout_stops_and_remains_visible(monkeypatch, stage, empty_message):
     module = load(monkeypatch)
 
     async def check():
-        robot = Robot()
-        opens = []
+        robot, agent = Robot(), Agent()
+        original_open = robot.speech.open
+        open_calls = 0
 
-        def failed_open():
-            opens.append(True)
-            raise TimeoutError()
+        def fail():
+            raise TimeoutError("" if empty_message else f"{stage} timed out")
 
-        robot.speech.open = failed_open
+        async def fail_agent(text, *, on_speak):
+            fail()
+
+        def open_session():
+            nonlocal open_calls
+            open_calls += 1
+            if stage == "open":
+                fail()
+            session = original_open()
+            if stage == "say":
+                session.say = lambda **kwargs: fail()
+            return session
+
+        robot.speech.open = open_session
+        if stage == "agent":
+            agent.ask = fail_agent
         context = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
-        service = module.ConversationService(context, agent_factory=Agent)
-        service.start()
+        service = module.ConversationService(context, agent_factory=lambda: agent)
         runner = asyncio.create_task(service.run())
         try:
-            await wait_until(lambda: not service.enabled)
-            await asyncio.sleep(.15)
-            state = service.snapshot()
-            assert state["phase"] == "error"
-            assert "启动" in state["error"] and "超时" in state["error"]
-            assert len(opens) == 1
+            service.start()
+            await wait_until(lambda: bool(service.error))
+            await asyncio.sleep(1.2)
+            assert service.snapshot()["phase"] == "error"
+            assert service.snapshot()["enabled"] is False
+            expected_error = "TimeoutError" if empty_message else f"{stage} timed out"
+            assert expected_error in service.snapshot()["error"]
+            assert open_calls == 1, "a failed handshake, model request or playback must not retry silently"
         finally:
             service.shutdown()
             await runner
@@ -348,31 +376,109 @@ def test_open_timeout_stops_and_keeps_actionable_error(monkeypatch):
     asyncio.run(check())
 
 
-def test_cleanup_timeout_remains_visible_in_standby(monkeypatch):
+@pytest.mark.parametrize("empty_message", [False, True], ids=["message", "empty_message"])
+def test_cleanup_failure_keeps_primary_error_and_idle_error_state(monkeypatch, empty_message):
+    module = load(monkeypatch)
+
+    async def check():
+        robot = Robot()
+        fail_cleanup = True
+        cleanup_attempted = threading.Event()
+
+        def open_session():
+            raise RuntimeError("speech handshake failed")
+
+        def close_session():
+            cleanup_attempted.set()
+            if fail_cleanup:
+                raise TimeoutError("" if empty_message else "speech cleanup timed out")
+
+        robot.speech = SimpleNamespace(open=open_session, close=close_session)
+        context = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
+        service = module.ConversationService(context)
+        runner = asyncio.create_task(service.run())
+        try:
+            service.start()
+            await wait_until(cleanup_attempted.is_set)
+            await asyncio.sleep(1.2)
+            state = service.snapshot()
+            assert "speech handshake failed" in state["error"]
+            expected_error = "TimeoutError" if empty_message else "speech cleanup timed out"
+            assert expected_error in state["error"]
+            assert state["phase"] == "error"
+            assert state["enabled"] is False
+        finally:
+            fail_cleanup = False
+            service.shutdown()
+            await runner
+
+    asyncio.run(check())
+
+
+def test_pause_during_open_waits_for_cleanup_before_reporting_paused(monkeypatch):
+    module = load(monkeypatch)
+
+    async def check():
+        robot = Robot()
+        opening, release = threading.Event(), threading.Event()
+        session = Session("must not be recognized")
+
+        def open_session():
+            opening.set()
+            assert release.wait(3)
+            return session
+
+        robot.speech.open = open_session
+        context = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
+        service = module.ConversationService(context)
+        runner = asyncio.create_task(service.run())
+        try:
+            service.start()
+            await wait_until(opening.is_set)
+            service.pause()
+            assert service.snapshot()["phase"] == "stopping"
+            assert service.snapshot()["enabled"] is False
+            release.set()
+            await wait_until(lambda: session.closed and service.phase == "paused")
+            assert service.snapshot()["messages"] == []
+        finally:
+            release.set()
+            service.shutdown()
+            await runner
+
+    asyncio.run(check())
+
+
+def test_recognition_timeout_closes_session_before_listening_again(monkeypatch):
     module = load(monkeypatch)
 
     async def check():
         robot = Robot()
 
-        def failed_close():
-            raise TimeoutError()
+        def silence(**kwargs):
+            raise TimeoutError("recognition timed out")
 
-        def rejected_open():
-            raise RuntimeError("open failed")
+        def open_session():
+            session = Session(None)
+            if not robot.sessions:
+                session.recognize = silence
+            else:
+                assert robot.sessions[-1].closed
+            robot.sessions.append(session)
+            return session
 
-        robot.speech.open = rejected_open
-        robot.speech.close = failed_close
+        robot.speech.open = open_session
         context = SimpleNamespace(robot=robot, shutdown_requested=False, logger=logging.getLogger("test"))
-        service = module.ConversationService(context, agent_factory=Agent)
-        service.start()
+        service = module.ConversationService(context)
         runner = asyncio.create_task(service.run())
         try:
-            await wait_until(lambda: not service.enabled)
-            await asyncio.sleep(.15)
-            assert service.snapshot()["error"]
-            assert service.snapshot()["phase"] == "error"
+            service.start()
+            await wait_until(lambda: len(robot.sessions) == 2 and service.phase == "listening")
+            assert service.error == ""
+            assert service.enabled is True
+            service.pause()
+            await wait_until(lambda: robot.sessions[-1].closed and service.phase == "paused")
         finally:
-            robot.speech.close = lambda: None
             service.shutdown()
             await runner
 

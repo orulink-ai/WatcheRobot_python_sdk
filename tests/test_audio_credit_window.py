@@ -78,3 +78,40 @@ def test_full_device_queue_and_new_stream_window() -> None:
     assert window.available({"expected_rx_seq": 4}, 8) == 4
     assert window.available({"expected_rx_seq": -1}, 8) is None
     assert AudioInFlightWindow().available({"expected_rx_seq": 0}, 8) == 8
+
+
+@pytest.mark.parametrize('desktop', [False, True])
+@pytest.mark.parametrize(('depth', 'free', 'expected'), [(64, 60, 32), (16, 12, 8), (64, 3, 7), (64, 0, 4)])
+def test_continuous_burst_respects_queue_target_free_slots_and_repeated_watermark(desktop, depth, free, expected):
+    async def exercise():
+        transport = DesktopRobotSession('ws://unused', command_timeout=1) if desktop else DaemonApplicationTransport(command_timeout=1)
+        packets = []
+        async def capture(*args): packets.append(args[-1])
+        transport._send = capture
+        await transport._open_continuous_audio(30)
+        writer = asyncio.create_task(transport._write_continuous_audio(bytes(4096 * 80), 30, False))
+        async def settle():
+            for _ in range(500): await asyncio.sleep(0)
+        try:
+            await settle()
+            assert len(packets) == 4
+            status = {'stream_id': 30, 'expected_rx_seq': 4, 'pending_frames': 4,
+                      'queue_depth': depth, 'free_frames': free, 'playing': True}
+            await transport._update_audio_flow(status)
+            await settle()
+            assert len(packets) == expected
+            for _ in range(3):
+                await transport._update_audio_flow(status)
+                await settle()
+            assert len(packets) == expected
+            writer.cancel()
+            with suppress(asyncio.CancelledError): await writer
+            await transport._close_continuous_audio(30)
+            await transport._open_continuous_audio(31)
+            await transport._update_audio_flow(dict(status, pending_frames=0))
+            assert transport._audio_credits == 4
+        finally:
+            writer.cancel()
+            with suppress(asyncio.CancelledError): await writer
+            await transport._close_continuous_audio(31)
+    asyncio.run(exercise())

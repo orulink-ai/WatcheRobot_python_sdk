@@ -173,6 +173,7 @@ class DaemonRuntime:
             device_session_end_listener=self._device_session_ended,
             business_frame_listener=self.face_tracking_preview.observe_frame,
             external_disconnect_listener=(self.face_tracking_preview.connection_lost),
+            event_logger=self.logs.record,
         )
         self.pairing_udp = PairingUdpService(
             session=self.device_pairing,

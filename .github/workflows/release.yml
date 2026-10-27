@@ -96,6 +96,10 @@ jobs:
         run: python -m pip install --upgrade pip build twine
       - if: needs.gate.outputs.reuse-artifact != 'true'
         run: python -m pip install -e ".[test]"
+      - uses: actions/setup-node@v4
+        if: needs.gate.outputs.reuse-artifact != 'true'
+        with:
+          node-version: "22"
       - if: needs.gate.outputs.reuse-artifact != 'true'
         run: python -m pytest
       - if: needs.gate.outputs.reuse-artifact != 'true'

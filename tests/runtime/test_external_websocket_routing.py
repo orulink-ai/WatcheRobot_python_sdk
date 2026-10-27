@@ -13,6 +13,43 @@ async def _allow_hardware(_hello, _peer_ip: str) -> None:
     return None
 
 
+def test_handshake_events_report_stage_without_credentials() -> None:
+    async def scenario() -> None:
+        from watcherobot.runtime.daemon.pairing.session import PairingSessionError
+        events = []
+        def reject(_hello, _peer):
+            raise PairingSessionError("pairing_credential_invalid")
+        server = ExternalWebSocketServer(host="127.0.0.1", port=0,
+                                         hardware_hello_authorizer=reject, event_logger=events.append)
+        await server.start()
+        try:
+            async with connect(server.url) as device:
+                await device.send(_hello("hardware"))
+                nack = json.loads(await asyncio.wait_for(device.recv(), timeout=1))
+                assert nack["data"]["error"] == "pairing_credential_invalid"
+            assert any("WebSocket connection opened" in event for event in events)
+            assert any("Hardware hello rejected" in event and "pairing_credential_invalid" in event for event in events)
+            assert all("session_token" not in event and "f84a1e16" not in event for event in events)
+        finally:
+            await server.stop()
+    asyncio.run(scenario())
+
+
+def test_connection_logger_failure_does_not_break_handshake() -> None:
+    async def scenario() -> None:
+        def fail(_message):
+            raise OSError("log storage unavailable")
+        server = ExternalWebSocketServer(host="127.0.0.1", port=0,
+                                         hardware_hello_authorizer=_allow_hardware, event_logger=fail)
+        await server.start()
+        try:
+            device = await _connect_as(server, "hardware")
+            await device.close()
+        finally:
+            await server.stop()
+    asyncio.run(scenario())
+
+
 def _hello(role: str, **metadata) -> str:
     if role == "hardware":
         return json.dumps(

@@ -1,0 +1,132 @@
+{
+  "scope": "Controlled text injection; real Pi, Doubao TTS and robot playback; no ASR fixture or phone operation",
+  "rounds": [
+    {
+      "round": 1,
+      "synthesis": [
+        {
+          "characters": 8,
+          "segment": 1,
+          "start_ms": 452,
+          "end_ms": 1226,
+          "pcm_bytes": 86764
+        },
+        {
+          "characters": 28,
+          "segment": 1,
+          "start_ms": 4932,
+          "end_ms": 6115,
+          "pcm_bytes": 261186
+        },
+        {
+          "characters": 12,
+          "segment": 2,
+          "start_ms": 6115,
+          "end_ms": 6835,
+          "pcm_bytes": 124640
+        }
+      ],
+      "playback": [
+        {
+          "segment": 1,
+          "start_ms": 1226,
+          "pcm_bytes": 86764,
+          "completed_ms": 3995
+        },
+        {
+          "segment": 1,
+          "start_ms": 6115,
+          "pcm_bytes": 261186,
+          "completed_ms": 12878
+        },
+        {
+          "segment": 2,
+          "start_ms": 12878,
+          "pcm_bytes": 124640,
+          "completed_ms": 16955
+        }
+      ],
+      "cache_populated_before": false,
+      "ack_started_ms": 452,
+      "ack_completed_ms": 4014,
+      "ack_synthesis_calls": 1,
+      "pi_ask_started_ms": 4014,
+      "pi_settled_ms": 4931,
+      "segment_characters": [
+        28,
+        12
+      ],
+      "reply_text": "我们现在测试更短的首段播报，让机器人先自然回应你的请求，然后按顺序播放后续内容。",
+      "reply_playback_completed_ms": 16955,
+      "timings_ms": {
+        "pi_start": 3,
+        "acknowledgement": 3563
+      }
+    },
+    {
+      "round": 2,
+      "synthesis": [
+        {
+          "characters": 28,
+          "segment": 1,
+          "start_ms": 20986,
+          "end_ms": 22147,
+          "pcm_bytes": 259910
+        },
+        {
+          "characters": 12,
+          "segment": 2,
+          "start_ms": 22147,
+          "end_ms": 23109,
+          "pcm_bytes": 143714
+        }
+      ],
+      "playback": [
+        {
+          "segment": 1,
+          "start_ms": 17018,
+          "pcm_bytes": 86764,
+          "completed_ms": 19775
+        },
+        {
+          "segment": 1,
+          "start_ms": 22147,
+          "pcm_bytes": 259910,
+          "completed_ms": 28750
+        },
+        {
+          "segment": 2,
+          "start_ms": 28750,
+          "pcm_bytes": 143714,
+          "completed_ms": 32936
+        }
+      ],
+      "cache_populated_before": true,
+      "ack_started_ms": 17017,
+      "ack_completed_ms": 19816,
+      "ack_synthesis_calls": 0,
+      "pi_ask_started_ms": 19816,
+      "pi_settled_ms": 20985,
+      "segment_characters": [
+        28,
+        12
+      ],
+      "reply_text": "我们现在测试更短的首段播报，让机器人先自然回应你的请求，然后按顺序播放后续内容。",
+      "reply_playback_completed_ms": 32936,
+      "timings_ms": {
+        "pi_start": 3,
+        "acknowledgement": 2799
+      }
+    }
+  ],
+  "passed": true,
+  "resources_released": true,
+  "deployment": {
+    "application": "com.orulink.joyinside_pi",
+    "connected": true,
+    "backend": "doubao",
+    "phase": "paused",
+    "resources_released": true,
+    "updated_assets_served": true
+  }
+}
