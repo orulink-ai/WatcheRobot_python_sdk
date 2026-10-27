@@ -34,7 +34,16 @@ node tests/web/pi_speech_ui.cjs
 
 全量mypy在本机Anaconda的torch类型文件UTF-8解码处停止，不是本项目类型错误；6个相关SDK文件检查通过，完整检查交由干净CI环境。
 
-全量pytest首次因环境缺少项目锁定dulwich依赖而产生23个收集错误，随后在忽略目录创建独立校验venv，仅补齐dulwich1.2.17，没有修改全局环境。全量结果待追加。
+全量pytest首次因环境缺少项目锁定dulwich依赖而产生23个收集错误，随后在忽略目录创建独立校验venv，仅补齐dulwich1.2.17，没有修改全局环境。
+
+隔离环境执行 `python -m pytest -q -o addopts='' --tb=short`：**2230 passed、18 skipped、2 failed，375.08s**。实际失败如下：
+
+- `tests/runtime/test_daemon_import_dependencies.py::test_daemon_initializes_without_loading_audio_codecs`：用例启动子进程未继承 pytest 的 pythonpath 设置，实际导入全局旧版安装包，其 work_assets 提前导入 av。错误栈指向全局 site-packages；本工作树对应源码已有延迟导入。
+- `tests/test_api.py::test_camera_capture_with_feedback_reports_jpeg_timeout_with_context`：预期 JPEG 超时，但在全量负载下先触发 camera busy 超时。此前本轮定向483项已覆盖并通过此用例。
+
+设置 `PYTHONPATH` 为当前工作树 `src` 后，使用同一隔离 Python 复跑上述两个完整 node id：**2 passed，1.33s**。这次复跑确认当前源码的对应行为，但不把前述全量结果改写成全部通过。
+
+原始日志保留于本机忽略交付目录：`pcm-sdk-full-tests-venv.log`、`pcm-sdk-expanded-failures-corrected.log`，不提交个人环境路径和临时日志。
 
 ## 硬件边界
 

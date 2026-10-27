@@ -2,7 +2,7 @@
 
 - 时间：2026-10-27，Asia/Shanghai；作者：KID；参与：Codex。
 - 需求：用户授权推进 macos-joyinside-provision 固件及配套 SDK 合并。
-- 状态：进行中；尚未提交、推送或合入。
+- 状态：固件已合入；SDK 已提交并推送原 PR #151，正在完成最终验证与合入。
 - 固件来源：618bdb2d；目标 codex/joyinside-integration-20261015（41ca9d1a）。
 - SDK 来源：0207d196（4 项独有提交）；目标 main（299dbc5）。
 - 范围：注册日志路径、本地 PCM 嘴型、连续播放、配套 Pi 应用与 SDK；保留旧协议和 Daemon 透明路由。
@@ -52,3 +52,13 @@
 - 固件PR #280已合入，合并提交6e1b667b6e5a2165a9efe648647e299bae702f19；固件远程CI因账户付款/额度未启动，本地全部定向Host和构建通过。
 - SDK定向483项、6源文件mypy、Node12项/网页VM均通过；全量pytest已补齐隔离依赖并运行中，本机全量mypy受第三方torch存根编码阻塞。上述限制不冒称通过。
 - 接下来提交并快进更新已有PR #151，再依据扩展测试结果执行用户授权的merge；不使用squash或rebase合并，不发版。
+
+## 2026-10-27 最终扩大验证记录
+
+- 作者：KID / Codex；原因：补齐提交后的全量测试结果，区分本次功能验证与本机测试限制。
+- SDK 整合提交 f31ff53b174ce4cf25f3664107292431f5f7a222 已推送原 PR #151；其两个 parent 分别保留最新 main 和原 Pi 配套分支。
+- 隔离环境全量 pytest：2230 passed、18 skipped、2 failed（375.08s）。一项子进程加载本机旧版安装包，另一项相机反馈超时用例在全量负载下提前到达 busy 截止；未将本次全量运行记为全绿。
+- 设置 PYTHONPATH 指向本工作树 src 后复跑上述两项，2 passed（1.33s）；相关功能定向483项仍全部通过。详见 [validation.md](validation.md)。
+- 固件最终格式化后重新完成 Host 回归与 IDF BuildOnly；最终二进制 SHA256 为 9234faa33fe7744d3670d20a5cfa85984906f46037ca57191e88ed42014f211c，前文 cc8de855 为首次构建历史值。
+- 固件最终 PR 合并提交 6e1b667b6e5a2165a9efe648647e299bae702f19 已确认两个 parent，原 macos-joyinside-provision 分支已在目标集成分支祖先链中。
+- 不新增代码，因此本次档案补充不适用新增 TDD；替代验证为核对实际日志、PR状态与提交父节点。SDK 远程 CI 仍运行中，未伪称通过；硬件验收仍待后续实际烧录。
