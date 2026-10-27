@@ -175,3 +175,41 @@ def test_closed_event_wins_over_close_command_nack():
     transport.send_command = close_race
     speech.close(timeout=1)
     speech.close(timeout=1)
+
+
+def test_close_mismatch_retires_only_the_unowned_local_handle():
+    robot, transport = make_robot()
+    speech = robot.speech.open()
+    original = transport.send_command
+
+    def no_longer_owned(kind, data, timeout=None):
+        if kind == "ctrl.speech.close":
+            raise CommandError(kind, "session_mismatch")
+        return original(kind, data, timeout)
+
+    transport.send_command = no_longer_owned
+    speech.close(timeout=0.1)
+    assert robot.speech._session is None
+    assert [kind for kind, _ in transport.commands] == ["ctrl.speech.open"]
+    transport.send_command = original
+    with robot.speech.open(timeout=1):
+        pass
+
+
+@pytest.mark.parametrize("reason", ["busy", "audio_release_failed"])
+def test_other_close_rejections_retain_the_owner_for_retry(reason):
+    robot, transport = make_robot()
+    speech = robot.speech.open()
+    original = transport.send_command
+
+    def reject(kind, data, timeout=None):
+        if kind == "ctrl.speech.close":
+            raise CommandError(kind, reason)
+        return original(kind, data, timeout)
+
+    transport.send_command = reject
+    with pytest.raises(CommandError, match=reason):
+        speech.close(timeout=0.1)
+    assert robot.speech._session is speech
+    transport.send_command = original
+    speech.close(timeout=1)
