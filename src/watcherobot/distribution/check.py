@@ -7,6 +7,8 @@ from pathlib import Path
 
 from watcherobot.runtime.daemon.application.manifest import ApplicationManifest
 
+from watcherobot.firmware.contract import FirmwareRequirement
+
 from .source_files import collect_application_source_files
 
 
@@ -23,6 +25,7 @@ class ApplicationCheckResult:
     description: str
     author: str
     icon: str
+    requires_firmware: FirmwareRequirement | None = None
     application_protocol: str = ""
     supported_host_platforms: tuple[str, ...] = ()
 
@@ -39,9 +42,11 @@ class ApplicationCheckResult:
             "author": self.author,
             "icon": self.icon,
         }
-        if self.schema_version == 3:
+        if self.schema_version >= 3:
             result["requires_sdk"] = result.pop("requires_watcherobot")
             result["requires_daemon"] = {"application_protocol": self.application_protocol}
+        if self.requires_firmware is not None:
+            result["requires_firmware"] = self.requires_firmware.to_dict()
         return result
 
 
@@ -59,7 +64,7 @@ def check_application(
         daemon=daemon,
     )
     collect_application_source_files(application_dir)
-    if manifest.schema_version == 3:
+    if manifest.schema_version >= 3:
         from .dependency_lock import read_dependency_lock
 
         read_dependency_lock(
@@ -69,6 +74,7 @@ def check_application(
         )
     return ApplicationCheckResult(
         schema_version=manifest.schema_version,
+        requires_firmware=manifest.requires_firmware,
         app_id=manifest.app_id,
         name=manifest.name,
         version=manifest.version,

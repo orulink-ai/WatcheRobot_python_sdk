@@ -549,6 +549,16 @@ class DaemonApplicationTransport:
         frame: str | bytes,
     ) -> None:
         if channel is ApplicationChannel.DESKTOP:
+            # Standard SDK metadata query is handled by the Application transport,
+            # never by adding a content-aware Daemon routing exception.
+            if isinstance(frame, str):
+                try:
+                    query = json.loads(frame)
+                except ValueError:
+                    query = None
+                if isinstance(query, dict) and query.get("type") == "sys.sdk.ready.get":
+                    await self._send(ApplicationChannel.DEVICE, frame)
+                    return
             self._desktop_callback(frame)
             return
         if isinstance(frame, bytes):
@@ -588,7 +598,9 @@ class DaemonApplicationTransport:
             device_info["animations"] = list(self.animation_ids)
             with self._resource_lock:
                 self._resource_generation += 1
-                self.device_info.update(device_info)
+                self.device_info = device_info
+            if self._communicators is not None:
+                await self._send(ApplicationChannel.DESKTOP, frame)
         if message_type == "evt.sdk.resource_snapshot":
             snapshot = dict(data)
             with self._resource_lock:

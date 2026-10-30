@@ -254,6 +254,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Installed Application ID to run",
     )
     add_distribution_commands(app_commands)
+    from watcherobot.firmware.cli import add_commands as add_firmware_commands
+
+    add_firmware_commands(commands)
     app_commands.add_parser(
         "start",
         help="Start the Application currently selected by the Daemon",

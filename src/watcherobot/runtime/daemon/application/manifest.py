@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from watcherobot.firmware.contract import FirmwareError, FirmwareRequirement
+
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
@@ -31,7 +33,7 @@ _V1_REQUIRED_FIELDS = frozenset(
 _V2_REQUIRED_FIELDS = _V1_REQUIRED_FIELDS | frozenset(
     {"supported_host_platforms"}
 )
-_OPTIONAL_FIELDS = frozenset({"description", "author", "icon"})
+_OPTIONAL_FIELDS = frozenset({"description", "author", "icon", "requires_firmware"})
 _ALLOWED_FIELDS = _V2_REQUIRED_FIELDS | _OPTIONAL_FIELDS
 _V3_REQUIRED_FIELDS = (_V2_REQUIRED_FIELDS - {"requires_watcherobot"}) | {"requires_sdk", "requires_daemon"}
 _SUPPORTED_HOST_PLATFORMS = frozenset({"windows", "macos"})
@@ -81,6 +83,7 @@ class ApplicationManifestMetadata:
     description: str = ""
     author: str = ""
     icon: str = ""
+    requires_firmware: FirmwareRequirement | None = None
 
     def supports_watcherobot(self, version: str) -> bool:
         """Return whether one installed SDK version satisfies this manifest."""
@@ -112,6 +115,8 @@ class ApplicationManifestMetadata:
         if self.schema_version == 3:
             result["requires_sdk"] = result.pop("requires_watcherobot")
             result["requires_daemon"] = {"application_protocol": self.application_protocol}
+        if self.requires_firmware is not None:
+            result["requires_firmware"] = self.requires_firmware.to_dict()
         return result
 
 
@@ -129,6 +134,7 @@ class ApplicationManifest:
     description: str = ""
     author: str = ""
     icon: str = ""
+    requires_firmware: FirmwareRequirement | None = None
 
     @classmethod
     def load(
@@ -192,6 +198,7 @@ class ApplicationManifest:
             description=metadata.description,
             author=metadata.author,
             icon=icon,
+            requires_firmware=metadata.requires_firmware,
         )
 
 
@@ -233,6 +240,12 @@ def _metadata_from_payload(
     if schema_version == 3:
         required_fields = _V3_REQUIRED_FIELDS
         allowed_fields = _V3_REQUIRED_FIELDS | _OPTIONAL_FIELDS
+    requires_firmware = None
+    if payload.get("requires_firmware") is not None:
+        try:
+            requires_firmware = FirmwareRequirement.parse(payload.get("requires_firmware"))
+        except FirmwareError as exc:
+            raise ApplicationManifestError(str(exc)) from exc
     unknown_fields = sorted(set(payload) - allowed_fields)
     missing_fields = sorted(required_fields - set(payload))
     if unknown_fields:
@@ -277,7 +290,7 @@ def _metadata_from_payload(
             "requires_watcherobot must not be empty"
         )
     try:
-        requirement = SpecifierSet(requires_watcherobot)
+        SpecifierSet(requires_watcherobot)
     except InvalidSpecifier as exc:
         raise ApplicationManifestError(
             "requires_watcherobot must be a valid version range"
@@ -326,6 +339,7 @@ def _metadata_from_payload(
 
     return ApplicationManifestMetadata(
         schema_version=schema_version,
+        requires_firmware=requires_firmware,
         app_id=app_id,
         name=name,
         version=version,
