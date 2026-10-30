@@ -15,7 +15,7 @@ watcherobot-app-store/
 
 ## 应用目录
 
-app-list.json 继续使用原 JSON 数组，每项只包含 space_id 和完整的 40 位 commit。应用源码保留在作者自己的公开仓库。无需 application-list-v2.json，也不按客户端版本拆目录。
+app-list.json 继续使用原 JSON 数组，每项只包含 repo_id 和完整的 40 位 commit。应用源码保留在作者自己的公开仓库。无需 application-list-v2.json，也不按客户端版本拆目录。
 
 应用项目 app.json 可以选填 requires_firmware，保留原 schema 2/3 与 SDK 依赖锁。未声明时新客户端继续读取已有字段，不猜测固件要求；声明错误则拒绝。依赖示例：
 
