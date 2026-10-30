@@ -17,6 +17,7 @@ from .contract import FirmwareError, firmware_id, version
 MAX_PACKAGE_BYTES = 100 * 1024 * 1024
 MAX_EXPANDED_BYTES = 128 * 1024 * 1024
 MAX_METADATA_BYTES = 64 * 1024
+FLASH_SECTOR_BYTES = 4096
 _RESERVED = re.compile(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", re.I)
 
 
@@ -235,6 +236,8 @@ def inspect_package(path: Path) -> FirmwarePackage:
                         raise FirmwareError("Invalid segment fields")
                     name = _path(raw["path"])
                     offset = _integer(raw["offset"], minimum=0, maximum=capacity - 1)
+                    if offset % FLASH_SECTOR_BYTES:
+                        raise FirmwareError("Firmware offsets must align to 4096-byte erase sectors")
                     length = _integer(raw["size"], minimum=1, maximum=capacity - offset)
                     expected = raw["sha256"]
                     if (
@@ -254,9 +257,11 @@ def inspect_package(path: Path) -> FirmwarePackage:
                     segments.append(Segment(name, offset, length, expected))
                 ordered = sorted(segments, key=lambda item: item.offset)
                 if any(
-                    a.offset + a.size > b.offset for a, b in zip(ordered, ordered[1:])
+                    ((a.offset + a.size + FLASH_SECTOR_BYTES - 1) // FLASH_SECTOR_BYTES)
+                    * FLASH_SECTOR_BYTES > b.offset
+                    for a, b in zip(ordered, ordered[1:])
                 ):
-                    raise FirmwareError("Overlapping flash segments")
+                    raise FirmwareError("Overlapping flash erase sectors")
                 if len({s.path for s in segments}) != len(segments) or set(files) != {
                     "firmware.json",
                     "flash_args.txt",

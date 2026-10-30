@@ -11,6 +11,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from filelock import FileLock, Timeout
 
 from watcherobot.distribution.credentials import SystemCredentialStore
 from watcherobot.distribution.providers import get_provider
@@ -36,7 +37,7 @@ ACTIONS = {
 }
 
 
-def _write(path: Path, value: Any) -> None:
+def _write(path: Path, value: Any, *, expected: bytes | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=".state-", dir=path.parent)
     try:
@@ -44,6 +45,8 @@ def _write(path: Path, value: Any) -> None:
             json.dump(value, stream, ensure_ascii=True)
             stream.flush()
             os.fsync(stream.fileno())
+        if expected is not None and path.read_bytes() != expected:
+            raise FirmwareError("Application manifest changed while preparing the dependency")
         os.replace(name, path)
     finally:
         Path(name).unlink(missing_ok=True)
@@ -92,6 +95,34 @@ def _app_requirement(root: Path, app_id: Any) -> dict[str, object] | None:
     return metadata.requires_firmware.to_dict() if metadata.requires_firmware else None
 
 
+def _configure(path: Path, request: dict[str, Any], root: Path, provider: str) -> dict[str, Any]:
+    from watcherobot.runtime.daemon.application.manifest import (
+        parse_application_manifest,
+    )
+
+    original = path.read_bytes()
+    parse_application_manifest(original)
+    requirement = FirmwareRequirement.parse(request.get("requires_firmware"))
+    if requirement is None:
+        raise FirmwareError("Choose an explicit firmware requirement")
+    if requirement.mode == "required":
+        resolve_release(requirement, _releases(root, provider), provider=provider)
+    value = json.loads(original)
+    value.update(requires_firmware=requirement.to_dict())
+    parse_application_manifest(json.dumps(value).encode())
+    preview_key = hashlib.sha256(
+        original + json.dumps(value, sort_keys=True).encode()
+    ).hexdigest()
+    if request.get("confirmed") is not True:
+        return {"preview": value, "preview_key": preview_key}
+    if request.get("preview_key") != preview_key or path.read_bytes() != original:
+        raise FirmwareError(
+            "Application manifest changed while preparing the dependency"
+        )
+    _write(path, value, expected=original)
+    return {"configured": True, "requires_firmware": requirement.to_dict()}
+
+
 def execute(
     action: str,
     request: dict[str, Any],
@@ -108,32 +139,15 @@ def execute(
     root.mkdir(parents=True, exist_ok=True)
     backend = FirmwarePlatform(provider)
     if action == "configure":
-        from watcherobot.runtime.daemon.application.manifest import (
-            parse_application_manifest,
-        )
-
         path = Path(request["application_dir"]).resolve() / "app.json"
-        original = path.read_bytes()
-        parse_application_manifest(original)
-        requirement = FirmwareRequirement.parse(request.get("requires_firmware"))
-        if requirement is None:
-            raise FirmwareError("Choose an explicit firmware requirement")
-        if requirement.mode == "required":
-            resolve_release(requirement, _releases(root, provider), provider=provider)
-        value = json.loads(original)
-        value.update(requires_firmware=requirement.to_dict())
-        parse_application_manifest(json.dumps(value).encode())
-        preview_key = hashlib.sha256(
-            original + json.dumps(value, sort_keys=True).encode()
-        ).hexdigest()
-        if request.get("confirmed") is not True:
-            return {"preview": value, "preview_key": preview_key}
-        if request.get("preview_key") != preview_key or path.read_bytes() != original:
-            raise FirmwareError(
-                "Application manifest changed while preparing the dependency"
-            )
-        _write(path, value)
-        return {"configured": True, "requires_firmware": requirement.to_dict()}
+        locks = Path(tempfile.gettempdir()) / "watcherobot-manifest-locks"
+        locks.mkdir(parents=True, exist_ok=True)
+        identity = hashlib.sha256(os.path.normcase(str(path)).encode()).hexdigest()
+        try:
+            with FileLock(str(locks / (identity + ".lock")), timeout=10):
+                return _configure(path, request, root, provider)
+        except Timeout:
+            raise FirmwareError("Another operation is configuring this Application; retry") from None
     if action == "marketplace":
         progress(stage="fetching_catalog")
         warnings = []

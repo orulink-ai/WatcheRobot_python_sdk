@@ -125,6 +125,34 @@ def test_package_rejects_corrupt_image_and_out_of_bounds(tmp_path):
         inspect_package(path)
 
 
+def test_package_rejects_unaligned_flash_segment(tmp_path):
+    path = tmp_path / "unaligned.zip"
+    make_package(path, offset=0x20004)
+    with pytest.raises(FirmwareError, match="sector"):
+        inspect_package(path)
+
+
+@pytest.mark.parametrize("second_offset,accepted", [(0x20080, False), (0x21000, True)])
+def test_flash_segments_must_not_share_an_erase_sector(tmp_path, second_offset, accepted):
+    path = tmp_path / "sectors.zip"
+    manifest = make_package(path)
+    with ZipFile(path) as archive:
+        files = {name: archive.read(name) for name in archive.namelist()}
+    second = dict(manifest["segments"][0], path="images/second.bin", offset=second_offset)
+    manifest["segments"].append(second)
+    files["firmware.json"] = json.dumps(manifest).encode()
+    files["images/second.bin"] = files["images/app.bin"]
+    files["flash_args.txt"] += f"{second_offset:#x} images/second.bin\n".encode()
+    with ZipFile(path, "w") as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    if accepted:
+        assert len(inspect_package(path).segments) == 2
+    else:
+        with pytest.raises(FirmwareError, match="sector"):
+            inspect_package(path)
+
+
 def test_malformed_flash_syntax_is_a_validation_error(tmp_path):
     path = tmp_path / "firmware.zip"
     make_package(path)

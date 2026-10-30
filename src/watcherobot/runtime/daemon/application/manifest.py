@@ -241,7 +241,9 @@ def _metadata_from_payload(
         required_fields = _V3_REQUIRED_FIELDS
         allowed_fields = _V3_REQUIRED_FIELDS | _OPTIONAL_FIELDS
     requires_firmware = None
-    if payload.get("requires_firmware") is not None:
+    if "requires_firmware" in payload:
+        if not isinstance(payload["requires_firmware"], dict):
+            raise ApplicationManifestError("requires_firmware must be an object")
         try:
             requires_firmware = FirmwareRequirement.parse(payload.get("requires_firmware"))
         except FirmwareError as exc:

@@ -20,6 +20,68 @@ def setup_catalog(tmp_path):
     return release, root
 
 
+def editable_project(tmp_path):
+    from tests.distribution.test_firmware_application import document
+
+    project = tmp_path / "project"
+    project.mkdir()
+    original = document()
+    del original["requires_firmware"]
+    path = project / "app.json"
+    path.write_text(json.dumps(original), encoding="utf-8")
+    request = {"application_dir": str(project), "requires_firmware": {"mode": "not_required"}}
+
+    def configure(value):
+        return operations.execute("configure", value, provider="huggingface",
+                                  cache_root=tmp_path / "cache", store_root=tmp_path,
+                                  progress=lambda **_: None)
+
+    preview = configure(request)
+    return path, {**request, "confirmed": True, "preview_key": preview["preview_key"]}, configure
+
+
+def test_configure_preserves_external_edit_during_temporary_file_write(tmp_path, monkeypatch):
+    path, request, configure = editable_project(tmp_path)
+    edited = json.loads(path.read_bytes())
+    edited["author"] = "Edited during save"
+    dump = operations.json.dump
+
+    def edit_after_serializing(*args, **kwargs):
+        dump(*args, **kwargs)
+        path.write_text(json.dumps(edited), encoding="utf-8")
+
+    monkeypatch.setattr(operations.json, "dump", edit_after_serializing)
+    with pytest.raises(FirmwareError, match="changed"):
+        configure(request)
+    assert json.loads(path.read_bytes()) == edited
+
+
+def test_concurrent_configuration_accepts_only_one_confirmed_preview(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    _, request, configure = editable_project(tmp_path)
+    first_entered, second_entered = Event(), Event()
+    write = operations._write
+
+    def delayed_write(*args, **kwargs):
+        if not first_entered.is_set():
+            first_entered.set()
+            second_entered.wait(timeout=1)
+        else:
+            second_entered.set()
+        return write(*args, **kwargs)
+
+    monkeypatch.setattr(operations, "_write", delayed_write)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(configure, request)
+        assert first_entered.wait(timeout=5)
+        second = pool.submit(configure, request)
+        assert first.result(timeout=5)["configured"] is True
+        with pytest.raises(FirmwareError, match="changed"):
+            second.result(timeout=5)
+
+
 def test_offline_download_uses_verified_catalog_cache(tmp_path):
     release, root = setup_catalog(tmp_path)
     result = operations.execute(

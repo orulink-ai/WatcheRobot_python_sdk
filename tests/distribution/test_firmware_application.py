@@ -49,6 +49,14 @@ def test_missing_optional_requirement_keeps_existing_application_usable():
     )
 
 
+@pytest.mark.parametrize("invalid", [None, {}, [], "required"])
+def test_present_invalid_firmware_requirement_is_not_legacy_unknown(invalid):
+    value = document()
+    value["requires_firmware"] = invalid
+    with pytest.raises(ApplicationManifestError):
+        parse_application_manifest(json.dumps(value).encode())
+
+
 @pytest.mark.parametrize("provider", ["huggingface", "gitee"])
 def test_existing_and_new_applications_share_one_catalog(provider):
     from tests.distribution.test_marketplace import (
