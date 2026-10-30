@@ -199,7 +199,7 @@ class _UtteranceCapture:
                     self.first_ready.set()
                     self.changed.set()
                     await asyncio.sleep(0)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             # SDK read polling timeouts are handled inside utterance(). An
             # escaping timeout means opening/capturing/closing the device failed,
             # never the normal "no speech yet" deadline used by the service.
@@ -266,8 +266,13 @@ class DoubaoSession:
         self._task = task
         try:
             return await asyncio.wait_for(task, timeout)
-        except (asyncio.CancelledError, TimeoutError):
+        except asyncio.CancelledError:
             raise
+        except (TimeoutError, asyncio.TimeoutError) as exc:
+            # asyncio.TimeoutError is a distinct class on Python 3.10.
+            if isinstance(exc, TimeoutError):
+                raise
+            raise TimeoutError(str(exc)) from None
         except VoiceError:
             raise
         except Exception:
@@ -315,7 +320,7 @@ class DoubaoSession:
             try:
                 # After speech starts, timeout means a service/capture failure, never silence.
                 final_text = await asyncio.wait_for(transcribe_until_capture_failure(), timeout + self.asr_timeout)
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 raise VoiceError("ASR 语音识别服务响应超时，请检查网络与服务配置") from None
             if final_text is None:
                 raise VoiceError("ASR 未返回最终识别结果，请重试")
@@ -376,7 +381,7 @@ class DoubaoSession:
         started = asyncio.get_running_loop().time()
         try:
             await asyncio.wait_for(self.device.play_stream(frames), MAX_AUDIO_BYTES / 48000 + self.tts_timeout + 20)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             await self.device.stop()
             raise VoiceError("机器人连续音频播放超时，请检查设备连接") from None
         finally:
@@ -412,7 +417,7 @@ class DoubaoSession:
             return bytes(pcm)
         try:
             pcm = await asyncio.wait_for(synthesize(), self.tts_timeout)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             raise VoiceError("TTS 语音生成服务响应超时，请检查网络与服务配置") from None
         if self._closing or self.closed or generation != self._cancel_generation:
             # A provider may swallow cancellation and yield one final chunk.
@@ -426,7 +431,7 @@ class DoubaoSession:
         self._timing("playback_start", started, segment)
         try:
             await asyncio.wait_for(self.device.play(pcm), len(pcm) / 48000 + 20)
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
             await self.device.stop()
             raise VoiceError("机器人音频播放超时，请检查设备连接") from None
         except asyncio.CancelledError:
@@ -442,7 +447,7 @@ class DoubaoSession:
             task.cancel()
             results = await asyncio.gather(task, return_exceptions=True)
             errors.extend(error for error in results
-                          if isinstance(error, Exception) and not isinstance(error, TimeoutError))
+                          if isinstance(error, Exception) and not isinstance(error, (TimeoutError, asyncio.TimeoutError)))
         try:
             await self.device.stop()
         except Exception as error:

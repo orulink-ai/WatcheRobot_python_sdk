@@ -63,6 +63,16 @@ def _releases(root: Path, provider: str) -> tuple[FirmwareRelease, ...]:
         ) from None
 
 
+def _cache_catalog(root: Path, provider: str, releases: tuple[FirmwareRelease, ...]) -> None:
+    try:
+        _write(root / provider / "catalog.json", {
+            "schema_version": 1,
+            "firmwares": [release_record(item) for item in releases],
+        })
+    except OSError:
+        raise FirmwareError("Unable to persist the current firmware catalog; retry") from None
+
+
 def _selected(
     request: dict[str, Any], releases: tuple[FirmwareRelease, ...]
 ) -> FirmwareRelease:
@@ -154,19 +164,14 @@ def execute(
         commit = None
         try:
             commit, releases = backend.catalog()
-            _write(
-                root / provider / "catalog.json",
-                {
-                    "schema_version": 1,
-                    "firmwares": [release_record(item) for item in releases],
-                },
-            )
         except Exception:
             warnings.append("firmware_catalog_unavailable")
             try:
                 releases = _releases(root, provider)
             except (FirmwareError, OSError):
                 releases = ()
+        else:
+            _cache_catalog(root, provider, releases)
         return {
             "catalog_commit": commit,
             "firmwares": [asdict(item) for item in releases if not item.withdrawn],
@@ -279,13 +284,7 @@ def execute(
         releases = _releases(root, provider)
         offline = True
     else:
-        try:
-            _write(root / provider / "catalog.json", {
-                "schema_version": 1,
-                "firmwares": [release_record(item) for item in releases],
-            })
-        except OSError:
-            raise FirmwareError("Unable to persist the current firmware catalog; retry") from None
+        _cache_catalog(root, provider, releases)
     if requirement is not None:
         release = resolve_release(requirement, releases, provider=provider)
     else:

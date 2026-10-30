@@ -522,6 +522,35 @@ def test_timeout_retires_capture_and_provider_stream(tmp_path):
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("phase", ["operation", "asr"])
+def test_legacy_asyncio_timeout_is_not_masked_as_generic_failure(monkeypatch, phase):
+    class LegacyAsyncTimeout(Exception):
+        pass
+    class LegacyASR(ASR):
+        async def transcribe(self, frames):
+            raise LegacyAsyncTimeout("legacy timeout")
+            yield
+    mod = module()
+    legacy_asyncio = SimpleNamespace(**vars(asyncio))
+    legacy_asyncio.TimeoutError = LegacyAsyncTimeout
+    monkeypatch.setattr(mod, "asyncio", legacy_asyncio)
+    device = Device()
+    session = mod.DoubaoSession(device, LegacyASR(), TTS(), 1, 1)
+
+    async def run():
+        async def fail():
+            raise LegacyAsyncTimeout("legacy timeout")
+        if phase == "operation":
+            with pytest.raises(TimeoutError):
+                await session._run(fail)
+        else:
+            with pytest.raises(VoiceError, match="超时"):
+                await session.recognize(timeout=1)
+        assert session._task is None and not device.listening
+        await session.close()
+    asyncio.run(run())
+
+
 def test_cancel_joins_playback_before_stopping_device(tmp_path):
     events = []
     started = asyncio.Event()

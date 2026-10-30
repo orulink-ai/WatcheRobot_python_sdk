@@ -140,13 +140,14 @@ def test_offline_mode_never_downloads_a_new_or_corrupt_package(tmp_path, monkeyp
                                provider="huggingface", cache_root=root, store_root=tmp_path, progress=lambda **_: None)
 
 
-def test_catalog_persistence_failure_cannot_fall_back_to_old_approval(tmp_path, monkeypatch):
+@pytest.mark.parametrize("action", ["marketplace", "download"])
+def test_catalog_persistence_failure_cannot_fall_back_to_old_approval(tmp_path, monkeypatch, action):
     from dataclasses import replace
     release, root = setup_catalog(tmp_path)
     monkeypatch.setattr(operations.FirmwarePlatform, "catalog", lambda _: ("b" * 40, (replace(release, withdrawn=True),)))
     monkeypatch.setattr(operations, "_write", lambda *a, **kw: (_ for _ in ()).throw(OSError("read only")))
     with pytest.raises(FirmwareError, match="catalog"):
-        operations.execute("download", {"firmware_id": release.firmware_id, "version": release.version},
+        operations.execute(action, {"firmware_id": release.firmware_id, "version": release.version},
                            provider="huggingface", cache_root=root, store_root=tmp_path, progress=lambda **_: None)
 
 
