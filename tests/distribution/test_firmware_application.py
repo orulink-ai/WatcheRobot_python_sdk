@@ -184,10 +184,10 @@ def test_firmware_dependency_keeps_exact_sdk_lock_and_inventory_requirement(tmp_
         return httpx.Response(503) if len(requests) == 1 else httpx.Response(200, content=firmware_bytes)
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as client:
-        def download(release, root, progress):
-            return acquire_package(release, root, client=client, progress=progress)
+        def download(release, root, progress, **kwargs):
+            return acquire_package(release, root, client=client, progress=progress, **kwargs)
 
-        with patch.object(operations, "acquire_package", side_effect=download):
+        with patch.object(operations.FirmwarePlatform, "catalog", return_value=("a" * 40, (release,))), patch.object(operations, "acquire_package", side_effect=download):
             def prepare():
                 return operations.execute("download", {"app_id": value["id"]}, provider=provider,
                                           cache_root=cache, store_root=tmp_path / "store", progress=lambda **_: None)

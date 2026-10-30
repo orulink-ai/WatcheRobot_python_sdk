@@ -82,8 +82,9 @@ def test_concurrent_configuration_accepts_only_one_confirmed_preview(tmp_path, m
             second.result(timeout=5)
 
 
-def test_offline_download_uses_verified_catalog_cache(tmp_path):
+def test_offline_download_uses_verified_catalog_cache(tmp_path, monkeypatch):
     release, root = setup_catalog(tmp_path)
+    monkeypatch.setattr(operations.FirmwarePlatform, "catalog", lambda _: (_ for _ in ()).throw(OSError("offline")))
     result = operations.execute(
         "download",
         {"firmware_id": release.firmware_id, "version": "v" + release.version},
@@ -93,6 +94,60 @@ def test_offline_download_uses_verified_catalog_cache(tmp_path):
         progress=lambda **e: None,
     )
     assert result["release"]["sha256"] == release.sha256
+    assert result["catalog_stale"] is True
+
+
+@pytest.mark.parametrize("mode", [None, "not_required", "required"])
+def test_app_requirement_is_checked_before_catalog_access(tmp_path, monkeypatch, mode):
+    from tests.distribution.test_firmware_application import document
+    value = document()
+    if mode is None:
+        del value["requires_firmware"]
+    elif mode == "not_required":
+        value["requires_firmware"] = {"mode": mode}
+    source = tmp_path / "store/apps" / value["id"] / "source"
+    source.mkdir(parents=True)
+    (source / "app.json").write_text(json.dumps(value), encoding="utf-8")
+    monkeypatch.setattr(operations.FirmwarePlatform, "catalog", lambda _: (_ for _ in ()).throw(OSError("offline")))
+    def download():
+        return operations.execute("download", {"app_id": value["id"]}, provider="huggingface",
+                                  cache_root=tmp_path / "cache", store_root=tmp_path / "store", progress=lambda **_: None)
+    if mode == "required":
+        with pytest.raises(FirmwareError):
+            download()
+    else:
+        assert download()["required"] is False
+
+
+def test_online_withdrawal_blocks_previously_cached_package(tmp_path, monkeypatch):
+    from dataclasses import replace
+    release, root = setup_catalog(tmp_path)
+    monkeypatch.setattr(operations.FirmwarePlatform, "catalog", lambda _: ("b" * 40, (replace(release, withdrawn=True),)))
+    with pytest.raises(FirmwareError, match="withdrawn"):
+        operations.execute("download", {"firmware_id": release.firmware_id, "version": release.version},
+                           provider="huggingface", cache_root=root, store_root=tmp_path, progress=lambda **_: None)
+
+
+def test_offline_mode_never_downloads_a_new_or_corrupt_package(tmp_path, monkeypatch):
+    from watcherobot.firmware import transfer
+    release, root = setup_catalog(tmp_path)
+    (root / "packages" / (release.sha256 + ".zip")).write_bytes(b"corrupt cache")
+    monkeypatch.setattr(operations.FirmwarePlatform, "catalog", lambda _: (_ for _ in ()).throw(OSError("offline")))
+    monkeypatch.setattr(transfer.httpx, "Client", lambda **_: pytest.fail("offline cache reuse must not download"))
+    for _ in range(2):
+        with pytest.raises(FirmwareError, match="catalog"):
+            operations.execute("download", {"firmware_id": release.firmware_id, "version": release.version},
+                               provider="huggingface", cache_root=root, store_root=tmp_path, progress=lambda **_: None)
+
+
+def test_catalog_persistence_failure_cannot_fall_back_to_old_approval(tmp_path, monkeypatch):
+    from dataclasses import replace
+    release, root = setup_catalog(tmp_path)
+    monkeypatch.setattr(operations.FirmwarePlatform, "catalog", lambda _: ("b" * 40, (replace(release, withdrawn=True),)))
+    monkeypatch.setattr(operations, "_write", lambda *a, **kw: (_ for _ in ()).throw(OSError("read only")))
+    with pytest.raises(FirmwareError, match="catalog"):
+        operations.execute("download", {"firmware_id": release.firmware_id, "version": release.version},
+                           provider="huggingface", cache_root=root, store_root=tmp_path, progress=lambda **_: None)
 
 
 def test_dependency_edit_is_previewed_and_requires_confirmation(tmp_path):

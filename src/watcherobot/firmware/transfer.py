@@ -86,6 +86,7 @@ def acquire_package(
     *,
     client: httpx.Client | None = None,
     progress: Progress | None = None,
+    offline: bool = False,
 ) -> Path:
     release = validate_release(release)
     if release.withdrawn:
@@ -108,6 +109,8 @@ def acquire_package(
                 return destination
             except FirmwareError:
                 destination.unlink()
+        if offline:
+            raise FirmwareError("A current firmware catalog is required before downloading a new package")
         url = (
             f"https://huggingface.co/datasets/{release.repo_id}/resolve/{release.commit}/{quote(release.path, safe='/')}"
             if release.provider == "huggingface"

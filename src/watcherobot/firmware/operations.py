@@ -262,7 +262,7 @@ def execute(
         return backend.submit(
             release, token, cache_root=root / "packages", progress=progress
         )
-    releases = _releases(root, provider)
+    requirement = None
     if request.get("app_id"):
         raw = _app_requirement(store_root, request["app_id"])
         requirement = FirmwareRequirement.parse(raw)
@@ -271,10 +271,27 @@ def execute(
                 "required": False,
                 "evidence": "legacy_unknown" if requirement is None else "not_required",
             }
+    progress(stage="fetching_catalog")
+    offline = False
+    try:
+        _, releases = backend.catalog()
+    except Exception:
+        releases = _releases(root, provider)
+        offline = True
+    else:
+        try:
+            _write(root / provider / "catalog.json", {
+                "schema_version": 1,
+                "firmwares": [release_record(item) for item in releases],
+            })
+        except OSError:
+            raise FirmwareError("Unable to persist the current firmware catalog; retry") from None
+    if requirement is not None:
         release = resolve_release(requirement, releases, provider=provider)
     else:
         release = _selected(request, releases)
     if action == "download":
-        path = acquire_package(release, root / "packages", progress=progress)
-        return {"release": asdict(release), "package_path": str(path)}
+        path = acquire_package(release, root / "packages", progress=progress, offline=offline)
+        return {"release": asdict(release), "package_path": str(path),
+                "catalog_stale": offline, "warnings": ["firmware_catalog_unavailable"] if offline else []}
     raise FirmwareError("USB device operations belong to Watcher Desktop")

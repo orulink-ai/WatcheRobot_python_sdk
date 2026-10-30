@@ -215,3 +215,29 @@ def test_firmware_submission_only_changes_separate_catalog_and_detects_version_c
             cache_root=tmp_path,
         )
     assert not any(name == "create_pr" for name, _ in hub.calls)
+
+
+@pytest.mark.parametrize("withdrawn", [False, True])
+def test_reviewed_metadata_is_preserved_on_publication_resubmission(tmp_path, monkeypatch, withdrawn):
+    from dataclasses import replace
+    from watcherobot.firmware import platforms
+    from watcherobot.firmware.transfer import release_record
+    from tests.distribution.test_firmware_transfer import artifact
+    from tests.distribution._publishing_fakes import FakePublishHub
+    from watcherobot.distribution.ports import CatalogDocument
+
+    release, _ = artifact(tmp_path)
+    reviewed = replace(release, notes="Maintainer-reviewed notes", publisher_kind="official",
+                       ota_supported=True, withdrawn=withdrawn)
+    hub = FakePublishHub(catalog=CatalogDocument(commit="a" * 40, content=json.dumps({
+        "schema_version": 1, "firmwares": [release_record(reviewed)],
+    }).encode()))
+    monkeypatch.setattr(platforms, "HuggingFacePublishHubClient", lambda: hub)
+    monkeypatch.setattr(platforms, "acquire_package", lambda *a, **kw: None)
+    backend = FirmwarePlatform("huggingface")
+    if withdrawn:
+        with pytest.raises(FirmwareError, match="withdrawn"):
+            backend.submit(release, AccessToken("secret"), cache_root=tmp_path)
+    else:
+        assert backend.submit(release, AccessToken("secret"), cache_root=tmp_path)["status"] == "already_listed"
+    assert not any(name == "create_pr" for name, _ in hub.calls)

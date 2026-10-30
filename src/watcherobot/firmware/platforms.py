@@ -409,10 +409,13 @@ class FirmwarePlatform:
             if item.firmware_id == release.firmware_id and version(
                 item.version
             ) == version(release.version):
-                if item != release:
+                artifact_fields = ("provider", "repo_id", "commit", "path", "asset_id", "download_url", "size", "sha256")
+                if any(getattr(item, field) != getattr(release, field) for field in artifact_fields):
                     raise FirmwareError(
                         "Catalog version already has a different immutable reference"
                     )
+                if item.withdrawn:
+                    raise FirmwareError("Firmware version has been withdrawn; maintainer review is required")
                 return {"status": "already_listed"}
         releases.append(release)
         content = json.dumps(
