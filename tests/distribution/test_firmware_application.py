@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -107,7 +108,8 @@ def test_submission_uses_the_existing_application_catalog(
         assert writes[0][1] == "app-list.json"
 
 
-def test_firmware_dependency_keeps_exact_sdk_lock_and_inventory_requirement(tmp_path):
+@pytest.mark.parametrize("provider", ["huggingface", "gitee"])
+def test_firmware_dependency_keeps_exact_sdk_lock_and_inventory_requirement(tmp_path, provider):
     from tests.distribution.test_install import (
         _write_source_v3,
         _write_runtime,
@@ -131,7 +133,7 @@ def test_firmware_dependency_keeps_exact_sdk_lock_and_inventory_requirement(tmp_
     path.write_text(json.dumps(value))
     runner = FakeEnvironmentRunner()
     install_application(
-        provider="huggingface",
+        provider=provider,
         repo_id=SPACE_ID,
         commit=COMMIT,
         store_root=tmp_path / "store",
@@ -147,3 +149,47 @@ def test_firmware_dependency_keeps_exact_sdk_lock_and_inventory_requirement(tmp_
     )
     assert "--no-deps" in command.arguments
     assert "watcherobot==0.1.1a3" in command.arguments
+
+    # Compose installation with real dependency resolution and anonymous transfer.
+    # A failed firmware download preserves the installed application for retry.
+    import httpx
+    from dataclasses import replace
+    from watcherobot.firmware import operations
+    from watcherobot.firmware.contract import FirmwareError
+    from watcherobot.firmware.transfer import acquire_package, release_record
+    from tests.distribution.test_firmware_transfer import artifact
+    from unittest.mock import patch
+
+    release, firmware_bytes = artifact(tmp_path)
+    if provider == "gitee":
+        release = replace(release, provider=provider, path="", asset_id=29,
+                          download_url="https://gitee.com/api/v5/repos/author/fw/releases/17/attach_files/29/download")
+    cache = tmp_path / "firmware-cache"
+    operations._write(cache / provider / "catalog.json", {
+        "schema_version": 1, "firmwares": [release_record(release)],
+    })
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        assert "authorization" not in request.headers
+        return httpx.Response(503) if len(requests) == 1 else httpx.Response(200, content=firmware_bytes)
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        def download(release, root, progress):
+            return acquire_package(release, root, client=client, progress=progress)
+
+        with patch.object(operations, "acquire_package", side_effect=download):
+            def prepare():
+                return operations.execute("download", {"app_id": value["id"]}, provider=provider,
+                                          cache_root=cache, store_root=tmp_path / "store", progress=lambda **_: None)
+
+            with pytest.raises(FirmwareError, match="503"):
+                prepare()
+            assert list_installed_applications(tmp_path / "store")[0].status == "installed"
+            result = prepare()
+            assert Path(result["package_path"]).read_bytes() == firmware_bytes
+            assert result["release"]["firmware_id"] == value["requires_firmware"]["firmware_id"]
+            assert result["release"]["provider"] == provider
+            prepare()
+            assert len(requests) == 2, "retry and subsequent preparation reuse only verified bytes"

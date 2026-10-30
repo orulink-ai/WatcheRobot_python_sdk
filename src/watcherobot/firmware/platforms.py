@@ -280,7 +280,8 @@ class FirmwarePlatform:
                     token,
                     allow_missing=True,
                 )
-                if existing_meta is None:
+                # Gitee also returns HTTP 200 + [] for a missing contents path.
+                if existing_meta is None or existing_meta == []:
                     meta = self._gitee(
                         "POST",
                         f"repos/{repo}/contents/{meta_path}",
@@ -293,6 +294,8 @@ class FirmwarePlatform:
                     )
                     commit = _commit(meta["commit"]["sha"])
                 else:
+                    if not isinstance(existing_meta, dict):
+                        raise FirmwareError("Existing firmware metadata is not a file")
                     try:
                         saved = base64.b64decode(existing_meta["content"])
                         if json.loads(saved) != json.loads(metadata):

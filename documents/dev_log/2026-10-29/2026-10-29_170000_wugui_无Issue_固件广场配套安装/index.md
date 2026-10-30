@@ -79,3 +79,15 @@
 - 真实固件发布账号/产物、Windows/macOS USB 和断线恢复、正式打包及配套 SDK 来源锁仍需后续验收。未发布新安装包、未伪造官方固件条目。
 
 配套档案：[另一仓库同任务](../../../../../WatcheRobot_client/documents/dev_log/2026-10-29/2026-10-29_170000_wugui_无Issue_固件广场配套安装/index.md)。完整方案：[本仓库文档](<../../../../docs/application-marketplace/firmware-implementation.zh-CN.md>)。
+
+## 2026-10-30 全链路复核与推送准备（wugui）
+
+用户本轮允许 SDK 和桌面端提交、推送功能分支，明确不创建 PR；该授权替代前文仅本地提交的限制，其他边界保持。
+
+- 通过真实匿名 Gitee API 复现不存在文件返回 `200 + []`，先补回归用例并看到原发布器 TypeError，再处理此响应；非文件元数据明确拒绝，保留 404 和已存在版本重试行为。
+- 补充双平台组合测试：应用实际安装编排（环境 runner 为替身）→ 从安装目录读取固件依赖 → 推荐版本与同平台目录解析 → 首次下载 503 → 应用仍保留 → 匿名重试成功 → 后续复用校验缓存。此部分属于既有实现的组合补测，没有描述为先写功能。
+- `pytest -o addopts='' tests/distribution tests/application tests/runtime/test_application_manifest.py tests/runtime/test_application_manifest_metadata.py tests/runtime/test_standalone_application_routing_contract.py -q`：616 passed，既有 Traversable 弃用警告 1 项；原错误测试路径已纠正，没有把路径错误计入通过结果。
+- Ruff 检查固件模块及两份相关测试通过；mypy 检查 9 个固件模块通过（Python 3.12，忽略缺失第三方类型）。真实网络读取 HF 9 个应用、Gitee 5 个应用，分别固定提交下载源码成功：HF example.sdk_media_lab@cb7064a7fdf43c6cd00a5d84fb1ec135f74e77e8（25 个文件/目录项）、Gitee com.orulink.expression_lab@f7faae287f78f9ac4f9349b5475916f111e1519f（23 项）；未运行源码或安装其依赖。
+- 网络探测的初次调用未创建要求的空 staging 目录，被下载器正确拒绝；修正探测后下载通过，不是业务代码缺陷。
+- HF 主目录缺少 firmware-list.json，既有结构 PR 仍待维护者合入；Gitee 空固件目录读取通过。没有发布测试固件或新建平台审核请求，真实固件上传/下载及设备烧录仍需产物和实机验收。
+- 配套桌面分支仍为 codex/firmware-marketplace，在此前 4589bd0e 基础上修复配套失败页面跳转、选择上下文及 USB 位置锁，并将在 SDK 推送后更新来源锁。本次不改 ESP32/STM32/Server，不提交 meta gitlink。

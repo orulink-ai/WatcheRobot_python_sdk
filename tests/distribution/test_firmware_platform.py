@@ -82,8 +82,9 @@ def test_hf_retries_same_content_without_reupload(tmp_path):
 
 
 @pytest.mark.parametrize("retry_metadata", [False, True])
+@pytest.mark.parametrize("missing_status", [404, 200])
 def test_gitee_publishes_release_attachment_without_replacing_old_files(
-    tmp_path, retry_metadata
+    tmp_path, retry_metadata, missing_status
 ):
     package = tmp_path / "fw.zip"
     make_package(package)
@@ -104,7 +105,7 @@ def test_gitee_publishes_release_attachment_without_replacing_old_files(
         elif "/contents/" in suffix:
             if request.method == "GET":
                 if not retry_metadata:
-                    return httpx.Response(404)
+                    return httpx.Response(missing_status, json=[])
                 return httpx.Response(
                     200,
                     json={
