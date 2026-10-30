@@ -14,7 +14,6 @@ from watcherobot.runtime.daemon.application.manifest import (
 
 from .catalog_submission import (
     CATALOG_PATH,
-    CATALOG_REPO_ID,
     CatalogDocumentError,
     CatalogPullRequestConflict,
     catalog_pull_request_title,
@@ -103,6 +102,16 @@ def submit_application(
         watcherobot_version=watcherobot_version,
     )
     _validate_submission_metadata(local_application)
+    if local_application.requires_firmware and local_application.requires_firmware.mode == "required":
+        from watcherobot.firmware.platforms import FirmwarePlatform
+        from watcherobot.firmware.catalog import resolve_release
+        from watcherobot.firmware.contract import FirmwareError
+
+        try:
+            _, releases = FirmwarePlatform(provider).catalog()
+            resolve_release(local_application.requires_firmware, releases, provider=provider)
+        except FirmwareError as exc:
+            raise ApplicationManifestError("Required firmware must be reviewed in the same provider first") from exc
 
     events.emit(
         ProgressEvent(

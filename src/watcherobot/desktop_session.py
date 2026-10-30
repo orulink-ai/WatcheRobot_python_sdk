@@ -265,7 +265,7 @@ class DesktopRobotSession:
                     animations = data.get("animations", [])
                     if isinstance(animations, list):
                         self.animation_ids = tuple(item for item in animations if isinstance(item, str))
-                    self.device_info.update(data)
+                    self.device_info = dict(data)
                 if message.get("type") == "evt.audio.buffer_status":
                     await self._update_audio_flow(data)
                 if not self._resolve_pending(message):

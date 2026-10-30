@@ -58,6 +58,7 @@ class MarketplaceApplication:
     supported_host_platforms: tuple[str, ...] = ()
     host_compatible: bool = False
     icon_data_url: str | None = None
+    requires_firmware: dict[str, object] | None = None
 
     @classmethod
     def from_metadata(
@@ -76,6 +77,7 @@ class MarketplaceApplication:
                 get_provider(provider).source_url(repo_id, commit)
             ),
             schema_version=metadata.schema_version,
+            requires_firmware=(metadata.requires_firmware.to_dict() if metadata.requires_firmware else None),
             app_id=metadata.app_id,
             name=metadata.name,
             version=metadata.version,
@@ -107,6 +109,8 @@ class MarketplaceApplication:
             "compatible": self.compatible,
             "host_compatible": self.host_compatible,
         }
+        if self.requires_firmware is not None:
+            result["requires_firmware"] = self.requires_firmware
         if self.icon_data_url is not None:
             result["icon_data_url"] = self.icon_data_url
         return result

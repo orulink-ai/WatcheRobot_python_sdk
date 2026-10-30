@@ -27,7 +27,7 @@ from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 from watcherobot.runtime.cleanup import reference_lock, store_operation
-from watcherobot.runtime.daemon.application.manifest import ApplicationManifestError
+from watcherobot.runtime.daemon.application.manifest import ApplicationManifestError, parse_application_manifest
 from watcherobot.runtime.windows_paths import filesystem_path
 
 from .download import (
@@ -186,9 +186,10 @@ class InstalledApplication:
     repo_id: str = ""
     provider: str = ""
     commit: str = ""
+    requires_firmware: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "id": self.application_id,
             "name": self.name,
             "version": self.version,
@@ -203,6 +204,9 @@ class InstalledApplication:
             "provider": self.provider,
             "commit": self.commit,
         }
+        if self.requires_firmware is not None:
+            result["requires_firmware"] = self.requires_firmware
+        return result
 
 
 @dataclass(frozen=True)
@@ -324,7 +328,7 @@ def install_application(
         environment = candidate / ".venv"
         runner = environment_runner or SystemApplicationEnvironmentRunner(events=events)
         dependencies = snapshot.application.dependencies
-        if snapshot.application.schema_version == 3:
+        if snapshot.application.schema_version >= 3:
             from .dependency_lock import read_dependency_lock
 
             dependencies = read_dependency_lock(
@@ -337,7 +341,7 @@ def install_application(
             environment=environment,
             runtime=runtime,
             dependencies=dependencies,
-            sdk_requirement=(snapshot.application.requires_watcherobot if snapshot.application.schema_version == 3 else None),
+            sdk_requirement=(snapshot.application.requires_watcherobot if snapshot.application.schema_version >= 3 else None),
             runner=runner,
             events=events,
         )
@@ -978,9 +982,9 @@ def _write_install_record(
             "runtime_id": runtime.runtime_id,
             "root": str(runtime.root),
             "watcherobot_version": next(item["version"] for item in resolved_dependencies if item["name"] == "watcherobot"),
-            "sdk_commit": runtime.watcherobot_sdk_commit if application.schema_version != 3 else None,
+            "sdk_commit": runtime.watcherobot_sdk_commit if application.schema_version < 3 else None,
             "runtime_bundle_sdk_commit": runtime.watcherobot_sdk_commit,
-            "sdk_source": "application-lock" if application.schema_version == 3 else "bundled-wheel",
+            "sdk_source": "application-lock" if application.schema_version >= 3 else "bundled-wheel",
         },
         "launcher": {
             "kind": "python",
@@ -1042,6 +1046,7 @@ def _read_installed_application(root: Path) -> InstalledApplication:
             or not _environment_python(root / ".venv").is_file()
         ):
             raise ValueError("invalid Application record")
+        metadata = parse_application_manifest(root.joinpath("source/app.json").read_bytes())
         return InstalledApplication(
             application_id=application_id,
             name=_required_text(record["name"]),
@@ -1051,8 +1056,9 @@ def _read_installed_application(root: Path) -> InstalledApplication:
             repo_id=_required_text(source["repo_id"]),
             provider=get_provider(_required_text(source["provider"])).name,
             commit=_required_text(source["commit"]),
+            requires_firmware=(metadata.requires_firmware.to_dict() if metadata.requires_firmware else None),
         )
-    except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError, ApplicationManifestError) as exc:
         raise ApplicationInstallError(
             ErrorCode.APP_CONTENT_FORBIDDEN,
             "Installed Application record is invalid",

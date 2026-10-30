@@ -305,6 +305,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="COMMAND",
     )
     add_distribution_commands(app_commands)
+    from watcherobot.firmware.cli import add_commands as add_firmware_commands
+
+    add_firmware_commands(commands)
     return parser
 
 
@@ -315,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def is_distribution_command(args: argparse.Namespace) -> bool:
+    if getattr(args, "command", None) == "firmware":
+        return getattr(args, "firmware_command", None) in {"check", "capabilities", "execute"}
     return (
         getattr(args, "command", None) == "app"
         and getattr(args, "app_command", None) in DISTRIBUTION_COMMANDS
@@ -324,6 +329,10 @@ def is_distribution_command(args: argparse.Namespace) -> bool:
 def run_command(args: argparse.Namespace) -> int:
     """Dispatch a parsed distribution command from either CLI entrypoint."""
 
+    if getattr(args, "command", None) == "firmware":
+        from watcherobot.firmware.cli import run as run_firmware
+
+        return run_firmware(args)
     if not is_distribution_command(args):
         raise ValueError("unsupported Application distribution command")
     if args.app_command == "check":
