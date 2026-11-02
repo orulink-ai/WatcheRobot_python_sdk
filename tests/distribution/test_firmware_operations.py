@@ -40,6 +40,28 @@ def editable_project(tmp_path):
     return path, {**request, "confirmed": True, "preview_key": preview["preview_key"]}, configure
 
 
+@pytest.mark.skipif(operations.os.name != "posix", reason="POSIX directory permissions")
+def test_configure_is_not_blocked_by_another_users_global_temp_locks(tmp_path, monkeypatch):
+    shared_temp = tmp_path / "shared-temp"
+    legacy_locks = shared_temp / "watcherobot-manifest-locks"
+    legacy_locks.mkdir(parents=True)
+    legacy_locks.chmod(0o500)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(operations.tempfile, "gettempdir", lambda: str(shared_temp))
+    monkeypatch.setattr(operations.Path, "home", lambda: home)
+    try:
+        if operations.os.access(legacy_locks, operations.os.W_OK):
+            pytest.skip("Current account bypasses read-only directory permissions")
+        path, request, configure = editable_project(tmp_path)
+        assert configure(request)["configured"] is True
+        assert json.loads(path.read_bytes())["requires_firmware"] == {"mode": "not_required"}
+        assert not list(legacy_locks.iterdir())
+        assert list((home / ".watcherobot" / "manifest-locks").glob("*.lock"))
+    finally:
+        legacy_locks.chmod(0o700)
+
+
 def test_configure_preserves_external_edit_during_temporary_file_write(tmp_path, monkeypatch):
     path, request, configure = editable_project(tmp_path)
     edited = json.loads(path.read_bytes())

@@ -150,8 +150,10 @@ def execute(
     backend = FirmwarePlatform(provider)
     if action == "configure":
         path = Path(request["application_dir"]).resolve() / "app.json"
-        locks = Path(tempfile.gettempdir()) / "watcherobot-manifest-locks"
-        locks.mkdir(parents=True, exist_ok=True)
+        # Keep the namespace shared across this user's SDK processes, not across
+        # OS accounts: a global temp directory can be owned by another user.
+        locks = Path.home() / ".watcherobot" / "manifest-locks"
+        locks.mkdir(parents=True, exist_ok=True, mode=0o700)
         identity = hashlib.sha256(os.path.normcase(str(path)).encode()).hexdigest()
         try:
             with FileLock(str(locks / (identity + ".lock")), timeout=10):
