@@ -98,7 +98,6 @@ def _read_releases(root: Path, provider: str) -> tuple[FirmwareRelease, ...]:
 def _cache_catalog(root: Path, provider: str, releases: tuple[FirmwareRelease, ...]) -> None:
     state = _catalog_state(root, provider)
     marker = state.with_suffix(".invalid")
-    _UNSAFE_CATALOGS.add(str(state))
     try:
         state.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         # Write-ahead veto lives outside a potentially read-only cache. A failed
@@ -111,6 +110,9 @@ def _cache_catalog(root: Path, provider: str, releases: tuple[FirmwareRelease, .
         try:
             (root / provider / "catalog.json").unlink(missing_ok=True)
         except OSError:
+            # Only the double-unwritable case needs a process-local veto.
+            # Durable markers/cache deletion can be recovered by another process.
+            _UNSAFE_CATALOGS.add(str(state))
             raise FirmwareError(
                 "Unable to invalidate firmware catalog; offline safety cannot persist across restart"
             ) from None

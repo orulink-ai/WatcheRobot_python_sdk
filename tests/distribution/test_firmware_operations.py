@@ -193,6 +193,54 @@ sys.exit(1)
                            provider="huggingface", cache_root=root, store_root=tmp_path, progress=lambda **_: None)
 
 
+@pytest.mark.parametrize("failure", ["catalog_write", "marker_write"])
+def test_other_process_refresh_recovers_existing_process_offline_cache(tmp_path, monkeypatch, failure):
+    import subprocess
+    import sys
+
+    release, root = setup_catalog(tmp_path)
+    marker = operations._catalog_state(root, "huggingface").with_suffix(".invalid")
+    original_open = operations.Path.open
+    with monkeypatch.context() as failing:
+        failing.setattr(operations.FirmwarePlatform, "catalog", lambda _: ("b" * 40, (release,)))
+        if failure == "catalog_write":
+            failing.setattr(operations, "_write", lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full")))
+        else:
+            def denied_marker(path, *args, **kwargs):
+                if path == marker:
+                    raise PermissionError("marker read only")
+                return original_open(path, *args, **kwargs)
+            failing.setattr(operations.Path, "open", denied_marker)
+        with pytest.raises(FirmwareError, match="catalog"):
+            operations.execute("marketplace", {}, provider="huggingface", cache_root=root,
+                               store_root=tmp_path, progress=lambda **_: None)
+    # A separate interpreter performs a real successful refresh; the original
+    # process must observe recovery without needing its own network connection.
+    snapshot = tmp_path / "remote.json"
+    snapshot.write_text(json.dumps({"schema_version": 1, "firmwares": [release_record(release)]}))
+    script = """
+import sys
+from pathlib import Path
+from unittest.mock import patch
+from watcherobot.firmware import operations
+root, snapshot = map(Path, sys.argv[1:])
+releases = operations.parse_catalog(snapshot.read_bytes(), provider='huggingface')
+with patch.object(operations.FirmwarePlatform, 'catalog', return_value=('b' * 40, releases)):
+    operations.execute('marketplace', {}, provider='huggingface', cache_root=root,
+                       store_root=root.parent, progress=lambda **_: None)
+"""
+    completed = subprocess.run([sys.executable, "-c", script, str(root), str(snapshot)],
+                               capture_output=True, text=True, timeout=30)
+    assert completed.returncode == 0, completed.stderr
+    assert not marker.exists()
+    monkeypatch.setattr(operations.FirmwarePlatform, "catalog", lambda _: (_ for _ in ()).throw(OSError("offline")))
+    result = operations.execute("download", {"firmware_id": release.firmware_id, "version": release.version},
+                                provider="huggingface", cache_root=root, store_root=tmp_path,
+                                progress=lambda **_: None)
+    assert result["catalog_stale"] is True
+    assert result["release"]["sha256"] == release.sha256
+
+
 @pytest.mark.parametrize("cache_unlink_fails", [False, True])
 def test_failed_catalog_veto_falls_back_to_cache_invalidation(tmp_path, monkeypatch, cache_unlink_fails):
     from dataclasses import replace

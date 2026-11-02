@@ -6,7 +6,7 @@
 - 用户需求：审查相关修改、修复问题并推进 0.1.13 正式发布。
 - 分支：release/watcherobot-0.1.13；PR：[#154](https://github.com/orulink-ai/WatcheRobot_python_sdk/pull/154)
 - 基线：main 0579082606c6619e52d52cce61520a64342d2382；初始版本提交 417b563960493f5f2fc896b93f78835e83d4fd7e。
-- 状态：配置锁修复已提交；撤回缓存追加修复经主代理复核及全量验证，准备提交。尚未合并或正式发布。
+- 状态：配置锁与撤回缓存修复已提交；追加跨进程恢复修复已完成全量验证，准备提交。尚未合并或正式发布。
 
 ## 范围与边界
 - 核对版本源、发布说明、打包、发布门禁及最近业务变更；发现确认缺陷则追加修复。
@@ -66,3 +66,11 @@
 - 最终 wheel/sdist 重新构建及 twine check 均 PASSED；独立 wheel 环境重装最终包后 pip check 无冲突，隔离导入／发行元数据均为 0.1.13，CLI --help 通过。
 - 补充恢复检查实际验证：保存失败留下标记，离线重试拒绝；随后成功刷新移除标记，并恢复合法离线缓存复用。Python 3.10 对源码及 Pi 示例 151 文件语法编译通过，不将其记为 3.10 完整运行测试。
 - CHANGELOG 与固件正式文档同步事务串行、持久标记及双不可写边界。审查结论转为修复已本地验证，仍须新提交远端矩阵与负责人确认 RTC；未合并、未打 tag、未上传 TestPyPI／PyPI、未审批。
+
+## 2026-11-02 +08:00｜agent-server／陆骁｜跨进程恢复追加修复
+- 用户要求继续合并发布；实查 PR 仍 OPEN、CHANGES_REQUESTED，无 merge commit，不能跳过负责人合并。最新自动审查提出普通保存失败后进程 A 留下永久内存否决，即便进程 B 成功刷新，A 离线仍被拒绝。
+- 先新增两个真实子解释器恢复回归，分别覆盖目录写失败与标记写失败但旧目录成功删除。RED：`pytest tests/distribution/test_firmware_operations.py -k other_process_refresh -q --tb=short` → 2 failed，均为进程 B 刷新后 A 仍因 `_UNSAFE_CATALOGS` 抛 FirmwareError。
+- 最小修复：仅在标记写入和旧目录删除均失败时加入进程内否决；普通保存失败依靠持久标记或目录缺失保护，可由其他进程成功刷新恢复。不通过“只要标记不存在就清除双不可写兜底”放松安全边界。
+- GREEN：固件专项 98 passed in 22.19s，mypy 137 源文件通过；专项另补跑恢复、持久标记和双不可写六用例全部通过。双不可写仍在当前进程失败关闭。
+- 最终隔离源码全量：**2342 passed / 8 skipped / 2 warnings in 317.17s**。最终 wheel/sdist 构建及 twine、wheel 重装、pip check、隔离版本检查均通过；另以 wheel 内 operations.py 与源码字节比较确认包含最终实现。
+- 远端 main 仍为 0579082606c6619e52d52cce61520a64342d2382；旧 HEAD 的 CI 不作为新修复证据。提交后重新等待远端矩阵；RTC 实机与负责人合并、正式 PyPI 审批门禁不变。
