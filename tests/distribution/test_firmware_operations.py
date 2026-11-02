@@ -171,6 +171,181 @@ def test_catalog_persistence_failure_cannot_fall_back_to_old_approval(tmp_path, 
     with pytest.raises(FirmwareError, match="catalog"):
         operations.execute(action, {"firmware_id": release.firmware_id, "version": release.version},
                            provider="huggingface", cache_root=root, store_root=tmp_path, progress=lambda **_: None)
+    # A fresh interpreter must honor the on-disk veto, not a process-local flag.
+    import subprocess
+    import sys
+    script = """
+import sys
+from pathlib import Path
+from watcherobot.firmware import operations
+from watcherobot.firmware.contract import FirmwareError
+try:
+    operations._releases(Path(sys.argv[1]), 'huggingface')
+except FirmwareError:
+    sys.exit(0)
+sys.exit(1)
+"""
+    completed = subprocess.run([sys.executable, "-c", script, str(root)], capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    monkeypatch.setattr(operations.FirmwarePlatform, "catalog", lambda _: (_ for _ in ()).throw(OSError("offline")))
+    with pytest.raises(FirmwareError, match="catalog|withdrawn"):
+        operations.execute("download", {"firmware_id": release.firmware_id, "version": release.version},
+                           provider="huggingface", cache_root=root, store_root=tmp_path, progress=lambda **_: None)
+
+
+@pytest.mark.parametrize("cache_unlink_fails", [False, True])
+def test_failed_catalog_veto_falls_back_to_cache_invalidation(tmp_path, monkeypatch, cache_unlink_fails):
+    from dataclasses import replace
+
+    release, root = setup_catalog(tmp_path)
+    marker = operations._catalog_state(root, "huggingface").with_suffix(".invalid")
+    catalog_path = root / "huggingface/catalog.json"
+    original_open, original_unlink = operations.Path.open, operations.Path.unlink
+
+    def denied_marker(path, *args, **kwargs):
+        if path == marker:
+            raise PermissionError("marker read only")
+        return original_open(path, *args, **kwargs)
+
+    def denied_unlink(path, *args, **kwargs):
+        if path == catalog_path and cache_unlink_fails:
+            raise PermissionError("cache read only")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(operations.Path, "open", denied_marker)
+    monkeypatch.setattr(operations.Path, "unlink", denied_unlink)
+    monkeypatch.setattr(operations.FirmwarePlatform, "catalog", lambda _: ("b" * 40, (replace(release, withdrawn=True),)))
+    expected = "cannot persist across restart" if cache_unlink_fails else "catalog"
+    with pytest.raises(FirmwareError, match=expected):
+        operations.execute("marketplace", {}, provider="huggingface", cache_root=root,
+                           store_root=tmp_path, progress=lambda **_: None)
+    assert catalog_path.exists() == cache_unlink_fails
+    with pytest.raises(FirmwareError, match="catalog"):
+        operations._releases(root, "huggingface")
+
+
+def _catalog_transaction_worker(root, home, release, action, withdrawn, started, entered, resume, results, patches=True):
+    """Spawn-safe real execute worker; only remote catalog transport is replaced."""
+    from dataclasses import replace
+    from unittest.mock import patch
+    from contextlib import nullcontext
+
+    def catalog(_):
+        entered.set()
+        if not resume.wait(10):
+            raise RuntimeError("test did not release remote response")
+        if withdrawn is None:
+            raise OSError("offline")
+        return "b" * 40, (replace(release, withdrawn=withdrawn),)
+
+    with (patch.object(operations.Path, "home", return_value=home) if patches else nullcontext()), (
+        patch.object(operations.FirmwarePlatform, "catalog", catalog) if patches else nullcontext()
+    ):
+        started.set()
+        try:
+            operations.execute(action, {"firmware_id": release.firmware_id, "version": release.version},
+                               provider="huggingface", cache_root=root, store_root=root.parent,
+                               progress=lambda **_: None)
+            results.put("ok")
+        except FirmwareError as error:
+            results.put(str(error))
+
+
+@pytest.mark.parametrize("workers", ["threads", "processes"])
+@pytest.mark.parametrize("first_action", ["marketplace", "download"])
+@pytest.mark.parametrize("second_action", ["marketplace", "download"])
+def test_catalog_transactions_prevent_late_old_approval(tmp_path, monkeypatch, workers, first_action, second_action):
+    import multiprocessing
+    import queue
+    import threading
+
+    release, root = setup_catalog(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(operations.Path, "home", lambda: home)
+    alias = tmp_path / "cache-alias"
+    alias.symlink_to(root, target_is_directory=True)
+    context = multiprocessing.get_context("spawn") if workers == "processes" else threading
+    results = multiprocessing.get_context("spawn").Queue() if workers == "processes" else queue.Queue()
+    first_started, second_started = context.Event(), context.Event()
+    first_entered, second_entered = context.Event(), context.Event()
+    resume, immediate = context.Event(), context.Event()
+    immediate.set()
+    worker = multiprocessing.get_context("spawn").Process if workers == "processes" else threading.Thread
+    if workers == "threads":
+        from dataclasses import replace
+
+        def catalog(_):
+            withdrawn = threading.current_thread().name == "new-withdrawal"
+            (second_entered if withdrawn else first_entered).set()
+            assert (immediate if withdrawn else resume).wait(10)
+            return "b" * 40, (replace(release, withdrawn=withdrawn),)
+
+        monkeypatch.setattr(operations.FirmwarePlatform, "catalog", catalog)
+    first = worker(target=_catalog_transaction_worker, args=(root, home, release, first_action, False,
+                                                           first_started, first_entered, resume, results, workers == "processes"), name="old-approval")
+    second = worker(target=_catalog_transaction_worker, args=(alias, home, release, second_action, True,
+                                                            second_started, second_entered, immediate, results, workers == "processes"), name="new-withdrawal")
+    first.start()
+    try:
+        assert first_entered.wait(10)
+        second.start()
+        assert second_started.wait(10)
+        overlapped = second_entered.wait(0.5)
+        if overlapped:
+            # In the broken implementation the newer withdrawal commits first;
+            # only then allow the older approval response to finish saving.
+            second.join(10)
+            assert not second.is_alive()
+    finally:
+        resume.set()
+        first.join(15)
+        if second.ident is not None:
+            second.join(15)
+    assert not first.is_alive() and not second.is_alive()
+    outcomes = [results.get(timeout=5), results.get(timeout=5)]
+    assert all(value == "ok" or "withdrawn" in value or "catalog" in value for value in outcomes)
+    assert operations.parse_catalog((root / "huggingface/catalog.json").read_bytes(),
+                                    provider="huggingface")[0].withdrawn, outcomes
+    monkeypatch.setattr(operations.FirmwarePlatform, "catalog", lambda _: (_ for _ in ()).throw(OSError("offline")))
+    with pytest.raises(FirmwareError, match="withdrawn"):
+        operations.execute("download", {"firmware_id": release.firmware_id, "version": release.version},
+                           provider="huggingface", cache_root=root, store_root=tmp_path, progress=lambda **_: None)
+    assert not overlapped, "remote fetch and persistence must share a transaction lock"
+
+
+def test_offline_process_waits_for_inflight_withdrawal(tmp_path):
+    import multiprocessing
+
+    release, root = setup_catalog(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    context = multiprocessing.get_context("spawn")
+    results = context.Queue()
+    entered, offline_entered = context.Event(), context.Event()
+    started, offline_started = context.Event(), context.Event()
+    resume, immediate = context.Event(), context.Event()
+    immediate.set()
+    refresh = context.Process(target=_catalog_transaction_worker,
+                              args=(root, home, release, "marketplace", True, started, entered, resume, results))
+    offline = context.Process(target=_catalog_transaction_worker,
+                              args=(root, home, release, "download", None, offline_started, offline_entered, immediate, results))
+    refresh.start()
+    try:
+        assert entered.wait(10)
+        offline.start()
+        assert offline_started.wait(10)
+        overlapped = offline_entered.wait(0.5)
+    finally:
+        resume.set()
+        refresh.join(15)
+        if offline.ident is not None:
+            offline.join(15)
+    assert not refresh.is_alive() and not offline.is_alive()
+    outcomes = [results.get(timeout=5), results.get(timeout=5)]
+    assert "ok" in outcomes
+    assert any("withdrawn" in value for value in outcomes), outcomes
+    assert not overlapped
 
 
 def test_dependency_edit_is_previewed_and_requires_confirmation(tmp_path):

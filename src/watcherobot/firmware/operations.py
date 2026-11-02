@@ -7,6 +7,8 @@ import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
+from collections.abc import Iterator
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -52,8 +54,38 @@ def _write(path: Path, value: Any, *, expected: bytes | None = None) -> None:
         Path(name).unlink(missing_ok=True)
 
 
-def _releases(root: Path, provider: str) -> tuple[FirmwareRelease, ...]:
+# Last-resort protection if neither the user marker nor cache can be changed.
+# This fallback cannot survive restart; the raised error makes that explicit.
+_UNSAFE_CATALOGS: set[str] = set()
+
+
+def _catalog_state(root: Path, provider: str) -> Path:
+    path = (root / provider / "catalog.json").resolve()
+    identity = hashlib.sha256(os.path.normcase(str(path)).encode()).hexdigest()
+    return Path.home() / ".watcherobot" / "catalog-locks" / identity
+
+
+@contextmanager
+def _catalog_lock(root: Path, provider: str) -> Iterator[None]:
+    state = _catalog_state(root, provider)
+    state.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
+        with FileLock(str(state.with_suffix(".lock")), timeout=10):
+            yield
+    except Timeout:
+        raise FirmwareError("Another operation is using the firmware catalog; retry") from None
+
+
+def _releases(root: Path, provider: str) -> tuple[FirmwareRelease, ...]:
+    with _catalog_lock(root, provider):
+        return _read_releases(root, provider)
+
+
+def _read_releases(root: Path, provider: str) -> tuple[FirmwareRelease, ...]:
+    try:
+        state = _catalog_state(root, provider)
+        if str(state) in _UNSAFE_CATALOGS or state.with_suffix(".invalid").exists():
+            raise FirmwareError("Refresh the firmware catalog before selecting a release")
         return parse_catalog(
             (root / provider / "catalog.json").read_bytes(), provider=provider
         )
@@ -64,11 +96,32 @@ def _releases(root: Path, provider: str) -> tuple[FirmwareRelease, ...]:
 
 
 def _cache_catalog(root: Path, provider: str, releases: tuple[FirmwareRelease, ...]) -> None:
+    state = _catalog_state(root, provider)
+    marker = state.with_suffix(".invalid")
+    _UNSAFE_CATALOGS.add(str(state))
+    try:
+        state.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # Write-ahead veto lives outside a potentially read-only cache. A failed
+        # save (or interrupted process) must not leave an old approval usable.
+        with marker.open("w", encoding="utf-8") as stream:
+            stream.write("Refresh the firmware catalog before offline reuse\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError:
+        try:
+            (root / provider / "catalog.json").unlink(missing_ok=True)
+        except OSError:
+            raise FirmwareError(
+                "Unable to invalidate firmware catalog; offline safety cannot persist across restart"
+            ) from None
+        raise FirmwareError("Unable to persist the current firmware catalog; retry") from None
     try:
         _write(root / provider / "catalog.json", {
             "schema_version": 1,
             "firmwares": [release_record(item) for item in releases],
         })
+        marker.unlink()
+        _UNSAFE_CATALOGS.discard(str(state))
     except OSError:
         raise FirmwareError("Unable to persist the current firmware catalog; retry") from None
 
@@ -161,25 +214,26 @@ def execute(
         except Timeout:
             raise FirmwareError("Another operation is configuring this Application; retry") from None
     if action == "marketplace":
-        progress(stage="fetching_catalog")
-        warnings = []
-        commit = None
-        try:
-            commit, releases = backend.catalog()
-        except Exception:
-            warnings.append("firmware_catalog_unavailable")
+        with _catalog_lock(root, provider):
+            progress(stage="fetching_catalog")
+            warnings = []
+            commit = None
             try:
-                releases = _releases(root, provider)
-            except (FirmwareError, OSError):
-                releases = ()
-        else:
-            _cache_catalog(root, provider, releases)
-        return {
-            "catalog_commit": commit,
-            "firmwares": [asdict(item) for item in releases if not item.withdrawn],
-            "warnings": warnings,
-            "stale": bool(warnings),
-        }
+                commit, releases = backend.catalog()
+            except Exception:
+                warnings.append("firmware_catalog_unavailable")
+                try:
+                    releases = _read_releases(root, provider)
+                except (FirmwareError, OSError):
+                    releases = ()
+            else:
+                _cache_catalog(root, provider, releases)
+            return {
+                "catalog_commit": commit,
+                "firmwares": [asdict(item) for item in releases if not item.withdrawn],
+                "warnings": warnings,
+                "stale": bool(warnings),
+            }
     if action == "requirements":
         return {
             "requires_firmware": _app_requirement(store_root, request.get("app_id"))
@@ -278,21 +332,23 @@ def execute(
                 "required": False,
                 "evidence": "legacy_unknown" if requirement is None else "not_required",
             }
-    progress(stage="fetching_catalog")
-    offline = False
-    try:
-        _, releases = backend.catalog()
-    except Exception:
-        releases = _releases(root, provider)
-        offline = True
-    else:
-        _cache_catalog(root, provider, releases)
-    if requirement is not None:
-        release = resolve_release(requirement, releases, provider=provider)
-    else:
-        release = _selected(request, releases)
-    if action == "download":
-        path = acquire_package(release, root / "packages", progress=progress, offline=offline)
-        return {"release": asdict(release), "package_path": str(path),
-                "catalog_stale": offline, "warnings": ["firmware_catalog_unavailable"] if offline else []}
-    raise FirmwareError("USB device operations belong to Watcher Desktop")
+    # Keep remote fetch, save, offline selection and package handoff coordinated.
+    with _catalog_lock(root, provider):
+        progress(stage="fetching_catalog")
+        offline = False
+        try:
+            _, releases = backend.catalog()
+        except Exception:
+            releases = _read_releases(root, provider)
+            offline = True
+        else:
+            _cache_catalog(root, provider, releases)
+        if requirement is not None:
+            release = resolve_release(requirement, releases, provider=provider)
+        else:
+            release = _selected(request, releases)
+        if action == "download":
+            path = acquire_package(release, root / "packages", progress=progress, offline=offline)
+            return {"release": asdict(release), "package_path": str(path),
+                    "catalog_stale": offline, "warnings": ["firmware_catalog_unavailable"] if offline else []}
+        raise FirmwareError("USB device operations belong to Watcher Desktop")
