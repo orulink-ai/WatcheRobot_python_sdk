@@ -311,6 +311,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Six-digit code shown by the robot",
     )
     setup.add_argument("--clear-existing", action="store_true")
+    usb = robot_commands.add_parser("usb", help="Connect a compatible framed-USB device via Daemon")
+    usb_commands = usb.add_subparsers(dest="usb_command", required=True)
+    usb_connect = usb_commands.add_parser("connect")
+    usb_connect.add_argument("--port", required=True)
+    usb_connect.add_argument("--baudrate", type=int, choices=(460800, 1000000, 1500000, 2000000), default=1000000)
+    usb_commands.add_parser("disconnect")
     pair = robot_commands.add_parser(
         "pair",
         help="Pair an already networked robot with the SDK Runtime",
@@ -460,6 +466,14 @@ def main(argv: list[str] | None = None) -> int:
                     runtime_state=hardware_state,
                     request_json=_request_json,
                 )
+            if args.robot_command == "usb":
+                state, _reused = ensure_runtime()
+                endpoint = f"/daemon/devices/usb/{args.usb_command}"
+                payload = ({"port": args.port, "baudrate": args.baudrate}
+                           if args.usb_command == "connect" else {})
+                result = _request_json(state.control_url, endpoint, method="POST", payload=payload)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
             if args.robot_command == "status":
                 return robot_status()
             if args.robot_command == "vision":

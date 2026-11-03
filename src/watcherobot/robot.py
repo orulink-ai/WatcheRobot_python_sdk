@@ -985,6 +985,8 @@ class WatcheRobot:
         self.vision = VisionDomain(self)
         self.face_tracking = FaceTrackingDomain(self)
         self.inputs = InputDomain()
+        from .display import DisplayDomain
+        self.display = DisplayDomain(self)
         transport.set_callbacks(self._on_message, self._on_binary, self._on_disconnect)
 
     @classmethod
@@ -1086,6 +1088,10 @@ class WatcheRobot:
                 return
             self._closing = True
             microphone = self._microphone
+        try:
+            self.display._close()
+        except Exception:
+            _LOGGER.warning("Display stream cleanup failed while closing robot", exc_info=True)
         try:
             self.speech._close()
         except Exception:
@@ -1627,6 +1633,9 @@ class WatcheRobot:
         return True
 
     def _on_message(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "evt.display.presented":
+            self.display._on_event(message.get("data"))
+            return
         if message.get("type") == "evt.speech":
             self.speech._event(message.get("data"))
             return
@@ -1650,6 +1659,7 @@ class WatcheRobot:
         if message.get("type") == "daemon.device.state":
             data = message.get("data", {})
             if isinstance(data, dict) and data.get("online") is False:
+                self.display._disconnected()
                 self.recordings.device_connection_lost()
                 self.speech._disconnected()
             return
@@ -1829,6 +1839,7 @@ class WatcheRobot:
             self._pending_audio_frames.clear()
             microphone = self._microphone
         self._fail_all_jobs(reason="disconnected")
+        self.display._disconnected()
         self.inputs._close("disconnected")
         if microphone is not None:
             microphone._mark_remote_closed()

@@ -10,6 +10,9 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
+from websockets.asyncio.server import ServerConnection
+from watcherobot.runtime.daemon.connections.usb_connection import UsbConnection
 
 from watcherobot.runtime.daemon.application.bridge import ChannelNotConnectedError
 from watcherobot.runtime.daemon.application.logging import ApplicationLogService
@@ -57,6 +60,7 @@ from watcherobot.runtime.daemon.pairing.protocol import (
 from watcherobot.runtime.daemon.pairing.session import (
     DevicePairingSession,
     DevicePairingState,
+    PairingSessionError,
 )
 from watcherobot.runtime.daemon.pairing.udp import PairingUdpService
 from watcherobot.runtime.daemon.preview.face_tracking import (
@@ -156,6 +160,8 @@ class DaemonRuntime:
         self._instance_id = instance_id or runtime_instance_id(default_runtime_instance_root())
         self._started_at = time.time()
         self.connection_registry = connection_registry
+        self._usb_connection: UsbConnection | None = None
+        self._usb_lock = asyncio.Lock()
         self.face_tracking_preview = FaceTrackingPreviewBroker(connection_registry)
         self.application.bridge.set_frame_callback(
             self._route_application_frame
@@ -254,6 +260,8 @@ class DaemonRuntime:
         self.logs.record("Daemon Runtime stopping")
         await self.control_server.stop()
         await self.application.stop()
+        if self._usb_connection is not None:
+            await self._usb_connection.close(reason="Daemon stopped")
         await self.preview_udp.stop()
         await self.pairing_udp.stop()
         await self.external_server.stop()
@@ -472,6 +480,8 @@ class DaemonRuntime:
     ) -> dict[str, object]:
         """Reserve the single slot and start Daemon-owned UDP discovery."""
 
+        if self._usb_connection is not None:
+            raise PairingSessionError("device_slot_occupied")
         self.device_pairing.start_pairing(
             pairing_code=pairing_code,
             target_mode=target_mode,
@@ -497,9 +507,86 @@ class DaemonRuntime:
         self.logs.record("Device pairing cancelled")
         return self.device_status()
 
+    def _usb_state(self, *, online: bool) -> dict[str, object]:
+        return {"state": "connected" if online else "idle", "online": online,
+                "mode": "sdk" if online else None, "request_id": None, "last_error": None}
+
+    async def connect_usb_device(self, port: str, baudrate: int = 1000000) -> dict[str, object]:
+        """Explicit local management: attach one generic framed serial peer.
+
+        The transport and router never inspect display, input, or App payloads.
+        The active Application obtains firmware capabilities over its own channel.
+        """
+        if not isinstance(port, str) or not port.strip() or len(port) > 256:
+            raise ValueError("an explicit serial port is required")
+        if type(baudrate) is not int or baudrate not in (460800, 1000000, 1500000, 2000000):
+            raise ValueError("unsupported USB baudrate")
+        async with self._usb_lock:
+            if (self._usb_connection is not None
+                    or self.device_pairing.state is not DevicePairingState.IDLE
+                    or self.connection_registry.online_count(ExternalClientRole.DEVICE)):
+                raise PairingSessionError("device_slot_occupied")
+            connection = None
+
+            async def on_frame(frame: str | bytes) -> None:
+                assert connection is not None
+                await self.router.route_external(connection, frame)
+
+            async def on_disconnect(error: BaseException | None) -> None:
+                self.connection_registry.remove(peer)
+                if self._usb_connection is usb:
+                    # Keep the slot reserved through offline delivery without
+                    # taking _usb_lock: failed startup can invoke this callback
+                    # while connect already owns that lock.
+                    try:
+                        snapshot = self._usb_state(online=False)
+                        await self._publish_device_state(snapshot)
+                        if self.application.registry.active_run is not None:
+                            try:
+                                await self.application.bridge.send_to_application(
+                                    ApplicationChannel.DEVICE,
+                                    json.dumps(build_device_state_event(snapshot), separators=(",", ":")),
+                                )
+                            except ChannelNotConnectedError:
+                                pass
+                    finally:
+                        if self._usb_connection is usb:
+                            self._usb_connection = None
+                self.logs.record("USB device disconnected" + (f" ({type(error).__name__})" if error else ""))
+
+            usb = UsbConnection(port.strip(), baudrate, on_frame=on_frame, on_disconnect=on_disconnect)
+            # Registry only requires send/close; the USB adapter has the same interface.
+            peer = cast(ServerConnection, usb)
+            connection = self.connection_registry.add(peer)
+            self.connection_registry.declare_role(connection, role="hardware")
+            self._usb_connection = usb
+            try:
+                await usb.start()
+            except BaseException:
+                self.connection_registry.remove(peer)
+                # Only on_disconnect releases the slot. Shielded transport
+                # cleanup can outlive cancellation of this attach request.
+                await usb.close(reason="USB connect failed")
+                raise
+            self.logs.record("Generic USB device transport connected")
+            await self._publish_device_state(self._usb_state(online=True))
+            return self.device_status()
+
+    async def disconnect_usb_device(self) -> bool:
+        """Release only USB, leaving any LAN session and binding untouched."""
+
+        usb = self._usb_connection
+        if usb is None:
+            return False
+        # close() awaits on_disconnect; do not hold _usb_lock here.
+        await usb.close(reason="device session released")
+        return True
+
     async def disconnect_device(self) -> bool:
         """Release the single device session without involving Application."""
 
+        if self._usb_connection is not None:
+            return await self.disconnect_usb_device()
         state = self.device_pairing.state
         if state is DevicePairingState.IDLE:
             self.logs.record("Device disconnect ignored (no active session)")
@@ -555,6 +642,13 @@ class DaemonRuntime:
         }
 
     def device_status(self) -> dict[str, object]:
+        if self._usb_connection is not None:
+            device = self._usb_state(online=self._usb_connection.is_open)
+            device.update(transport="usb", port=self._usb_connection.port,
+                          baudrate=self._usb_connection.baudrate, reuniting=False,
+                          preview_websocket_url=None, mjpeg_websocket_url=None,
+                          preview_transport={})
+            return {"device": device}
         device = self.device_pairing.snapshot()
         peer_ip = self.device_pairing.expected_peer_ip
         device["reuniting"] = self.device_pairing.reuniting

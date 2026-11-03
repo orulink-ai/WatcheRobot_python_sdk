@@ -9,8 +9,18 @@ from typing import Any, Literal, TypeAlias
 from .errors import WatcheRobotError
 
 
+@dataclass(frozen=True, kw_only=True)
+class InputDisplayContext:
+    """Optional identity of the displayed frame on which an input occurred."""
+
+    event_id: int | None = None
+    stream_id: int | None = None
+    display_sequence: int | None = None
+    age_ms: int | None = None
+
+
 @dataclass(frozen=True)
-class BackTouchEvent:
+class BackTouchEvent(InputDisplayContext):
     """A press state reported by the rear touch sensor."""
 
     action: Literal["press", "release", "long_press"]
@@ -23,7 +33,7 @@ class BackTouchEvent:
 
 
 @dataclass(frozen=True)
-class ScreenTouchEvent:
+class ScreenTouchEvent(InputDisplayContext):
     """A short tap reported by the display touch controller."""
 
     x: int
@@ -40,7 +50,7 @@ class ScreenTouchEvent:
 
 
 @dataclass(frozen=True)
-class RollerEvent:
+class RollerEvent(InputDisplayContext):
     """A signed rotation step reported by the physical roller."""
 
     delta: int
@@ -55,7 +65,22 @@ class RollerEvent:
         return "rotate"
 
 
-InputEvent: TypeAlias = BackTouchEvent | ScreenTouchEvent | RollerEvent
+@dataclass(frozen=True)
+class RollerButtonEvent(InputDisplayContext):
+    """A debounced short press of the roller button."""
+
+    timestamp_ms: int
+
+    @property
+    def source(self) -> Literal["roller"]:
+        return "roller"
+
+    @property
+    def action(self) -> Literal["press"]:
+        return "press"
+
+
+InputEvent: TypeAlias = BackTouchEvent | ScreenTouchEvent | RollerEvent | RollerButtonEvent
 
 
 def parse_input_event(data: object) -> InputEvent | None:
@@ -64,6 +89,18 @@ def parse_input_event(data: object) -> InputEvent | None:
     timestamp_ms = data.get("timestamp_ms")
     if isinstance(timestamp_ms, bool) or not isinstance(timestamp_ms, int) or timestamp_ms < 0:
         return None
+
+    context: dict[str, int] = {}
+    fields = {"id": "event_id", "stream_id": "stream_id",
+              "display_sequence": "display_sequence", "age_ms": "age_ms"}
+    if any(name in data for name in fields):
+        for wire_name, attribute in fields.items():
+            value = data.get(wire_name)
+            minimum = 1 if wire_name in ("id", "stream_id") else 0
+            maximum = 65535 if wire_name == "stream_id" else 0xFFFFFFFF
+            if type(value) is not int or not minimum <= value <= maximum:
+                return None
+            context[attribute] = value
 
     source = data.get("source")
     action = data.get("action")
@@ -76,7 +113,7 @@ def parse_input_event(data: object) -> InputEvent | None:
             or not 0 <= touch_id <= 255
         ):
             return None
-        return BackTouchEvent(action=action, touch_id=touch_id, timestamp_ms=timestamp_ms)
+        return BackTouchEvent(action=action, touch_id=touch_id, timestamp_ms=timestamp_ms, **context)
 
     if source == "screen_touch":
         x = data.get("x")
@@ -91,7 +128,10 @@ def parse_input_event(data: object) -> InputEvent | None:
             or y < 0
         ):
             return None
-        return ScreenTouchEvent(x=x, y=y, timestamp_ms=timestamp_ms)
+        return ScreenTouchEvent(x=x, y=y, timestamp_ms=timestamp_ms, **context)
+
+    if source == "roller" and action == "press":
+        return RollerButtonEvent(timestamp_ms=timestamp_ms, **context)
 
     if source == "roller":
         delta = data.get("delta")
@@ -102,7 +142,7 @@ def parse_input_event(data: object) -> InputEvent | None:
             or delta == 0
         ):
             return None
-        return RollerEvent(delta=delta, timestamp_ms=timestamp_ms)
+        return RollerEvent(delta=delta, timestamp_ms=timestamp_ms, **context)
 
     return None
 
