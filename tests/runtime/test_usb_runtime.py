@@ -247,3 +247,144 @@ def test_usb_payload_new_types_and_binary_are_opaque(tmp_path,monkeypatch):
         assert frames==payloads
         await runtime.disconnect_device()
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("desktop_fails,application_fails", [
+    (False, False), (True, False), (False, True), (True, True),
+])
+def test_usb_offline_notifies_both_recipients_despite_send_errors(
+    tmp_path, monkeypatch, desktop_fails, application_fails,
+):
+    import watcherobot.runtime.daemon.runtime as module
+    from watcherobot.runtime.daemon.application.session import ApplicationChannel
+
+    monkeypatch.setattr(module, "UsbConnection", FakeUsb)
+
+    async def run():
+        runtime = DaemonRuntime(application_dir=tmp_path, current_app=None)
+        desktop_error = ConnectionError("Desktop offline notification failed")
+        application_error = RuntimeError("Application offline notification failed")
+        desktop_notifications, application_notifications = [], []
+
+        class Desktop:
+            async def send(self, frame):
+                event = json.loads(frame)
+                if event["data"]["online"] is False:
+                    desktop_notifications.append(event)
+                    if desktop_fails:
+                        raise desktop_error
+
+        async def notify_application(channel, frame):
+            assert channel is ApplicationChannel.DEVICE
+            application_notifications.append(json.loads(frame))
+            if application_fails:
+                raise application_error
+
+        desktop = runtime.connection_registry.add(Desktop())
+        runtime.connection_registry.declare_role(desktop, role="desktop")
+        monkeypatch.setattr(runtime.application, "registry", SimpleNamespace(active_run=object()))
+        monkeypatch.setattr(runtime.application.bridge, "send_to_application", notify_application)
+        await runtime.connect_usb_device("COM99")
+        usb = runtime._usb_connection
+        actual_error = None
+        try:
+            await runtime.disconnect_usb_device()
+        except Exception as exc:
+            actual_error = exc
+
+        assert len(desktop_notifications) == 1
+        assert len(application_notifications) == 1
+        for event in desktop_notifications + application_notifications:
+            assert event["type"] == "daemon.device.state"
+            assert event["data"]["online"] is False
+        expected_error = application_error if application_fails else desktop_error if desktop_fails else None
+        assert actual_error is expected_error
+        assert usb.closed
+        assert runtime._usb_connection is None
+        assert runtime.connection_registry.online_count(ExternalClientRole.DEVICE) == 0
+
+    asyncio.run(run())
+
+
+def test_usb_desktop_error_keeps_slot_until_application_offline_delivery(tmp_path, monkeypatch):
+    import watcherobot.runtime.daemon.runtime as module
+
+    monkeypatch.setattr(module, "UsbConnection", FakeUsb)
+
+    async def run():
+        runtime = DaemonRuntime(application_dir=tmp_path, current_app=None)
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        class Desktop:
+            async def send(self, frame):
+                if json.loads(frame)["data"]["online"] is False:
+                    raise ConnectionError("Desktop went away")
+
+        async def notify_application(_channel, frame):
+            assert json.loads(frame)["data"]["online"] is False
+            entered.set()
+            await release.wait()
+
+        desktop = runtime.connection_registry.add(Desktop())
+        runtime.connection_registry.declare_role(desktop, role="desktop")
+        monkeypatch.setattr(runtime.application, "registry", SimpleNamespace(active_run=object()))
+        monkeypatch.setattr(runtime.application.bridge, "send_to_application", notify_application)
+        await runtime.connect_usb_device("COM99")
+        closing = asyncio.create_task(runtime.disconnect_usb_device())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            with pytest.raises(PairingSessionError, match="occupied"):
+                await asyncio.wait_for(runtime.connect_usb_device("COM100"), 1)
+        finally:
+            release.set()
+            with pytest.raises(ConnectionError, match="Desktop went away"):
+                await asyncio.wait_for(closing, 1)
+
+        assert runtime._usb_connection is None
+        status = await runtime.connect_usb_device("COM100")
+        assert status["device"]["online"] is True
+        with pytest.raises(ConnectionError, match="Desktop went away"):
+            await runtime.disconnect_usb_device()
+        assert runtime._usb_connection is None
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cancel_at", ["desktop", "application", "application_after_desktop_error"])
+def test_usb_offline_cancellation_propagates_and_releases_slot(tmp_path, monkeypatch, cancel_at):
+    import watcherobot.runtime.daemon.runtime as module
+
+    monkeypatch.setattr(module, "UsbConnection", FakeUsb)
+
+    async def run():
+        runtime = DaemonRuntime(application_dir=tmp_path, current_app=None)
+        cancellation = asyncio.CancelledError("offline notification cancelled")
+        application_notifications = []
+
+        class Desktop:
+            async def send(self, frame):
+                if json.loads(frame)["data"]["online"] is False:
+                    if cancel_at == "desktop":
+                        raise cancellation
+                    if cancel_at == "application_after_desktop_error":
+                        raise ConnectionError("Desktop went away")
+
+        async def notify_application(_channel, frame):
+            application_notifications.append(json.loads(frame))
+            raise cancellation
+
+        desktop = runtime.connection_registry.add(Desktop())
+        runtime.connection_registry.declare_role(desktop, role="desktop")
+        monkeypatch.setattr(runtime.application, "registry", SimpleNamespace(active_run=object()))
+        monkeypatch.setattr(runtime.application.bridge, "send_to_application", notify_application)
+        await runtime.connect_usb_device("COM99")
+        usb = runtime._usb_connection
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await runtime.disconnect_usb_device()
+        assert caught.value is cancellation
+        assert len(application_notifications) == (0 if cancel_at == "desktop" else 1)
+        assert usb.closed
+        assert runtime._usb_connection is None
+        assert runtime.connection_registry.online_count(ExternalClientRole.DEVICE) == 0
+
+    asyncio.run(run())

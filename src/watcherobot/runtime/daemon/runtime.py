@@ -540,7 +540,13 @@ class DaemonRuntime:
                     # while connect already owns that lock.
                     try:
                         snapshot = self._usb_state(online=False)
-                        await self._publish_device_state(snapshot)
+                        desktop_error: Exception | None = None
+                        try:
+                            await self._publish_device_state(snapshot)
+                        except Exception as exc:
+                            # A Desktop send failure must not skip App retirement.
+                            # Cancellation remains control flow, not a send error.
+                            desktop_error = exc
                         if self.application.registry.active_run is not None:
                             try:
                                 await self.application.bridge.send_to_application(
@@ -549,6 +555,8 @@ class DaemonRuntime:
                                 )
                             except ChannelNotConnectedError:
                                 pass
+                        if desktop_error is not None:
+                            raise desktop_error
                     finally:
                         if self._usb_connection is usb:
                             self._usb_connection = None
