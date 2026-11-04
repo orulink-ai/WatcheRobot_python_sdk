@@ -16,10 +16,11 @@ from PIL import Image, ImageSequence, UnidentifiedImageError
 
 DISPLAY_SIZE = 206
 MAX_SOURCE_BYTES_BY_KIND = {
-    "expression": 2 * 1024 * 1024,
+    "expression": 8 * 1024 * 1024,
     "sound": 4 * 1024 * 1024,
 }
-MAX_ANIMATION_FRAMES = 120
+# Match the current firmware AnimPack reader; encoded assets remain capped below.
+MAX_ANIMATION_FRAMES = 255
 MAX_DEVICE_ASSET_BYTES = 16 * 1024 * 1024
 MAX_AUDIO_DURATION_SECONDS = 30
 ANIMPACK_HEADER = "<4sHHHHBBHIII"
@@ -126,6 +127,8 @@ def _indexed8(rgb565: bytes) -> bytes | None:
 def _animation_payload(source: bytes) -> bytes:
     try:
         with Image.open(BytesIO(source)) as image:
+            if not 1 <= image.n_frames <= MAX_ANIMATION_FRAMES:
+                raise WorkAssetError(f"自定义 GIF 帧数必须在 1 到 {MAX_ANIMATION_FRAMES} 之间。")
             fallback_delay = int(image.info.get("duration") or 100)
             frames = [
                 (_fit_frame(frame.copy()), max(20, min(5000, int(frame.info.get("duration") or fallback_delay))))

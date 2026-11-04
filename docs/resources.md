@@ -128,3 +128,8 @@ audio is converted to mono 24 kHz PCM; the original source files remain inside
 the work so importing from a reader or device port restores an editable
 timeline. Unsupported or oversized source media fails before installation
 instead of producing a work that cannot play on the device.
+
+Expression sources may be up to 8 MiB. GIFs may contain 1–255 frames, matching
+the current firmware AnimPack reader. Conversion keeps all frames and bounds
+each frame delay to 20–5000 ms; encoded AnimPack assets remain limited to
+16 MiB. These are import constraints, not a 120-frame animation design rule.

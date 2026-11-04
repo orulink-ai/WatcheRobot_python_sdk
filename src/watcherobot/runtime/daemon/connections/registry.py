@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Any
 
 from websockets.asyncio.server import ServerConnection
+from websockets.exceptions import ConnectionClosed
 
 from .device_state import DeviceConnectionStateRegistry
 
@@ -125,7 +126,12 @@ class ExternalConnectionRegistry:
         for connection in list(self.connections_for(role)):
             if connection is exclude:
                 continue
-            await connection.websocket.send(frame)
+            try:
+                await connection.websocket.send(frame)
+            except ConnectionClosed:
+                # The external receive loop owns removal and disconnect events.
+                # A close racing this send must not close the Application channel.
+                continue
             sent += 1
         return sent
 

@@ -1,0 +1,14 @@
+{
+  "photo": {
+    "source": "firmware\\s3\\components\\services\\anim_service\\src\\watcher_photo_asset.c",
+    "sha256": "1f3a6a4b26e13a8f1f781f0a994d046d3bfd6f75f320668b2ed4b437c5890a80",
+    "count": 35,
+    "format": "RGB565 big-endian, 412x412"
+  },
+  "processing": {
+    "source": "firmware\\s3\\components\\services\\anim_service\\src\\watcher_processing_asset.c",
+    "sha256": "e5afb2977ee6c22815b391038cbe512019c702418a9a372f2c26c07924c05cc5",
+    "count": 40,
+    "format": "RGB565 big-endian, 412x412"
+  }
+}

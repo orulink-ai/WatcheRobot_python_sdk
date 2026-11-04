@@ -53,7 +53,7 @@ watcherobot robot recording delete rec_123
 
 音频播放接受 WAV、MP3、OGG，由电脑转换为 24 kHz、16-bit、mono PCM，并继续遵守 4 MiB PCM 上限。灯区为 `side`、`bottom`、`all`，`head` 是 `side` 的兼容别名；摄像头和麦克风隐私指示灯由固件自动控制，`light status` 只读展示，任何 CLI 命令都不能覆盖。
 
-屏幕安装接受 GIF、PNG、JPEG、WebP，复用 Creator Work 构建与维护传输，生成 `main` clip。动画遵守 206×206、最多 120 帧和 AnimPack v2 约束。一个串口候选时自动选择；多个候选时必须传 `--port`，读卡器安装可传 `--volume-id`。
+屏幕安装接受 GIF、PNG、JPEG、WebP，复用 Creator Work 构建与维护传输，生成 `main` clip。原始表情文件最多 8 MiB；动画转换为 206×206 的 AnimPack v2，最多 255 帧，转换产物最多 16 MiB，与当前固件读取限制一致。保留全部帧及转换器支持范围内的帧时长，CLI 不截断长 GIF 的作品时长。一个串口候选时自动选择；多个候选时必须传 `--port`，读卡器安装可传 `--volume-id`。
 
 ## 机器输出和退出行为
 

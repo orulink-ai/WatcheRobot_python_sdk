@@ -205,6 +205,10 @@ def _default_sdk_requirement(version: str) -> str:
         upper = f"0.{parsed.minor + 1}"
     else:
         upper = str(parsed.major + 1)
+    # PEP 440 forbids local labels on ordered specifiers. A companion build
+    # may expose extensions absent from the corresponding public release.
+    if parsed.local is not None:
+        return f"=={parsed}"
     return f">={parsed},<{upper}"
 
 

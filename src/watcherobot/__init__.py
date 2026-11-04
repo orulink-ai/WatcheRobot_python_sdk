@@ -99,4 +99,4 @@ __all__ = [
     "WifiStatus",
 ]
 
-__version__ = "0.1.12"
+__version__ = "0.1.12+firstmeeting.20261026"

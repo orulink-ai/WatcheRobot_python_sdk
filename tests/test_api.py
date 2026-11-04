@@ -1691,3 +1691,37 @@ def test_camera_reports_command_ack_timeout_with_context():
         assert "capture command was not acknowledged" in str(error)
     else:
         raise AssertionError("camera command timeout should include capture context")
+
+
+def test_microphone_close_retry_accepts_only_confirmed_missing_session():
+    class RetryTransport(FakeTransport):
+        attempts = 0
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == 'ctrl.microphone.close':
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise TimeoutError('ACK lost')
+                raise CommandError(message_type, 'not_found')
+            return super().send_command(message_type, data, timeout=timeout)
+    transport = RetryTransport()
+    robot = WatcheRobot._from_transport(transport)
+    session = robot.microphone.open()
+    with pytest.raises(TimeoutError):
+        session.close()
+    session.close()
+    session.close()
+    assert transport.attempts == 2
+    assert robot.microphone.open().id != session.id
+
+
+@pytest.mark.parametrize('command,reason', [('ctrl.microphone.close', 'busy'), ('other', 'not_found')])
+def test_microphone_close_does_not_hide_other_rejections(command, reason):
+    class RejectedTransport(FakeTransport):
+        def send_command(self, message_type, data, timeout=None):
+            if message_type == 'ctrl.microphone.close':
+                raise CommandError(command, reason)
+            return super().send_command(message_type, data, timeout=timeout)
+    session = WatcheRobot._from_transport(RejectedTransport()).microphone.open()
+    for _ in range(2):
+        with pytest.raises(CommandError):
+            session.close()

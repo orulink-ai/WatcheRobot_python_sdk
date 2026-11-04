@@ -21,6 +21,7 @@ from .errors import CommandError
 from .protocol import FLAG_LAST
 from .recordings import HostRecording, RecordingInfo, RecordingMode, iter_wrec_records, mux_wrec_to_mp4, write_pcm_wav
 from .robot import WatcheRobot
+from .runtime.daemon.maintenance.work_assets import MAX_ANIMATION_FRAMES, MAX_SOURCE_BYTES_BY_KIND
 
 _HARDWARE_COMMANDS = {"capabilities", "camera", "audio", "light", "screen", "recording"}
 _TERMINAL_RECORDING_STATES = {"completed", "interrupted", "failed"}
@@ -504,8 +505,8 @@ def _run_maintenance(args: argparse.Namespace, control_url: str, request_json: C
     if source.suffix.lower() not in {".gif", ".png", ".jpg", ".jpeg", ".webp"}:
         raise RobotCliError("Screen install accepts GIF, PNG, JPEG, or WebP files")
     payload = source.read_bytes()
-    if len(payload) > 2 * 1024 * 1024:
-        raise RobotCliError("Screen source exceeds the 2 MiB limit")
+    if len(payload) > MAX_SOURCE_BYTES_BY_KIND["expression"]:
+        raise RobotCliError("Screen source exceeds the 8 MiB limit")
     work_id = args.work_id or _stable_work_id(source, payload)
     if not _WORK_ID_PATTERN.fullmatch(work_id):
         raise RobotCliError("Work ID must match ^[a-z][a-z0-9_]{0,22}$")
@@ -602,7 +603,9 @@ def _screen_duration_ms(payload: bytes) -> int:
     from PIL import Image
 
     with Image.open(io.BytesIO(payload)) as image:
-        frames = min(int(getattr(image, "n_frames", 1)), 120)
+        frames = int(getattr(image, "n_frames", 1))
+        if not 1 <= frames <= MAX_ANIMATION_FRAMES:
+            raise RobotCliError(f"Screen animation must contain 1 to {MAX_ANIMATION_FRAMES} frames")
         if frames <= 1:
             return 1000
         duration = 0

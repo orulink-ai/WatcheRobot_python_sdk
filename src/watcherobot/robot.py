@@ -90,7 +90,11 @@ class AnimationDomain(_Domain):
         self._robot._command("ctrl.animation.stop", {})
 
 
-_EXPRESSION_RUNTIME_PRESETS = frozenset({"standby", "thinking", "speaking"})
+_EXPRESSION_RUNTIME_PRESETS = frozenset({
+    "standby", "thinking", "speaking", "sunglasses", "music_voice",
+    "photo", "sing", "interference", "processing", "idle_preview", "error",
+    "neutral", "smile", "happy", "anger", "concentration", "sad", "speechless",
+})
 _EXPRESSION_RUNTIME_STYLES = frozenset(
     {"watcher", "watcher_compact", "watcher_focus", "watcher_open", "watcher_pulse"}
 )
@@ -98,7 +102,7 @@ _EXPRESSION_RUNTIME_TAGS = frozenset({"none", "thinking", "question", "love"})
 _EXPRESSION_RUNTIME_ACCESSORIES = frozenset(
     {
         "none", "halo", "devil_horns", "ninja_mask", "hero_mask", "eyepatch", "antenna",
-        "custom_pixel", "custom_vector",
+        "custom_pixel", "custom_vector", "provision_scan", "provision_network", "provision_failed",
     }
 )
 _EXPRESSION_CUSTOM_ACCESSORY_MASK_HEX_LENGTH = 652
@@ -274,6 +278,8 @@ class ExpressionRuntimeDomain(_Domain):
         style: str | None = None,
         gaze_x: float | None = None,
         gaze_y: float | None = None,
+        mouth_opacity: float | None = None,
+        accessory_opacity: float | None = None,
         openness: float | None = None,
         spacing: float | None = None,
         scale: float | None = None,
@@ -320,6 +326,10 @@ class ExpressionRuntimeDomain(_Domain):
             payload["gaze_x_milli"] = _expression_scaled_number("gaze_x", gaze_x, -1.0, 1.0)
         if gaze_y is not None:
             payload["gaze_y_milli"] = _expression_scaled_number("gaze_y", gaze_y, -1.0, 1.0)
+        if accessory_opacity is not None:
+            payload["accessory_opacity_milli"] = _expression_scaled_number("accessory_opacity", accessory_opacity, 0.0, 1.0)
+        if mouth_opacity is not None:
+            payload["mouth_opacity_milli"] = _expression_scaled_number("mouth_opacity", mouth_opacity, 0.0, 1.0)
         if openness is not None:
             payload["openness_milli"] = _expression_scaled_number("openness", openness, 0.05, 1.2)
         if spacing is not None:
@@ -442,6 +452,8 @@ class ExpressionRuntimeDomain(_Domain):
         style: str | None = None,
         gaze_x: float | None = None,
         gaze_y: float | None = None,
+        mouth_opacity: float | None = None,
+        accessory_opacity: float | None = None,
         openness: float | None = None,
         spacing: float | None = None,
         scale: float | None = None,
@@ -483,6 +495,8 @@ class ExpressionRuntimeDomain(_Domain):
             style=style,
             gaze_x=gaze_x,
             gaze_y=gaze_y,
+            mouth_opacity=mouth_opacity,
+            accessory_opacity=accessory_opacity,
             openness=openness,
             spacing=spacing,
             scale=scale,
@@ -534,6 +548,8 @@ class ExpressionRuntimeDomain(_Domain):
         style: str | None = None,
         gaze_x: float | None = None,
         gaze_y: float | None = None,
+        mouth_opacity: float | None = None,
+        accessory_opacity: float | None = None,
         openness: float | None = None,
         spacing: float | None = None,
         scale: float | None = None,
@@ -575,6 +591,8 @@ class ExpressionRuntimeDomain(_Domain):
             style=style,
             gaze_x=gaze_x,
             gaze_y=gaze_y,
+            mouth_opacity=mouth_opacity,
+            accessory_opacity=accessory_opacity,
             openness=openness,
             spacing=spacing,
             scale=scale,
@@ -1411,6 +1429,12 @@ class WatcheRobot:
     def _close_microphone(self, session_id: int) -> None:
         try:
             self._command("ctrl.microphone.close", {"session_id": session_id})
+        except CommandError as error:
+            # A prior close may have succeeded despite a lost ACK. The device
+            # explicitly confirms this lease is absent; no resource remains
+            # for this session to release. Other rejections must stay retryable.
+            if error.message_type != "ctrl.microphone.close" or error.reason != "not_found":
+                raise
         finally:
             with self._media_lock:
                 if self._microphone is not None and self._microphone.id == session_id:

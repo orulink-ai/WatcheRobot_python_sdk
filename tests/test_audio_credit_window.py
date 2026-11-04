@@ -11,7 +11,10 @@ from watcherobot.desktop_session import DesktopRobotSession
 
 
 @pytest.mark.parametrize("desktop", [False, True])
-def test_repeated_status_does_not_regrant_inflight_audio(desktop: bool) -> None:
+def test_repeated_status_does_not_regrant_inflight_audio(desktop: bool, monkeypatch) -> None:
+    import watcherobot.application.transport as module
+    monkeypatch.setattr(module, "AUDIO_PCM_BYTES_PER_SECOND", 1e12)
+    monkeypatch.setattr(module, "AUDIO_FALLBACK_PACKET_SECONDS", 10.0)
     async def exercise() -> None:
         transport = (
             DesktopRobotSession("ws://127.0.0.1:1")
@@ -40,18 +43,18 @@ def test_repeated_status_does_not_regrant_inflight_audio(desktop: bool) -> None:
 
         try:
             await settle()
-            assert len(packets) == 4
+            assert len(packets) == (4 if desktop else 16)
             await status(1, 1)
-            assert len(packets) == 9  # one acknowledged plus eight in flight
+            assert len(packets) == (9 if desktop else 17)  # one acknowledged plus eight in flight
             for _ in range(3):
                 await status(1, 1)
-            assert len(packets) == 9
+            assert len(packets) == (9 if desktop else 17)
             await status(5, 5)
-            assert len(packets) == 13
+            assert len(packets) == (13 if desktop else 21)
             await status(4, 0)  # stale snapshot cannot reissue a credit
             await status(1000, 0)  # cannot acknowledge unsent packets
             await status(True, 0)  # bool is not a sequence number
-            assert len(packets) == 13
+            assert len(packets) == (13 if desktop else 21)
         finally:
             task.cancel()
             with suppress(asyncio.CancelledError):

@@ -40,7 +40,9 @@ BinaryCallback = Callable[[BinaryFrame], None]
 DisconnectCallback = Callable[[], None]
 DesktopCallback = Callable[[str | bytes], None]
 AUDIO_DEVICE_SLOT_BYTES = 4096
-AUDIO_MAX_CREDIT_PACKETS = 8
+AUDIO_MAX_CREDIT_PACKETS = 16
+AUDIO_PCM_BYTES_PER_SECOND = 24000 * 2
+AUDIO_FALLBACK_PACKET_SECONDS = AUDIO_DEVICE_SLOT_BYTES / AUDIO_PCM_BYTES_PER_SECOND
 DEVICE_READY_SYNC_TIMEOUT_SECONDS = 1.0
 _ANIMATION_ID_PATTERN = re.compile(r"[a-z][a-z0-9_]{0,62}")
 
@@ -353,14 +355,18 @@ class DaemonApplicationTransport:
                 (chunk_bytes + AUDIO_DEVICE_SLOT_BYTES - 1)
                 // AUDIO_DEVICE_SLOT_BYTES,
             )
-            self._audio_credits = 4
+            self._audio_credits = 16 if chunk_bytes == AUDIO_DEVICE_SLOT_BYTES else 4
             self._audio_inflight = AudioInFlightWindow()
             self._audio_flow_error = None
         sequence = 0
+        loop = asyncio.get_running_loop()
+        next_packet_at = loop.time()
         try:
             for offset in range(0, len(pcm), chunk_bytes):
                 await self._take_audio_credit(stream_id)
                 payload = pcm[offset : offset + chunk_bytes]
+                if chunk_bytes == AUDIO_DEVICE_SLOT_BYTES:
+                    await asyncio.sleep(max(0, next_packet_at - loop.time()))
                 flags = FLAG_FIRST if offset == 0 else 0
                 if offset + len(payload) >= len(pcm):
                     flags |= FLAG_LAST
@@ -374,6 +380,7 @@ class DaemonApplicationTransport:
                         payload,
                     ),
                 )
+                next_packet_at = loop.time() + len(payload) / AUDIO_PCM_BYTES_PER_SECOND
                 sequence += 1
         finally:
             async with self._audio_credit_condition:
@@ -403,15 +410,32 @@ class DaemonApplicationTransport:
                 self._audio_credits -= 1
                 self._audio_inflight.reserve()
 
+        started_at = asyncio.get_running_loop().time()
         try:
             await asyncio.wait_for(
                 wait_for_credit(),
-                timeout=self.command_timeout,
+                timeout=(self.command_timeout if self._audio_inflight.has_watermark
+                         else min(self.command_timeout, AUDIO_FALLBACK_PACKET_SECONDS)),
             )
         except TimeoutError as error:
-            raise WatcheRobotError(
-                "timed out waiting for robot audio buffer credit"
-            ) from error
+            async with condition:
+                if self._audio_flow_stream_id != stream_id:
+                    raise WatcheRobotError("audio stream was replaced") from error
+                if self._audio_flow_error is not None:
+                    raise WatcheRobotError(f"audio stream failed: {self._audio_flow_error}") from error
+                # Legacy firmware can omit telemetry until the prebuffer fills.
+                # Never bypass a negotiated cumulative receive watermark.
+                if self._audio_inflight.has_watermark:
+                    remaining = self.command_timeout - (asyncio.get_running_loop().time() - started_at)
+                else:
+                    self._audio_inflight.reserve()
+                    return
+            # A watermark can arrive during the initial legacy probe interval.
+            # Wait out the command deadline without bypassing negotiated credit.
+            try:
+                await asyncio.wait_for(wait_for_credit(), timeout=max(0.0, remaining))
+            except TimeoutError as final_error:
+                raise WatcheRobotError("timed out waiting for robot audio buffer credit") from final_error
 
     async def _update_audio_flow(self, data: dict[str, Any]) -> None:
         condition = self._audio_credit_condition

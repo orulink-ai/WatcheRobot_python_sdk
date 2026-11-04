@@ -1,0 +1,6 @@
+# Runtime data must never enter public Application snapshots.
+artifacts/
+tests/
+*.log
+.temp/
+release/

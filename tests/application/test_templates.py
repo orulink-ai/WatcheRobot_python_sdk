@@ -121,3 +121,11 @@ def test_base_entry_can_be_imported_and_stops_with_context_cleanup(tmp_path, mon
         await asyncio.wait_for(module.main(), 1)
     asyncio.run(run())
     assert observed == ['started', 'closed']
+
+
+def test_companion_sdk_scaffold_pins_local_version():
+    from watcherobot.application.project import _default_sdk_requirement
+    from packaging.specifiers import SpecifierSet
+    requirement = _default_sdk_requirement("0.1.12+firstmeeting.20261026")
+    assert "0.1.12+firstmeeting.20261026" in SpecifierSet(requirement)
+    assert "0.1.12" not in SpecifierSet(requirement)

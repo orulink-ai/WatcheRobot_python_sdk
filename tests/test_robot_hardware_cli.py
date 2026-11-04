@@ -171,6 +171,21 @@ def test_screen_duration_preserves_gif_frame_timing() -> None:
     assert _screen_duration_ms(payload.getvalue()) == 350
 
 
+def test_screen_duration_includes_frames_after_120() -> None:
+    payload = io.BytesIO()
+    frames = [Image.new("RGB", (2, 2), (i, 0, 0)) for i in range(215)]
+    frames[0].save(payload, format="GIF", save_all=True, append_images=frames[1:], duration=100)
+    assert _screen_duration_ms(payload.getvalue()) == 21500
+
+
+def test_screen_duration_rejects_frames_above_device_limit() -> None:
+    payload = io.BytesIO()
+    frames = [Image.new("RGB", (2, 2), (i, 0, 0)) for i in range(256)]
+    frames[0].save(payload, format="GIF", save_all=True, append_images=frames[1:], duration=100)
+    with pytest.raises(RobotCliError, match="255"):
+        _screen_duration_ms(payload.getvalue())
+
+
 def test_screen_install_rejects_invalid_explicit_work_id_before_submission(tmp_path: Path) -> None:
     source = tmp_path / "screen.png"
     Image.new("RGB", (2, 2), "red").save(source)
