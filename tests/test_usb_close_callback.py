@@ -367,3 +367,385 @@ class UsbPublicCloseCallbackTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_finally_public_close_preserves_disconnect_failure(self):
         await self.exercise_public_close("cancel_finally", disconnect_error=RuntimeError("disconnect failed"))
+
+
+class UsbDispatcherCompletionTests(unittest.IsolatedAsyncioTestCase):
+    async def exercise_dispatcher_completion(
+        self, order, *, cancel_caller=False, cancel_dispatcher=False,
+        close_error=None, disconnect_error=None,
+    ):
+        serial = GatedCloseSerial(close_error=close_error)
+        entered, request_close, all_received = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        finishing, finish_release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        offline_entered, offline_release = asyncio.Event(), asyncio.Event()
+        disconnects, callback_close_errors = [], []
+
+        async def callback_close():
+            # This remains a direct dispatcher await, including repeated close.
+            try:
+                await connection.close()
+            except Exception as exc:
+                callback_close_errors.append(exc)
+
+        async def on_frame(_frame):
+            try:
+                entered.set()
+                await request_close.wait()
+                await callback_close()
+            finally:
+                try:
+                    await callback_close()
+                    finishing.set()
+                    await finish_release.wait()
+                    await callback_close()
+                finally:
+                    finished.set()
+
+        async def on_disconnect(error):
+            disconnects.append(error)
+            offline_entered.set()
+            await offline_release.wait()
+            await connection.close()  # The collector must not await itself.
+            if disconnect_error is not None:
+                raise disconnect_error
+
+        connection = UsbConnection(
+            "FAKE-DISPATCHER-COMPLETION", on_frame=on_frame, on_disconnect=on_disconnect,
+            serial_factory=lambda **_kwargs: serial, read_timeout=0.01,
+        )
+        if cancel_dispatcher:
+            original_dispatch = connection._dispatch_frames
+
+            async def cancelled_dispatcher():
+                await original_dispatch()
+                raise asyncio.CancelledError("dispatcher ended cancelled")
+
+            connection._dispatch_frames = cancelled_dispatcher
+        loop = asyncio.get_running_loop()
+        original_receive = connection._receive_event
+        received = 0
+
+        def receive(event):
+            nonlocal received
+            result = original_receive(event)
+            received += 1
+            if received == 3:
+                loop.call_soon_threadsafe(all_received.set)
+            return result
+
+        connection._receive_event = receive
+        callers = []
+
+        async def start_external_close():
+            started = asyncio.Event()
+
+            async def close():
+                started.set()
+                await connection.close()
+
+            task = asyncio.create_task(close())
+            callers.append(task)
+            await asyncio.wait_for(started.wait(), 1)
+            return task
+
+        try:
+            await connection.start()
+            serial.inject(b"".join(packet(frame_id=i, payload=b"active and queued")
+                                   for i in range(1, 4)))
+            await asyncio.wait_for(entered.wait(), 1)
+            await asyncio.wait_for(all_received.wait(), 1)
+            self.assertEqual(connection._receive_count, 3)
+            if order == "external_first":
+                await start_external_close()
+            else:
+                request_close.set()
+            self.assertTrue(await asyncio.to_thread(serial.close_entered.wait, 1))
+            if order == "before_port_cleanup":
+                await start_external_close()
+            serial.close_release.set()
+
+            if order == "external_first":
+                # External cancellation enters callback finally before offline.
+                await asyncio.wait_for(finishing.wait(), 1)
+                self.assertFalse(connection._close_task.done())
+                self.assertEqual(disconnects, [])
+            else:
+                await asyncio.wait_for(offline_entered.wait(), 1)
+                offline_release.set()
+                await asyncio.wait_for(finishing.wait(), 1)
+                self.assertTrue(connection._close_task.done())
+                self.assertEqual(disconnects, [close_error])
+                self.assertIs(connection._close_caller, connection._dispatch_task)
+
+            self.assertFalse(connection._dispatch_task.done())
+            self.assertFalse(finished.is_set())
+            self.assertEqual(connection._receive_count, 1)
+            self.assertGreater(connection._receive_bytes, 0)
+            self.assertEqual(list(connection._frames), [])
+            late_caller = await start_external_close()
+            self.assertFalse(
+                late_caller.done(),
+                "external close returned while callback async finally still owns the payload",
+            )
+            repeated_caller = await start_external_close()
+            self.assertTrue(all(not task.done() for task in callers))
+            if cancel_caller:
+                late_caller.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await late_caller
+                self.assertFalse(connection._dispatch_task.done())
+                self.assertFalse(finished.is_set())
+                self.assertFalse(connection._close_task.cancelled())
+                self.assertFalse(repeated_caller.done())
+
+            finish_release.set()
+            offline_release.set()
+            remaining = [task for task in callers if not task.cancelled()]
+            results = await asyncio.wait_for(
+                asyncio.gather(*remaining, return_exceptions=True), 1,
+            )
+            expected_error = disconnect_error or close_error
+            if expected_error is None:
+                self.assertEqual(results, [None] * len(results))
+            else:
+                self.assertTrue(all(result is expected_error for result in results))
+                self.assertTrue(all(exc is expected_error for exc in callback_close_errors))
+            self.assertTrue(finished.is_set())
+            self.assertTrue(connection._dispatch_task.done())
+            self.assertEqual(connection._dispatch_task.cancelled(), cancel_dispatcher)
+            self.assertEqual((connection._receive_count, connection._receive_bytes), (0, 0))
+            self.assertEqual((connection._pending, connection._expected_ack, connection._received_ack),
+                             (None, None, None))
+            self.assertFalse(connection._reader.is_alive())
+            for _ in range(2):
+                if expected_error is None:
+                    await asyncio.wait_for(connection.close(), 1)
+                else:
+                    with self.assertRaises(type(expected_error)) as caught:
+                        await asyncio.wait_for(connection.close(), 1)
+                    self.assertIs(caught.exception, expected_error)
+            self.assertEqual(serial.close_count, 1)
+            self.assertEqual(disconnects, [close_error])
+        finally:
+            serial.close_release.set()
+            offline_release.set()
+            finish_release.set()
+            request_close.set()
+            if connection._close_task is None:
+                connection._request_close(None, 1000, "test cleanup")
+            tasks = [task for task in [*callers, connection._dispatch_task, connection._close_task]
+                     if task is not None]
+            done, pending = await asyncio.wait(tasks, timeout=2)
+            self.assertFalse(pending, "dispatcher-completion test cleanup did not finish")
+            await asyncio.gather(*done, return_exceptions=True)
+
+    async def test_external_close_after_callback_port_cleanup_waits_for_async_finally(self):
+        await self.exercise_dispatcher_completion("after_port_cleanup")
+
+    async def test_external_close_before_callback_port_cleanup_waits_for_async_finally(self):
+        await self.exercise_dispatcher_completion("before_port_cleanup")
+
+    async def test_cancelling_external_dispatcher_wait_leaves_shared_cleanup_running(self):
+        await self.exercise_dispatcher_completion("after_port_cleanup", cancel_caller=True)
+
+    async def test_external_collection_precedes_serial_cleanup_error(self):
+        await self.exercise_dispatcher_completion("after_port_cleanup", close_error=OSError("port cleanup failed"))
+
+    async def test_external_collection_precedes_disconnect_error(self):
+        await self.exercise_dispatcher_completion("before_port_cleanup", disconnect_error=RuntimeError("offline failed"))
+
+    async def test_external_first_still_collects_cancelled_callback_async_finally(self):
+        await self.exercise_dispatcher_completion("external_first", cancel_caller=True)
+
+    async def test_cancelled_dispatcher_does_not_mimic_external_caller_cancellation(self):
+        await self.exercise_dispatcher_completion("after_port_cleanup", cancel_dispatcher=True)
+
+
+class UsbCallbackCleanupErrorTests(unittest.IsolatedAsyncioTestCase):
+    async def exercise_cleanup_error(
+        self, order, *, serial_error=None, disconnect_error=None, late_send=False,
+    ):
+        serial = GatedCloseSerial(close_error=serial_error)
+        entered, start_close = asyncio.Event(), asyncio.Event()
+        finishing, release = asyncio.Event(), asyncio.Event()
+        offline_entered, offline_release = asyncio.Event(), asyncio.Event()
+        failure = RuntimeError("callback asynchronous cleanup failed")
+        notifications = []
+
+        async def on_frame(_frame):
+            try:
+                entered.set()
+                await start_close.wait()
+                await connection.close()
+            finally:
+                finishing.set()
+                await release.wait()
+                if late_send:
+                    await connection.send(b"normal close rejects this late send")
+                else:
+                    raise failure
+
+        async def on_disconnect(error):
+            notifications.append(error)
+            offline_entered.set()
+            await offline_release.wait()
+            if disconnect_error is not None:
+                raise disconnect_error
+
+        connection = UsbConnection(
+            "FAKE-CALLBACK-ERROR", on_frame=on_frame, on_disconnect=on_disconnect,
+            serial_factory=lambda **_kwargs: serial, read_timeout=0.01,
+        )
+        callers = []
+
+        async def start_external():
+            started = asyncio.Event()
+
+            async def close():
+                started.set()
+                await connection.close()
+
+            task = asyncio.create_task(close())
+            callers.append(task)
+            await asyncio.wait_for(started.wait(), 1)
+            return task
+
+        try:
+            await connection.start()
+            serial.inject(packet(payload=b"retained until callback cleanup"))
+            await asyncio.wait_for(entered.wait(), 1)
+            if order == "callback_first":
+                start_close.set()
+            else:
+                await start_external()
+            self.assertTrue(await asyncio.to_thread(serial.close_entered.wait, 1))
+            serial.close_release.set()
+            if order == "callback_first":
+                await asyncio.wait_for(offline_entered.wait(), 1)
+                offline_release.set()
+            await asyncio.wait_for(finishing.wait(), 1)
+            await start_external()
+            await start_external()
+            self.assertTrue(all(not task.done() for task in callers))
+            self.assertEqual(connection._receive_count, 1)
+            release.set()
+            if order != "callback_first":
+                # The callback fails before a subsequent disconnect failure;
+                # the existing disconnect error must retain its priority.
+                await asyncio.wait_for(offline_entered.wait(), 1)
+                offline_release.set()
+            results = await asyncio.wait_for(
+                asyncio.gather(*callers, return_exceptions=True), 1,
+            )
+            expected = disconnect_error or serial_error or (None if late_send else failure)
+            if expected is None:
+                self.assertEqual(results, [None] * len(results))
+            else:
+                self.assertTrue(all(result is expected for result in results),
+                                "external close lost or replaced the original cleanup failure")
+            first_error = serial_error or disconnect_error or (None if late_send else failure)
+            self.assertIs(connection.error, first_error)
+            for _ in range(2):
+                if expected is None:
+                    await asyncio.wait_for(connection.close(), 1)
+                    await asyncio.wait_for(connection.wait_closed(), 1)
+                else:
+                    with self.assertRaises(type(expected)) as caught:
+                        await asyncio.wait_for(connection.close(), 1)
+                    self.assertIs(caught.exception, expected)
+                    with self.assertRaises(type(expected)) as caught:
+                        await asyncio.wait_for(connection.wait_closed(), 1)
+                    self.assertIs(caught.exception, expected)
+            self.assertTrue(connection._dispatch_task.done())
+            self.assertEqual((connection._receive_count, connection._receive_bytes), (0, 0))
+            self.assertEqual((connection._pending, connection._expected_ack, connection._received_ack),
+                             (None, None, None))
+            self.assertFalse(connection._reader.is_alive())
+            self.assertEqual(serial.close_count, 1)
+            self.assertEqual(notifications, [serial_error])
+        finally:
+            serial.close_release.set()
+            start_close.set()
+            release.set()
+            offline_release.set()
+            if connection._close_task is None:
+                connection._request_close(None, 1000, "test cleanup")
+            tasks = [task for task in [*callers, connection._dispatch_task, connection._close_task]
+                     if task is not None]
+            done, pending = await asyncio.wait(tasks, timeout=2)
+            self.assertFalse(pending, "callback-error cleanup remained blocked")
+            await asyncio.gather(*done, return_exceptions=True)
+
+    async def test_callback_first_async_cleanup_error_is_retained_after_join(self):
+        await self.exercise_cleanup_error("callback_first")
+
+    async def test_external_first_async_cleanup_error_is_retained_after_join(self):
+        await self.exercise_cleanup_error("external_first")
+
+    async def test_prior_serial_failure_keeps_original_identity(self):
+        await self.exercise_cleanup_error("callback_first", serial_error=OSError("original serial failure"))
+
+    async def test_prior_disconnect_failure_keeps_original_identity(self):
+        await self.exercise_cleanup_error("callback_first", disconnect_error=ValueError("original offline failure"))
+
+    async def test_subsequent_disconnect_failure_keeps_existing_priority(self):
+        await self.exercise_cleanup_error("external_first", disconnect_error=ValueError("offline failure"))
+
+    async def test_serial_and_disconnect_failure_priorities_remain_unchanged(self):
+        await self.exercise_cleanup_error("callback_first", serial_error=OSError("serial first"),
+                                          disconnect_error=ValueError("offline second"))
+
+    async def test_late_callback_send_does_not_turn_normal_close_into_failure(self):
+        for order in ("callback_first", "external_first"):
+            with self.subTest(order=order):
+                await self.exercise_cleanup_error(order, late_send=True)
+
+    async def test_interrupted_callback_write_does_not_become_cleanup_failure(self):
+        close_entered, close_release = threading.Event(), threading.Event()
+        callback_entered = asyncio.Event()
+        notifications = []
+
+        class InterruptedWriteSerial(ControlledWriteSerial):
+            def close(self):
+                FakeSerial.close(self)  # Unblock write before collector returns.
+                close_entered.set()
+                if not close_release.wait(2):
+                    raise AssertionError("test did not release physical close")
+
+        serial = InterruptedWriteSerial()
+
+        async def on_frame(_frame):
+            callback_entered.set()
+            await connection.send(b"interrupted by normal external close")
+
+        async def on_disconnect(error):
+            notifications.append(error)
+
+        connection = UsbConnection(
+            "FAKE-CLOSE-WRITE-ERROR", on_frame=on_frame, on_disconnect=on_disconnect,
+            serial_factory=lambda **_kwargs: serial, read_timeout=0.01,
+        )
+        closing = None
+        try:
+            await connection.start()
+            serial.inject(packet(payload=b"request"))
+            await asyncio.wait_for(callback_entered.wait(), 1)
+            self.assertTrue(await asyncio.to_thread(serial.write_entered.wait, 1))
+            closing = asyncio.create_task(connection.close())
+            self.assertTrue(await asyncio.to_thread(close_entered.wait, 1))
+            await asyncio.wait_for(asyncio.shield(connection._dispatch_task), 1)
+            self.assertIsNone(connection.error)
+            self.assertIsNone(connection._close_error)
+            close_release.set()
+            await asyncio.wait_for(closing, 1)
+            await asyncio.wait_for(connection.wait_closed(), 1)
+            self.assertEqual(notifications, [None])
+            self.assertEqual((connection._receive_count, connection._receive_bytes), (0, 0))
+            self.assertTrue(serial.write_exited.is_set())
+            self.assertEqual(serial.close_count, 1)
+        finally:
+            close_release.set()
+            tasks = [asyncio.create_task(connection.close())]
+            if closing is not None:
+                tasks.append(closing)
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 2)

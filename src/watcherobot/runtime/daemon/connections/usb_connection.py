@@ -29,8 +29,12 @@ There are no retransmissions. I/O failure, ACK timeout, or cancellation during
 transmission closes the session, physically closes the port, and wakes senders.
 Invalid local payloads fail before writing and leave the connection usable.
 close(code=1000, reason="...") is terminal and idempotent; construct a new
-connection to reconnect. wait_closed() waits for cleanup and raises the original
-failure, including callback errors; error also exposes the first failure.
+connection to reconnect. A frame callback's own close() waits for port/reader
+and disconnect cleanup without waiting for itself. Ordinary external close()
+also waits for dispatcher exit, including asynchronous callback cleanup.
+wait_closed() observes port/reader and disconnect cleanup; if a callback started
+closure, that callback may still be returning. It raises the original failure,
+including callback errors; error also exposes the first failure.
 Disconnect callback and cleanup errors are propagated by close()/wait_closed().
 The factory must honor bounded read/write timeouts and close must unblock I/O.
 See usb_wire's module contract for the firmware packet layout and decoder API.
@@ -140,6 +144,8 @@ class UsbConnection:
         self._close_caller: asyncio.Task[Any] | None = None
         self._dispatch_task: asyncio.Task[None] | None = None
         self._close_error: BaseException | None = None
+        self._callback_cleanup_error: Exception | None = None
+        self._dispatch_send_error: BaseException | None = None
         self._receive_lock = threading.Lock()
         self._frames: deque[tuple[str | bytes, int]] = deque()
         self._frames_ready = asyncio.Event()
@@ -286,6 +292,11 @@ class UsbConnection:
         if have_frames:
             self._frames_ready.set()
 
+    def _publish_callback_cleanup_error(self) -> None:
+        # Serial/disconnect failures keep their established identity and priority.
+        if self._close_error is None and self.error is None:
+            self.error = self._close_error = self._callback_cleanup_error
+
     async def _dispatch_frames(self) -> None:
         try:
             while not self._closed:
@@ -309,7 +320,15 @@ class UsbConnection:
             if not self._closed:
                 self._request_close(exc, 1011, "USB frame callback cancelled")
         except Exception as exc:
+            if (self._close_task is not None and self._callback_cleanup_error is None
+                    and exc is not self._dispatch_send_error
+                    and not isinstance(exc, UsbConnectionClosed)):
+                self._callback_cleanup_error = exc
+                if self._closed_event.is_set():
+                    self._publish_callback_cleanup_error()
             self._request_close(exc, 1011, "USB frame callback failed")
+        finally:
+            self._dispatch_send_error = None
 
     def _wait_fragment_gap(self, deadline: float) -> None:
         """Sleep off-loop until the real gap elapsed; close bounds long waits."""
@@ -379,6 +398,9 @@ class UsbConnection:
                         await asyncio.to_thread(self._wait_fragment_gap, gap_deadline)
                     self._require_open()
                 except BaseException as exc:
+                    if asyncio.current_task() is self._dispatch_task:
+                        # A send interrupted by close is not a callback cleanup failure.
+                        self._dispatch_send_error = exc
                     if not ack.done():
                         ack.cancel()
                     closing = self._request_close(exc, 1011, "USB send failed")
@@ -453,10 +475,11 @@ class UsbConnection:
                 if self.error is None:
                     self.error = exc
         finally:
+            self._publish_callback_cleanup_error()
             self._closed_event.set()
 
     async def close(self, code: int = 1000, reason: str = "USB connection closed") -> None:
-        """Permanently close the session, release the port, and wake ACK waits."""
+        """Close the session; external callers also await dispatcher cleanup."""
         task = self._request_close(None, code, reason)
         caller = asyncio.current_task()
         if caller is task:
@@ -466,11 +489,17 @@ class UsbConnection:
             # Return so it can unwind; external callers still await all cleanup.
             return
         await asyncio.shield(task)
+        dispatcher = self._dispatch_task
+        if dispatcher is not None and caller is not dispatcher:
+            # A callback-owned close excludes its dispatcher from the collector.
+            # External callers still collect its asynchronous finally, shielding
+            # shared cleanup from caller cancellation and absorbing task cancel.
+            await asyncio.shield(asyncio.gather(dispatcher, return_exceptions=True))
         if self._close_error is not None:
             raise self._close_error
 
     async def wait_closed(self) -> None:
-        """Wait for port cleanup and surface reader, callback, or send failures."""
+        """Wait for port/reader/disconnect cleanup and surface failures."""
         self._bind_loop()
         await self._closed_event.wait()
         if self._close_error is not None:

@@ -124,3 +124,16 @@ App 本地菜单呈现不再等待 Electron capture；点击后丢弃旧预取�
 最终源码冻结后：聚焦 305 passed、26 subtests passed；完整 Windows 回归 2567 passed、11 skipped、26 subtests passed；mypy 140 source files 通过。独立复核本次生产与测试完整差异及实际路由调用链，无剩余 Critical/Important；九项 close 回归独立通过。callback 重入 wait_closed 或等待子 Task 再委托 close/send 不属于本次直接 await send/close 契约，额外复现证据保留，未宣称这些组合已支持。日志为发布验收目录的 focused-usb-public-close.log、full-usb-public-close.log、mypy-usb-public-close.log、usb-close-public-review/evidence.json 和 full-review.md。
 
 普通设备的受管测试台目前加载 c0ff864 候选。配对、小角度运动 Job、行为、灯光、扬声器、相机 JPEG、5 秒 PCM 和浏览器 RTC 视频已实际执行；用户确认动作、灯光、扬声器正常。JPEG 解码正常；PCM 无传输解码失败及丢帧，录音听感仍待用户确认。RTC 实屏约 17–24 fps，停止后资源 owner 已释放；不宣称全链路零丢帧或 RTC 双向音频通过。设备报告 v0.5.12、协议 1.0、clean commit 130bf018c332，已在固件仓库唯一解析为 130bf018c332f4e24175702db0b2849dfed8da63。最新 close 修复尚需重启独立候选 Runtime 后复核加载版本；不把旧进程冒充本次源码。PR 尚未合入，SDK 尚未发行。
+
+
+### callback 先关闭后的完整收集与错误可观察性
+
+2026-11-04，Ciel。[ca0245a 的自动审查](https://github.com/orulink-ai/WatcheRobot_python_sdk/pull/155#issuecomment-6621331592)指出：callback 先 close 时底层 collector 必须排除自己，但普通外部 close 也只等待该 collector，可能在 callback 的异步收尾退出前返回。保留上述历史验证，不将已有 callback-first 测试误称已覆盖此窗口。
+
+第一阶段新增七项事件 barrier 回归，原实现 6 failed/1 passed，修复后七项通过。普通外部 close 在底层 collector 后 shield 等待 gather(dispatcher, return_exceptions=True)，随后才重抛原清理错误；单个外部 caller 的取消不取消共享收集。callback 自发 close、外部先关闭时的 callback 展开和 on_disconnect 重入边界保留。模块合同与 docstring 区分 callback 自身 close、外部完整 close，以及 wait_closed 的底层清理观察边界。
+
+第一阶段冻结源码聚焦 312 passed、26 subtests passed，完整 2574 passed、11 skipped、26 subtests passed，mypy 140 source files 通过；独立复核仍为未通过：callback 在自己 close 后的 async finally 抛出普通异常，dispatcher 捕获后调用已有 _request_close，错误会被丢失，外部 close/wait_closed/error 均误报正常。独立确定性复现保存在 reproduce_usb_callback_cleanup_error.py 及 usb-dispatcher-independent-evidence.json（approved=false），未将已有测试通过代替此项错误传播验收。
+
+第二阶段仅修复真实 callback 收尾错误的保留与向外可观察性，不把关闭后的任意发送当作 callback failure；保留已有串口、通知失败身份和取消控制流。RED/GREEN 证据保存在 usb-close-callback-error-review，最终生产与测试差异经独立复核通过，指纹见 usb-callback-error-independent-evidence.json。最终冻结整合：聚焦 320 passed、28 subtests passed；完整 Windows 2582 passed、11 skipped、28 subtests passed；mypy 140 source files 通过。对应日志为 focused-usb-close-final.log、full-usb-close-final.log、mypy-usb-close-final.log；历史失败及中间通过记录均保留。
+
+本次未重刷设备、改动桌宠实例或将私有媒体入库。普通固件先前实机记录与用户确认仍保留；录音听感和最终源码加载复核未完成，不宣称稳定版已验收或发行。
