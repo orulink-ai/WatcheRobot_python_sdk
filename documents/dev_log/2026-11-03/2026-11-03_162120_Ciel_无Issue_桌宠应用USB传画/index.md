@@ -87,3 +87,17 @@ App 本地菜单呈现不再等待 Electron capture；点击后丢弃旧预取�
 最终新候选本地聚焦为 265 passed、26 subtests passed；mypy 为 140 个源码文件通过。最新完整 Windows 回归为 2525 passed、3 failed、11 skipped、26 subtests passed；三个失败均为此前隔离基线已复现的 Pi voice timeout，没有新增失败，也没有继续扩展 Pi 诊断。完整套件不标记全绿。独立复核覆盖整个功能差异及新增修复后，没有剩余 Critical/Important；另独立执行显示与两种 transport 回归 113 passed。
 
 本地证据存于父任务工作区的 `.codex-artifacts/pet-release-20261104/`：`focused.log`、`mypy-final.log`、`full-final.log` 与 JUnit、`reconnect-red.log`、`reconnect-green.log`、`full-review.md`、`sdk-final-local-evidence.json`。源码指纹与命令记录均保留。本提交后仍需核对新 HEAD 的远端 CI 和自动审查报告；旧 HEAD 的成功不能代替。常规固件实机门禁、固件目录审核保持待完成，未打 tag、未上传 SDK 或提交 App 审核。
+
+
+### 打开与呈现的发送窗口补齐
+
+2026-11-04，Ciel。提交 c408c61 后的新自动审查 [R1](https://github.com/orulink-ai/WatcheRobot_python_sdk/pull/155#issuecomment-6620551919) 指出打开流仍使用普通命令，已观察离线后尚未发送的旧 open 可能在新设备分配无归属的流。独立复核确认成立，并按同一边界核对呈现：发送线程在调用真实 Future.cancel 前被调度暂停时，已提交但未执行的旧 JPEG 也可能发给复用 ID 的新流。两项都不是已经 admission 的在途字节问题。
+
+先用真实 Robot 与两个实际 transport 补 10 个确定性回归：打开的提交前/提交后窗口 × 离线/显示域关闭 × 两种 transport 为 8 项；呈现的真实 Future.cancel 调度边界为 2 项。修复前 10 项均在旧命令或旧画面真正到达内存 socket 时失败，修复后 10 passed。打开改用已有 guarded command，核对 reservation、generation、domain 和原截止时间；呈现给既有 send_device 增加可选 keyword-only admission guard，普通发送不变，guard 在 transport loop 进入既有发送前执行。关闭域仍允许已归属流的清理，未持条件锁等待传输 ACK。
+
+本次聚焦含 Desktop session 为 276 passed、26 subtests passed；mypy 140 source files 通过。完整 Windows 回归另存 `full-admission.log`，不覆盖上候选 c408c61 的 2525 passed/3 个既有 Pi timeout 结果；提交前以对应日志核对最终完成状态。已取消 c408c61 的旧 CI，后续以新提交检查为准。完整差异独立复核及新 HEAD 远端检查的结论分别记录，不能用工作流 success 代替报告内容。
+
+本次仍未发行 SDK，未改变实机固件或当前 App；常规固件稳定版实机门禁和固件审核 #58 没有豁免。
+
+
+本次发送窗口补齐后的完整 Windows 回归结束：2538 passed、11 skipped、26 subtests passed，无失败。本轮进程显式启用 PYTHONUTF8=1，先前的三个 Windows Pi timeout 也通过；未修改 Pi 源码、未继续扩展诊断，不据此单独断言旧失败的根因。旧候选失败记录保留。独立复核最终窄差异无 Critical/Important，另行回归 123 passed，源码指纹前后一致；命令和指纹见 `full-review.md`、`admission-review-evidence.json`、`sdk-admission-local-evidence.json`。提交后等待新 HEAD 的远端检查；尚未合入或发行。

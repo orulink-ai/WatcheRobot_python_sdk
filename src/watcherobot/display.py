@@ -80,10 +80,19 @@ class DisplayDomain:
                 raise WatcheRobotError("display session already open, opening, or closing")
             self._opening = True
             generation = self._generation
+
+        def admit() -> None:
+            with self._condition:
+                if generation != self._generation:
+                    raise WatcheRobotError("display device disconnected before open admission")
+                if self._closed or not self._opening:
+                    raise WatcheRobotError("display domain closed before open admission")
+                _remaining(deadline)
+
         try:
-            response = self._robot._command(
+            response = self._robot._command_guarded(
                 "ctrl.display.open", {"width": width, "height": height, "format": "jpeg"},
-                timeout=_remaining(deadline),
+                timeout=_remaining(deadline), admit=admit,
             )
             data = _ack_data(response)
             with self._condition:
@@ -235,13 +244,20 @@ class DisplaySession:
             self._next_sequence += 1
             self._inflight = sequence
             self._presented = None
+        def admit() -> None:
+            with condition:
+                self._check_usable()
+                if self._domain._closed:
+                    raise WatcheRobotError("display domain closed before present admission")
+                _remaining(deadline)
+
         future: Future[None] | None = None
         try:
             packet = build_wspk(FRAME_DISPLAY, FLAG_FIRST | FLAG_LAST, self.stream_id, sequence, jpeg)
             with condition:
                 self._check_usable()
                 _remaining(deadline)
-                future = self._domain._robot._transport.send_device(packet)
+                future = self._domain._robot._transport.send_device(packet, admit=admit)
                 future.add_done_callback(self._send_done)
                 # Wait interruptibly even if a running Future cannot be cancelled.
                 while not future.done():

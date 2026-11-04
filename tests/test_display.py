@@ -22,7 +22,9 @@ class FakeTransport:
         self.send_error = None
         self.sent = threading.Event()
 
-    def send_device(self, packet):
+    def send_device(self, packet, *, admit=None):
+        if admit is not None:
+            admit()
         self.packets.append(packet)
         future = Future()
         self.futures.append(future)

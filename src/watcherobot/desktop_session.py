@@ -200,8 +200,16 @@ class DesktopRobotSession:
             raise ValueError(f"chunk_bytes must be {AUDIO_DEVICE_SLOT_BYTES}")
         return self._submit(self._send_audio(bytes(pcm), stream_id, chunk_bytes))
 
-    def send_device(self, frame: str | bytes) -> Future[None]:
-        return self._submit(self._send(frame))
+    def send_device(
+        self, frame: str | bytes, *, admit: Callable[[], None] | None = None,
+    ) -> Future[None]:
+        if admit is None:
+            return self._submit(self._send(frame))
+        return self._submit(self._send_device(frame, admit=admit))
+
+    async def _send_device(self, frame: str | bytes, *, admit: Callable[[], None]) -> None:
+        admit()
+        await self._send(frame)
 
     def _submit(self, coroutine: Coroutine[Any, Any, Any]) -> Future[Any]:
         if self._loop is None or not self._loop.is_running():

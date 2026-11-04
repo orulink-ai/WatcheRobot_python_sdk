@@ -290,12 +290,19 @@ class DaemonApplicationTransport:
     def send_desktop(self, frame: str | bytes) -> Future[None]:
         return self._submit(self._send(ApplicationChannel.DESKTOP, frame))
 
-    def send_device(self, frame: str | bytes) -> Future[None]:
-        """Send a protocol frame through the Application's authorized Device channel."""
+    def send_device(
+        self, frame: str | bytes, *, admit: Callable[[], None] | None = None,
+    ) -> Future[None]:
+        """Send a Device frame, optionally checking ownership on-loop before admission."""
+        if admit is None:
+            return self._submit(self._send_device(frame))
+        return self._submit(self._send_device(frame, admit=admit))
 
-        return self._submit(self._send_device(frame))
-
-    async def _send_device(self, frame: str | bytes) -> None:
+    async def _send_device(
+        self, frame: str | bytes, *, admit: Callable[[], None] | None = None,
+    ) -> None:
+        if admit is not None:
+            admit()
         await self._send(ApplicationChannel.DEVICE, frame)
 
     def _submit(
