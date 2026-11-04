@@ -101,3 +101,17 @@ App 本地菜单呈现不再等待 Electron capture；点击后丢弃旧预取�
 
 
 本次发送窗口补齐后的完整 Windows 回归结束：2538 passed、11 skipped、26 subtests passed，无失败。本轮进程显式启用 PYTHONUTF8=1，先前的三个 Windows Pi timeout 也通过；未修改 Pi 源码、未继续扩展诊断，不据此单独断言旧失败的根因。旧候选失败记录保留。独立复核最终窄差异无 Critical/Important，另行回归 123 passed，源码指纹前后一致；命令和指纹见 `full-review.md`、`admission-review-evidence.json`、`sdk-admission-local-evidence.json`。提交后等待新 HEAD 的远端检查；尚未合入或发行。
+
+
+### USB 回调关闭与连接通知的事务边界
+
+2026-11-04，Ciel。提交 8bb0528 后的自动审查 [报告](https://github.com/orulink-ai/WatcheRobot_python_sdk/pull/155#issuecomment-6620806314) 提出两个真实生命周期问题，已独立确认并分别按 TDD 修复：
+
+- 外部关闭取消并等待 dispatcher，而 dispatcher 的 on_frame 正在 send()，send 的异常清理反过来等待同一个 close task，形成循环等待。新增四个 ACK 等待、受控串口 write、关闭失败、通知失败回归，原实现四项都在有限关闭断言失败；修复后四项通过。仅在外部关闭拥有收集工作时让被收集的 dispatcher 直接展开；普通发送和 dispatcher 自发关闭仍等待原有 shielded 清理。disconnect 仍等待回调、串口工作线程和预算释放。
+- usb.start() 后的在线通知在原 try 之外，通知错误或取消会把失败的 attach 留成活动连接。将在线发布纳入事务，失败时关闭捕获的本次 USB，保留槽位至其 offline 回调完成，清理异常只记日志并重抛最初 attach 错误。新增二十项测试在原实现 19 failed/1 passed，修复后全部通过；覆盖在线失败/取消、离线通知失败、清理期间取消、重连及旧回调隔离。
+
+同时更正文档：端口显式指定，省略 baudrate 仍默认 1000000，桌宠配套固件 0.3.2 必须显式传 2000000。未把旧 API 默认值改为强制参数。
+
+最终冻结源码的整合验证：聚焦 300 passed、26 subtests passed；完整 Windows 回归 2562 passed、11 skipped、26 subtests passed（PYTHONUTF8=1）；mypy 140 source files 通过。独立复核未发现 Critical/Important，新增测试独立 24 passed；实际 Runtime 与 UsbConnection 的纯内存交叉检查 4 passed。精确日志分别保存在发布验收工作目录的 focused-usb-lifecycle.log、full-usb-lifecycle.log、mypy-usb-lifecycle.log 和 full-review.md；没有将机器路径或私有媒体放进仓库。
+
+用户提供另一台普通固件设备后，已通过独立 Runtime 和 `watcherobot app run` 启动仓库现有 sdk_media_lab。普通设备已配对，报告固件 v0.5.12/协议 1.0；小角度 motion Job、灯光以及行为启动/停止通过。相机、麦克风、RTC 与完整固件 commit 身份继续核验，不能提前声称稳定版硬件门禁通过。桌宠专用固件未被改写，尚未合并本 PR 或发布 SDK。

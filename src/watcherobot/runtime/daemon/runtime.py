@@ -592,14 +592,27 @@ class DaemonRuntime:
             self._usb_connection = usb
             try:
                 await usb.start()
+                self.logs.record("Generic USB device transport connected")
+                await self._publish_device_state(self._usb_state(online=True))
             except BaseException:
                 self.connection_registry.remove(peer)
-                # Only on_disconnect releases the slot. Shielded transport
-                # cleanup can outlive cancellation of this attach request.
-                await usb.close(reason="USB connect failed")
+
+                async def rollback() -> None:
+                    try:
+                        await usb.close(reason="USB connect failed")
+                    except (Exception, asyncio.CancelledError) as cleanup_error:
+                        # A close/offline callback failure cannot replace the
+                        # original attach error, including cancellation.
+                        self.logs.record(
+                            "USB connect cleanup failed "
+                            f"({type(cleanup_error).__name__}: {cleanup_error})"
+                        )
+
+                # Only on_disconnect releases this peer's slot. Caller
+                # cancellation still propagates while owned cleanup continues.
+                cleanup = asyncio.create_task(rollback())
+                await asyncio.shield(cleanup)
                 raise
-            self.logs.record("Generic USB device transport connected")
-            await self._publish_device_state(self._usb_state(online=True))
             return self.device_status()
 
     async def disconnect_usb_device(self) -> bool:

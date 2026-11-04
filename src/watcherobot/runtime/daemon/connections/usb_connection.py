@@ -381,7 +381,13 @@ class UsbConnection:
                 except BaseException as exc:
                     if not ack.done():
                         ack.cancel()
-                    await asyncio.shield(self._request_close(exc, 1011, "USB send failed"))
+                    closing = self._request_close(exc, 1011, "USB send failed")
+                    # An external close cancels and gathers the dispatcher.
+                    # Let it unwind instead of waiting for its own collector.
+                    # A dispatcher-owned close already excludes its caller.
+                    if (asyncio.current_task() is not self._dispatch_task
+                            or self._close_caller is self._dispatch_task):
+                        await asyncio.shield(closing)
                     raise
                 finally:
                     if not writing.done():
