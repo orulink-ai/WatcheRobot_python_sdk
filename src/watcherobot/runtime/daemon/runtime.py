@@ -258,13 +258,35 @@ class DaemonRuntime:
 
     async def stop(self) -> None:
         self.logs.record("Daemon Runtime stopping")
-        await self.control_server.stop()
-        await self.application.stop()
-        if self._usb_connection is not None:
-            await self._usb_connection.close(reason="Daemon stopped")
-        await self.preview_udp.stop()
-        await self.pairing_udp.stop()
-        await self.external_server.stop()
+        error: Exception | None = None
+
+        async def close_usb() -> None:
+            # Look up USB after Application stop, as that can retire the peer.
+            usb = self._usb_connection
+            if usb is not None:
+                await usb.close(reason="Daemon stopped")
+
+        for component, stop in (
+            ("control server", self.control_server.stop),
+            ("Application", self.application.stop),
+            ("USB", close_usb),
+            ("preview UDP", self.preview_udp.stop),
+            ("pairing UDP", self.pairing_udp.stop),
+            ("external server", self.external_server.stop),
+        ):
+            try:
+                await stop()
+            except Exception as exc:
+                # Cancellation remains control flow; ordinary failures must not
+                # leave later services running or replace the original error.
+                if error is None:
+                    error = exc
+                self.logs.record(
+                    f"Daemon Runtime {component} stop failed "
+                    f"({type(exc).__name__}: {exc})"
+                )
+        if error is not None:
+            raise error
 
     async def start_application(self, *, expected_selection_id: str | None = None) -> ApplicationRun:
         self.logs.record(

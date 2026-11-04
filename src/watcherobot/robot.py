@@ -1143,6 +1143,17 @@ class WatcheRobot:
             raise WatcheRobotError("robot connection is closed")
         return self._transport.send_command(message_type, data, timeout=timeout)
 
+    def _command_guarded(
+        self, message_type: str, data: dict[str, Any], *, timeout: float,
+        admit: Callable[[], None],
+    ) -> dict[str, Any]:
+        if self._closed:
+            raise WatcheRobotError("robot connection is closed")
+        response: dict[str, Any] = self._transport.send_command_guarded(
+            message_type, data, timeout=timeout, admit=admit,
+        )
+        return response
+
     def _start_job(self, message_type: str, data: dict) -> Job:
         response = self._command(message_type, data)
         operation_id = response.get("data", {}).get("operation_id")

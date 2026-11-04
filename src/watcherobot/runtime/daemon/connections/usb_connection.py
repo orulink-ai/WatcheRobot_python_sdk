@@ -15,8 +15,11 @@ deasserts DTR/RTS, then assigns the port and opens it without flushing input.
 Serial open/write/close run via
 asyncio.to_thread; a dedicated worker reads available bytes (at most 1044),
 waiting for only one byte while idle, with a bounded read timeout. It routes
-ACKs and complete frames via loop.call_soon_threadsafe. Callback work never
-blocks the reader or ACK delivery. A bounded receive queue fails closed if full.
+ACKs and complete frames through a locked, bounded handoff, with at most one
+queued loop notification. Up to 128 queued/active payloads share a 1 MiB Python
+payload-storage budget (including Unicode storage); decoder state is separately
+bounded. Overflow stops the reader immediately, then closes on the owning loop.
+A single matching-ACK slot bypasses frame callbacks; stale ACKs are discarded.
 
 send(str|bytes) serializes entire logical frames; each fragment waits for its
 exact ACK within ack_timeout (including write time), followed by fragment_gap.
@@ -35,8 +38,10 @@ See usb_wire's module contract for the firmware packet layout and decoder API.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 import math
+import sys
 import threading
 import time
 from typing import Any, Protocol, cast
@@ -135,7 +140,14 @@ class UsbConnection:
         self._close_caller: asyncio.Task[Any] | None = None
         self._dispatch_task: asyncio.Task[None] | None = None
         self._close_error: BaseException | None = None
-        self._frames: asyncio.Queue[str | bytes] = asyncio.Queue(maxsize=128)
+        self._receive_lock = threading.Lock()
+        self._frames: deque[tuple[str | bytes, int]] = deque()
+        self._frames_ready = asyncio.Event()
+        self._receive_count = self._receive_bytes = 0
+        self._receive_notified = False
+        self._receive_error: BaseException | None = None
+        self._expected_ack: tuple[int, int] | None = None
+        self._received_ack: UsbAck | None = None
         self._pending: tuple[int, int, asyncio.Future[None]] | None = None
         self._next_frame_id = 1
 
@@ -210,33 +222,89 @@ class UsbConnection:
                 if not data and not serial_port.is_open:
                     raise OSError("USB serial port disconnected")
                 for event in self._decoder.feed(data):
-                    loop.call_soon_threadsafe(self._route_event, event)
+                    if not self._receive_event(event):
+                        return
         except Exception as exc:
-            if not self._stop.is_set():
-                loop.call_soon_threadsafe(self._reader_failed, exc)
+            with self._receive_lock:
+                if self._stop.is_set():
+                    return
+                self._receive_error = exc
+                self._stop.set()
+            self._notify_receive()
 
     def _reader_failed(self, error: BaseException) -> None:
         self._request_close(error, 1011, "USB reader failed")
 
-    def _route_event(self, event: UsbFrame | UsbAck) -> None:
+    def _receive_event(self, event: UsbFrame | UsbAck) -> bool:
+        """Reader-only admission; no event payload is captured by a loop handle."""
+        with self._receive_lock:
+            if self._stop.is_set():
+                return False
+            if isinstance(event, UsbAck):
+                if self._expected_ack != (event.frame_id, event.fragment_index):
+                    return True
+                self._received_ack = event  # One matching ACK, never an ACK queue.
+            else:
+                # Wire-byte or character counts undercount wide Python strings.
+                size = sys.getsizeof(event.payload)
+                if self._receive_count >= 128 or self._receive_bytes + size > 1024 * 1024:
+                    self._receive_error = BufferError("USB receive queue is full")
+                    self._stop.set()
+                else:
+                    self._frames.append((event.payload, size))
+                    self._receive_count += 1
+                    self._receive_bytes += size
+        self._notify_receive()
+        return not self._stop.is_set()
+
+    def _notify_receive(self) -> None:
+        loop = self._loop
+        assert loop is not None
+        with self._receive_lock:
+            if self._receive_notified:
+                return
+            self._receive_notified = True
+        loop.call_soon_threadsafe(self._drain_receive)
+
+    def _drain_receive(self) -> None:
+        """Coalesced loop notification; ACKs do not wait for on_frame()."""
+        with self._receive_lock:
+            self._receive_notified = False
+            error, ack = self._receive_error, self._received_ack
+            self._received_ack = None
+            have_frames = bool(self._frames)
         if self._closed:
             return
-        if isinstance(event, UsbAck):
+        if error is not None:
+            self._reader_failed(error)
+            return
+        if ack is not None:
             pending = self._pending
-            if pending is not None and pending[:2] == (event.frame_id, event.fragment_index):
+            if pending is not None and pending[:2] == (ack.frame_id, ack.fragment_index):
                 if not pending[2].done():
                     pending[2].set_result(None)
-            return
-        try:
-            self._frames.put_nowait(event.payload)
-        except asyncio.QueueFull:
-            self._request_close(BufferError("USB receive queue is full"), 1011, "USB receive overflow")
+        if have_frames:
+            self._frames_ready.set()
 
     async def _dispatch_frames(self) -> None:
         try:
             while not self._closed:
-                payload = await self._frames.get()
-                await self._on_frame(payload)
+                await self._frames_ready.wait()
+                with self._receive_lock:
+                    if not self._frames:
+                        self._frames_ready.clear()
+                        continue
+                    payload, size = self._frames.popleft()
+                    if not self._frames:
+                        self._frames_ready.clear()
+                try:
+                    await self._on_frame(payload)
+                finally:
+                    # Keep active callback payloads charged, including cancellation.
+                    del payload
+                    with self._receive_lock:
+                        self._receive_count -= 1
+                        self._receive_bytes -= size
         except asyncio.CancelledError as exc:
             if not self._closed:
                 self._request_close(exc, 1011, "USB frame callback cancelled")
@@ -282,6 +350,9 @@ class UsbConnection:
                 self._require_open()
                 ack: asyncio.Future[None] = loop.create_future()
                 self._pending = (frame_id, index, ack)
+                with self._receive_lock:
+                    self._expected_ack = (frame_id, index)
+                    self._received_ack = None
                 deadline = loop.time() + self.ack_timeout
                 writing = asyncio.create_task(asyncio.to_thread(self._write_packet, packet))
                 try:
@@ -300,6 +371,9 @@ class UsbConnection:
                         )
                     ack.result()
                     self._pending = None
+                    with self._receive_lock:
+                        self._expected_ack = None
+                        self._received_ack = None
                     if self.fragment_gap:
                         gap_deadline = time.perf_counter() + self.fragment_gap
                         await asyncio.to_thread(self._wait_fragment_gap, gap_deadline)
@@ -315,6 +389,9 @@ class UsbConnection:
                     await asyncio.gather(writing, return_exceptions=True)
                     if self._pending is not None and self._pending[2] is ack:
                         self._pending = None
+                    with self._receive_lock:
+                        self._expected_ack = None
+                        self._received_ack = None
                     if ack.done() and not ack.cancelled():
                         ack.exception()  # Retrieve a close error even if the write failed first.
 
@@ -327,6 +404,14 @@ class UsbConnection:
             self.error, self.close_code, self.close_reason = error, code, reason
             self._close_caller = asyncio.current_task()
             self._stop.set()
+            with self._receive_lock:
+                self._receive_count -= len(self._frames)
+                self._receive_bytes -= sum(size for _, size in self._frames)
+                self._frames.clear()
+                self._expected_ack = None
+                self._received_ack = None
+                self._receive_error = None
+            self._frames_ready.set()
             self._ready.set()
             if self._pending is not None and not self._pending[2].done():
                 self._pending[2].set_exception(UsbConnectionClosed(reason))

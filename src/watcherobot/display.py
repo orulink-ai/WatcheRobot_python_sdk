@@ -98,7 +98,7 @@ class DisplayDomain:
                 try:
                     _remaining(deadline)
                 except TimeoutError:
-                    # A late ACK gives us ownership for explicit cleanup only.
+                    # A late ACK retains ownership for public close_stream cleanup.
                     session._unusable = True
                     raise
                 return session
@@ -139,6 +139,22 @@ class DisplayDomain:
                 self._session._presented = None
                 self._session = None
             self._condition.notify_all()
+
+    def close_stream(self, *, timeout: float = 3.0) -> None:
+        """Release the owned stream, including one acquired by a late open ACK.
+
+        This does not close the display domain: a new stream may be opened after
+        successful cleanup. If cleanup fails, ownership is retained and this
+        method may be retried with a new finite timeout. With no confirmed
+        ownership, no device command is sent.
+        """
+        deadline = _deadline(timeout)
+        with self._condition:
+            while self._opening:
+                self._condition.wait(_remaining(deadline))
+            session = self._session
+        if session is not None:
+            session.close(timeout=_remaining(deadline))
 
     def _close(self, *, timeout: float = 3.0) -> None:
         """Close the owned stream before Robot closes its transport."""
@@ -271,9 +287,18 @@ class DisplaySession:
             self._unusable = True
             self._presented = None
             condition.notify_all()
+        def admit() -> None:
+            # Runs on the transport loop immediately before command admission,
+            # not just before scheduling its coroutine from this worker thread.
+            with condition:
+                if self._closed or self._domain._session is not self:
+                    raise WatcheRobotError("display device disconnected before close admission")
+                _remaining(deadline)
+
         try:
-            self._domain._robot._command(
-                "ctrl.display.close", {"stream_id": self.stream_id}, timeout=_remaining(deadline),
+            self._domain._robot._command_guarded(
+                "ctrl.display.close", {"stream_id": self.stream_id},
+                timeout=_remaining(deadline), admit=admit,
             )
             with condition:
                 self._closed = True

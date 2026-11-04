@@ -61,3 +61,29 @@ App 本地菜单呈现不再等待 Electron capture；点击后丢弃旧预取�
 本次仅准备基于 main 的 SDK 功能分支提交与 Draft PR。开发版本为 `0.1.14.dev20261103`，不是公开正式发行版。SDK 合入、发布和应用广场投稿均未由本次操作执行；App 源码发布由独立任务管理。提交集合只包含 SDK 源码、测试、显示协议文档和本档案，不包含本机路径配置、硬件身份、备份、运行日志或角色素材。
 
 提交前验证沿用同一候选实现的已完成结果：SDK 聚焦测试 223 passed、1 skipped、26 subtests passed，mypy 140 个源文件通过。全量测试记录为 2486 passed、11 skipped，另有一个并发重装期间的子进程导入错误；重装结束后该用例的两个参数分支均通过，不能将原全量运行记为无失败。显示模块使用 `FRAME_DISPLAY` 常量后的 91 项测试通过。
+
+
+## 2026-11-04，Ciel：发行前异常路径审查
+
+用户明确授权 PR #155 和版本 PR 在检查通过后合入，按现有流程发行 SDK 0.1.14，再更新 App 的正式依赖并继续关联审核。该授权不取消现有发布门禁，也不包含自行批准固件目录收录。
+
+本轮在同一功能分支上维护代码与档案。PR #155 已转 Ready；原候选 ea4df10 的 Linux 开发及 Python 3.10/3.12 兼容检查成功。Ready 自动审查报告提出三处异常路径问题；检查源码后确认成立，未因工作流结论 success 而忽略报告中的不建议合并意见。报告链接：https://github.com/orulink-ai/WatcheRobot_python_sdk/pull/155#issuecomment-6620078580。
+
+- 显示流迟到 ACK：总超时已经过后仍取得有效流 ID，但调用者没有句柄，无法公开清理。新增 `DisplayDomain.close_stream(timeout=...)`，可有界等待进行中的打开、清理自己持有的流；关闭失败保留所有权可重试，成功后仍可重新打开；无有效所有权不猜测 ID。4 个新增回归先全部失败，修复后显示测试 95 项通过。
+- Daemon 收尾：普通 USB 通知错误会提前退出 stop，跳过后续服务。各组件保持原顺序尝试停止，普通失败记录并在完成后抛回首个错误；取消仍立即传播，USB 清理及槽所有权不被过早释放。新增回归先 8 failed/2 passed，修复后 10 passed，与已有 USB Runtime 合计 26 passed。
+- USB 接收：读线程逐事件提交事件循环回调，绕过下游 128 帧队列的容量限制；需要将交接缓冲及唤醒数量同时限制，保留 ACK 的及时性和透明业务路由。7 个新增过载/关闭回归已在修改前失败，具体修复与集成验证状态见本节后续追加。
+
+稳定版的实机要求仍按 `docs/releasing.md` 与 `docs/hardware-testing.md` 执行。当前桌宠专用固件 0.3.2 的 USB 画面和输入有真实验收，App 173 项测试通过；这些证据不能代替常规固件的配对、行为、灯光、Job、相机、麦克风和 RTC 实时视频验收。本轮未更换固件、未操作 M5，未发布正式 SDK 或宣称应用上架。
+
+原开发阶段档案与上次 Windows 基线失败记录保留，不将历史结果挪作本候选的全量验证。待集成检查、完整差异复核和最新 CI 后再更新实际合入状态。
+
+
+### 集成复核与第四处竞争修复
+
+2026-11-04，Ciel。USB 交接修复后的 7 个新增过载回归通过，USB 完整聚焦为 38 passed、6 subtests passed；帧数与 Python payload 存储量在读线程处受限，活动回调仍计费，ACK 使用匹配单槽，事件循环唤醒合并。Daemon 停止流程和迟到 open ACK 的公开清理入口也已集成。
+
+完整独立复核发现第四处竞争：旧 close 已通过本地检查，但尚未送入 transport 时观察到离线；新流重用了相同 ID，旧请求随后可能误关新流。先用真实 Display 类确定性复现，再用真实 Robot 和两种实际 transport 写 4 个回归，覆盖提交前、协程已提交但尚未发送两个窗口。RED 为 4 failed；修复将 ownership guard 放在 transport loop 的命令 admission 处，等待 ACK 不持显示条件锁。4 项转 GREEN，组合回归 112 passed。文档明确已 admission 或在途字节无法撤回，未作超出本地保证的承诺。
+
+最终新候选本地聚焦为 265 passed、26 subtests passed；mypy 为 140 个源码文件通过。最新完整 Windows 回归为 2525 passed、3 failed、11 skipped、26 subtests passed；三个失败均为此前隔离基线已复现的 Pi voice timeout，没有新增失败，也没有继续扩展 Pi 诊断。完整套件不标记全绿。独立复核覆盖整个功能差异及新增修复后，没有剩余 Critical/Important；另独立执行显示与两种 transport 回归 113 passed。
+
+本地证据存于父任务工作区的 `.codex-artifacts/pet-release-20261104/`：`focused.log`、`mypy-final.log`、`full-final.log` 与 JUnit、`reconnect-red.log`、`reconnect-green.log`、`full-review.md`、`sdk-final-local-evidence.json`。源码指纹与命令记录均保留。本提交后仍需核对新 HEAD 的远端 CI 和自动审查报告；旧 HEAD 的成功不能代替。常规固件实机门禁、固件目录审核保持待完成，未打 tag、未上传 SDK 或提交 App 审核。

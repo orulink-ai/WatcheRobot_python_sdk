@@ -185,6 +185,18 @@ class DaemonApplicationTransport:
         )
         return future.result(timeout=effective_timeout + 1.0)
 
+    def send_command_guarded(
+        self, message_type: str, data: dict[str, Any], *, timeout: float,
+        admit: Callable[[], None],
+    ) -> dict[str, Any]:
+        """Check an ownership guard on-loop before admitting a device command."""
+        future = self._submit(self._send_command(message_type, data, timeout, admit=admit))
+        try:
+            return future.result(timeout=timeout)
+        except BaseException:
+            future.cancel()
+            raise
+
     def send_command_nowait(
         self,
         message_type: str,
@@ -384,6 +396,7 @@ class DaemonApplicationTransport:
         message_type: str,
         data: dict[str, Any],
         timeout: float,
+        *, admit: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         command_id = uuid.uuid4().hex
         response_future = (
@@ -391,6 +404,8 @@ class DaemonApplicationTransport:
         )
         self._pending[command_id] = response_future
         try:
+            if admit is not None:
+                admit()
             await self._send(
                 ApplicationChannel.DEVICE,
                 build_command(message_type, data, command_id),

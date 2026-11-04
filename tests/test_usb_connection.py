@@ -606,5 +606,179 @@ class UsbConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(serial.close_count, 0)
 
 
+    def observe_handoff(self, connection, serial):
+        """Observe a real reader while deliberately holding its owning loop."""
+        settled = threading.Event()
+        state = {"armed": False, "decoded": 0, "notifications": 0}
+        original_read = serial.read
+        original_worker = connection._read_worker
+        original_feed = connection._decoder.feed
+        original_schedule = asyncio.get_running_loop().call_soon_threadsafe
+
+        def read(size):
+            data = original_read(size)
+            if state["armed"] and state["decoded"] and not data:
+                settled.set()  # All preceding events have passed through the worker.
+            return data
+
+        def worker(port):
+            try:
+                original_worker(port)
+            finally:
+                settled.set()  # Overflow must stop the reader without the loop.
+
+        def feed(data):
+            events = original_feed(data)
+            if state["armed"]:
+                state["decoded"] += len(events)
+            return events
+
+        def schedule(callback, *args, **kwargs):
+            if getattr(callback, "__self__", None) is connection:
+                state["notifications"] += 1
+            return original_schedule(callback, *args, **kwargs)
+
+        serial.read = read
+        connection._read_worker = worker
+        connection._decoder.feed = feed
+        return settled, state, schedule
+
+    def stall_for_burst(self, connection, serial, observer, wire):
+        from unittest.mock import patch
+        settled, state, schedule = observer
+        state.update(armed=True, decoded=0, notifications=0)
+        settled.clear()
+        with patch.object(asyncio.get_running_loop(), "call_soon_threadsafe", schedule):
+            serial.inject(wire)
+            # Intentionally block this loop, rather than simulating a slow callback.
+            self.assertTrue(settled.wait(2), "reader neither drained nor failed closed")
+            return state["notifications"]
+
+    async def test_stalled_loop_handoff_bounds_empty_frames_before_scheduling(self):
+        connection, serial = self.make_connection()
+        observer = self.observe_handoff(connection, serial)
+        await connection.start()
+        count = self.stall_for_burst(connection, serial, observer, b"".join(
+            packet(frame_id=i, payload=b"") for i in range(1, 513)
+        ))
+        self.assertLessEqual(count, 1, "one callback per frame bypasses the receive bound")
+        self.assertTrue(connection._stop.is_set(), "overflow must stop reading while loop is stalled")
+        self.assertLessEqual(connection._receive_count, 128)
+        self.assertLessEqual(connection._receive_bytes, 1024 * 1024)
+        with self.assertRaises(BufferError):
+            await asyncio.wait_for(connection.wait_closed(), 1)
+        self.assertEqual(self.frames, [], "overflow must not deliver a partial buffered burst")
+        self.assertEqual((connection._receive_count, connection._receive_bytes), (0, 0))
+        self.assertFalse(connection._reader.is_alive())
+        self.assertEqual(serial.close_count, 1)
+        self.assertEqual(self.disconnects, [connection.error])
+
+    async def test_stalled_loop_handoff_has_a_payload_byte_limit(self):
+        from watcherobot.runtime.daemon.connections.usb_wire import encode_frame
+        connection, serial = self.make_connection()
+        observer = self.observe_handoff(connection, serial)
+        await connection.start()
+        wire = b"".join(
+            raw for i in range(1, 11)
+            for raw in encode_frame(b"x" * 131072, frame_id=i)
+        )
+        count = self.stall_for_burst(connection, serial, observer, wire)
+        self.assertTrue(connection._stop.is_set(), "fewer than 128 large frames must hit a byte bound")
+        self.assertLessEqual(count, 1)
+        self.assertLessEqual(connection._receive_bytes, 1024 * 1024)
+        self.assertLessEqual(connection._receive_count, 128)
+        with self.assertRaises(BufferError):
+            await asyncio.wait_for(connection.wait_closed(), 1)
+        self.assertEqual((connection._receive_count, connection._receive_bytes), (0, 0))
+
+    async def test_handoff_byte_limit_includes_active_unicode_callback(self):
+        from watcherobot.runtime.daemon.connections.usb_wire import encode_frame
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def slow(_frame):
+            entered.set()
+            await release.wait()
+
+        connection, serial = self.make_connection(on_frame=slow)
+        observer = self.observe_handoff(connection, serial)
+        await connection.start()
+        # A single non-BMP character makes Python retain four bytes per character.
+        text = "\U0001f916" + "x" * (131072 - 4)
+        serial.inject(b"".join(encode_frame(text, frame_id=1)))
+        await asyncio.wait_for(entered.wait(), 1)
+        wire = b"".join(raw for i in range(2, 5) for raw in encode_frame(text, frame_id=i))
+        self.stall_for_burst(connection, serial, observer, wire)
+        self.assertTrue(connection._stop.is_set(), "queued and active Python text memory must be bounded")
+        self.assertLessEqual(connection._receive_bytes, 1024 * 1024)
+        with self.assertRaises(BufferError):
+            await asyncio.wait_for(connection.wait_closed(), 1)
+        self.assertEqual((connection._receive_count, connection._receive_bytes), (0, 0))
+
+    async def test_stalled_loop_ack_flood_is_coalesced_without_losing_matching_ack(self):
+        connection, serial = self.make_connection(FakeSerial(auto_ack=False), ack_timeout=3, fragment_gap=0)
+        observer = self.observe_handoff(connection, serial)
+        await connection.start()
+        sending = asyncio.create_task(connection.send(b"one ACK is sufficient"))
+        await self.eventually(lambda: bool(serial.packets))
+        frame_id = struct.unpack_from("<I", serial.packets[0], 8)[0]
+        wire = (packet(3, 0, 1, frame_id) * 500
+                + packet(3, 0, 0, frame_id) * 500
+                + packet(3, 0, 0, frame_id + 1) * 500)
+        count = self.stall_for_burst(connection, serial, observer, wire)
+        self.assertLessEqual(count, 1, "ACK traffic must not allocate one loop handle per ACK")
+        self.assertFalse(connection._pending[2].done(), "reader must not complete an asyncio future off-loop")
+        await asyncio.wait_for(sending, 1)
+        self.assertFalse(connection.closed)
+        self.assertEqual(self.frames, [])
+
+    async def test_coalesced_handoff_rearms_and_reclaims_receive_budget(self):
+        connection, serial = self.make_connection()
+        observer = self.observe_handoff(connection, serial)
+        await connection.start()
+        for burst in range(4):
+            first = burst * 64 + 1
+            expected = [str(i).encode() for i in range(first, first + 64)]
+            count = self.stall_for_burst(connection, serial, observer, b"".join(
+                packet(frame_id=i, payload=str(i).encode()) for i in range(first, first + 64)
+            ))
+            self.assertLessEqual(count, 1)
+            await self.eventually(lambda: len(self.frames) == first + 63)
+            self.assertEqual(self.frames[-64:], expected)
+            self.assertEqual((connection._receive_count, connection._receive_bytes), (0, 0))
+
+    async def test_handoff_overflow_wakes_ack_waiter_and_queued_sender(self):
+        connection, serial = self.make_connection(FakeSerial(auto_ack=False), ack_timeout=5)
+        observer = self.observe_handoff(connection, serial)
+        await connection.start()
+        first = asyncio.create_task(connection.send(b"in flight"))
+        second = asyncio.create_task(connection.send(b"queued"))
+        await self.eventually(lambda: len(serial.packets) == 1)
+        self.stall_for_burst(connection, serial, observer, b"".join(
+            packet(frame_id=i) for i in range(1, 513)
+        ))
+        self.assertTrue(connection._stop.is_set(), "reader-side overflow must be terminal")
+        with self.assertRaises(BufferError):
+            await asyncio.wait_for(connection.wait_closed(), 1)
+        results = await asyncio.wait_for(asyncio.gather(first, second, return_exceptions=True), 1)
+        self.assertTrue(all(isinstance(result, ConnectionError) for result in results))
+        self.assertEqual(len(serial.packets), 1)
+        self.assertEqual(serial.close_count, 1)
+
+    async def test_explicit_close_discards_stalled_handoff_without_callbacks(self):
+        connection, serial = self.make_connection()
+        observer = self.observe_handoff(connection, serial)
+        await connection.start()
+        count = self.stall_for_burst(connection, serial, observer, b"".join(
+            packet(frame_id=i, payload=b"discard") for i in range(1, 65)
+        ))
+        self.assertLessEqual(count, 1)
+        await asyncio.wait_for(connection.close(), 1)
+        self.assertEqual(self.frames, [])
+        self.assertEqual((connection._receive_count, connection._receive_bytes), (0, 0))
+        self.assertEqual(self.disconnects, [None])
+        self.assertFalse(connection._reader.is_alive())
+
+
+
 if __name__ == "__main__":
     unittest.main()

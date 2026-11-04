@@ -13,7 +13,7 @@ watcherobot robot usb connect --port COM7 --baudrate 1000000
 watcherobot robot status
 ~~~
 
-配套固件的 UART 固定为 `1000000 baud、8N1`。CLI 接受的其他波特率必须由固件另行支持，不会自动协商，也不会回退旧串口协议。连接成功表示串口传输已建立，仍需由 Application 查询设备能力。
+示例使用 `1000000 baud、8N1`；实际速率以所安装固件的发布说明为准（桌宠配套社区固件 0.3.2 使用 `2000000 baud`）。CLI 接受的其他波特率必须由固件另行支持，不会自动协商，也不会回退旧串口协议。连接成功表示串口传输已建立，仍需由 Application 查询设备能力。
 
 Daemon 只允许一个设备连接槽位。已有 USB、LAN 设备连接或配对流程占用时，USB 连接请求会失败，不自动替换现有连接。没有端口自动扫描、轮询试连或启动 Application 时自动开串口的行为。
 
@@ -122,9 +122,10 @@ if __name__ == "__main__":
 | `session.max_frame_bytes` | 本次协商的 JPEG 字节上限，最大为 `65536` |
 | `session.lease_ms` | 固件返回的租约时长；未返回时为 `None` |
 | `session.present(jpeg: bytes, timeout=3.0) -> int` | 提交完整 JPEG，等待设备呈现结果，返回本会话的 SDK 帧序号 |
+| `app.robot.display.close_stream(timeout=3.0)` | 有界清理当前已确认归属的流；可在打开 ACK 迟到、没有取得句柄时调用；成功后仍可重新打开 |
 | `session.close(timeout=3.0)` | 请求关闭自己持有的流；成功后可重复调用 |
 
-`open_stream`、`present`、`close` 的超时参数必须是有限数值，满足 `0 < timeout <= 120` 秒，默认 `3.0` 秒。`present` 使用同一个截止时间覆盖发送完成和设备呈现应答，不会为两个阶段分别重新计算完整超时。SDK 在发送前检查 JPEG 的 SOI/EOI 标记和协商字节上限，实际解码与尺寸校验由固件完成。
+`open_stream`、`present`、`close`、`close_stream` 的超时参数必须是有限数值，满足 `0 < timeout <= 120` 秒，默认 `3.0` 秒。`present` 使用同一个截止时间覆盖发送完成和设备呈现应答，不会为两个阶段分别重新计算完整超时。SDK 在发送前检查 JPEG 的 SOI/EOI 标记和协商字节上限，实际解码与尺寸校验由固件完成。
 
 同一个 `DisplayDomain` 在打开、运行和关闭期间只保留一个会话。每个会话只允许一帧在途；上一帧 `present` 返回后再发下一帧。并发提交会报错，不会自动建立多帧队列。需要实时画面的应用应自行限制生产速度，避免无界积压。
 
@@ -135,8 +136,9 @@ if __name__ == "__main__":
 - 发送失败、呈现超时或设备返回呈现失败后，当前会话不能继续 `present`；仍可对原句柄调用 `close`。不要把迟到的呈现事件当作旧句柄恢复可用。
 - `close` 超时或失败不等于设备已释放。SDK 保留本地所有权用于显式重试，新的 `open_stream` 会被阻止；应使用原句柄重试有界关闭，并向调用者报告清理失败。
 - `open_stream` 超时且没有拿到有效 `stream_id` 时，设备端是否已分配租约是未知的。SDK 不会猜测 ID，也不会发送可能关闭他人会话的清理命令。先确认设备状态，并按配套固件的租约约定处理，不要立即反复抢占。
+- `open_stream` 已取得有效 ACK、但总截止时间已过时，SDK 保留流的所有权且不会返回可呈现句柄。调用 `app.robot.display.close_stream(timeout=3.0)` 清理；清理失败仍可重试，成功后才可重新打开。该入口也等待进行中的打开操作，并受同一个有限截止时间约束；没有已确认所有权时不发送清理命令。
 - 设备明确拒绝打开，例如返回 `busy`，也不应关闭设备上其他所有者的流。
-- 断开设备连接会唤醒等待者并退役旧句柄。重连后重新查询能力、重新打开；旧句柄不会向重连后的流发送关闭命令。
+- 断开设备连接会唤醒等待者并退役旧句柄。重连后重新查询能力、重新打开；旧关闭操作在实际传输循环接纳命令前重新核对归属，已观察到离线的旧句柄不能向重连后的流发起关闭。已经由通道接纳的在途命令不能撤回，也不能在固件尚未报告离线时推断设备已重启。
 
 `DisplaySession` 也支持同步 `with` 上下文管理，其退出会调用默认有界关闭。异步 Application 仍须等工作线程完成，再退出外层 `ApplicationContext`；单独取消 `asyncio.to_thread` 的等待不会停止线程。
 
@@ -163,6 +165,8 @@ if __name__ == "__main__":
 USB 路径为 `Application Device channel → Daemon → WRU1 → 固件`。WSPK 显示帧作为完整的不透明 `bytes` 进入 WRU1 的 BINARY 逻辑帧；任意 `str` 以严格 UTF-8 编码进入 TEXT，`bytes` 进入 BINARY；不检查 JSON 或业务类型。WRU1 的 `frame_id` / `fragment_index` 与 WSPK 的 `stream_id` / `sequence` 是不同层的标识，不能互换。
 
 WRU1 头为 `<4sBBHIII`、共 `20` 字节；单片负载不超过 `1024` 字节，逻辑帧上限为 `131072` 字节，CRC 为 `zlib.crc32(payload)`。Host 向设备逐片发送并等待同 ID、同分片索引的 ACK；ACK 的 kind 为 `3`、flags 为 `0`、负载长度和 CRC 都为 `0`。默认分片 ACK 超时为 `1` 秒，确认后保留默认 `1 ms` 间隔。超时或 I/O 错误会关闭连接，不自动重传；设备向 Host 发送数据不要求 Host 回传传输 ACK。
+
+USB 读线程与事件循环之间最多保留 128 个排队或正在回调的业务负载，合计 Python 负载存储不超过 1 MiB；Unicode 按实际对象大小计费。交接唤醒合并为最多一个待执行通知，匹配的分片 ACK 使用独立单槽，过期 ACK 不排队。超限立即停止读取，并由事件循环关闭连接；解码器自身仍有独立的长度和超时限制。
 
 USB ACK 只确认对应分片，`sys.ack` 确认业务控制命令，`evt.display.presented` 才返回本次画面呈现结果。这三层确认不能互相替代。
 

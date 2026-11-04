@@ -53,6 +53,10 @@ class FakeRobot:
         if not self.supported:
             raise WatcheRobotError("missing " + capability)
 
+    def _command_guarded(self, kind, data, *, timeout, admit):
+        admit()
+        return self._command(kind, data, timeout=timeout)
+
     def _command(self, kind, data, timeout=None):
         self.commands.append((kind, data.copy(), timeout))
         if self.on_command is not None:
@@ -654,4 +658,67 @@ def test_late_open_ack_keeps_only_cleanup_ownership(monkeypatch):
         domain.open_stream()
     robot.on_command = None
     domain._close()
+    assert robot.commands[-1][:2] == ("ctrl.display.close", {"stream_id": 41})
+
+
+@pytest.mark.parametrize("fail_first_close", [False, True])
+def test_late_open_public_cleanup_allows_retry_and_reopen(monkeypatch, fail_first_close):
+    domain, robot = make_domain()
+    display = importlib.import_module("watcherobot.display")
+    now = [100.0]
+    monkeypatch.setattr(display.time, "monotonic", lambda: now[0])
+
+    def late_ack(kind, data, timeout):
+        if kind == "ctrl.display.open":
+            now[0] += 2
+
+    robot.on_command = late_ack
+    with pytest.raises(TimeoutError, match="timed out"):
+        domain.open_stream(timeout=1)
+
+    if fail_first_close:
+        def reject_close(kind, data, timeout):
+            raise CommandError(kind, "busy")
+        robot.on_command = reject_close
+        with pytest.raises(CommandError, match="busy"):
+            domain.close_stream(timeout=0.1)
+        with pytest.raises(WatcheRobotError, match="already open"):
+            domain.open_stream()
+
+    robot.on_command = None
+    domain.close_stream(timeout=0.1)
+    assert robot.commands[-1][:2] == ("ctrl.display.close", {"stream_id": 41})
+    with domain.open_stream() as reopened:
+        auto_ack(domain, robot)
+        assert reopened.present(JPEG) == 1
+
+
+def test_public_cleanup_without_confirmed_ownership_sends_no_command():
+    domain, robot = make_domain()
+    domain.close_stream()
+    assert robot.commands == []
+
+
+def test_public_cleanup_waits_for_open_and_times_out_without_losing_ownership():
+    domain, robot = make_domain()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold_open(kind, data, timeout):
+        if kind == "ctrl.display.open":
+            entered.set()
+            assert release.wait(1)
+
+    robot.on_command = hold_open
+    opening = Call(lambda: domain.open_stream(timeout=1))
+    assert entered.wait(1)
+    try:
+        with pytest.raises(TimeoutError, match="timed out"):
+            domain.close_stream(timeout=0.02)
+    finally:
+        release.set()
+    session = opening.result()
+    domain.close_stream()
+    with pytest.raises(WatcheRobotError):
+        session.present(JPEG)
     assert robot.commands[-1][:2] == ("ctrl.display.close", {"stream_id": 41})
