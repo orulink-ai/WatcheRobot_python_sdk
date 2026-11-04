@@ -458,8 +458,13 @@ class UsbConnection:
     async def close(self, code: int = 1000, reason: str = "USB connection closed") -> None:
         """Permanently close the session, release the port, and wake ACK waits."""
         task = self._request_close(None, code, reason)
-        if asyncio.current_task() is task:
+        caller = asyncio.current_task()
+        if caller is task:
             return  # Allow on_disconnect to call close() without self-awaiting.
+        if caller is self._dispatch_task and self._close_caller is not caller:
+            # The external close gathers this callback, including its finally.
+            # Return so it can unwind; external callers still await all cleanup.
+            return
         await asyncio.shield(task)
         if self._close_error is not None:
             raise self._close_error

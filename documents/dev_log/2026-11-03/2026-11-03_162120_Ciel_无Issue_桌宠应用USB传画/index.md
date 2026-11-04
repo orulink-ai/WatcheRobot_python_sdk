@@ -115,3 +115,12 @@ App 本地菜单呈现不再等待 Electron capture；点击后丢弃旧预取�
 最终冻结源码的整合验证：聚焦 300 passed、26 subtests passed；完整 Windows 回归 2562 passed、11 skipped、26 subtests passed（PYTHONUTF8=1）；mypy 140 source files 通过。独立复核未发现 Critical/Important，新增测试独立 24 passed；实际 Runtime 与 UsbConnection 的纯内存交叉检查 4 passed。精确日志分别保存在发布验收工作目录的 focused-usb-lifecycle.log、full-usb-lifecycle.log、mypy-usb-lifecycle.log 和 full-review.md；没有将机器路径或私有媒体放进仓库。
 
 用户提供另一台普通固件设备后，已通过独立 Runtime 和 `watcherobot app run` 启动仓库现有 sdk_media_lab。普通设备已配对，报告固件 v0.5.12/协议 1.0；小角度 motion Job、灯光以及行为启动/停止通过。相机、麦克风、RTC 与完整固件 commit 身份继续核验，不能提前声称稳定版硬件门禁通过。桌宠专用固件未被改写，尚未合并本 PR 或发布 SDK。
+
+
+### 公共 close 入口的回调重入
+
+2026-11-04，Ciel。提交 c0ff864 的自动审查 [报告](https://github.com/orulink-ai/WatcheRobot_python_sdk/pull/155#issuecomment-6621107443) 发现公开 close() 仍存在与 send 异常路径同类的循环：外部 collector 等待 dispatcher，callback 的 finally 又 await 同一 collector。先新增五项有界事件测试，原实现 4 failed/1 passed；生产修复后五项通过。只有被外部 collector 收集的 dispatcher 直接调用 close 时返回展开；普通外部调用者继续 shield 等待串口、reader、回调和 offline 清理，callback 首先发起关闭及 on_disconnect 重入 close 的既定语义保留。
+
+最终源码冻结后：聚焦 305 passed、26 subtests passed；完整 Windows 回归 2567 passed、11 skipped、26 subtests passed；mypy 140 source files 通过。独立复核本次生产与测试完整差异及实际路由调用链，无剩余 Critical/Important；九项 close 回归独立通过。callback 重入 wait_closed 或等待子 Task 再委托 close/send 不属于本次直接 await send/close 契约，额外复现证据保留，未宣称这些组合已支持。日志为发布验收目录的 focused-usb-public-close.log、full-usb-public-close.log、mypy-usb-public-close.log、usb-close-public-review/evidence.json 和 full-review.md。
+
+普通设备的受管测试台目前加载 c0ff864 候选。配对、小角度运动 Job、行为、灯光、扬声器、相机 JPEG、5 秒 PCM 和浏览器 RTC 视频已实际执行；用户确认动作、灯光、扬声器正常。JPEG 解码正常；PCM 无传输解码失败及丢帧，录音听感仍待用户确认。RTC 实屏约 17–24 fps，停止后资源 owner 已释放；不宣称全链路零丢帧或 RTC 双向音频通过。设备报告 v0.5.12、协议 1.0、clean commit 130bf018c332，已在固件仓库唯一解析为 130bf018c332f4e24175702db0b2849dfed8da63。最新 close 修复尚需重启独立候选 Runtime 后复核加载版本；不把旧进程冒充本次源码。PR 尚未合入，SDK 尚未发行。
