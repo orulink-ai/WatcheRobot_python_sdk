@@ -87,6 +87,9 @@ def _build(root: Path, output: Path) -> None:
             "flash_settings": settings,
             "flash_files": images,
         }
+    for field in ("extra_esptool_args", "flash_settings", "flash_files"):
+        if not isinstance(args.get(field), dict):
+            raise FirmwareError(f"Build field {field} must be an object")
     if (root / "project_description.json").is_file():
         project = _json(_file(root, "project_description.json"))
     else:

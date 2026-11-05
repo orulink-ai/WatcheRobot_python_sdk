@@ -76,3 +76,18 @@
 - macOS Python 3.12：`python -m pytest -o addopts='' tests/distribution/test_firmware_*.py -q`，136 passed、1 skipped（Windows 专用路径用例）；2 项依赖弃用 warning。第一次完整回归因磁盘空间耗尽失败，释放可重建构建缓存后重跑通过，不把环境失败计作功能通过。
 - 默认 Python 3.10 目标 mypy 受本机 NumPy stub 的 Python 3.12 `type` 语法阻塞（`numpy/__init__.pyi:737`）；原增量缓存一度 INTERNAL ERROR，关闭增量后得到明确依赖语法错误。该限制不能描述为项目 3.10 类型检查通过。另以 `mypy --no-incremental --python-version 3.12 src/watcherobot/firmware` 检查当前宿主，12 个源码全部通过。
 - 未新增系统脚本入口；未进行真实账号上传、线上下架或设备写入；未 commit、push、合入，由主审查者统一检查提交。
+
+
+## 2026-11-05｜orulink-wugui / Codex｜PR #156 外部审查：收窄应用更新启动策略
+
+- 外部自动审查指出 P1：相同分区布局不能证明设备当前/下次启动哪个 OTA 槽；原 application 模式接受只写 OTA 槽或 factory 的包，可能报告完成但继续运行其他槽。独立复核确认原实现仅比较布局，没有 OTA 状态或槽切换计划。
+- 本轮明确不实现不完整 OTA 策略。`inspect_installation` 和 `plan_installation` 共用边界：application 模式必须恰好一个 type=app/subtype=factory，且没有 type=data/subtype=ota。含任何 OTA 槽、test/其他应用、多个 factory 应用或 OTA 选择数据均拒绝；单 factory 与普通 NVS/custom data 组合保留，检查与标签名称无关。设备实际布局仍须与包内布局一致。
+- TDD Red：7 种布局 × 包检查/计划检查共14例先出现 DID NOT RAISE，包括写 ota_0、写 ota_1、写 factory 但保留 OTA 槽、保留选择数据、ota_15、test、多 factory；1条合法非OTA数据布局通过。Green：共享策略生效后 installation 32项通过。计划入口另核验已构造 Installation，避免旧解析结果绕过新边界。
+- 正式文档已更新支持边界及 ESP-IDF 官方 type/subtype 来源；SDK 不打开 USB、不改变业务帧路由、不写 OTA 数据。
+- bootloader 与分区表编译地址关联问题独立处理，本轮未把限制应用更新冒称完整包问题已解决。仅限制表地址为默认值仍不足以证明 bootloader 编译配置，等待明确可信配置/支持边界决策。
+- 本轮未进行设备写入、线上发布、commit 或 push；由主审查者统一检查提交。
+
+- 同轮主审查者修复构建元数据对象类型：`extra_esptool_args` / `flash_settings` / `flash_files` 的数组输入先3例失败，再于 `.get` / `.values` 前检查 dict，返回包含字段名的 `FirmwareError`；该项与本轮 OTA 修复统一提交。
+- 本轮最终验证：`pytest -o addopts='' tests/distribution/test_firmware_*.py -q` 为154 passed、1 skipped（Windows 专用）、2项依赖弃用 warning；`mypy --no-incremental --python-version 3.12 src/watcherobot/firmware` 12源码通过；`git diff --check` 通过。bootloader/表地址关联 P1 仍为未解决合入阻断，不能据这些通过结果声称分支可合入。
+
+- 主审最终重跑 Distribution 全套：618 通过、4 跳过；Python 3.12 firmware mypy 12 源码通过。当前只保存已验证的 OTA 与元数据修复，不将剩余 bootloader 风险带入目标分支。

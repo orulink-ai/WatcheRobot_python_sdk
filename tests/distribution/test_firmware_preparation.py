@@ -240,3 +240,15 @@ def test_malformed_package_manifest_is_not_reinterpreted_as_build_metadata(tmp_p
     with pytest.raises(FirmwareError, match="Invalid firmware manifest fields"):
         prepare_package(malformed, tmp_path / "cache")
     assert not list((tmp_path / "cache").glob("*.zip"))
+
+
+@pytest.mark.parametrize("field", ["extra_esptool_args", "flash_settings", "flash_files"])
+def test_build_rejects_non_object_flash_metadata_with_field_name(tmp_path, field):
+    source = build(tmp_path / "invalid-metadata")
+    metadata = source / "flasher_args.json"
+    value = json.loads(metadata.read_text())
+    value[field] = []
+    metadata.write_text(json.dumps(value))
+    with pytest.raises(FirmwareError, match=field):
+        prepare_package(source, tmp_path / "cache")
+    assert not list((tmp_path / "cache").glob("*.zip"))

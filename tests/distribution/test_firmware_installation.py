@@ -35,9 +35,14 @@ def valid_image():
     return data + hashlib.sha256(data).digest()
 
 
-def package(path, *, offset=0x20000, full=False, missing_boot=False, image=None):
+def package(
+    path, *, offset=0x20000, full=False, missing_boot=False, image=None, layout=None
+):
     image = valid_image() if image is None else image
-    files = {"application.bin": image, "partition-table.bin": table(offset)}
+    files = {
+        "application.bin": image,
+        "partition-table.bin": table(offset) if layout is None else layout,
+    }
     segments = [(offset, "application.bin")]
     if full:
         segments.insert(0, (0x8000, "partition-table.bin"))
@@ -201,3 +206,64 @@ def test_esptool_generated_image_is_accepted(tmp_path):
         inspect_installation(package(tmp_path / "esptool.zip", image=data)).mode
         == "application"
     )
+
+
+# These are binary ESP-IDF partition types/subtypes, independent of labels.
+UNSUPPORTED_APPLICATION_LAYOUTS = [
+    [(0, 0x10, 0x20000, "ota_0"), (0, 0x11, 0x120000, "ota_1")],
+    [(0, 0x11, 0x20000, "ota_1"), (0, 0x10, 0x120000, "ota_0")],
+    [(0, 0, 0x20000, "factory"), (0, 0x10, 0x120000, "ota_0")],
+    [(0, 0, 0x20000, "factory"), (1, 0, 0x9000, "selection")],
+    [(0, 0x1F, 0x20000, "custom_label")],
+    [(0, 0x20, 0x20000, "test")],
+    [(0, 0, 0x20000, "factory"), (0, 0, 0x120000, "second_factory")],
+]
+
+
+def encoded_layout(entries):
+    return b"".join(
+        struct.pack(
+            "<HBBII16sI",
+            0x50AA,
+            kind,
+            subtype,
+            offset,
+            0x100000 if kind == 0 else 0x2000,
+            name.encode(),
+            0,
+        )
+        for kind, subtype, offset, name in entries
+    ) + b"\xff" * 32
+
+
+@pytest.mark.parametrize("entries", UNSUPPORTED_APPLICATION_LAYOUTS)
+def test_application_package_rejects_ambiguous_boot_selection(tmp_path, entries):
+    path = package(tmp_path / "unsafe-update.zip", layout=encoded_layout(entries))
+    with pytest.raises(FirmwareError, match="single factory.*OTA"):
+        inspect_installation(path, require_layout=True)
+
+
+@pytest.mark.parametrize("entries", UNSUPPORTED_APPLICATION_LAYOUTS)
+def test_application_plan_cannot_accept_unsupported_boot_selection(tmp_path, entries):
+    from dataclasses import replace
+
+    # A caller can hold Installation data parsed before this policy was added.
+    info = inspect_installation(package(tmp_path / "factory-update.zip"))
+    layout = encoded_layout(entries)
+    info = replace(info, partitions=parse_partitions(layout, 0x2000000))
+    with pytest.raises(FirmwareError, match="single factory.*OTA"):
+        plan_installation(info, layout, 0x2000000)
+
+
+def test_single_factory_update_allows_non_ota_data_partitions(tmp_path):
+    layout = encoded_layout(
+        [
+            (0, 0, 0x20000, "custom_app_name"),
+            (1, 2, 0x9000, "nvs"),
+            (0x40, 0, 0xB000, "custom_data"),
+        ]
+    )
+    info = inspect_installation(package(tmp_path / "factory.zip", layout=layout))
+    plan = plan_installation(info, layout, 0x2000000)
+    assert plan.mode == "application"
+    assert plan.requires_confirmation is False
