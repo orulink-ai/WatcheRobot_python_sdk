@@ -1,0 +1,54 @@
+# 固件自动解析及安装校验
+
+- 2026-11-05 Asia/Shanghai；作者 wugui；Codex 执行；无 Issue。
+- 分支 codex/firmware-install-validation，基于最新 origin/main 0a5427e。
+- 状态：进行中，未提交。目标与验收见根目录 implementation-plan.md。
+- 配套 Desktop 独立功能分支同名，基于其 origin/dev。SDK 为解析和策略唯一实现，Desktop 负责 USB 与界面。
+- 已阅读本仓规范/模板；历史 firmware-marketplace 档案与现有协议说明作为上下文。TDD证据后续追加。
+
+## 实现与验证（2026-11-05，wugui / Codex）
+
+- 两仓分别使用 origin/main（SDK 0a5427e）与 origin/dev（Desktop 1a4d740）的最新检出建立同名功能分支，原工作区既有修改保留。
+- SDK 新增纯函数分区解析、schema v2 参考表、安装策略，自动准备 IDF 构建目录/ZIP；上传和提交均严格检查布局，未通过不接触上传平台。原 v1 读取保留，缺布局不能新发布/写入。
+- 自动准备包使用固定 ZIP 条目、稳定排序和无压缩存储，消除时间戳、映射顺序及压缩器差异，支持同版本重试。
+- Desktop 上传先执行 SDK inspect，成功才可发布；设置本地包与广场下载包共用设备只读预检、风险确认、物理锁、同一快照与写入前重检。广场额外保留发布摘要/来源核验。
+- 不增加定时扫描、固定等待成功或后台自动重试；新步骤按操作结果推进，沿用已有进度查询机制。串口连接保留必要的有界失败处理。
+- stdin/stdout/stderr 明确 UTF-8；Windows 长路径使用原生扩展表示，macOS 保持原生路径。中文、emoji、不同初始代码页、长路径均有回归。
+- 新增本机下载包删除和作者下架申请：前者不更改设备，后者需账号所有权及目录审核，保留历史制品。按用户要求不增加恢复官方固件入口。
+
+### TDD 与检查
+
+- SDK 首轮分区测试：缺失模块后实现，出现 7 failed/4 passed；修正 v2 解析及分区终止符后通过。准备模块先因缺实现失败；本地缓存删除/作者下架先 2 failed 后通过；自定义分区测试先失败后通过。
+- 可重现打包测试先因不同 SHA 失败，固定 ZIP 元数据及顺序后通过。长路径测试先在 worker 的 is_file 检查失败，规范化文件系统路径后通过；测试清理失败属于 Windows 路径环境问题，改为校验临时目录后用原生路径清理。
+- 编码边界测试沿用此前真实 Red/Green；新增安装协议测试替换硬件写入，实际解析、任务和输出保留。设备探测纯 helper 先实现后补测，如实记为补测，不冒称所有用例均事前 TDD。
+- SDK：110 passed、9 skipped；其中 8 个既有并发测试因 Windows 无符号链接权限跳过，另 1 为既有跳过。mypy firmware 12 源文件通过。
+- Desktop：维护/安装 Python 35 项通过；Node 53 项通过（含三语、两入口确认/取消、缓存删除、SDK能力门禁）；tsc --noEmit 通过；cargo check 通过；Vite 生产构建通过，有既有大 chunk 提示。
+- Windows PyInstaller 冻结 worker 构建完成；最终冻结管道及长中文路径 smoke 结果在下方追加。
+- USB 实机只读检测成功：ESP32-S3、32 MiB，应用区实际从 0x20000 开始，参考用户原包写入 0x10000 的不匹配事实未改变。未向设备写入；未上传/下架线上固件。
+- macOS 端口形式和 UTF-8 默认环境在自动化覆盖；当前宿主为 Windows，未执行 macOS 原生构建/真机烧录，不能宣称跨平台真机验收已完成。
+
+## 交付状态与配套关系
+
+- 本地源码、测试、文档已修改；未 commit、push、合入或发布，未改根仓 gitlink。
+- 同名配套分支 codex/firmware-install-validation；正式打包要求 SDK capability firmware_installation_v2。
+- 配套提交尚不存在，因此没有编造 SDK commit/source lock。用户授权提交后，应先提交并推送 SDK，再以真实可获取 SHA 更新 Desktop runtime-source-lock.json，构建两平台安装包。
+- 已安装客户端未被替换。当前完成的是源码和主机测试，实际 UI 写入/断线恢复/macOS 硬件验收仍待兼容固件和相应宿主。
+
+## 关联历史
+
+- 补充并部分替代 [固件广场配套安装](../../2026-10-29/2026-10-29_170000_wugui_无Issue_固件广场配套安装/index.md) 的包校验/安装计划：保留原分发与 Daemon 边界，扩展自动解析及双入口设备布局核验；原文保留。
+- [实施计划](../../../../implementation-plan.md)。
+
+### 最终验证补充
+
+配套 Desktop 的最终冻结 EXE 已完成真实管道 UTF-8/emoji/长中文路径验证；原始失败请求现被准确判定为缺参考分区布局，未连接 USB 或执行写入。SDK firmware 全套仍为 110 passed/9 skipped，12 源文件 mypy 通过；没有新增原生脚本入口。
+
+## 2026-11-05：旧包布局状态提前返回
+
+开发版 UI 重试旧包时发现布局核验过晚，导致先停止 Application 再被预检拒绝。cache_status 和 download 现返回 layout_verified/layout_error；仍允许获取旧包，但不会把下载完整误当作可安装。Desktop 使用实际状态禁用写入，运行时最终检查仍保留。
+
+新增两条缓存布局状态测试先失败后通过；最终 firmware 回归 112 passed/9 skipped，operations mypy 通过。未修改旧包、未发布固件或目录。
+
+## 2026-11-05 18:15:08 Asia/Shanghai｜wugui｜审查基线
+用户授权分别保存功能分支并追加审查修复 commit。本次先提交此前功能实现和验证记录，审查发现的镜像完整性和路径边界问题将在后续独立修复提交处理，不发布或烧录。
+

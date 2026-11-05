@@ -45,6 +45,7 @@ class FirmwarePackage:
     description: str = ""
     author: str = ""
     notes: str = ""
+    partition_table: str = ""
 
 
 def _pairs(items: list[tuple[str, object]]) -> dict[str, object]:
@@ -192,12 +193,12 @@ def inspect_package(path: Path) -> FirmwarePackage:
                 if (
                     not isinstance(manifest, dict)
                     or not required.issubset(manifest)
-                    or set(manifest) - required - {"description", "author", "notes"}
+                    or set(manifest) - required - {"description", "author", "notes", "partition_table"}
                 ):
                     raise FirmwareError("Invalid firmware manifest fields")
                 if (
                     type(manifest["schema_version"]) is not int
-                    or manifest["schema_version"] != 1
+                    or manifest["schema_version"] not in (1, 2)
                     or manifest["chip"] != "esp32s3"
                 ):
                     raise FirmwareError("Unsupported firmware schema or chip")
@@ -219,6 +220,11 @@ def inspect_package(path: Path) -> FirmwarePackage:
                     32 * 1024**2,
                 }:
                     raise FirmwareError("Unsupported flash capacity")
+                reference = _path(manifest["partition_table"]) if "partition_table" in manifest else ""
+                if manifest["schema_version"] == 2 and not reference:
+                    raise FirmwareError("Missing reference partition table")
+                if reference and (reference not in files or files[reference].file_size > 4096):
+                    raise FirmwareError("Missing or oversized partition table")
                 raw_segments = manifest["segments"]
                 if (
                     not isinstance(raw_segments, list)
@@ -266,6 +272,7 @@ def inspect_package(path: Path) -> FirmwarePackage:
                     "firmware.json",
                     "flash_args.txt",
                     *(s.path for s in segments),
+                    *([reference] if reference else []),
                 }:
                     raise FirmwareError("Unlisted or repeated firmware files")
                 flash_options = _flash_arguments(
@@ -288,6 +295,7 @@ def inspect_package(path: Path) -> FirmwarePackage:
                     _text(manifest.get("description", ""), 2048),
                     _text(manifest.get("author", ""), 128),
                     _text(manifest.get("notes", ""), 4000),
+                    reference,
                 )
     except (
         OSError,

@@ -33,6 +33,10 @@ def add_commands(commands: argparse._SubParsersAction[argparse.ArgumentParser]) 
         "--action",
         required=True,
         choices=(
+            "inspect",
+            "cache_status",
+            "remove_download",
+            "withdraw",
             "marketplace",
             "download",
             "publish",
@@ -120,6 +124,7 @@ def run(args: argparse.Namespace) -> int:
                 "firmware_package_check",
                 "firmware_requirement_contract",
                 "firmware_operations_v1",
+                "firmware_installation_v2",
             ]
         }
     else:

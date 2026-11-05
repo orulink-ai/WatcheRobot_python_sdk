@@ -312,7 +312,12 @@ def test_catalog_transactions_prevent_late_old_approval(tmp_path, monkeypatch, w
     home.mkdir()
     monkeypatch.setattr(operations.Path, "home", lambda: home)
     alias = tmp_path / "cache-alias"
-    alias.symlink_to(root, target_is_directory=True)
+    try:
+        alias.symlink_to(root, target_is_directory=True)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows account cannot create symbolic links")
+        raise
     context = multiprocessing.get_context("spawn") if workers == "processes" else threading
     results = multiprocessing.get_context("spawn").Queue() if workers == "processes" else queue.Queue()
     first_started, second_started = context.Event(), context.Event()

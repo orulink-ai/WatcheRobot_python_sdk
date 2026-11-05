@@ -28,6 +28,10 @@ from .platforms import FirmwarePlatform
 from .transfer import Progress, acquire_package, release_record
 
 ACTIONS = {
+    "inspect",
+    "cache_status",
+    "remove_download",
+    "withdraw",
     "marketplace",
     "download",
     "publish",
@@ -188,6 +192,15 @@ def _configure(path: Path, request: dict[str, Any], root: Path, provider: str) -
     return {"configured": True, "requires_firmware": requirement.to_dict()}
 
 
+def _installation_status(path: Path) -> dict[str, Any]:
+    from .installation import inspect_installation
+    try:
+        info = inspect_installation(path, require_layout=True)
+        return {"layout_verified": True, "installation_mode": info.mode}
+    except FirmwareError as exc:
+        return {"layout_verified": False, "layout_error": str(exc)}
+
+
 def execute(
     action: str,
     request: dict[str, Any],
@@ -202,7 +215,36 @@ def execute(
     get_provider(provider)
     root = Path(cache_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
+    if action == "inspect":
+        from .preparation import prepare_package
+        return prepare_package(Path(request["package_path"]), root / "prepared")
+    if action in {"cache_status", "remove_download"}:
+        digest = request.get("sha256")
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise FirmwareError("Invalid cache digest")
+        target = root / "packages" / (digest + ".zip")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with FileLock(str(target.parent / (digest + ".lock")), timeout=10):
+            if target.is_symlink():
+                raise FirmwareError("Cache file must not be a symbolic link")
+            if action == "remove_download":
+                exists = target.exists()
+                target.unlink(missing_ok=True)
+                return {"removed": exists}
+            cached = False
+            if target.is_file():
+                from .package import inspect_package
+                try:
+                    cached = inspect_package(target).sha256 == digest
+                except FirmwareError:
+                    pass
+            return {"cached": cached, **(_installation_status(target) if cached else {})}
     backend = FirmwarePlatform(provider)
+    if action == "withdraw":
+        token = SystemCredentialStore(provider=provider).load()
+        if token is None:
+            raise FirmwareError("Sign in before requesting firmware withdrawal")
+        return backend.request_withdrawal(request["firmware_id"], request["version"], token)
     if action == "configure":
         path = Path(request["application_dir"]).resolve() / "app.json"
         # Keep the namespace shared across this user's SDK processes, not across
@@ -351,6 +393,6 @@ def execute(
             release = _selected(request, releases)
         if action == "download":
             path = acquire_package(release, root / "packages", progress=progress, offline=offline)
-            return {"release": asdict(release), "package_path": str(path),
+            return {"release": asdict(release), "package_path": str(path), **_installation_status(path),
                     "catalog_stale": offline, "warnings": ["firmware_catalog_unavailable"] if offline else []}
         raise FirmwareError("USB device operations belong to Watcher Desktop")

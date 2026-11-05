@@ -10,7 +10,7 @@ from watcherobot.distribution.ports import AccessToken
 from watcherobot.firmware.contract import FirmwareError
 from watcherobot.firmware.platforms import FirmwarePlatform
 from watcherobot.firmware.package import inspect_package
-from tests.distribution.test_firmware_contract import make_package
+from tests.distribution.test_firmware_installation import package as make_package
 
 
 class Hf:
@@ -177,7 +177,7 @@ def test_firmware_submission_only_changes_separate_catalog_and_detects_version_c
     from dataclasses import replace
     from watcherobot.firmware import platforms
     from watcherobot.firmware.transfer import release_record
-    from tests.distribution.test_firmware_transfer import artifact
+    from tests.distribution.test_firmware_installation import release_artifact as artifact
     from tests.distribution._publishing_fakes import FakePublishHub
     from watcherobot.distribution.ports import CatalogDocument
 
@@ -188,7 +188,7 @@ def test_firmware_submission_only_changes_separate_catalog_and_detects_version_c
         )
     )
     monkeypatch.setattr(platforms, "HuggingFacePublishHubClient", lambda: hub)
-    monkeypatch.setattr(platforms, "acquire_package", lambda *a, **kw: None)
+    monkeypatch.setattr(platforms, "acquire_package", lambda *a, **kw: tmp_path / "source.zip")
     backend = FirmwarePlatform("huggingface", hf_factory=lambda token: Hf())
     assert (
         backend.submit(release, AccessToken("secret"), cache_root=tmp_path)["status"]
@@ -222,7 +222,7 @@ def test_reviewed_metadata_is_preserved_on_publication_resubmission(tmp_path, mo
     from dataclasses import replace
     from watcherobot.firmware import platforms
     from watcherobot.firmware.transfer import release_record
-    from tests.distribution.test_firmware_transfer import artifact
+    from tests.distribution.test_firmware_installation import release_artifact as artifact
     from tests.distribution._publishing_fakes import FakePublishHub
     from watcherobot.distribution.ports import CatalogDocument
 
@@ -233,7 +233,7 @@ def test_reviewed_metadata_is_preserved_on_publication_resubmission(tmp_path, mo
         "schema_version": 1, "firmwares": [release_record(reviewed)],
     }).encode()))
     monkeypatch.setattr(platforms, "HuggingFacePublishHubClient", lambda: hub)
-    monkeypatch.setattr(platforms, "acquire_package", lambda *a, **kw: None)
+    monkeypatch.setattr(platforms, "acquire_package", lambda *a, **kw: tmp_path / "source.zip")
     backend = FirmwarePlatform("huggingface")
     if withdrawn:
         with pytest.raises(FirmwareError, match="withdrawn"):

@@ -124,7 +124,8 @@ class FirmwarePlatform:
         self, path: Path, token: AccessToken, *, progress: Progress | None = None
     ) -> FirmwareRelease:
         emit = progress or (lambda **_: None)
-        package = inspect_package(path)
+        from .installation import inspect_installation
+        package = inspect_installation(path, require_layout=True).package
         release_version = ".".join(map(str, version(package.version)))
         metadata = json.dumps(asdict(package), ensure_ascii=True).encode()
         emit(stage="preparing_upload", total_bytes=package.size)
@@ -382,6 +383,75 @@ class FirmwarePlatform:
             )
         )
 
+    def request_withdrawal(
+        self, identity: str, selected_version: str, token: AccessToken
+    ) -> dict[str, object]:
+        """Request a reviewed catalog change; never delete artifacts or device data."""
+        from .contract import firmware_id
+
+        firmware_id(identity)
+        version(selected_version)
+        username = (
+            self.hf_factory(token.value).whoami()["name"]
+            if self.provider == "huggingface"
+            else self._gitee("GET", "user", token)["login"]
+        )
+        repository = (
+            HuggingFacePublishHubClient()
+            if self.provider == "huggingface"
+            else GiteeRepository()
+        )
+        catalog_repo = get_provider(self.provider).catalog
+        document = repository.read_catalog(
+            token, repo_id=catalog_repo, path=CATALOG_PATH
+        )
+        releases = list(parse_catalog(document.content, provider=self.provider))
+        selected = next(
+            (
+                item
+                for item in releases
+                if item.firmware_id == identity
+                and version(item.version) == version(selected_version)
+            ),
+            None,
+        )
+        if selected is None:
+            raise FirmwareError("Selected firmware version is not listed")
+        if selected.repo_id.split("/")[0].casefold() != str(username).casefold():
+            raise FirmwareError(
+                "Only the firmware repository owner may request withdrawal"
+            )
+        if selected.withdrawn:
+            return {"status": "already_withdrawn"}
+        releases = [
+            replace(item, withdrawn=True) if item == selected else item
+            for item in releases
+        ]
+        content = json.dumps(
+            {
+                "schema_version": 1,
+                "firmwares": [release_record(item) for item in releases],
+            },
+            ensure_ascii=True,
+            indent=2,
+        ).encode("utf-8")
+        title = f"Withdraw firmware: {identity}@{selected.version}"
+        for existing in repository.list_open_catalog_pull_requests(
+            token, repo_id=catalog_repo, author=str(username)
+        ):
+            if existing.title == title:
+                return {"status": "pending", "pr_url": existing.url}
+        result = repository.create_catalog_pull_request(
+            token,
+            repo_id=catalog_repo,
+            path=CATALOG_PATH,
+            content=content,
+            parent_commit=document.commit,
+            title=title,
+            description="Author requests withdrawal. Preserve historical artifacts and metadata; review before merging.",
+        )
+        return {"status": "pending", "pr_url": result.url}
+
     def submit(
         self,
         release: FirmwareRelease,
@@ -394,7 +464,9 @@ class FirmwarePlatform:
             raise FirmwareError("Selected provider does not match firmware publication")
         # Always anonymously re-download and inspect before offering the version to users.
         with tempfile.TemporaryDirectory(prefix="firmware-public-check-") as temporary:
-            acquire_package(release, Path(temporary), progress=progress)
+            verified = acquire_package(release, Path(temporary), progress=progress)
+            from .installation import inspect_installation
+            inspect_installation(verified, require_layout=True)
         repository = (
             HuggingFacePublishHubClient()
             if self.provider == "huggingface"

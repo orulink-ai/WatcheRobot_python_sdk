@@ -205,3 +205,15 @@ flowchart TD
 - 真实匿名读取：HF 主目录 9 个应用，Gitee 5 个应用；分别实际下载一个固定提交的应用源码并完成校验，没有运行其代码或安装依赖。
 - HF 主目录尚无 firmware-list.json；Gitee 固件目录正常返回空列表。因此真实固件上传、收录后的匿名下载和 USB 实机写入仍待真实发布产物验收，不能用模拟通过替代。
 - 桌面复核修复联动准备失败后的过早跳转、切换应用的旧固件选择和缺少 USB 序列号时的物理设备互斥；继续共用原设置维护执行器。
+
+## 自动准备和布局校验（v2）
+
+`firmware execute --action inspect --request-json '{"package_path":"..."}'` 在本地准备安装包，无需登录，不连接设备。输入支持规范 ZIP、ESP-IDF 构建目录和构建 ZIP。工具读取生成的 flash 文件映射、分区表、应用描述，生成规范 `firmware.json`，不执行作者脚本。Windows 本地长路径使用扩展路径，中文路径及文本按 UTF-8 处理，构建 JSON 可带 UTF-8 BOM。
+
+v2 新增 `partition_table` 文件引用，其地址不由用户手填。参考分区表不列入 `segments` 时仅作布局依据；完整刷机包将其列入写入分段，并必须有合法 bootloader、应用镜像。支持自定义分区标签、数据类型和合法地址，不以某个官方版本的布局作为全局要求。Flash 容量、文件大小、擦除重叠和芯片镜像合法性仍接受检查。
+
+`inspect_installation` 为共享纯函数，发布与提交目录审核之前执行严格布局检查；旧包可读，缺布局不允许新发布。`plan_installation` 接受 Desktop 读取的真实设备表和容量：应用更新要求布局兼容，完整刷机返回必须确认覆盖数据的计划。SDK 不负责打开 USB、停止应用或更改 Daemon 业务路由。
+
+本地缓存操作 `cache_status` / `remove_download` 只接受 SHA-256，不接受任意删除路径，并与下载复用摘要锁。删除缓存不会卸载设备固件。`withdraw` 要求当前账号为固件仓库所有者，向目录创建下架审核请求，保留展示信息及历史文件，不自动合并或删除线上制品。
+
+配套桌面 capability：`firmware_installation_v2`。发行时先提交并发布可获取的 SDK，再更新 Desktop 的真实 SDK 来源锁和冻结工具；未更新前不能将新界面搭配旧 Runtime 发布。
