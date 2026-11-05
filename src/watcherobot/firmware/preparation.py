@@ -17,7 +17,13 @@ from zipfile import ZipFile, ZipInfo, ZIP_STORED, BadZipFile
 from .contract import FirmwareError
 from .installation import inspect_installation
 from .paths import filesystem_path
-from .package import MAX_PACKAGE_BYTES, MAX_EXPANDED_BYTES, _path, _pairs
+from .package import (
+    MAX_PACKAGE_BYTES,
+    MAX_EXPANDED_BYTES,
+    MAX_METADATA_BYTES,
+    _path,
+    _pairs,
+)
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -225,6 +231,21 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
                         "firmware.json" in archive.namelist()
                         and "flash_args.txt" in archive.namelist()
                     )
+                    if prepared:
+                        if archive.getinfo("firmware.json").file_size > MAX_METADATA_BYTES:
+                            raise FirmwareError("Firmware metadata exceeds size limit")
+                        metadata = json.loads(
+                            archive.read("firmware.json").decode("utf-8-sig"),
+                            object_pairs_hook=_pairs,
+                        )
+                        if not isinstance(metadata, dict):
+                            raise FirmwareError("Firmware metadata must be an object")
+                        # IDF builds may carry optional display metadata too.
+                        # A package-format marker keeps malformed packages on the
+                        # strict inspection path rather than rebuilding them.
+                        prepared = (
+                            "schema_version" in metadata or "segments" in metadata
+                        )
                 if prepared:
                     output.write_bytes(source.read_bytes())
                 else:

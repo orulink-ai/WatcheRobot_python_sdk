@@ -65,3 +65,14 @@
 
 配套 Desktop 基线为 191ad645，独立修复提交会同步真实 SDK 来源锁。当前提交/测试在本地完成，不推送、不合入、不发布，不改变 meta repo gitlink。
 
+
+
+## 2026-11-05｜orulink-wugui / Codex｜macOS 分支合入前审查修复
+
+- 延续同一任务审查，针对 SDK `origin/main...codex/firmware-install-validation` 检查包解析、分区/镜像验证、两端发布、缓存删除及路径边界；未改变 Daemon 路由。
+- [P2，已修复] IDF 构建 ZIP 包含 `flash_args.txt` 并按现有规则提供可选 `firmware.json` 展示元数据时，原实现仅凭两文件存在就误判为预制安装包。相同构建目录可准备，ZIP 却报 `Invalid firmware manifest fields`，阻断有效固件上传预检。
+- 现对有界 JSON 元数据检查包格式标记（`schema_version` / `segments`），普通展示元数据继续走构建准备；含包格式标记的成品包始终保留严格校验，不以重新打包修复坏 manifest。
+- TDD Red：新增 JSON flash args / 纯文本 flash args 两种真实构建 ZIP 回归，修复前均失败于 `Invalid firmware manifest fields`；Green：修复后两条通过，目录与 ZIP 的内容 SHA 相同。另补损坏成品 manifest 不回退为 build 的防回退用例。
+- macOS Python 3.12：`python -m pytest -o addopts='' tests/distribution/test_firmware_*.py -q`，136 passed、1 skipped（Windows 专用路径用例）；2 项依赖弃用 warning。第一次完整回归因磁盘空间耗尽失败，释放可重建构建缓存后重跑通过，不把环境失败计作功能通过。
+- 默认 Python 3.10 目标 mypy 受本机 NumPy stub 的 Python 3.12 `type` 语法阻塞（`numpy/__init__.pyi:737`）；原增量缓存一度 INTERNAL ERROR，关闭增量后得到明确依赖语法错误。该限制不能描述为项目 3.10 类型检查通过。另以 `mypy --no-incremental --python-version 3.12 src/watcherobot/firmware` 检查当前宿主，12 个源码全部通过。
+- 未新增系统脚本入口；未进行真实账号上传、线上下架或设备写入；未 commit、push、合入，由主审查者统一检查提交。

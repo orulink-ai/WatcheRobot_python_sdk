@@ -196,3 +196,47 @@ def test_both_upload_providers_reject_bad_packages_before_auth_or_remote_io(
             FirmwarePlatform(provider, client=client, hf_factory=remote).publish(
                 path, AccessToken("unused")
             )
+
+
+@pytest.mark.parametrize("use_json_flash_args", [True, False])
+def test_build_zip_with_display_metadata_is_prepared_like_directory(
+    tmp_path, use_json_flash_args
+):
+    source = build(tmp_path / "custom-build")
+    if not use_json_flash_args:
+        (source / "flasher_args.json").unlink()
+    (source / "flash_args.txt").write_text(
+        "--flash_size 32MB --flash_mode dio --flash_freq 80m\n"
+        "0 bootloader.bin\n0x8000 partition-table.bin\n0x20000 app.bin"
+    )
+    (source / "firmware.json").write_text(
+        json.dumps({"id": "org.example.custom", "name": "Custom Firmware"})
+    )
+    expected = prepare_package(source, tmp_path / "directory-cache")
+    raw = tmp_path / "custom-build.zip"
+    with ZipFile(raw, "w") as archive:
+        for path in source.iterdir():
+            archive.write(path, path.name)
+    actual = prepare_package(raw, tmp_path / "zip-cache")
+    assert actual["mode"] == "full"
+    assert actual["name"] == "Custom Firmware"
+    assert actual["firmware_id"] == "org.example.custom"
+    assert actual["sha256"] == expected["sha256"]
+
+
+def test_malformed_package_manifest_is_not_reinterpreted_as_build_metadata(tmp_path):
+    from tests.distribution.test_firmware_installation import package
+
+    original = package(tmp_path / "original.zip")
+    malformed = tmp_path / "malformed.zip"
+    with ZipFile(original) as source, ZipFile(malformed, "w") as output:
+        for item in source.infolist():
+            data = source.read(item)
+            if item.filename == "firmware.json":
+                manifest = json.loads(data)
+                del manifest["name"]
+                data = json.dumps(manifest).encode("utf-8")
+            output.writestr(item, data)
+    with pytest.raises(FirmwareError, match="Invalid firmware manifest fields"):
+        prepare_package(malformed, tmp_path / "cache")
+    assert not list((tmp_path / "cache").glob("*.zip"))
