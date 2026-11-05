@@ -36,7 +36,8 @@ def valid_image():
 
 
 def package(
-    path, *, offset=0x20000, full=False, missing_boot=False, image=None, layout=None
+    path, *, offset=0x20000, full=False, missing_boot=False, image=None, layout=None,
+    table_offset=0x8000,
 ):
     image = valid_image() if image is None else image
     files = {
@@ -45,7 +46,7 @@ def package(
     }
     segments = [(offset, "application.bin")]
     if full:
-        segments.insert(0, (0x8000, "partition-table.bin"))
+        segments.insert(0, (table_offset, "partition-table.bin"))
         if not missing_boot:
             files["bootloader.bin"] = image
             segments.insert(0, (0, "bootloader.bin"))
@@ -96,7 +97,7 @@ def test_legacy_app_without_layout_is_readable_but_not_publishable(tmp_path):
 
 
 def test_full_install_needs_bootloader(tmp_path):
-    with pytest.raises(FirmwareError, match="bootloader"):
+    with pytest.raises(FirmwareError, match="bootloader image at address zero"):
         inspect_installation(
             package(tmp_path / "bad.zip", full=True, missing_boot=True)
         )
@@ -209,7 +210,7 @@ def test_esptool_generated_image_is_accepted(tmp_path):
 
 
 # These are binary ESP-IDF partition types/subtypes, independent of labels.
-UNSUPPORTED_APPLICATION_LAYOUTS = [
+DECLARED_APPLICATION_LAYOUTS = [
     [(0, 0x10, 0x20000, "ota_0"), (0, 0x11, 0x120000, "ota_1")],
     [(0, 0x11, 0x20000, "ota_1"), (0, 0x10, 0x120000, "ota_0")],
     [(0, 0, 0x20000, "factory"), (0, 0x10, 0x120000, "ota_0")],
@@ -236,23 +237,40 @@ def encoded_layout(entries):
     ) + b"\xff" * 32
 
 
-@pytest.mark.parametrize("entries", UNSUPPORTED_APPLICATION_LAYOUTS)
-def test_application_package_rejects_ambiguous_boot_selection(tmp_path, entries):
-    path = package(tmp_path / "unsafe-update.zip", layout=encoded_layout(entries))
-    with pytest.raises(FirmwareError, match="single factory.*OTA"):
-        inspect_installation(path, require_layout=True)
+@pytest.mark.parametrize("entries", DECLARED_APPLICATION_LAYOUTS)
+def test_application_package_preserves_declared_target_without_boot_slot_selection(
+    tmp_path, entries
+):
+    path = package(tmp_path / "declared-update.zip", layout=encoded_layout(entries))
+    original = path.read_bytes()
+    info = inspect_installation(path, require_layout=True)
+    assert info.mode == "application"
+    assert [(s.offset, s.path) for s in info.package.segments] == [
+        (0x20000, "application.bin")
+    ]
+    assert info.partitions == parse_partitions(encoded_layout(entries), 0x2000000)
+    assert path.read_bytes() == original
 
 
-@pytest.mark.parametrize("entries", UNSUPPORTED_APPLICATION_LAYOUTS)
-def test_application_plan_cannot_accept_unsupported_boot_selection(tmp_path, entries):
+@pytest.mark.parametrize("entries", DECLARED_APPLICATION_LAYOUTS)
+def test_application_plan_accepts_declared_slot_without_changing_ota_selection(
+    tmp_path, entries
+):
     from dataclasses import replace
 
-    # A caller can hold Installation data parsed before this policy was added.
+    # The planner also accepts an already parsed Installation from its caller.
     info = inspect_installation(package(tmp_path / "factory-update.zip"))
     layout = encoded_layout(entries)
     info = replace(info, partitions=parse_partitions(layout, 0x2000000))
-    with pytest.raises(FirmwareError, match="single factory.*OTA"):
-        plan_installation(info, layout, 0x2000000)
+    segments = info.package.segments
+    plan = plan_installation(info, layout, 0x2000000)
+    assert plan.mode == "application"
+    assert plan.requires_confirmation is False
+    assert plan.device_layout_sha256 == hashlib.sha256(layout).hexdigest()
+    assert info.package.segments == segments
+    assert [(s.offset, s.path) for s in info.package.segments] == [
+        (0x20000, "application.bin")
+    ]
 
 
 def test_single_factory_update_allows_non_ota_data_partitions(tmp_path):
@@ -267,3 +285,48 @@ def test_single_factory_update_allows_non_ota_data_partitions(tmp_path):
     plan = plan_installation(info, layout, 0x2000000)
     assert plan.mode == "application"
     assert plan.requires_confirmation is False
+
+
+@pytest.mark.parametrize("segment_kind", ["data", "bootloader", "table"])
+def test_application_mode_still_rejects_non_application_write_segments(
+    tmp_path, segment_kind
+):
+    layout = encoded_layout(
+        [(0, 0x10, 0x20000, "ota_0"), (1, 0, 0x9000, "selection")]
+    )
+    original = package(tmp_path / "source.zip", layout=layout)
+    with ZipFile(original) as archive:
+        files = {item.filename: archive.read(item) for item in archive.infolist()}
+    name, offset, data, error = {
+        "data": ("selection.bin", 0x9000, bytes(32), "data partitions"),
+        "bootloader": ("bootloader.bin", 0, valid_image(), "Incomplete application"),
+        "table": ("partition-table.bin", 0x8000, layout, "bootloader"),
+    }[segment_kind]
+    manifest = json.loads(files["firmware.json"])
+    manifest["segments"].append({
+        "path": name, "offset": offset, "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    })
+    files["firmware.json"] = json.dumps(manifest).encode()
+    files["flash_args.txt"] += f"\n{offset:#x} {name}".encode()
+    files[name] = data
+    path = tmp_path / "extra-segment.zip"
+    with ZipFile(path, "w") as archive:
+        for name, data in files.items():
+            archive.writestr(name, data)
+    with pytest.raises(FirmwareError, match=error):
+        inspect_installation(path, require_layout=True)
+
+
+def test_full_package_preserves_author_declared_custom_table_address(tmp_path):
+    info = inspect_installation(
+        package(tmp_path / "custom-table.zip", full=True, table_offset=0x9000),
+        require_layout=True,
+    )
+    assert info.mode == "full"
+    assert info.table_offset == 0x9000
+    assert [(s.offset, s.path) for s in info.package.segments] == [
+        (0, "bootloader.bin"),
+        (0x9000, "partition-table.bin"),
+        (0x20000, "application.bin"),
+    ]

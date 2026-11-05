@@ -91,3 +91,17 @@
 - 本轮最终验证：`pytest -o addopts='' tests/distribution/test_firmware_*.py -q` 为154 passed、1 skipped（Windows 专用）、2项依赖弃用 warning；`mypy --no-incremental --python-version 3.12 src/watcherobot/firmware` 12源码通过；`git diff --check` 通过。bootloader/表地址关联 P1 仍为未解决合入阻断，不能据这些通过结果声称分支可合入。
 
 - 主审最终重跑 Distribution 全套：618 通过、4 跳过；Python 3.12 firmware mypy 12 源码通过。当前只保存已验证的 OTA 与元数据修复，不将剩余 bootloader 风险带入目标分支。
+
+
+## 2026-11-05｜orulink-wugui / Codex｜用户澄清职责后更正启动语义审查
+
+- 用户明确职责：作者对固件构建/bootloader 配套和启动语义负责；桌面按作者声明执行 USB 写入，成功只表示写入与校验完成，不是目标固件运行证明。对照代码确认 manifest 与 flash_args 的地址/路径逐项一致性、镜像结构与摘要、分区/容量/擦除边界均已有客观检查；UI 区分写入记录和当前运行身份，不自动选择或启动 OTA 槽。
+- 更正上一节“收窄应用更新启动策略”和“bootloader关联为合入P1阻断”的结论：此前将未承诺的任意固件启动保证提升为工具职责，超出了用户澄清后的边界。该历史审查及其当时真实 Red/Green 证据保留，当前策略以本节及正式文档为准，不声称旧判断从未发生。
+- 删除本轮新增的 single-factory 强制限制，允许相同实际/参考布局中的 factory、OTA、test、多应用声明分段原样 USB 写入；不切槽、不改写选择状态、不替作者补包。application 模式禁止数据/bootloader 写入、布局必须一致、分区表写入归完整包等已有检查保持。
+- TDD Red：按澄清后的合同重写7种布局的包/计划用例共14项，先被此前 single-factory 限制拒绝；Green：移除限制后14项通过，并断言分段地址/路径保持声明、布局/包字节保持不变。另补3项非法非应用写入拒绝和1项自定义表地址保留回归；installation 36项通过。
+- 将“requires a matching bootloader”改为“requires a bootloader image at address zero”，准确表述已执行的存在性检查；不冒称证明二进制编译配置关联。没有添加可信摘要白名单、编译证明、自动OTA策略或固件变更。
+- 此更正不免除可核验结构错误的拒绝义务，也不宣称真实启动已验证。真实写入、启动和业务行为仍须如实记录，不能用主机测试替代。
+
+- 更正后最终验证：firmware 全量158 passed、1 skipped（Windows 专用）、2项依赖弃用 warning；3.12 mypy 检查12源码通过，diff检查通过。bootloader编译语义及OTA槽运行选择依用户明确职责不再作为本工具合入阻断，不能据此声称真实固件运行成功；本次未commit或push。
+
+- 主审扩大回归首轮为2403通过、9跳过，唯一失败是以含 `../` 的相对解释器路径启动导致既有 launcher 路径精确比较不一致；以规范绝对解释器路径重跑该项通过，未改业务路由或测试断言。随后用绝对路径重跑全套，不把首轮失败伪称为全绿。

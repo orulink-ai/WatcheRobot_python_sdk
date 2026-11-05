@@ -122,19 +122,6 @@ def _verify_image(data: bytes) -> None:
             raise FirmwareError("Invalid firmware image SHA-256")
 
 
-def _require_single_factory_layout(partitions: tuple[Partition, ...]) -> None:
-    applications = [p for p in partitions if p.type == 0]
-    if (
-        len(applications) != 1
-        or applications[0].subtype != 0
-        or any(p.type == 1 and p.subtype == 0 for p in partitions)
-    ):
-        raise FirmwareError(
-            "Application updates require a single factory app and no OTA selection state; "
-            "OTA or other boot-selection layouts are unsupported"
-        )
-
-
 def inspect_installation(path: Path, *, require_layout: bool = False) -> Installation:
     package = inspect_package(path)
     with ZipFile(path) as archive:
@@ -155,8 +142,6 @@ def inspect_installation(path: Path, *, require_layout: bool = False) -> Install
         table_segments = [s for s in package.segments if s.path == reference]
         mode = "full" if table_segments else "application"
         table_offset = table_segments[0].offset if table_segments else None
-        if mode == "application":
-            _require_single_factory_layout(partitions)
         if table_offset is not None and (
             table_offset < 0x1000
             or table_offset % 4096
@@ -165,7 +150,9 @@ def inspect_installation(path: Path, *, require_layout: bool = False) -> Install
             raise FirmwareError("Invalid partition table write location")
         boot = [s for s in package.segments if s.offset == 0]
         if mode == "full" and not boot:
-            raise FirmwareError("Full installation requires a matching bootloader")
+            raise FirmwareError(
+                "Full installation requires a bootloader image at address zero"
+            )
         applications = 0
         for segment in package.segments:
             if segment in table_segments or segment in boot:
@@ -212,7 +199,6 @@ def plan_installation(
             "Device flash capacity is smaller than the package requires"
         )
     if info.mode == "application":
-        _require_single_factory_layout(info.partitions)
         current = parse_partitions(device_table, flash_size)
         # Compare semantic entries; padding and table checksums need not match.
         if sorted(current, key=lambda p: p.offset) != sorted(
