@@ -1,0 +1,181 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-05T19:52:00+08:00",
+  "author": "orulink-wugui / Codex",
+  "source_commit": "6ff7b55c8adf2d28ff1ab28e3013c81abdf2d439",
+  "workflow": ".github/workflows/sdk-ci.yml",
+  "scope": [
+    "development",
+    "python-compatibility"
+  ],
+  "platform": {
+    "os": "macOS",
+    "version": "26.3",
+    "architecture": "arm64"
+  },
+  "environment": "Fresh isolated venv per Python version, plus independent wheel-only venv; Node 22.21.1 on PATH. Full pytest runs serialized.",
+  "status": "passed",
+  "python": [
+    {
+      "version": "3.10.19",
+      "status": "passed",
+      "commands": [
+        {
+          "command": "python -m pip check",
+          "status": "passed"
+        },
+        {
+          "command": "python -m pytest",
+          "status": "passed",
+          "passed": 2404,
+          "skipped": 9,
+          "failed": 0,
+          "warnings": 2,
+          "duration_seconds": 265.78
+        },
+        {
+          "command": "python -m pytest examples/expression_lab/tests",
+          "status": "passed",
+          "passed": 30,
+          "skipped": 0,
+          "failed": 0,
+          "warnings": 1,
+          "duration_seconds": 0.97
+        }
+      ]
+    },
+    {
+      "version": "3.11.18",
+      "status": "passed",
+      "commands": [
+        {
+          "command": "python -m pip check",
+          "status": "passed"
+        },
+        {
+          "command": "python -m pytest",
+          "status": "passed",
+          "passed": 2404,
+          "skipped": 9,
+          "failed": 0,
+          "warnings": 2,
+          "duration_seconds": 247.26
+        },
+        {
+          "command": "python -m pytest examples/expression_lab/tests",
+          "status": "passed",
+          "passed": 30,
+          "skipped": 0,
+          "failed": 0,
+          "warnings": 1,
+          "duration_seconds": 1.09
+        }
+      ]
+    },
+    {
+      "version": "3.12.13",
+      "status": "passed",
+      "commands": [
+        {
+          "command": "python -m pip check",
+          "status": "passed"
+        },
+        {
+          "command": "python -m pytest",
+          "status": "passed",
+          "passed": 2404,
+          "skipped": 9,
+          "failed": 0,
+          "warnings": 3,
+          "duration_seconds": 254.45
+        },
+        {
+          "command": "python -m pytest examples/expression_lab/tests",
+          "status": "passed",
+          "passed": 30,
+          "skipped": 0,
+          "failed": 0,
+          "warnings": 2,
+          "duration_seconds": 1.03
+        }
+      ]
+    }
+  ],
+  "development_extra": [
+    {
+      "command": "python -m mypy src/watcherobot",
+      "python": "3.11.18",
+      "status": "passed",
+      "source_files": 140,
+      "configured_python_version": "3.10",
+      "python_version_override": false
+    },
+    {
+      "command": "node --test tests/js/*.mjs",
+      "node": "22.21.1",
+      "status": "passed",
+      "passed": 225,
+      "skipped": 0,
+      "failed": 0
+    },
+    {
+      "command": "python -c \"from watcherobot.provisioning.bleak_backend import BleakBackend; print(BleakBackend)\"",
+      "python": "3.11.18",
+      "status": "passed"
+    },
+    {
+      "command": "python -m pytest tests/provisioning",
+      "python": "3.11.18",
+      "status": "passed",
+      "passed": 75,
+      "skipped": 0,
+      "failed": 0
+    },
+    {
+      "command": "python -m build --outdir <temporary-dist-directory>",
+      "python": "3.11.18",
+      "status": "passed",
+      "artifacts": [
+        "watcherobot-0.1.13.tar.gz",
+        "watcherobot-0.1.13-py3-none-any.whl"
+      ]
+    },
+    {
+      "command": "python -m twine check <temporary-dist-directory>/*",
+      "status": "passed",
+      "distributions_checked": 2
+    }
+  ],
+  "wheel": {
+    "python": "3.11.18",
+    "status": "passed",
+    "commands": [
+      "python -m venv <temporary-wheel-venv>",
+      "python -m pip install --force-reinstall <temporary-dist-directory>/*.whl",
+      "python -m pip check",
+      "python -c \"import watcherobot; print(watcherobot.__version__)\"",
+      "watcherobot --help",
+      "watcherobot demo --help",
+      "python -I -c \"import tempfile; from pathlib import Path; from watcherobot.bundled_apps import DEMO_NAMES, prepare_demo; t = tempfile.TemporaryDirectory(); [prepare_demo(name, Path(t.name)) for name in DEMO_NAMES]; t.cleanup()\"",
+      "python -I -c \"import watcherobot.firmware.installation, watcherobot.firmware.preparation\"",
+      "watcher-distribution firmware --help"
+    ],
+    "sdk_version": "0.1.13",
+    "bundled_demos": [
+      "sdk-test-bench",
+      "expression-lab"
+    ],
+    "firmware_import_origin": "Independent wheel venv site-packages; cwd outside source checkout",
+    "sha256": {
+      "watcherobot-0.1.13-py3-none-any.whl": "4ea4b18eda7361670b1b98ab6acab606578626f7b9e856e3465f481099d22d16",
+      "watcherobot-0.1.13.tar.gz": "d7b1526132f8d89ecbf5f40feb9c3051c0dfc92a1b128c3f29f74ac380941cc5"
+    }
+  },
+  "limitations": [
+    "Local macOS equivalent checks; GitHub Actions Linux self-hosted runner cleanup/download/setup infrastructure was not executed.",
+    "Windows-specific cases remain skipped on macOS. No Windows native execution is claimed.",
+    "No hardware firmware write/startup, live BLE device, production upload or release was performed.",
+    "Release-only lowest/latest dependency matrix was not selected; current branch development and Python compatibility steps were exercised."
+  ],
+  "changes": "Documentation evidence only; no production code, test expectations, workflow or architecture changes; no commit/push/merge by this verifier."
+}

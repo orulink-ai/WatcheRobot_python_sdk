@@ -105,3 +105,22 @@
 - 更正后最终验证：firmware 全量158 passed、1 skipped（Windows 专用）、2项依赖弃用 warning；3.12 mypy 检查12源码通过，diff检查通过。bootloader编译语义及OTA槽运行选择依用户明确职责不再作为本工具合入阻断，不能据此声称真实固件运行成功；本次未commit或push。
 
 - 主审扩大回归首轮为2403通过、9跳过，唯一失败是以含 `../` 的相对解释器路径启动导致既有 launcher 路径精确比较不一致；以规范绝对解释器路径重跑该项通过，未改业务路由或测试断言。随后用绝对路径重跑全套，不把首轮失败伪称为全绿。
+
+
+## 2026-11-05 19:52 Asia/Shanghai｜orulink-wugui / Codex｜本机完整开发 CI 与兼容性验证
+
+- 测试源码基线：`6ff7b55c8adf2d28ff1ab28e3013c81abdf2d439`；按 `.github/workflows/sdk-ci.yml` 的 development 和 python-compatibility 作业，在 macOS 26.3 arm64 执行本机可执行步骤。三个 Python 各用干净隔离环境，Node 22.21.1；全量 pytest 串行运行，避免固定端口干扰。依赖、解释器和产物均置于临时目录，不提交缓存或个人路径。
+- 原有全量 2404 项通过结论本轮重新执行，未只复用历史日志：
+
+| Python | pip check | 全 SDK pytest | expression lab |
+|---|---|---|---|
+| 3.10.19 | 通过 | 2404 passed / 9 skipped，265.78s | 30 passed，0.97s |
+| 3.11.18 | 通过 | 2404 passed / 9 skipped，247.26s | 30 passed，1.09s |
+| 3.12.13 | 通过 | 2404 passed / 9 skipped，254.45s | 30 passed，1.03s |
+
+- 3.11 开发步骤：`python -m mypy src/watcherobot` 默认配置通过，140 个源码文件，无 `--python-version` 覆盖，目标仍为 `3.10`；`node --test tests/js/*.mjs` 225 passed；`BleakBackend` 导入通过，`pytest tests/provisioning` 75 passed。干净环境没有无关 NumPy；因此本节补齐并替代此前“最低版本 mypy 受本机 NumPy stub 阻塞”的当前验证状态，原历史事实保留。
+- `python -m build` 生成 0.1.13 sdist/wheel，`twine check` 两项通过。独立 wheel 环境安装及 pip check、版本导入、`watcherobot --help` / `demo --help` 通过；`python -I` 成功准备 `sdk-test-bench` 和 `expression-lab` 两个内置 demo。另在源码目录外确认 `firmware.installation` / `firmware.preparation` 来自独立安装的 site-packages，`watcher-distribution firmware --help` 通过。产物未发布。
+- 机器证据：[local-ci-result.json](local-ci-result.json)，保存版本、命令、计数、状态及构建摘要；完整临时日志和个人绝对路径不进入档案。所有命令退出码均为 0；只有既有依赖弃用提示及重复 ZIP 条目的预期 warning，无测试失败。
+- 本轮仅验证和追加档案，没有修改业务代码、测试或 CI，因此不适用新增代码的 Red/Green；以三个实际解释器的完整检查及独立安装 smoke 为替代验证。没有为了通过检查放宽断言、覆盖最低类型目标或改变固件职责边界。
+- 平台边界：未执行 Linux 自托管 runner 的清理/源码下载/setup 基础设施；macOS 上保留 9 项平台跳过，不冒称 Windows 原生验证。当前不是 release 标签流程，未运行 release-only 的 lowest/latest 依赖矩阵。未执行实机写入、目标固件启动、真实 BLE、线上上传或发布。
+- 交付状态：新增本节及机器结果，本轮未 commit、push、合入，由主审查者统一检查提交；用户要求仅更新分支与中文 PR，不合并。
