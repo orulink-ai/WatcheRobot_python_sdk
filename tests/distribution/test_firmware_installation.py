@@ -20,8 +20,23 @@ def table(offset=0x20000, size=0x600000):
     )
 
 
-def package(path, *, offset=0x20000, full=False, missing_boot=False):
-    image = b"\xe9" + bytes(11) + b"\x09\x00" + bytes(50)
+def valid_image():
+    header = bytearray(24)
+    header[0] = 0xE9
+    header[1] = 1
+    header[12] = 9
+    header[23] = 1
+    payload = b"\x01\x02\x03\x04"
+    data = bytes(header) + struct.pack("<II", 0x3FC88000, len(payload)) + payload
+    checksum = 0xEF
+    for value in payload:
+        checksum ^= value
+    data += bytes((15 - len(data) % 16) % 16) + bytes([checksum])
+    return data + hashlib.sha256(data).digest()
+
+
+def package(path, *, offset=0x20000, full=False, missing_boot=False, image=None):
+    image = valid_image() if image is None else image
     files = {"application.bin": image, "partition-table.bin": table(offset)}
     segments = [(offset, "application.bin")]
     if full:
@@ -152,3 +167,37 @@ def test_custom_data_partition_types_and_nondefault_table_layout_are_supported()
         + b"\xff" * 32
     )
     assert parse_partitions(data, 0x2000000)[0].type == 0x40
+
+
+@pytest.mark.parametrize(
+    "damage", ["truncated", "segment_length", "checksum", "digest"]
+)
+def test_corrupt_images_cannot_pass_even_with_valid_package_hashes(tmp_path, damage):
+    image = bytearray(valid_image())
+    if damage == "truncated":
+        image = image[:24]
+    elif damage == "segment_length":
+        struct.pack_into("<I", image, 28, 0x400000)
+    elif damage == "checksum":
+        image[47] ^= 1
+    else:
+        image[-1] ^= 1
+    with pytest.raises(FirmwareError, match="image"):
+        inspect_installation(
+            package(tmp_path / "bad-image.zip", image=bytes(image)), require_layout=True
+        )
+
+
+def test_esptool_generated_image_is_accepted(tmp_path):
+    from esptool.bin_image import ESP32S3FirmwareImage, ImageSegment
+
+    image = ESP32S3FirmwareImage()
+    image.entrypoint = 0x40370000
+    image.segments = [ImageSegment(0x3FC88000, b"\x01\x02\x03\x04")]
+    image.segments[0].name = ".dram0.data"
+    data = image.save(None)
+    assert isinstance(data, bytes)
+    assert (
+        inspect_installation(package(tmp_path / "esptool.zip", image=data)).mode
+        == "application"
+    )

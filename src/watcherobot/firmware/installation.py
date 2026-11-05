@@ -86,6 +86,42 @@ def parse_partitions(data: bytes, capacity: int) -> tuple[Partition, ...]:
     return tuple(result)
 
 
+def _verify_image(data: bytes) -> None:
+    """Verify the ESP image framing/checksum and optional appended SHA-256."""
+    if (
+        len(data) < 24
+        or data[0] != 0xE9
+        or not 1 <= data[1] <= 16
+        or struct.unpack_from("<H", data, 12)[0] != 9
+        or data[23] not in (0, 1)
+    ):
+        raise FirmwareError("Invalid ESP32-S3 image header")
+    position = 24
+    checksum = 0xEF
+    for _ in range(data[1]):
+        if position + 8 > len(data):
+            raise FirmwareError("Truncated firmware image segment header")
+        _, length = struct.unpack_from("<II", data, position)
+        position += 8
+        end = position + length
+        if length % 4 or end > len(data):
+            raise FirmwareError("Invalid firmware image segment length")
+        for value in data[position:end]:
+            checksum ^= value
+        position = end
+    checksum_at = (position // 16 + 1) * 16 - 1
+    if checksum_at >= len(data) or data[checksum_at] != checksum:
+        raise FirmwareError("Invalid firmware image checksum")
+    if data[23]:
+        digest_at = checksum_at + 1
+        if (
+            len(data) < digest_at + 32
+            or data[digest_at : digest_at + 32]
+            != hashlib.sha256(data[:digest_at]).digest()
+        ):
+            raise FirmwareError("Invalid firmware image SHA-256")
+
+
 def inspect_installation(path: Path, *, require_layout: bool = False) -> Installation:
     package = inspect_package(path)
     with ZipFile(path) as archive:
@@ -135,12 +171,7 @@ def inspect_installation(path: Path, *, require_layout: bool = False) -> Install
                 )
             if partition.type == 0:
                 image = archive.read(segment.path)
-                if (
-                    len(image) < 24
-                    or image[0] != 0xE9
-                    or struct.unpack_from("<H", image, 12)[0] != 9
-                ):
-                    raise FirmwareError("Invalid ESP32-S3 application image")
+                _verify_image(image)
                 applications += 1
             elif mode == "application":
                 raise FirmwareError(
@@ -150,12 +181,7 @@ def inspect_installation(path: Path, *, require_layout: bool = False) -> Install
             raise FirmwareError("Incomplete application installation")
         if boot:
             image = archive.read(boot[0].path)
-            if (
-                len(image) < 24
-                or image[0] != 0xE9
-                or struct.unpack_from("<H", image, 12)[0] != 9
-            ):
-                raise FirmwareError("Invalid ESP32-S3 bootloader image")
+            _verify_image(image)
         return Installation(package, partitions, mode, table_offset)
 
 

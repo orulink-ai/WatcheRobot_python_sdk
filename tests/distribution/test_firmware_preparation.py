@@ -6,12 +6,12 @@ import pytest
 
 from watcherobot.firmware.contract import FirmwareError
 from watcherobot.firmware.preparation import prepare_package
-from tests.distribution.test_firmware_installation import table
+from tests.distribution.test_firmware_installation import table, valid_image
 
 
 def build(root):
     root.mkdir()
-    image = b"\xe9" + bytes(11) + b"\x09\x00" + bytes(50)
+    image = valid_image()
     (root / "app.bin").write_bytes(image)
     (root / "bootloader.bin").write_bytes(image)
     (root / "partition-table.bin").write_bytes(table())
@@ -144,3 +144,55 @@ def test_preparation_is_reproducible_for_retries_and_mapping_order(tmp_path):
     with patch("zipfile.time.localtime", return_value=(2001, 1, 1, 0, 0, 0, 0, 1, -1)):
         two = prepare_package(source, tmp_path / "cache")
     assert one["sha256"] == two["sha256"]
+
+
+def test_system_symlink_ancestors_do_not_reject_legitimate_builds(
+    tmp_path, monkeypatch
+):
+    from watcherobot.firmware.paths import filesystem_path
+
+    source = build(tmp_path / "build")
+    outside = filesystem_path(tmp_path.parent)
+    original = Path.is_symlink
+    monkeypatch.setattr(Path, "is_symlink", lambda p: p == outside or original(p))
+    assert prepare_package(source, tmp_path / "cache")["mode"] == "full"
+
+
+def test_symlink_inside_selected_build_is_still_rejected(tmp_path, monkeypatch):
+    from watcherobot.firmware.paths import filesystem_path
+
+    source = build(tmp_path / "build")
+    unsafe = filesystem_path(source / "app.bin")
+    original = Path.is_symlink
+    monkeypatch.setattr(Path, "is_symlink", lambda p: p == unsafe or original(p))
+    with pytest.raises(FirmwareError, match="symbolic"):
+        prepare_package(source, tmp_path / "cache")
+
+
+@pytest.mark.parametrize("provider", ["huggingface", "gitee"])
+@pytest.mark.parametrize("damage", ["missing_layout", "corrupt_image"])
+def test_both_upload_providers_reject_bad_packages_before_auth_or_remote_io(
+    tmp_path, provider, damage
+):
+    import httpx
+    from watcherobot.firmware.platforms import FirmwarePlatform
+    from watcherobot.distribution.ports import AccessToken
+    from tests.distribution.test_firmware_contract import make_package
+    from tests.distribution.test_firmware_installation import package, valid_image
+
+    path = tmp_path / "bad.zip"
+    if damage == "missing_layout":
+        make_package(path)
+    else:
+        data = bytearray(valid_image())
+        data[-1] ^= 1
+        package(path, image=bytes(data))
+
+    def remote(*a, **kw):
+        raise AssertionError("Invalid package must not contact either provider")
+
+    with httpx.Client(transport=httpx.MockTransport(remote)) as client:
+        with pytest.raises(FirmwareError):
+            FirmwarePlatform(provider, client=client, hf_factory=remote).publish(
+                path, AccessToken("unused")
+            )

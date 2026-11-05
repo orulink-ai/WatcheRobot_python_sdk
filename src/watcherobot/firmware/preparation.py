@@ -32,8 +32,13 @@ def _json(path: Path) -> dict[str, Any]:
 def _file(root: Path, name: str) -> Path:
     safe = _path(name)
     candidate = root / safe
-    if any(p.is_symlink() for p in (candidate, *candidate.parents) if p != root.parent):
-        raise FirmwareError("Build references cannot use symbolic links")
+    # Only links inside the selected root are untrusted references. System
+    # ancestors such as macOS /var -> /private/var are valid filesystem roots.
+    for current in (candidate, *candidate.parents):
+        if current == root:
+            break
+        if current.is_symlink():
+            raise FirmwareError("Build references cannot use symbolic links")
     if (
         not candidate.resolve().is_relative_to(root.resolve())
         or not candidate.is_file()

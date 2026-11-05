@@ -223,6 +223,8 @@ def execute(
         if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
             raise FirmwareError("Invalid cache digest")
         target = root / "packages" / (digest + ".zip")
+        if target.parent.is_symlink():
+            raise FirmwareError("Cache directory must not be a symbolic link")
         target.parent.mkdir(parents=True, exist_ok=True)
         with FileLock(str(target.parent / (digest + ".lock")), timeout=10):
             if target.is_symlink():
