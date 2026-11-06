@@ -4,6 +4,7 @@ import pytest
 
 from watcherobot.firmware import operations
 from watcherobot.firmware.contract import FirmwareError
+from watcherobot.firmware.paths import filesystem_path
 from watcherobot.firmware.transfer import release_record
 from tests.distribution.test_firmware_transfer import artifact
 
@@ -256,7 +257,7 @@ def test_failed_catalog_veto_falls_back_to_cache_invalidation(tmp_path, monkeypa
         return original_open(path, *args, **kwargs)
 
     def denied_unlink(path, *args, **kwargs):
-        if path == catalog_path and cache_unlink_fails:
+        if filesystem_path(path) == filesystem_path(catalog_path) and cache_unlink_fails:
             raise PermissionError("cache read only")
         return original_unlink(path, *args, **kwargs)
 
@@ -312,7 +313,12 @@ def test_catalog_transactions_prevent_late_old_approval(tmp_path, monkeypatch, w
     home.mkdir()
     monkeypatch.setattr(operations.Path, "home", lambda: home)
     alias = tmp_path / "cache-alias"
-    alias.symlink_to(root, target_is_directory=True)
+    try:
+        alias.symlink_to(root, target_is_directory=True)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows account cannot create symbolic links")
+        raise
     context = multiprocessing.get_context("spawn") if workers == "processes" else threading
     results = multiprocessing.get_context("spawn").Queue() if workers == "processes" else queue.Queue()
     first_started, second_started = context.Event(), context.Event()
@@ -481,7 +487,9 @@ def test_publication_cannot_use_local_cache_as_public_availability_proof(
     import httpx
     from watcherobot.distribution.ports import AccessToken
     from watcherobot.firmware.transfer import acquire_package
+    from tests.distribution.test_firmware_installation import package
 
+    source = package(tmp_path / "publication.zip")
     release, root = setup_catalog(tmp_path)
     monkeypatch.setattr(
         operations.SystemCredentialStore, "load", lambda self: AccessToken("secret")
@@ -506,7 +514,7 @@ def test_publication_cannot_use_local_cache_as_public_availability_proof(
         with pytest.raises(FirmwareError, match="404"):
             operations.execute(
                 "publish",
-                {"package_path": "unused.zip"},
+                {"package_path": str(source)},
                 provider="huggingface",
                 cache_root=root,
                 store_root=tmp_path,
@@ -514,3 +522,113 @@ def test_publication_cannot_use_local_cache_as_public_availability_proof(
             )
     assert len(requests) == 1
     assert not list((root / "huggingface/publications").glob("*.json"))
+
+
+@pytest.mark.skipif(operations.os.name != "nt", reason="Windows long-path entrypoint")
+def test_inspect_operation_normalizes_long_cache_root_before_creating_it(tmp_path):
+    import shutil
+    from watcherobot.firmware.paths import filesystem_path
+    from tests.distribution.test_firmware_preparation import build
+
+    source = build(tmp_path / "build")
+    cache = tmp_path / "长路径缓存"
+    for _ in range(7):
+        cache = cache / ("中文缓存目录" * 6)
+    cleanup = filesystem_path(tmp_path / "长路径缓存")
+    try:
+        result = operations.execute(
+            "inspect", {"package_path": str(source)}, provider="huggingface",
+            cache_root=cache, store_root=tmp_path, progress=lambda **_: None,
+        )
+        assert result["mode"] == "full"
+        assert operations.Path(result["package_path"]).is_file()
+        assert operations.execute(
+            "cache_status", {"sha256": result["sha256"]}, provider="huggingface",
+            cache_root=cache, store_root=tmp_path, progress=lambda **_: None,
+        ) == {"cached": False}
+    finally:
+        if cleanup.exists():
+            shutil.rmtree(cleanup)
+
+
+@pytest.mark.skipif(operations.os.name != "nt", reason="Windows extended-path aliases")
+def test_catalog_lock_and_veto_identity_matches_extended_and_native_paths(tmp_path):
+    from watcherobot.firmware.paths import filesystem_path
+
+    cache = tmp_path / "cache"
+    assert operations._catalog_state(cache, "huggingface") == operations._catalog_state(
+        filesystem_path(cache), "huggingface"
+    )
+
+
+@pytest.mark.parametrize("provider", ["gitee", "huggingface"])
+@pytest.mark.parametrize("invalid_offset", [False, True])
+def test_publish_prepares_wrapped_build_before_authentication(
+    tmp_path, monkeypatch, provider, invalid_offset
+):
+    from pathlib import Path
+    from zipfile import ZipFile
+
+    from watcherobot.distribution.ports import AccessToken
+    from watcherobot.firmware.installation import inspect_installation
+    from tests.distribution.test_firmware_preparation import build
+
+    source = build(tmp_path / "build")
+    if invalid_offset:
+        args_path = source / "flasher_args.json"
+        args = json.loads(args_path.read_text())
+        args["flash_files"]["0x21000"] = args["flash_files"].pop("0x20000")
+        args_path.write_text(json.dumps(args))
+    archive_path = tmp_path / "release.zip"
+    with ZipFile(archive_path, "w") as archive:
+        for entry in source.iterdir():
+            archive.write(entry, f"release/{entry.name}")
+
+    calls = []
+
+    def load(self):
+        calls.append("credentials")
+        return AccessToken("test-only")
+
+    def publish(self, path, token, *, progress):
+        calls.append("publish")
+        info = inspect_installation(Path(path), require_layout=True)
+        assert info.mode == "full"
+        assert [segment.offset for segment in info.package.segments] == [
+            0, 0x8000, 0x20000,
+        ]
+        raise RuntimeError("reached platform boundary")
+
+    monkeypatch.setattr(operations.SystemCredentialStore, "load", load)
+    monkeypatch.setattr(operations.FirmwarePlatform, "publish", publish)
+
+    expected = FirmwareError if invalid_offset else RuntimeError
+    message = "does not match partition layout" if invalid_offset else "reached platform boundary"
+    with pytest.raises(expected, match=message):
+        operations.execute(
+            "publish",
+            {"package_path": str(archive_path)},
+            provider=provider,
+            cache_root=tmp_path / "cache",
+            store_root=tmp_path,
+            progress=lambda **_: None,
+        )
+    assert calls == ([] if invalid_offset else ["credentials", "publish"])
+
+@pytest.mark.parametrize("provider", ["huggingface", "gitee"])
+def test_publish_validates_raw_build_before_loading_credentials(tmp_path, monkeypatch, provider):
+    from zipfile import ZipFile
+    from tests.distribution.test_firmware_preparation import build
+
+    source = build(tmp_path / "build")
+    (source / "app.bin").write_bytes(bytes(24))
+    raw = tmp_path / "bad-build.zip"
+    with ZipFile(raw, "w") as archive:
+        for path in source.iterdir():
+            archive.write(path, "release/" + path.name)
+    monkeypatch.setattr(operations.SystemCredentialStore, "load",
+                        lambda _: pytest.fail("Invalid build must fail before credential access"))
+    with pytest.raises(FirmwareError, match="image"):
+        operations.execute("publish", {"package_path": str(raw)}, provider=provider,
+                           cache_root=tmp_path / "cache", store_root=tmp_path / "store",
+                           progress=lambda **_: None)

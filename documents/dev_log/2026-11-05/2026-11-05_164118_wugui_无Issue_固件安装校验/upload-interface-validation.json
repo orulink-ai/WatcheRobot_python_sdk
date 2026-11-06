@@ -1,0 +1,89 @@
+{
+  "date": "2026-11-06",
+  "platform": "Windows x64 / Python3.12.13",
+  "input": "unmodified official v0.5.9 wrapped build ZIP",
+  "input_sha256": "e2af6033a677588a967138ae1b1e83fc568fd58d59e78fcaf16d33fae19a0e70",
+  "segments": [
+    {
+      "offset": "0x0",
+      "size": 22560
+    },
+    {
+      "offset": "0x8000",
+      "size": 3072
+    },
+    {
+      "offset": "0xf000",
+      "size": 8192
+    },
+    {
+      "offset": "0x20000",
+      "size": 4815120
+    },
+    {
+      "offset": "0xc20000",
+      "size": 4
+    },
+    {
+      "offset": "0xd20000",
+      "size": 4194304
+    }
+  ],
+  "direct_publish": [
+    {
+      "provider": "huggingface",
+      "input": "original official v0.5.9 wrapped build ZIP",
+      "firmware_id": "local.watcherobot-s3",
+      "version": "v0.5.9",
+      "size": 9045491,
+      "sha256": "30725978188bc4d8c1ebbc3adc7b3fac37fb233f4297c59ae7e47318410767ee",
+      "network": "provider boundary replaced; SDK preparation, validation and publish adapter real"
+    },
+    {
+      "provider": "gitee",
+      "input": "original official v0.5.9 wrapped build ZIP",
+      "firmware_id": "local.watcherobot-s3",
+      "version": "v0.5.9",
+      "size": 9045491,
+      "sha256": "30725978188bc4d8c1ebbc3adc7b3fac37fb233f4297c59ae7e47318410767ee",
+      "network": "provider boundary replaced; SDK preparation, validation and publish adapter real"
+    }
+  ],
+  "reject_before_credentials_and_network": [
+    {
+      "damage": "wrong_partition",
+      "provider": "gitee",
+      "reason": "Image write address does not match partition layout",
+      "credential_or_remote_access": false
+    },
+    {
+      "damage": "wrong_partition",
+      "provider": "huggingface",
+      "reason": "Image write address does not match partition layout",
+      "credential_or_remote_access": false
+    },
+    {
+      "damage": "overlap",
+      "provider": "gitee",
+      "reason": "Overlapping flash erase sectors",
+      "credential_or_remote_access": false
+    },
+    {
+      "damage": "overlap",
+      "provider": "huggingface",
+      "reason": "Overlapping flash erase sectors",
+      "credential_or_remote_access": false
+    }
+  ],
+  "tests": {
+    "distribution_passed": 643,
+    "distribution_skipped": 11,
+    "firmware_mypy_sources": 12
+  },
+  "limitations": [
+    "No SDK credentials for either provider",
+    "HF API/httpx transport substituted; no live upload or catalog submission",
+    "No macOS rerun of latest changes"
+  ],
+  "integration_base": "Remote 73da181 preserved; operation preparation uses a request-scoped temporary directory"
+}

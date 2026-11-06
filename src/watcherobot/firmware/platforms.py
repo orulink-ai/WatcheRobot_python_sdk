@@ -106,25 +106,37 @@ class FirmwarePlatform:
     def publish(
         self, path: Path, token: AccessToken, *, progress: Progress | None = None
     ) -> FirmwareRelease:
-        # Read an immutable local snapshot: editors/builds may replace the selected ZIP during upload.
         from .package import MAX_PACKAGE_BYTES
+        from .paths import filesystem_path
+        from .preparation import prepare_package
 
+        path = filesystem_path(path)
         with tempfile.TemporaryDirectory(prefix="firmware-publication-") as temporary:
-            snapshot = Path(temporary) / "firmware.zip"
-            with Path(path).open("rb") as source, snapshot.open("wb") as target:
-                total = 0
-                while chunk := source.read(64 * 1024):
-                    total += len(chunk)
-                    if total > MAX_PACKAGE_BYTES:
-                        raise FirmwareError("Firmware package exceeds size limit")
-                    target.write(chunk)
-            return self._publish(snapshot, token, progress=progress)
+            root = Path(temporary)
+            selected = path
+            if not path.is_dir():
+                # Freeze archive input before inspecting it: builds/editors may
+                # replace the source ZIP while preparation or upload runs.
+                selected = root / "source.zip"
+                with path.open("rb") as source, selected.open("wb") as target:
+                    total = 0
+                    while chunk := source.read(64 * 1024):
+                        total += len(chunk)
+                        if total > MAX_PACKAGE_BYTES:
+                            raise FirmwareError("Firmware package exceeds size limit")
+                        target.write(chunk)
+            prepared = prepare_package(selected, root / "prepared")
+            return self._publish(
+                Path(prepared["package_path"]), token, progress=progress
+            )
 
     def _publish(
         self, path: Path, token: AccessToken, *, progress: Progress | None = None
     ) -> FirmwareRelease:
         emit = progress or (lambda **_: None)
-        package = inspect_package(path)
+        from .installation import inspect_installation
+
+        package = inspect_installation(path, require_layout=True).package
         release_version = ".".join(map(str, version(package.version)))
         metadata = json.dumps(asdict(package), ensure_ascii=True).encode()
         emit(stage="preparing_upload", total_bytes=package.size)
@@ -382,6 +394,75 @@ class FirmwarePlatform:
             )
         )
 
+    def request_withdrawal(
+        self, identity: str, selected_version: str, token: AccessToken
+    ) -> dict[str, object]:
+        """Request a reviewed catalog change; never delete artifacts or device data."""
+        from .contract import firmware_id
+
+        firmware_id(identity)
+        version(selected_version)
+        username = (
+            self.hf_factory(token.value).whoami()["name"]
+            if self.provider == "huggingface"
+            else self._gitee("GET", "user", token)["login"]
+        )
+        repository = (
+            HuggingFacePublishHubClient()
+            if self.provider == "huggingface"
+            else GiteeRepository()
+        )
+        catalog_repo = get_provider(self.provider).catalog
+        document = repository.read_catalog(
+            token, repo_id=catalog_repo, path=CATALOG_PATH
+        )
+        releases = list(parse_catalog(document.content, provider=self.provider))
+        selected = next(
+            (
+                item
+                for item in releases
+                if item.firmware_id == identity
+                and version(item.version) == version(selected_version)
+            ),
+            None,
+        )
+        if selected is None:
+            raise FirmwareError("Selected firmware version is not listed")
+        if selected.repo_id.split("/")[0].casefold() != str(username).casefold():
+            raise FirmwareError(
+                "Only the firmware repository owner may request withdrawal"
+            )
+        if selected.withdrawn:
+            return {"status": "already_withdrawn"}
+        releases = [
+            replace(item, withdrawn=True) if item == selected else item
+            for item in releases
+        ]
+        content = json.dumps(
+            {
+                "schema_version": 1,
+                "firmwares": [release_record(item) for item in releases],
+            },
+            ensure_ascii=True,
+            indent=2,
+        ).encode("utf-8")
+        title = f"Withdraw firmware: {identity}@{selected.version}"
+        for existing in repository.list_open_catalog_pull_requests(
+            token, repo_id=catalog_repo, author=str(username)
+        ):
+            if existing.title == title:
+                return {"status": "pending", "pr_url": existing.url}
+        result = repository.create_catalog_pull_request(
+            token,
+            repo_id=catalog_repo,
+            path=CATALOG_PATH,
+            content=content,
+            parent_commit=document.commit,
+            title=title,
+            description="Author requests withdrawal. Preserve historical artifacts and metadata; review before merging.",
+        )
+        return {"status": "pending", "pr_url": result.url}
+
     def submit(
         self,
         release: FirmwareRelease,
@@ -394,7 +475,10 @@ class FirmwarePlatform:
             raise FirmwareError("Selected provider does not match firmware publication")
         # Always anonymously re-download and inspect before offering the version to users.
         with tempfile.TemporaryDirectory(prefix="firmware-public-check-") as temporary:
-            acquire_package(release, Path(temporary), progress=progress)
+            verified = acquire_package(release, Path(temporary), progress=progress)
+            from .installation import inspect_installation
+
+            inspect_installation(verified, require_layout=True)
         repository = (
             HuggingFacePublishHubClient()
             if self.provider == "huggingface"
@@ -409,13 +493,27 @@ class FirmwarePlatform:
             if item.firmware_id == release.firmware_id and version(
                 item.version
             ) == version(release.version):
-                artifact_fields = ("provider", "repo_id", "commit", "path", "asset_id", "download_url", "size", "sha256")
-                if any(getattr(item, field) != getattr(release, field) for field in artifact_fields):
+                artifact_fields = (
+                    "provider",
+                    "repo_id",
+                    "commit",
+                    "path",
+                    "asset_id",
+                    "download_url",
+                    "size",
+                    "sha256",
+                )
+                if any(
+                    getattr(item, field) != getattr(release, field)
+                    for field in artifact_fields
+                ):
                     raise FirmwareError(
                         "Catalog version already has a different immutable reference"
                     )
                 if item.withdrawn:
-                    raise FirmwareError("Firmware version has been withdrawn; maintainer review is required")
+                    raise FirmwareError(
+                        "Firmware version has been withdrawn; maintainer review is required"
+                    )
                 return {"status": "already_listed"}
         releases.append(release)
         content = json.dumps(
