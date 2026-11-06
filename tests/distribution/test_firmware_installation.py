@@ -207,7 +207,11 @@ def test_esptool_generated_image_is_accepted(tmp_path):
     image.entrypoint = 0x40370000
     image.segments = [ImageSegment(0x3FC88000, b"\x01\x02\x03\x04")]
     image.segments[0].name = ".dram0.data"
-    data = image.save(None)
+    # esptool 4.8 requires a filename; 5.x additionally supports save(None).
+    # Generate a real independent image through the shared file-based API.
+    image_path = tmp_path / "esptool-generated.bin"
+    image.save(str(image_path))
+    data = image_path.read_bytes()
     assert isinstance(data, bytes)
     assert (
         inspect_installation(package(tmp_path / "esptool.zip", image=data)).mode

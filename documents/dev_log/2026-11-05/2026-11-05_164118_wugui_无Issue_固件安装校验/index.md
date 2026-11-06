@@ -200,3 +200,6 @@
 - prepare_package现先有界复制原ZIP到本次私有source.zip，分类/解包/成品拷贝使用同一份快照；成品分支关闭ZipFile后os.replace，目录流程不变。回归后原ZIP中途被替换仍生成最初快照的包身份与SHA。
 - Windows Distribution654 passed/11 skipped、默认mypy140源码通过，独立复审86通过/9跳过。a5bf7f2前一集合全SDK2424 passed/27 skipped（214.05s）；不把新snapshot回归算入该历史计数。初次局部编辑造成缩进错误，black/pytest立即拦截，已从HEAD恢复该文件后按精确片段重新修改，通过上述检查，未提交语法错误版本。
 - 目前没有未解决的已复现代码问题；最终源代码验证和远端检查状态如实记录，合并仍使用普通merge而不使用admin或自动merge。
+
+## 后续变更
+- 2026-11-06｜agent-server／陆骁｜[SDK 0.1.14 发布审查](../../2026-11-06/2026-11-06_141449_agent-server_无Issue_SDK版本发布审查/index.md)：发布最低依赖矩阵复现 esptool 4.8 不支持测试中的 save(None)；使用跨版本共有的真实文件输出接口修复，保留 SDK 镜像检查与坏镜像拒绝断言。此前开发平台与依赖环境下的验证历史不改写；正式发布与实机边界继续保留。
