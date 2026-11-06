@@ -1,3 +1,4 @@
+from .display import DisplayDomain, DisplaySession
 from .errors import (
     AuthenticationError,
     CameraCaptureError,
@@ -10,7 +11,7 @@ from .errors import (
 from .audio import AudioPlayback, PCMAudio
 from .inference import DetectionBox, InferenceResult, InferenceSession
 from .job import Job, JobState
-from .inputs import BackTouchEvent, InputDomain, InputEvent, RollerEvent, ScreenTouchEvent
+from .inputs import BackTouchEvent, InputDomain, InputEvent, RollerEvent, RollerButtonEvent, ScreenTouchEvent
 from .media import AudioFormat, AudioFrame, AudioRecording, ImageFrame, MicrophoneSession
 from .recordings import DeviceRecording, HostRecording, RecordingDownload, RecordingInfo
 from .provisioning import (
@@ -44,6 +45,8 @@ from .vision import (
 )
 
 __all__ = [
+    "DisplayDomain",
+    "DisplaySession",
     "DetectionBox",
     "InferenceResult",
     "InferenceSession",
@@ -94,9 +97,10 @@ __all__ = [
     "RecordingDownload",
     "RecordingInfo",
     "RollerEvent",
+    "RollerButtonEvent",
     "ScreenTouchEvent",
     "WatcheRobotError",
     "WifiStatus",
 ]
 
-__version__ = "0.1.13"
+__version__ = "0.1.14.dev20261103"

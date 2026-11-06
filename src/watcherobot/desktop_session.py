@@ -114,6 +114,18 @@ class DesktopRobotSession:
         effective = self.command_timeout if timeout is None else timeout
         return self._submit(self._send_command(message_type, data, effective)).result(effective + 1.0)
 
+    def send_command_guarded(
+        self, message_type: str, data: dict[str, Any], *, timeout: float,
+        admit: Callable[[], None],
+    ) -> dict[str, Any]:
+        """Check an ownership guard on-loop before admitting a device command."""
+        future = self._submit(self._send_command(message_type, data, timeout, admit=admit))
+        try:
+            return future.result(timeout=timeout)
+        except BaseException:
+            future.cancel()
+            raise
+
     def send_command_nowait(self, message_type: str, data: dict[str, Any]) -> Future[dict[str, Any]]:
         return self._submit(self._send_command(message_type, data, self.command_timeout))
 
@@ -188,8 +200,16 @@ class DesktopRobotSession:
             raise ValueError(f"chunk_bytes must be {AUDIO_DEVICE_SLOT_BYTES}")
         return self._submit(self._send_audio(bytes(pcm), stream_id, chunk_bytes))
 
-    def send_device(self, frame: str | bytes) -> Future[None]:
-        return self._submit(self._send(frame))
+    def send_device(
+        self, frame: str | bytes, *, admit: Callable[[], None] | None = None,
+    ) -> Future[None]:
+        if admit is None:
+            return self._submit(self._send(frame))
+        return self._submit(self._send_device(frame, admit=admit))
+
+    async def _send_device(self, frame: str | bytes, *, admit: Callable[[], None]) -> None:
+        admit()
+        await self._send(frame)
 
     def _submit(self, coroutine: Coroutine[Any, Any, Any]) -> Future[Any]:
         if self._loop is None or not self._loop.is_running():
@@ -291,11 +311,16 @@ class DesktopRobotSession:
             raise WatcheRobotError("CLI Desktop session is not connected")
         await self._websocket.send(frame)
 
-    async def _send_command(self, message_type: str, data: dict[str, Any], timeout: float) -> dict[str, Any]:
+    async def _send_command(
+        self, message_type: str, data: dict[str, Any], timeout: float,
+        *, admit: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
         command_id = uuid.uuid4().hex
         future = asyncio.get_running_loop().create_future()
         self._pending[command_id] = future
         try:
+            if admit is not None:
+                admit()
             await self._send(build_command(message_type, data, command_id))
             response = await asyncio.wait_for(future, timeout)
             if response.get("type") == "sys.nack":

@@ -43,6 +43,12 @@ class RuntimeDiscoveryMetadata(TypedDict):
     started_at: float
 
 
+class UsbDeviceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    port: str = Field(min_length=1, max_length=256)
+    baudrate: Literal[460800, 1000000, 1500000, 2000000] = 1000000
+
+
 class PairDeviceRequest(BaseModel):
     pairing_code: str
     target_mode: str
@@ -145,6 +151,11 @@ class ApplicationController(Protocol):
 
     async def restart_application(self) -> Any:
         """Restart the current Application as one lifecycle operation."""
+
+    async def connect_usb_device(self, port: str, baudrate: int = 1000000) -> dict[str, object]: ...
+
+    async def disconnect_usb_device(self) -> bool:
+        """Release only USB; an absent USB session is already disconnected."""
 
     def device_status(self) -> dict[str, Any]:
         """Return the Daemon-owned single device slot."""
@@ -532,6 +543,20 @@ class DaemonControlAPI:
         @app.get("/daemon/devices")
         async def get_devices() -> dict[str, Any]:
             return self._controller.device_status()
+
+        @app.post("/daemon/devices/usb/connect")
+        async def connect_usb_device(request: UsbDeviceRequest) -> Any:
+            try:
+                return await self._controller.connect_usb_device(request.port, request.baudrate)
+            except PairingSessionError as exc:
+                return JSONResponse(status_code=409, content={"error": exc.code, "message": str(exc)})
+            except (OSError, ValueError, ConnectionError) as exc:
+                return JSONResponse(status_code=400, content={"error": "usb_connect_failed", "message": str(exc)})
+
+        @app.post("/daemon/devices/usb/disconnect")
+        async def disconnect_usb_device() -> dict[str, Any]:
+            disconnected = await self._controller.disconnect_usb_device()
+            return {"disconnected": disconnected, **self._controller.device_status()}
 
         @app.post("/daemon/devices/pair", status_code=202)
         async def pair_device(
