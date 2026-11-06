@@ -64,7 +64,7 @@ Gitee
       firmware.zip                              # Release 附件
 ```
 
-固件 ID 在平台内唯一；一个固件仓库包含多个版本。同版本内容不可覆盖，失败重试检查已有元数据与附件；内容不同需递增版本。HF 用固定 commit 下载；Gitee 目录同时绑定 commit、asset_id、下载 URL、大小和 SHA-256。附件发生替换则校验失败，不按 tag 名盲信。
+固件 ID 在平台内唯一；一个固件仓库包含多个版本。同版本内容不可覆盖，失败重试检查已有元数据与附件；内容不同需递增版本。兼容 SDK 0.1.13 历史发布元数据缺少后来增加的 `partition_table`：仅当当前包的该字段确实为空时，将历史缺失值视为默认空值，不改写旧元数据；显式 null、非空路径、需要参考表的当前包缺字段及实际摘要变化仍为冲突。HF 用固定 commit 下载；Gitee 目录同时绑定 commit、asset_id、下载 URL、大小和 SHA-256。附件发生替换则校验失败，不按 tag 名盲信。
 
 固件目录顶层为 `{"schema_version":1,"firmwares":[]}`。每个版本含 ID、版本、仓库、完整 commit、包大小、SHA-256、撤回状态与平台定位字段；可包含名称、作者、更新说明、SKU、硬件版本。`publisher_kind` 默认 community；`ota_supported` 默认 false。官方标识由审核目录控制，不信任作者自行声明。
 
