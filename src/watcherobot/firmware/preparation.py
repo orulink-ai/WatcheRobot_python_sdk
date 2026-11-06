@@ -26,10 +26,19 @@ from .package import (
 )
 
 
+def _read_bounded(path: Path, limit: int, message: str) -> bytes:
+    # A build may replace/grow a file after stat. Bound the actual read, not
+    # merely the size observed before opening the stream.
+    with path.open("rb") as stream:
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise FirmwareError(message)
+    return data
+
+
 def _json(path: Path) -> dict[str, Any]:
-    if path.stat().st_size > 65536:
-        raise FirmwareError("Build metadata exceeds size limit")
-    value = json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=_pairs)
+    data = _read_bounded(path, MAX_METADATA_BYTES, "Build metadata exceeds size limit")
+    value = json.loads(data.decode("utf-8-sig"), object_pairs_hook=_pairs)
     if not isinstance(value, dict):
         raise FirmwareError("Build metadata must be an object")
     return value
@@ -56,13 +65,23 @@ def _file(root: Path, name: str) -> Path:
 
 
 def _build(root: Path, output: Path) -> None:
+    metadata = {}
+    if (root / "firmware.json").is_file():
+        metadata = _json(_file(root, "firmware.json"))
+        if "schema_version" in metadata or "segments" in metadata:
+            raise FirmwareError(
+                "Firmware package metadata cannot be used as build display metadata"
+            )
     if (root / "flasher_args.json").is_file():
         args = _json(_file(root, "flasher_args.json"))
     else:
         raw_args = _file(root, "flash_args.txt")
-        if raw_args.stat().st_size > 65536:
-            raise FirmwareError("Flash arguments exceed size limit")
-        tokens = shlex.split(raw_args.read_text(encoding="utf-8"), comments=True)
+        tokens = shlex.split(
+            _read_bounded(
+                raw_args, MAX_METADATA_BYTES, "Flash arguments exceed size limit"
+            ).decode("utf-8"),
+            comments=True,
+        )
         settings = {}
         images = {}
         while tokens:
@@ -122,11 +141,10 @@ def _build(root: Path, output: Path) -> None:
     total = 0
     for key, value in raw.items():
         path = _file(root, value)
-        length = path.stat().st_size
-        total += length
-        if total > MAX_EXPANDED_BYTES:
-            raise FirmwareError("Build images exceed expanded limit")
-        data = path.read_bytes()
+        data = _read_bounded(
+            path, MAX_EXPANDED_BYTES - total, "Build images exceed expanded limit"
+        )
+        total += len(data)
         offset = int(key, 0)
         name = f"images/{offset:08x}.bin"
         files[name] = data
@@ -164,8 +182,7 @@ def _build(root: Path, output: Path) -> None:
         "segments": segments,
     }
     # Authors can supply display identity without manually specifying any address.
-    if (root / "firmware.json").is_file():
-        metadata = _json(_file(root, "firmware.json"))
+    if metadata:
         for field in (
             "id",
             "name",
@@ -254,7 +271,13 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
                             "schema_version" in metadata or "segments" in metadata
                         )
                 if prepared:
-                    output.write_bytes(source.read_bytes())
+                    output.write_bytes(
+                        _read_bounded(
+                            source,
+                            MAX_PACKAGE_BYTES,
+                            "Firmware package exceeds size limit",
+                        )
+                    )
                 else:
                     build = root / "build"
                     build.mkdir()

@@ -173,3 +173,14 @@
 - 推送被正常拒绝，发现远端73da181已追加同一execute publish准备顺序修复及macOS Distribution638通过/6跳过、默认mypy140源码证据。没有强推或覆盖远端提交；将本地未推送提交rebase到其上。
 - operations保留远端的请求专用临时准备目录方案；公开FirmwarePlatform.publish的ZIP快照/自动准备、直接适配器正负向测试保留本轮实现。两边新增测试、历史档案均保留，不覆盖历史正文。
 - 冲突整合后Windows Distribution643 passed/11 skipped，固件mypy12源码通过、diff检查通过。本轮新公开适配器修复未冒称在macOS重新跑过。上传接口证据更新最终广回归计数；Desktop两条接口桥均已完成实际写入及实时版本查询，配套桌面将追加同步最终SDK来源。
+
+
+## 2026-11-06 Asia/Shanghai｜wugui / Codex｜用户授权正常合并后的最终审查修复
+
+- 用户明确要求普通合并两个PR，先检查最新head、CI及审查意见，不使用admin绕过。最新自动审查经源码与独立测试复核，确认目录firmware.json成品marker会被忽略重建；stat后无界read可被文件增长绕过。
+- TDD四例先失败：目录schema_version/segments两例DID NOT RAISE；镜像增长在1024字节预算下仍被接受；metadata增长直到成品检查才以generic错误拒绝。修复后构建目录早期一次读取展示metadata并拒绝成品marker，后续展示覆盖复用该snapshot；统一实际字节有界读取用于JSON、flash args、累计镜像及准备成品ZIP复制，保留现有容量限额。
+- 清理并行整合残留的重复package导入与无用upload.zip生成；原publication公开匿名回读失败断言不变。
+- Windows Distribution647 passed/11 skipped，准备模块33通过，固件mypy12源码通过，diff检查通过。真实官方v0.5.9 ZIP重准备SHA256仍307259...67ee。独立只读复审79通过/9跳过，没有新增实际问题。未重复写设备，不改SDK/Daemon职责。
+- 当前尚未合并，远端CI仍待最终提交结果；后续桌面来源锁跟随本次修复，不提前声称合并完成。
+
+- 同轮默认配置`python -m mypy src/watcherobot`重新执行通过，140源码，无版本覆盖；不只依赖固件模块的follow-imports检查。

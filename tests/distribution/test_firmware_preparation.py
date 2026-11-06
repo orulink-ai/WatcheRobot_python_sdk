@@ -365,3 +365,63 @@ def test_nested_bootloader_metadata_does_not_make_outer_build_ambiguous(tmp_path
         archive.writestr("release/bootloader/flasher_args.json", "{}")
     actual = prepare_package(raw, tmp_path / "zip-cache")
     assert actual["sha256"] == expected["sha256"]
+
+
+@pytest.mark.parametrize("marker", ["schema_version", "segments"])
+def test_directory_package_markers_cannot_be_rebuilt_as_display_metadata(
+    tmp_path, marker
+):
+    source = build(tmp_path / "build")
+    (source / "firmware.json").write_text(
+        json.dumps(
+            {
+                marker: 999 if marker == "schema_version" else [],
+                "name": "Broken package",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(FirmwareError, match="package"):
+        prepare_package(source, tmp_path / "cache")
+    assert not list((tmp_path / "cache").glob("*.zip"))
+
+
+def test_growing_build_image_is_bounded_by_actual_bytes(tmp_path, monkeypatch):
+    import io
+    from watcherobot.firmware import preparation
+    from watcherobot.firmware.paths import filesystem_path
+
+    source = build(tmp_path / "build")
+    image = filesystem_path(source / "app.bin")
+    grown = image.read_bytes() + bytes(2048)
+    original = Path.open
+    monkeypatch.setattr(preparation, "MAX_EXPANDED_BYTES", 1024)
+
+    def opened(path, mode="r", *args, **kwargs):
+        if path == image and mode == "rb":
+            return io.BytesIO(grown)
+        return original(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", opened)
+    with pytest.raises(FirmwareError, match="expanded limit"):
+        prepare_package(source, tmp_path / "cache")
+    assert not list((tmp_path / "cache").glob("*.zip"))
+
+
+def test_growing_build_metadata_is_bounded_before_json_decode(tmp_path, monkeypatch):
+    import io
+    from watcherobot.firmware.paths import filesystem_path
+
+    source = build(tmp_path / "build")
+    metadata = filesystem_path(source / "project_description.json")
+    grown = json.dumps({"project_name": "x" * 66000, "project_version": "0.3.3"})
+    original = Path.open
+
+    def opened(path, mode="r", *args, **kwargs):
+        if path == metadata:
+            return io.BytesIO(grown.encode()) if mode == "rb" else io.StringIO(grown)
+        return original(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", opened)
+    with pytest.raises(FirmwareError, match="metadata exceeds size limit"):
+        prepare_package(source, tmp_path / "cache")
