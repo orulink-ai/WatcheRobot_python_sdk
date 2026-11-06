@@ -208,7 +208,7 @@ flowchart TD
 
 ## 自动准备和布局校验（v2）
 
-`firmware execute --action inspect --request-json '{"package_path":"..."}'` 在本地准备安装包，无需登录，不连接设备。输入支持规范 ZIP、ESP-IDF 构建目录和构建 ZIP。构建 ZIP 可带发布用的外层目录，工具只选择唯一包含生成烧录参数的目录，多候选报错；带成品包格式标记的根 manifest 始终严格检查，不因缺少 flash_args 而回退重建。工具读取生成的 flash 文件映射、分区表、应用描述，生成规范 `firmware.json`，不执行作者脚本。Windows 本地长路径使用扩展路径，中文路径及文本按 UTF-8 处理，构建 JSON 可带 UTF-8 BOM。目录与ZIP均将 `schema_version` / `segments` 视作成品包标记，不能用作展示覆盖后重新生成；目录展示元数据仅读取一次。元数据、flash args、镜像及成品快照均按实际读取字节限额，文件在检查期间增长也不能绕过边界。项目显示名可为中文；无法从其生成 ASCII ID 时，以项目名的稳定摘要自动生成 `local.project-...`，也可用 `firmware.json` 中的合法 ID 覆盖。缓存目录在实际操作入口创建前即规范化；Windows 普通路径与扩展路径共享目录锁及撤销标记。
+`firmware execute --action inspect --request-json '{"package_path":"..."}'` 在本地准备安装包，无需登录，不连接设备。输入支持规范 ZIP、ESP-IDF 构建目录和构建 ZIP。构建 ZIP 可带发布用的外层目录，工具只选择唯一包含生成烧录参数的目录，多候选报错；带成品包格式标记的根 manifest 始终严格检查，不因缺少 flash_args 而回退重建。ZIP在公共准备入口先做有界私有快照，分类和解包使用同一份输入，避免源文件被替换导致不同阶段读取不同包。工具读取生成的 flash 文件映射、分区表、应用描述，生成规范 `firmware.json`，不执行作者脚本。Windows 本地长路径使用扩展路径，中文路径及文本按 UTF-8 处理，构建 JSON 可带 UTF-8 BOM。目录与ZIP均将 `schema_version` / `segments` 视作成品包标记，不能用作展示覆盖后重新生成；目录展示元数据仅读取一次。元数据、flash args、镜像及成品快照均按实际读取字节限额，文件在检查期间增长也不能绕过边界。项目显示名可为中文；无法从其生成 ASCII ID 时，以项目名的稳定摘要自动生成 `local.project-...`，也可用 `firmware.json` 中的合法 ID 覆盖。缓存目录在实际操作入口创建前即规范化；Windows 普通路径与扩展路径共享目录锁及撤销标记。
 
 `firmware execute --action publish` 接受相同的输入，可直接传入原始构建 ZIP。SDK 在读取平台凭证前生成并校验本次上传专用的临时包，分段错误会在认证和联网之前返回。上传后仍会匿名回读，核对公开可访问性与内容摘要。
 

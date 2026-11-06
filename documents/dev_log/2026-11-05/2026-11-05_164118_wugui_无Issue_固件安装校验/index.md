@@ -192,3 +192,11 @@
 - 新增6条回归，2条普通数据先失败后通过，并覆盖legacy v1正常识别；4条双真表/坏表保持拒绝。独立复审79通过，没有新增缺陷。
 - 前一19f700d源代码集合本机全SDK2418 passed/27 skipped（241.17s），并非把新增6例算入此前计数。此补修后Distribution653 passed/11 skipped、默认mypy140源码通过、diff检查通过。真实平台、GUI及设备不重复操作。
 - 远端Linux任务仍处于依赖安装/兼容检查大步骤，未产生最终测试结论；普通合并授权已明确，不允许使用admin或自动合并绕过。后续状态以实际GitHub结果记录。
+
+
+### 公共准备入口ZIP快照一致性闭环
+
+- 复核最新审查，新增确定性替换测试：分类后、解包前替换原ZIP为带损坏根marker及新子构建，旧代码得到新身份/不同SHA，真实Red；不能仅依赖platform.publish的外层snapshot保护所有公开inspect路径。
+- prepare_package现先有界复制原ZIP到本次私有source.zip，分类/解包/成品拷贝使用同一份快照；成品分支关闭ZipFile后os.replace，目录流程不变。回归后原ZIP中途被替换仍生成最初快照的包身份与SHA。
+- Windows Distribution654 passed/11 skipped、默认mypy140源码通过，独立复审86通过/9跳过。a5bf7f2前一集合全SDK2424 passed/27 skipped（214.05s）；不把新snapshot回归算入该历史计数。初次局部编辑造成缩进错误，black/pytest立即拦截，已从HEAD恢复该文件后按精确片段重新修改，通过上述检查，未提交语法错误版本。
+- 目前没有未解决的已复现代码问题；最终源代码验证和远端检查状态如实记录，合并仍使用普通merge而不使用admin或自动merge。

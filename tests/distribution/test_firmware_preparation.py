@@ -472,3 +472,40 @@ def test_partition_magic_is_only_a_candidate_filter(tmp_path, wrapped_zip, candi
                 payload = json.dumps(manifest).encode()
             target.writestr(item, payload)
     assert inspect_installation(legacy, require_layout=True).mode == "full"
+
+
+def test_public_preparation_freezes_zip_before_classification_and_extraction(
+    tmp_path, monkeypatch
+):
+    from watcherobot.firmware import preparation
+
+    source = build(tmp_path / "build")
+    raw = tmp_path / "selected.zip"
+    with ZipFile(raw, "w") as archive:
+        for path in source.iterdir():
+            archive.write(path, path.name)
+    expected = prepare_package(raw, tmp_path / "expected")
+    (source / "project_description.json").write_text(
+        json.dumps({"project_name": "replacement", "project_version": "9.9.9"}),
+        encoding="utf-8",
+    )
+    replacement = tmp_path / "replacement.zip"
+    with ZipFile(replacement, "w") as archive:
+        archive.writestr(
+            "firmware.json", json.dumps({"schema_version": 999, "segments": []})
+        )
+        for path in source.iterdir():
+            archive.write(path, "release/" + path.name)
+    original_extract = preparation._extract_build
+    calls = []
+
+    def replace_selected_file(snapshot, destination):
+        calls.append(snapshot)
+        raw.write_bytes(replacement.read_bytes())
+        original_extract(snapshot, destination)
+
+    monkeypatch.setattr(preparation, "_extract_build", replace_selected_file)
+    actual = prepare_package(raw, tmp_path / "cache")
+    assert len(calls) == 1
+    assert actual["sha256"] == expected["sha256"]
+    assert actual["version"] == "0.3.3"

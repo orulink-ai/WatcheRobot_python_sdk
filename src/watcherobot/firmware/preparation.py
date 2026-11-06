@@ -255,7 +255,15 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
             if source.is_dir():
                 _build(source, output)
             elif source.is_file() and source.stat().st_size <= MAX_PACKAGE_BYTES:
-                with ZipFile(source) as archive:
+                # Classification and extraction observe one private ZIP, even
+                # when the selected build output is replaced concurrently.
+                snapshot = root / "source.zip"
+                snapshot.write_bytes(
+                    _read_bounded(
+                        source, MAX_PACKAGE_BYTES, "Firmware package exceeds size limit"
+                    )
+                )
+                with ZipFile(snapshot) as archive:
                     prepared = "firmware.json" in archive.namelist()
                     if prepared:
                         if (
@@ -276,17 +284,11 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
                             "schema_version" in metadata or "segments" in metadata
                         )
                 if prepared:
-                    output.write_bytes(
-                        _read_bounded(
-                            source,
-                            MAX_PACKAGE_BYTES,
-                            "Firmware package exceeds size limit",
-                        )
-                    )
+                    os.replace(snapshot, output)
                 else:
                     build = root / "build"
                     build.mkdir()
-                    _extract_build(source, build)
+                    _extract_build(snapshot, build)
                     roots = {
                         item.parent
                         for pattern in ("flasher_args.json", "flash_args.txt")
