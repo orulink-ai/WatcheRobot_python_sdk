@@ -489,6 +489,9 @@ def test_publication_cannot_use_local_cache_as_public_availability_proof(
     from watcherobot.firmware.transfer import acquire_package
     from tests.distribution.test_firmware_installation import package
 
+    from tests.distribution.test_firmware_installation import package
+
+    source = package(tmp_path / "upload.zip")
     release, root = setup_catalog(tmp_path)
     source = package(tmp_path / "publication.zip")
     monkeypatch.setattr(
@@ -614,3 +617,21 @@ def test_publish_prepares_wrapped_build_before_authentication(
             progress=lambda **_: None,
         )
     assert calls == ([] if invalid_offset else ["credentials", "publish"])
+
+@pytest.mark.parametrize("provider", ["huggingface", "gitee"])
+def test_publish_validates_raw_build_before_loading_credentials(tmp_path, monkeypatch, provider):
+    from zipfile import ZipFile
+    from tests.distribution.test_firmware_preparation import build
+
+    source = build(tmp_path / "build")
+    (source / "app.bin").write_bytes(bytes(24))
+    raw = tmp_path / "bad-build.zip"
+    with ZipFile(raw, "w") as archive:
+        for path in source.iterdir():
+            archive.write(path, "release/" + path.name)
+    monkeypatch.setattr(operations.SystemCredentialStore, "load",
+                        lambda _: pytest.fail("Invalid build must fail before credential access"))
+    with pytest.raises(FirmwareError, match="image"):
+        operations.execute("publish", {"package_path": str(raw)}, provider=provider,
+                           cache_root=tmp_path / "cache", store_root=tmp_path / "store",
+                           progress=lambda **_: None)

@@ -106,25 +106,36 @@ class FirmwarePlatform:
     def publish(
         self, path: Path, token: AccessToken, *, progress: Progress | None = None
     ) -> FirmwareRelease:
-        # Read an immutable local snapshot: editors/builds may replace the selected ZIP during upload.
         from .package import MAX_PACKAGE_BYTES
+        from .paths import filesystem_path
+        from .preparation import prepare_package
 
+        path = filesystem_path(path)
         with tempfile.TemporaryDirectory(prefix="firmware-publication-") as temporary:
-            snapshot = Path(temporary) / "firmware.zip"
-            with Path(path).open("rb") as source, snapshot.open("wb") as target:
-                total = 0
-                while chunk := source.read(64 * 1024):
-                    total += len(chunk)
-                    if total > MAX_PACKAGE_BYTES:
-                        raise FirmwareError("Firmware package exceeds size limit")
-                    target.write(chunk)
-            return self._publish(snapshot, token, progress=progress)
+            root = Path(temporary)
+            selected = path
+            if not path.is_dir():
+                # Freeze archive input before inspecting it: builds/editors may
+                # replace the source ZIP while preparation or upload runs.
+                selected = root / "source.zip"
+                with path.open("rb") as source, selected.open("wb") as target:
+                    total = 0
+                    while chunk := source.read(64 * 1024):
+                        total += len(chunk)
+                        if total > MAX_PACKAGE_BYTES:
+                            raise FirmwareError("Firmware package exceeds size limit")
+                        target.write(chunk)
+            prepared = prepare_package(selected, root / "prepared")
+            return self._publish(
+                Path(prepared["package_path"]), token, progress=progress
+            )
 
     def _publish(
         self, path: Path, token: AccessToken, *, progress: Progress | None = None
     ) -> FirmwareRelease:
         emit = progress or (lambda **_: None)
         from .installation import inspect_installation
+
         package = inspect_installation(path, require_layout=True).package
         release_version = ".".join(map(str, version(package.version)))
         metadata = json.dumps(asdict(package), ensure_ascii=True).encode()
@@ -466,6 +477,7 @@ class FirmwarePlatform:
         with tempfile.TemporaryDirectory(prefix="firmware-public-check-") as temporary:
             verified = acquire_package(release, Path(temporary), progress=progress)
             from .installation import inspect_installation
+
             inspect_installation(verified, require_layout=True)
         repository = (
             HuggingFacePublishHubClient()
@@ -481,13 +493,27 @@ class FirmwarePlatform:
             if item.firmware_id == release.firmware_id and version(
                 item.version
             ) == version(release.version):
-                artifact_fields = ("provider", "repo_id", "commit", "path", "asset_id", "download_url", "size", "sha256")
-                if any(getattr(item, field) != getattr(release, field) for field in artifact_fields):
+                artifact_fields = (
+                    "provider",
+                    "repo_id",
+                    "commit",
+                    "path",
+                    "asset_id",
+                    "download_url",
+                    "size",
+                    "sha256",
+                )
+                if any(
+                    getattr(item, field) != getattr(release, field)
+                    for field in artifact_fields
+                ):
                     raise FirmwareError(
                         "Catalog version already has a different immutable reference"
                     )
                 if item.withdrawn:
-                    raise FirmwareError("Firmware version has been withdrawn; maintainer review is required")
+                    raise FirmwareError(
+                        "Firmware version has been withdrawn; maintainer review is required"
+                    )
                 return {"status": "already_listed"}
         releases.append(release)
         content = json.dumps(

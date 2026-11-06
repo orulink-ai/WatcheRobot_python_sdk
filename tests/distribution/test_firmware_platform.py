@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from dataclasses import asdict
 import json
@@ -177,7 +178,9 @@ def test_firmware_submission_only_changes_separate_catalog_and_detects_version_c
     from dataclasses import replace
     from watcherobot.firmware import platforms
     from watcherobot.firmware.transfer import release_record
-    from tests.distribution.test_firmware_installation import release_artifact as artifact
+    from tests.distribution.test_firmware_installation import (
+        release_artifact as artifact,
+    )
     from tests.distribution._publishing_fakes import FakePublishHub
     from watcherobot.distribution.ports import CatalogDocument
 
@@ -188,7 +191,9 @@ def test_firmware_submission_only_changes_separate_catalog_and_detects_version_c
         )
     )
     monkeypatch.setattr(platforms, "HuggingFacePublishHubClient", lambda: hub)
-    monkeypatch.setattr(platforms, "acquire_package", lambda *a, **kw: tmp_path / "source.zip")
+    monkeypatch.setattr(
+        platforms, "acquire_package", lambda *a, **kw: tmp_path / "source.zip"
+    )
     backend = FirmwarePlatform("huggingface", hf_factory=lambda token: Hf())
     assert (
         backend.submit(release, AccessToken("secret"), cache_root=tmp_path)["status"]
@@ -218,26 +223,146 @@ def test_firmware_submission_only_changes_separate_catalog_and_detects_version_c
 
 
 @pytest.mark.parametrize("withdrawn", [False, True])
-def test_reviewed_metadata_is_preserved_on_publication_resubmission(tmp_path, monkeypatch, withdrawn):
+def test_reviewed_metadata_is_preserved_on_publication_resubmission(
+    tmp_path, monkeypatch, withdrawn
+):
     from dataclasses import replace
     from watcherobot.firmware import platforms
     from watcherobot.firmware.transfer import release_record
-    from tests.distribution.test_firmware_installation import release_artifact as artifact
+    from tests.distribution.test_firmware_installation import (
+        release_artifact as artifact,
+    )
     from tests.distribution._publishing_fakes import FakePublishHub
     from watcherobot.distribution.ports import CatalogDocument
 
     release, _ = artifact(tmp_path)
-    reviewed = replace(release, notes="Maintainer-reviewed notes", publisher_kind="official",
-                       ota_supported=True, withdrawn=withdrawn)
-    hub = FakePublishHub(catalog=CatalogDocument(commit="a" * 40, content=json.dumps({
-        "schema_version": 1, "firmwares": [release_record(reviewed)],
-    }).encode()))
+    reviewed = replace(
+        release,
+        notes="Maintainer-reviewed notes",
+        publisher_kind="official",
+        ota_supported=True,
+        withdrawn=withdrawn,
+    )
+    hub = FakePublishHub(
+        catalog=CatalogDocument(
+            commit="a" * 40,
+            content=json.dumps(
+                {
+                    "schema_version": 1,
+                    "firmwares": [release_record(reviewed)],
+                }
+            ).encode(),
+        )
+    )
     monkeypatch.setattr(platforms, "HuggingFacePublishHubClient", lambda: hub)
-    monkeypatch.setattr(platforms, "acquire_package", lambda *a, **kw: tmp_path / "source.zip")
+    monkeypatch.setattr(
+        platforms, "acquire_package", lambda *a, **kw: tmp_path / "source.zip"
+    )
     backend = FirmwarePlatform("huggingface")
     if withdrawn:
         with pytest.raises(FirmwareError, match="withdrawn"):
             backend.submit(release, AccessToken("secret"), cache_root=tmp_path)
     else:
-        assert backend.submit(release, AccessToken("secret"), cache_root=tmp_path)["status"] == "already_listed"
+        assert (
+            backend.submit(release, AccessToken("secret"), cache_root=tmp_path)[
+                "status"
+            ]
+            == "already_listed"
+        )
     assert not any(name == "create_pr" for name, _ in hub.calls)
+
+
+@pytest.mark.parametrize("provider", ["huggingface", "gitee"])
+def test_direct_publish_accepts_wrapped_build_zip_and_uploads_prepared_segments(
+    tmp_path, provider
+):
+    from zipfile import ZipFile
+    from tests.distribution.test_firmware_preparation import build
+    from watcherobot.firmware.preparation import prepare_package
+
+    source = build(tmp_path / "build")
+    raw = tmp_path / "官方构建.zip"
+    with ZipFile(raw, "w") as archive:
+        for path in source.iterdir():
+            archive.write(path, "release/" + path.name)
+    expected = prepare_package(raw, tmp_path / "expected")
+    calls = []
+    api = Hf()
+
+    def response(request):
+        calls.append(request.url.path)
+        suffix = request.url.path.removeprefix("/api/v5/")
+        if suffix == "user":
+            value = {"login": "author"}
+        elif (
+            "/releases/tags/" in suffix
+            or "/contents/" in suffix
+            and request.method == "GET"
+        ):
+            return httpx.Response(404)
+        elif "/contents/" in suffix:
+            value = {"commit": {"sha": "a" * 40}}
+        elif suffix.endswith("/commits"):
+            value = [{"sha": "a" * 40}]
+        elif suffix.endswith("/releases"):
+            value = {"id": 17}
+        elif suffix.endswith("/attach_files"):
+            if request.method == "GET":
+                value = []
+            else:
+                assert Path(expected["package_path"]).read_bytes() in request.read()
+                value = {"id": 29, "name": "firmware.zip", "size": expected["size"]}
+        else:
+            value = {
+                "private": False,
+                "full_name": "author/WatcherRobot-Firmware-local.desktop_pet",
+                "default_branch": "master",
+            }
+        return httpx.Response(201 if request.method == "POST" else 200, json=value)
+
+    with httpx.Client(transport=httpx.MockTransport(response)) as client:
+        release = FirmwarePlatform(
+            provider, hf_factory=lambda _: api, client=client
+        ).publish(raw, AccessToken("test-token"))
+    assert release.sha256 == expected["sha256"]
+    assert release.firmware_id == "local.desktop_pet"
+    assert release.version == "0.3.3"
+    assert [item["offset"] for item in expected["segments"]] == [0, 0x8000, 0x20000]
+    assert api.calls if provider == "huggingface" else calls
+
+
+@pytest.mark.parametrize("provider", ["huggingface", "gitee"])
+@pytest.mark.parametrize("damage", ["overlap", "wrong_partition", "corrupt_image"])
+def test_direct_build_upload_rejects_invalid_segments_before_provider_access(
+    tmp_path, provider, damage
+):
+    from zipfile import ZipFile
+    from tests.distribution.test_firmware_preparation import build
+
+    source = build(tmp_path / "build")
+    args = source / "flasher_args.json"
+    metadata = json.loads(args.read_text())
+    if damage == "overlap":
+        metadata["flash_files"]["0x0"] = "app.bin"
+        metadata["flash_files"]["0x1000"] = "bootloader.bin"
+        (source / "app.bin").write_bytes(
+            (source / "app.bin").read_bytes() + bytes(8192)
+        )
+    elif damage == "wrong_partition":
+        metadata["flash_files"]["0x10000"] = metadata["flash_files"].pop("0x20000")
+    else:
+        (source / "app.bin").write_bytes(bytes(24))
+    args.write_text(json.dumps(metadata))
+    raw = tmp_path / "bad-build.zip"
+    with ZipFile(raw, "w") as archive:
+        for path in source.iterdir():
+            archive.write(path, "release/" + path.name)
+
+    def remote(*a, **kw):
+        pytest.fail("Invalid segments must be rejected before provider access")
+
+    with httpx.Client(transport=httpx.MockTransport(remote)) as client:
+        with pytest.raises(FirmwareError, match={"overlap": "Overlapping", "wrong_partition": "write address", "corrupt_image": "image"}[damage]):
+            FirmwarePlatform(provider, hf_factory=remote, client=client).publish(
+                raw, AccessToken("unused")
+            )

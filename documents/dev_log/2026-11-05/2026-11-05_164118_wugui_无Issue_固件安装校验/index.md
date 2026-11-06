@@ -155,3 +155,21 @@
 - 通过真实 `firmware execute --action publish` CLI 与两平台上传适配器，用测试凭证、HF API 和 Gitee HTTP 替身执行官方 v0.5.9 原始 ZIP。六段地址为 0x0、0x8000、0xf000、0x20000、0xc20000、0xd20000，生成包 SHA-256 为 30725978188bc4d8c1ebbc3adc7b3fac37fb233f4297c59ae7e47318410767ee，与已烧录的包一致。两平台模拟匿名回读与摘要核对均通过。
 - 将副本中的应用地址从 0x20000 改为 0x21000，两平台均返回分区布局不匹配，凭证读取与平台调用均为零。未向真实平台发布。
 - macOS Distribution 回归 638 passed, 6 skipped；默认配置 mypy 140 个源文件通过。变更及记录留在本机。
+
+
+## 2026-11-06 Asia/Shanghai｜wugui / Codex｜SDK 直接上传接口与前端请求联合验收
+
+- 用户要求直接将官方v0.5.9构建ZIP传SDK上传接口、非法分段上传前拦截，并验证设置及广场两个前端入口；后续明确不要控制电脑，改用接口测试。停止开发版启动会话，此轮不进行点击、输入或窗口控制。
+- 发现公开FirmwarePlatform.publish只接受准备包，依赖UI先inspect。两provider直接传包装构建ZIP的正向测试先报Missing firmware metadata；现该接口在任何平台调用前冻结ZIP、prepare并使用准备后固定文件上传，目录同样支持。operations.execute publish在读取凭据前prepare，两条非法镜像测试先因访问credential而失败，修复后提前拒绝。共新增10例（4例真实Red/Green，其余非法分段断言补强具体原因，不能把原先因缺manifest拒绝误当布局检查覆盖）。
+- 正向真实官方ZIP分别调用两provider实际publish适配器，边界用Hf/httpx替身，确实生成同一准备包SHA256=307259...67ee、local.watcherobot-s3、v0.5.9及6个原地址。无SDK登录凭据，不宣称真实平台已上传；用户已收到凭据缺失说明，不在聊天索取token。
+- 使用真实官方ZIP改址为0x30000和制造table@0x1000重叠，两个公开接口×两provider均在credential/network前分别报Image write address does not match partition layout与Overlapping flash erase sectors；平台回调设置为触发即失败。首次改为0x10000会先与otadata实际范围重叠，正确收到overlap，因此调整不重叠的0x30000用例单独检验布局门禁，未改校验逻辑。
+- 广回归Windows Python3.12：Distribution639 passed/11 skipped，固件mypy12源码通过。匿名公开可访问证明旧测试的unused.zip改成真实合法包，保留404、不能借本地缓存证明公开可访问及不保存receipt的原断言。
+- 独立只读审查71通过/9跳过，无新增实际缺陷；原追加发布、版本冲突、匿名重新下载和snapshot边界保留。配套Desktop新增实际handler+API串联测试及真实接口请求验收，详见Desktop同任务档案。
+
+- [实际官方ZIP上传接口证据](upload-interface-validation.json)保存两provider结果、6段大小/地址、坏包具体原因及网络替身边界，不包含token或设备标识。配套Desktop设置请求链已实际写入并实时查询v0.5.9，广场请求链还在本轮验收中；不提前宣称其完成。
+
+### 推送前整合并行远端修复
+
+- 推送被正常拒绝，发现远端73da181已追加同一execute publish准备顺序修复及macOS Distribution638通过/6跳过、默认mypy140源码证据。没有强推或覆盖远端提交；将本地未推送提交rebase到其上。
+- operations保留远端的请求专用临时准备目录方案；公开FirmwarePlatform.publish的ZIP快照/自动准备、直接适配器正负向测试保留本轮实现。两边新增测试、历史档案均保留，不覆盖历史正文。
+- 冲突整合后Windows Distribution643 passed/11 skipped，固件mypy12源码通过、diff检查通过。本轮新公开适配器修复未冒称在macOS重新跑过。上传接口证据更新最终广回归计数；Desktop两条接口桥均已完成实际写入及实时版本查询，配套桌面将追加同步最终SDK来源。
