@@ -82,6 +82,85 @@ def test_hf_retries_same_content_without_reupload(tmp_path):
     assert not any(call[0] == "commit" for call in api.calls)
 
 
+@pytest.mark.parametrize("provider", ["huggingface", "gitee"])
+@pytest.mark.parametrize("metadata_case, accepted", [
+    ("legacy_missing_empty", True), ("legacy_explicit_empty", True),
+    ("different_hash", False), ("null_table", False),
+    ("different_table", False), ("missing_required_table", False),
+])
+def test_retry_preserves_legacy_metadata_compatibility(tmp_path, provider, metadata_case, accepted):
+    from zipfile import ZipFile
+    from watcherobot.firmware.installation import inspect_installation
+
+    path = make_package(tmp_path / "legacy-full.zip", full=True)
+    if metadata_case != "missing_required_table":
+        with ZipFile(path) as archive:
+            files = {entry.filename: archive.read(entry) for entry in archive.infolist()}
+        manifest = json.loads(files["firmware.json"])
+        manifest["schema_version"] = 1
+        manifest.pop("partition_table")
+        files["firmware.json"] = json.dumps(manifest).encode()
+        with ZipFile(path, "w") as archive:
+            for name, data in files.items():
+                archive.writestr(name, data)
+    assert inspect_installation(path, require_layout=True).mode == "full"
+    package = inspect_package(path)
+    saved = asdict(package)
+    if metadata_case in {"legacy_missing_empty", "missing_required_table"}:
+        saved.pop("partition_table")
+    elif metadata_case == "different_hash":
+        saved["sha256"] = "0" * 64
+    elif metadata_case == "null_table":
+        saved["partition_table"] = None
+    elif metadata_case == "different_table":
+        saved["partition_table"] = "another-table.bin"
+    metadata = tmp_path / "saved-release.json"
+    metadata.write_text(json.dumps(saved))
+    original_metadata = metadata.read_bytes()
+    class HistoricalHf(Hf):
+        def get_paths_info(self, **kwargs):
+            return [SimpleNamespace(last_commit=SimpleNamespace(oid="a" * 40))]
+
+        def hf_hub_download(self, **kwargs):
+            return str(metadata)
+
+    api = HistoricalHf()
+    calls = []
+    def response(request):
+        calls.append((request.method, request.url.path))
+        suffix = request.url.path.removeprefix("/api/v5/")
+        if suffix == "user":
+            value = {"login": "author"}
+        elif suffix.endswith("/releases/tags/v1.0.0"):
+            return httpx.Response(404)
+        elif "/contents/" in suffix:
+            assert request.method == "GET", "Existing metadata must not be overwritten"
+            value = {"content": base64.b64encode(metadata.read_bytes()).decode()}
+        elif suffix.endswith("/commits"):
+            value = [{"sha": "a" * 40}]
+        elif suffix.endswith("/releases"):
+            value = {"id": 17}
+        elif suffix.endswith("/attach_files"):
+            assert request.method == "GET", "Existing asset must not be reuploaded"
+            value = [{"id": 29, "name": "firmware.zip", "size": package.size}]
+        else:
+            value = {"private": False, "full_name": "author/WatcherRobot-Firmware-com.example.firmware",
+                     "default_branch": "master"}
+        return httpx.Response(200, json=value)
+    with httpx.Client(transport=httpx.MockTransport(response)) as client:
+        backend = FirmwarePlatform(provider, hf_factory=lambda _: api, client=client)
+        if accepted:
+            release = backend.publish(path, AccessToken("secret"))
+            assert release.sha256 == package.sha256
+            assert release.commit == "a" * 40
+        else:
+            with pytest.raises(FirmwareError, match="metadata|different"):
+                backend.publish(path, AccessToken("secret"))
+            assert not any(method != "GET" for method, _ in calls)
+    assert not any(name == "commit" for name, _ in api.calls)
+    assert metadata.read_bytes() == original_metadata
+
+
 @pytest.mark.parametrize("retry_metadata", [False, True])
 @pytest.mark.parametrize("missing_status", [404, 200])
 def test_gitee_publishes_release_attachment_without_replacing_old_files(

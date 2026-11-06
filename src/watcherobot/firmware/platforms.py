@@ -44,6 +44,21 @@ class _UploadReader(io.BufferedReader):
         return value
 
 
+def _same_publication_metadata(saved: bytes, current: bytes) -> bool:
+    previous = json.loads(saved)
+    expected = json.loads(current)
+    # SDK 0.1.13 omitted this later-added default. Only a missing field for
+    # a package with no explicit table is equivalent; null/nonempty values,
+    # required table paths, hashes and every other field remain exact.
+    if (
+        isinstance(previous, dict)
+        and expected.get("partition_table") == ""
+        and "partition_table" not in previous
+    ):
+        previous["partition_table"] = ""
+    return previous == expected
+
+
 class FirmwarePlatform:
     def __init__(
         self,
@@ -192,7 +207,7 @@ class FirmwarePlatform:
                             revision=version_commit,
                         )
                     ).read_bytes()
-                    if json.loads(saved) != json.loads(metadata):
+                    if not _same_publication_metadata(saved, metadata):
                         raise FirmwareError(
                             "Firmware version belongs to different content"
                         )
@@ -310,7 +325,7 @@ class FirmwarePlatform:
                         raise FirmwareError("Existing firmware metadata is not a file")
                     try:
                         saved = base64.b64decode(existing_meta["content"])
-                        if json.loads(saved) != json.loads(metadata):
+                        if not _same_publication_metadata(saved, metadata):
                             raise FirmwareError(
                                 "Firmware version metadata belongs to different content"
                             )
