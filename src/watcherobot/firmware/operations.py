@@ -348,12 +348,18 @@ def execute(
                 records.append(item)
         return {"jobs": records}
     if action == "publish":
-        token = SystemCredentialStore(provider=provider).load()
-        if token is None:
-            raise FirmwareError("Sign in to the selected provider before publishing")
-        release = backend.publish(
-            Path(request["package_path"]), token, progress=progress
-        )
+        from .preparation import prepare_package
+
+        with tempfile.TemporaryDirectory(
+            prefix="publish-prepare-", dir=root
+        ) as temporary:
+            prepared = prepare_package(Path(request["package_path"]), Path(temporary))
+            token = SystemCredentialStore(provider=provider).load()
+            if token is None:
+                raise FirmwareError("Sign in to the selected provider before publishing")
+            release = backend.publish(
+                Path(prepared["package_path"]), token, progress=progress
+            )
         # Verify public accessibility and exact bytes, not only authenticated upload success.
         with tempfile.TemporaryDirectory(prefix="firmware-public-check-") as temporary:
             acquire_package(release, Path(temporary), progress=progress)

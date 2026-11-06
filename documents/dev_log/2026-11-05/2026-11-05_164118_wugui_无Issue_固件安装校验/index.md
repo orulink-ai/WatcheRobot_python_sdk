@@ -147,3 +147,11 @@
 - 官方ZIP成功自动准备为完整包，保留6个声明分段及v0.5.9版本；准备包SHA256=30725978188bc4d8c1ebbc3adc7b3fac37fb233f4297c59ae7e47318410767ee。Desktop共享worker真实预检成功并进入写入，结果由配套桌面档案记录。
 
 - 进一步复核：IDF可能附带bootloader子构建元数据，选择独立最外层构建根，避免把嵌套元数据当第二个独立候选。最终Windows Distribution629 passed/11 skipped；固件mypy12源码通过、diff检查通过。实际官方ZIP经最终准备器重新准备摘要保持307259...67ee（由后续执行验证），无需重复写设备。真实Desktop worker烧录成功，重启后实时查询v0.5.9，配套Desktop档案保存脱敏结果；本轮未进行macOS原生或GUI点击验收。
+
+## 2026-11-06 10:31:36 Asia/Shanghai｜Codex｜SDK 原始发布 ZIP 上传入口复验
+
+- 在 SDK `2218076` 基线上确认 `inspect` 可解析外层目录，但直接 `publish` 原先先取凭证，再把输入交给成品包校验。两平台的正常/错址参数化回归共四条先失败。
+- `publish` 现先复用 `prepare_package`，在本次请求的临时目录生成并校验标准包，通过后才读取凭证。平台上传与匿名回读沿用原验证，回读失败不落发布凭据。没有写入设备或改变作者声明的分区地址。
+- 通过真实 `firmware execute --action publish` CLI 与两平台上传适配器，用测试凭证、HF API 和 Gitee HTTP 替身执行官方 v0.5.9 原始 ZIP。六段地址为 0x0、0x8000、0xf000、0x20000、0xc20000、0xd20000，生成包 SHA-256 为 30725978188bc4d8c1ebbc3adc7b3fac37fb233f4297c59ae7e47318410767ee，与已烧录的包一致。两平台模拟匿名回读与摘要核对均通过。
+- 将副本中的应用地址从 0x20000 改为 0x21000，两平台均返回分区布局不匹配，凭证读取与平台调用均为零。未向真实平台发布。
+- macOS Distribution 回归 638 passed, 6 skipped；默认配置 mypy 140 个源文件通过。变更及记录留在本机。

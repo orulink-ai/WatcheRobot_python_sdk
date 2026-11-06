@@ -487,8 +487,10 @@ def test_publication_cannot_use_local_cache_as_public_availability_proof(
     import httpx
     from watcherobot.distribution.ports import AccessToken
     from watcherobot.firmware.transfer import acquire_package
+    from tests.distribution.test_firmware_installation import package
 
     release, root = setup_catalog(tmp_path)
+    source = package(tmp_path / "publication.zip")
     monkeypatch.setattr(
         operations.SystemCredentialStore, "load", lambda self: AccessToken("secret")
     )
@@ -512,7 +514,7 @@ def test_publication_cannot_use_local_cache_as_public_availability_proof(
         with pytest.raises(FirmwareError, match="404"):
             operations.execute(
                 "publish",
-                {"package_path": "unused.zip"},
+                {"package_path": str(source)},
                 provider="huggingface",
                 cache_root=root,
                 store_root=tmp_path,
@@ -557,3 +559,58 @@ def test_catalog_lock_and_veto_identity_matches_extended_and_native_paths(tmp_pa
     assert operations._catalog_state(cache, "huggingface") == operations._catalog_state(
         filesystem_path(cache), "huggingface"
     )
+
+
+@pytest.mark.parametrize("provider", ["gitee", "huggingface"])
+@pytest.mark.parametrize("invalid_offset", [False, True])
+def test_publish_prepares_wrapped_build_before_authentication(
+    tmp_path, monkeypatch, provider, invalid_offset
+):
+    from pathlib import Path
+    from zipfile import ZipFile
+
+    from watcherobot.distribution.ports import AccessToken
+    from watcherobot.firmware.installation import inspect_installation
+    from tests.distribution.test_firmware_preparation import build
+
+    source = build(tmp_path / "build")
+    if invalid_offset:
+        args_path = source / "flasher_args.json"
+        args = json.loads(args_path.read_text())
+        args["flash_files"]["0x21000"] = args["flash_files"].pop("0x20000")
+        args_path.write_text(json.dumps(args))
+    archive_path = tmp_path / "release.zip"
+    with ZipFile(archive_path, "w") as archive:
+        for entry in source.iterdir():
+            archive.write(entry, f"release/{entry.name}")
+
+    calls = []
+
+    def load(self):
+        calls.append("credentials")
+        return AccessToken("test-only")
+
+    def publish(self, path, token, *, progress):
+        calls.append("publish")
+        info = inspect_installation(Path(path), require_layout=True)
+        assert info.mode == "full"
+        assert [segment.offset for segment in info.package.segments] == [
+            0, 0x8000, 0x20000,
+        ]
+        raise RuntimeError("reached platform boundary")
+
+    monkeypatch.setattr(operations.SystemCredentialStore, "load", load)
+    monkeypatch.setattr(operations.FirmwarePlatform, "publish", publish)
+
+    expected = FirmwareError if invalid_offset else RuntimeError
+    message = "does not match partition layout" if invalid_offset else "reached platform boundary"
+    with pytest.raises(expected, match=message):
+        operations.execute(
+            "publish",
+            {"package_path": str(archive_path)},
+            provider=provider,
+            cache_root=tmp_path / "cache",
+            store_root=tmp_path,
+            progress=lambda **_: None,
+        )
+    assert calls == ([] if invalid_offset else ["credentials", "publish"])

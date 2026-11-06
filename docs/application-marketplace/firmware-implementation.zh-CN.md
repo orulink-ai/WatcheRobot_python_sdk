@@ -210,6 +210,8 @@ flowchart TD
 
 `firmware execute --action inspect --request-json '{"package_path":"..."}'` 在本地准备安装包，无需登录，不连接设备。输入支持规范 ZIP、ESP-IDF 构建目录和构建 ZIP。构建 ZIP 可带发布用的外层目录，工具只选择唯一包含生成烧录参数的目录，多候选报错；带成品包格式标记的根 manifest 始终严格检查，不因缺少 flash_args 而回退重建。工具读取生成的 flash 文件映射、分区表、应用描述，生成规范 `firmware.json`，不执行作者脚本。Windows 本地长路径使用扩展路径，中文路径及文本按 UTF-8 处理，构建 JSON 可带 UTF-8 BOM。项目显示名可为中文；无法从其生成 ASCII ID 时，以项目名的稳定摘要自动生成 `local.project-...`，也可用 `firmware.json` 中的合法 ID 覆盖。缓存目录在实际操作入口创建前即规范化；Windows 普通路径与扩展路径共享目录锁及撤销标记。
 
+`firmware execute --action publish` 接受相同的输入，可直接传入原始构建 ZIP。SDK 在读取平台凭证前生成并校验本次上传专用的临时包，分段错误会在认证和联网之前返回。上传后仍会匿名回读，核对公开可访问性与内容摘要。
+
 v2 新增 `partition_table` 文件引用，其地址不由用户手填。参考分区表不列入 `segments` 时仅作布局依据；完整刷机包将其列入写入分段，并必须有合法 bootloader、应用镜像。支持自定义分区标签、数据类型和合法地址，不以某个官方版本的布局作为全局要求。Flash 容量、文件大小、擦除重叠和芯片镜像合法性仍接受检查。自定义表地址前也可声明分区，只要不与 bootloader 和分区表的实际擦除范围重叠；不以分区先后顺序替代重叠检查。
 
 `inspect_installation` 为共享纯函数，发布与提交目录审核之前执行包结构、镜像完整性和声明布局检查；旧包可读，缺布局不允许新发布。`plan_installation` 接受 Desktop 读取的真实设备表和容量：应用分段写入要求设备与包参考布局一致，分段必须位于对应应用分区内并从该分区起点开始，不得写数据分区或 bootloader；分区表写入属于完整刷机，必须带地址零的 bootloader 镜像并额外确认覆盖风险。factory、OTA、test 及多应用布局中的合法声明应用分段均可通过 USB 原样写入，不因未读取运行槽而拒绝，不按当前启动槽重定位地址。
