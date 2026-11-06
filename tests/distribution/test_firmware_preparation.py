@@ -289,3 +289,79 @@ def test_unicode_project_name_keeps_display_name_and_prepares_stable_identity(
         )
         other = prepare_package(source, tmp_path / "cache")
         assert other["firmware_id"] != expected["firmware_id"]
+
+
+@pytest.mark.parametrize("use_json_flash_args", [True, False])
+def test_wrapped_release_build_zip_prepares_without_manually_extracting(
+    tmp_path, use_json_flash_args
+):
+    source = build(tmp_path / "build")
+    if not use_json_flash_args:
+        (source / "flasher_args.json").unlink()
+        (source / "flash_args.txt").write_text(
+            "--flash_size 32MB --flash_mode dio --flash_freq 80m\n"
+            "0 bootloader.bin\n0x8000 partition-table.bin\n0x20000 app.bin",
+            encoding="utf-8",
+        )
+    expected = prepare_package(source, tmp_path / "directory-cache")
+    raw = tmp_path / "官方完整固件.zip"
+    with ZipFile(raw, "w") as archive:
+        for path in source.iterdir():
+            archive.write(path, "官方固件发布目录/" + path.name)
+    actual = prepare_package(raw, tmp_path / "zip-cache")
+    assert actual["sha256"] == expected["sha256"]
+    assert actual["mode"] == "full"
+
+
+def test_ambiguous_build_roots_are_rejected(tmp_path):
+    source = build(tmp_path / "build")
+    raw = tmp_path / "ambiguous.zip"
+    with ZipFile(raw, "w") as archive:
+        for folder in ("release-a", "release-b"):
+            for path in source.iterdir():
+                archive.write(path, folder + "/" + path.name)
+    with pytest.raises(FirmwareError, match="exactly one build directory"):
+        prepare_package(raw, tmp_path / "cache")
+    assert not list((tmp_path / "cache").glob("*.zip"))
+
+
+def test_wrapped_package_markers_are_not_rebuilt_as_display_metadata(tmp_path):
+    source = build(tmp_path / "build")
+    (source / "firmware.json").write_text(
+        json.dumps({"schema_version": 2, "name": "Broken package"}), encoding="utf-8"
+    )
+    raw = tmp_path / "wrapped-broken-package.zip"
+    with ZipFile(raw, "w") as archive:
+        for path in source.iterdir():
+            archive.write(path, "release/" + path.name)
+    with pytest.raises(FirmwareError, match="package metadata"):
+        prepare_package(raw, tmp_path / "cache")
+    assert not list((tmp_path / "cache").glob("*.zip"))
+
+
+def test_root_package_marker_without_flash_args_cannot_fall_back_to_nested_build(
+    tmp_path,
+):
+    source = build(tmp_path / "build")
+    raw = tmp_path / "broken-package-with-build.zip"
+    with ZipFile(raw, "w") as archive:
+        archive.writestr(
+            "firmware.json", json.dumps({"schema_version": 2, "segments": []})
+        )
+        for path in source.iterdir():
+            archive.write(path, "release/" + path.name)
+    with pytest.raises(FirmwareError, match="Missing or oversized firmware metadata"):
+        prepare_package(raw, tmp_path / "cache")
+    assert not list((tmp_path / "cache").glob("*.zip"))
+
+
+def test_nested_bootloader_metadata_does_not_make_outer_build_ambiguous(tmp_path):
+    source = build(tmp_path / "build")
+    expected = prepare_package(source, tmp_path / "directory-cache")
+    raw = tmp_path / "idf-build.zip"
+    with ZipFile(raw, "w") as archive:
+        for path in source.iterdir():
+            archive.write(path, "release/" + path.name)
+        archive.writestr("release/bootloader/flasher_args.json", "{}")
+    actual = prepare_package(raw, tmp_path / "zip-cache")
+    assert actual["sha256"] == expected["sha256"]

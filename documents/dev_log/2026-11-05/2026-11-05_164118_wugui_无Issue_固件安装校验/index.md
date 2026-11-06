@@ -137,3 +137,13 @@
 - P2 Windows 长缓存路径：真实 execute(inspect) 在进入 prepare_package 前 mkdir 失败（WinError3）；新入口回归先真实失败。现创建前规范化扩展路径，同时所有操作复用该路径。回归发现普通/扩展路径的目录状态摘要不同，新增身份一致性测试先失败后修复：仅在身份摘要时去掉 Windows 扩展别名前缀，保留旧目录锁、跨进程 veto 及 UNC 语义。已有故障注入测试的文件路径比较同步到真实 I/O 表示，未删除或放宽撤销保护断言。首次广回归6失败来自身份差异和测试替身路径比较，修复后重跑通过。
 - Windows Python3.12.13：firmware 全套158 passed/9 skipped；Distribution 全套623 passed/11 skipped；mypy firmware12源码通过，diff空白检查通过。跳过保留Windows无符号链接权限/POSIX专用条件，未修改skip门禁。8条新增回归（2中文、4布局、2Windows路径）包含真实Red/Green证据；macOS新增用例尚未本轮原生执行，历史macOS三版本CI为10bf0e9的基线证据。
 - 配套 Desktop #190 原代码复审无新的独立缺陷，组合Python41通过（另10subtests）、Node82通过；后续桌面来源锁将跟随本提交。未执行线上上传/下架或USB实机写入，不合并两个PR，不改meta gitlink。
+
+
+## 2026-11-06 Asia/Shanghai｜wugui / Codex｜真实发布包烧录验收发现的准备问题
+
+- 用户授权对已连接设备实际测试。下载官方v0.5.9完整ZIP，SHA256与GitHub发布digest一致（e2af6033a677588a967138ae1b1e83fc568fd58d59e78fcaf16d33fae19a0e70）；不执行包内tools或skill。原桌宠0.3.2缺少参考布局仍不能作为有效样本。当前设备原为v0.5.12，没有本机同版本完整包，测试前已明确告知使用已发布v0.5.9。
+- 真实ZIP包含外层版本目录，SDK准备直接失败于Missing build file，设备未写入。两种flash参数形式的包装目录测试先失败；现有界安全解包后寻找唯一生成参数父目录，多根明确拒绝，不改变作者地址。
+- 独立复审发现新增递归选择可能忽略ZIP根损坏成品marker（缺flash_args）而重建子目录；新回归先DID NOT RAISE，现根firmware.json只要有成品marker即走严格检查，不依赖flash_args存在。包装目录内成品marker也拒绝重解释。新增共6例：2条包装构建正向、独立根歧义提示、根成品marker防回退、嵌套bootloader元数据不误判共5例先失败后通过；包装目录成品marker拒绝为补充覆盖，未冒称全部先Red。
+- 官方ZIP成功自动准备为完整包，保留6个声明分段及v0.5.9版本；准备包SHA256=30725978188bc4d8c1ebbc3adc7b3fac37fb233f4297c59ae7e47318410767ee。Desktop共享worker真实预检成功并进入写入，结果由配套桌面档案记录。
+
+- 进一步复核：IDF可能附带bootloader子构建元数据，选择独立最外层构建根，避免把嵌套元数据当第二个独立候选。最终Windows Distribution629 passed/11 skipped；固件mypy12源码通过、diff检查通过。实际官方ZIP经最终准备器重新准备摘要保持307259...67ee（由后续执行验证），无需重复写设备。真实Desktop worker烧录成功，重启后实时查询v0.5.9，配套Desktop档案保存脱敏结果；本轮未进行macOS原生或GUI点击验收。

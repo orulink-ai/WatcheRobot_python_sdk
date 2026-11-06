@@ -234,10 +234,7 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
                 _build(source, output)
             elif source.is_file() and source.stat().st_size <= MAX_PACKAGE_BYTES:
                 with ZipFile(source) as archive:
-                    prepared = (
-                        "firmware.json" in archive.namelist()
-                        and "flash_args.txt" in archive.namelist()
-                    )
+                    prepared = "firmware.json" in archive.namelist()
                     if prepared:
                         if (
                             archive.getinfo("firmware.json").file_size
@@ -262,7 +259,32 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
                     build = root / "build"
                     build.mkdir()
                     _extract_build(source, build)
-                    _build(build, output)
+                    roots = {
+                        item.parent
+                        for pattern in ("flasher_args.json", "flash_args.txt")
+                        for item in build.rglob(pattern)
+                        if item.is_file()
+                    }
+                    # IDF may include metadata for the bootloader sub-build.
+                    # Only independent outer builds are ambiguous.
+                    roots = {
+                        item
+                        for item in roots
+                        if not any(parent in roots for parent in item.parents)
+                    }
+                    if len(roots) != 1:
+                        raise FirmwareError(
+                            "ZIP must contain exactly one build directory"
+                        )
+                    selected = roots.pop()
+                    metadata_path = selected / "firmware.json"
+                    if metadata_path.is_file():
+                        metadata = _json(metadata_path)
+                        if "schema_version" in metadata or "segments" in metadata:
+                            raise FirmwareError(
+                                "Firmware package metadata must be at ZIP root"
+                            )
+                    _build(selected, output)
             else:
                 raise FirmwareError(
                     "Select a build directory or a bounded firmware ZIP"

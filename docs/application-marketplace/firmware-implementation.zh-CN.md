@@ -208,7 +208,7 @@ flowchart TD
 
 ## 自动准备和布局校验（v2）
 
-`firmware execute --action inspect --request-json '{"package_path":"..."}'` 在本地准备安装包，无需登录，不连接设备。输入支持规范 ZIP、ESP-IDF 构建目录和构建 ZIP。工具读取生成的 flash 文件映射、分区表、应用描述，生成规范 `firmware.json`，不执行作者脚本。Windows 本地长路径使用扩展路径，中文路径及文本按 UTF-8 处理，构建 JSON 可带 UTF-8 BOM。项目显示名可为中文；无法从其生成 ASCII ID 时，以项目名的稳定摘要自动生成 `local.project-...`，也可用 `firmware.json` 中的合法 ID 覆盖。缓存目录在实际操作入口创建前即规范化；Windows 普通路径与扩展路径共享目录锁及撤销标记。
+`firmware execute --action inspect --request-json '{"package_path":"..."}'` 在本地准备安装包，无需登录，不连接设备。输入支持规范 ZIP、ESP-IDF 构建目录和构建 ZIP。构建 ZIP 可带发布用的外层目录，工具只选择唯一包含生成烧录参数的目录，多候选报错；带成品包格式标记的根 manifest 始终严格检查，不因缺少 flash_args 而回退重建。工具读取生成的 flash 文件映射、分区表、应用描述，生成规范 `firmware.json`，不执行作者脚本。Windows 本地长路径使用扩展路径，中文路径及文本按 UTF-8 处理，构建 JSON 可带 UTF-8 BOM。项目显示名可为中文；无法从其生成 ASCII ID 时，以项目名的稳定摘要自动生成 `local.project-...`，也可用 `firmware.json` 中的合法 ID 覆盖。缓存目录在实际操作入口创建前即规范化；Windows 普通路径与扩展路径共享目录锁及撤销标记。
 
 v2 新增 `partition_table` 文件引用，其地址不由用户手填。参考分区表不列入 `segments` 时仅作布局依据；完整刷机包将其列入写入分段，并必须有合法 bootloader、应用镜像。支持自定义分区标签、数据类型和合法地址，不以某个官方版本的布局作为全局要求。Flash 容量、文件大小、擦除重叠和芯片镜像合法性仍接受检查。自定义表地址前也可声明分区，只要不与 bootloader 和分区表的实际擦除范围重叠；不以分区先后顺序替代重叠检查。
 
