@@ -36,7 +36,13 @@ def valid_image():
 
 
 def package(
-    path, *, offset=0x20000, full=False, missing_boot=False, image=None, layout=None,
+    path,
+    *,
+    offset=0x20000,
+    full=False,
+    missing_boot=False,
+    image=None,
+    layout=None,
     table_offset=0x8000,
 ):
     image = valid_image() if image is None else image
@@ -222,19 +228,22 @@ DECLARED_APPLICATION_LAYOUTS = [
 
 
 def encoded_layout(entries):
-    return b"".join(
-        struct.pack(
-            "<HBBII16sI",
-            0x50AA,
-            kind,
-            subtype,
-            offset,
-            0x100000 if kind == 0 else 0x2000,
-            name.encode(),
-            0,
+    return (
+        b"".join(
+            struct.pack(
+                "<HBBII16sI",
+                0x50AA,
+                kind,
+                subtype,
+                offset,
+                0x100000 if kind == 0 else 0x2000,
+                name.encode(),
+                0,
+            )
+            for kind, subtype, offset, name in entries
         )
-        for kind, subtype, offset, name in entries
-    ) + b"\xff" * 32
+        + b"\xff" * 32
+    )
 
 
 @pytest.mark.parametrize("entries", DECLARED_APPLICATION_LAYOUTS)
@@ -291,9 +300,7 @@ def test_single_factory_update_allows_non_ota_data_partitions(tmp_path):
 def test_application_mode_still_rejects_non_application_write_segments(
     tmp_path, segment_kind
 ):
-    layout = encoded_layout(
-        [(0, 0x10, 0x20000, "ota_0"), (1, 0, 0x9000, "selection")]
-    )
+    layout = encoded_layout([(0, 0x10, 0x20000, "ota_0"), (1, 0, 0x9000, "selection")])
     original = package(tmp_path / "source.zip", layout=layout)
     with ZipFile(original) as archive:
         files = {item.filename: archive.read(item) for item in archive.infolist()}
@@ -303,10 +310,14 @@ def test_application_mode_still_rejects_non_application_write_segments(
         "table": ("partition-table.bin", 0x8000, layout, "bootloader"),
     }[segment_kind]
     manifest = json.loads(files["firmware.json"])
-    manifest["segments"].append({
-        "path": name, "offset": offset, "size": len(data),
-        "sha256": hashlib.sha256(data).hexdigest(),
-    })
+    manifest["segments"].append(
+        {
+            "path": name,
+            "offset": offset,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+    )
     files["firmware.json"] = json.dumps(manifest).encode()
     files["flash_args.txt"] += f"\n{offset:#x} {name}".encode()
     files[name] = data
@@ -330,3 +341,29 @@ def test_full_package_preserves_author_declared_custom_table_address(tmp_path):
         (0x9000, "partition-table.bin"),
         (0x20000, "application.bin"),
     ]
+
+
+def test_full_package_allows_partition_before_custom_table_without_overlap(tmp_path):
+    layout = encoded_layout([(1, 2, 0x8000, "nvs"), (0, 0, 0x20000, "app")])
+    path = package(
+        tmp_path / "custom-table.zip", full=True, table_offset=0xA000, layout=layout
+    )
+    info = inspect_installation(path, require_layout=True)
+    assert info.mode == "full"
+    assert info.table_offset == 0xA000
+    assert info.partitions[0].offset == 0x8000
+    assert plan_installation(info, b"old-layout", 0x2000000).requires_confirmation
+
+
+@pytest.mark.parametrize("data_offset", [0, 0x9000, 0xA000])
+def test_full_package_rejects_partitions_overlapping_boot_or_table(
+    tmp_path, data_offset
+):
+    # No data image is written: the reference layout itself must still reserve
+    # the bootloader and table erase ranges, including a partially crossing row.
+    layout = encoded_layout([(1, 2, data_offset, "data"), (0, 0, 0x20000, "app")])
+    path = package(
+        tmp_path / "overlap.zip", full=True, table_offset=0xA000, layout=layout
+    )
+    with pytest.raises(FirmwareError):
+        inspect_installation(path, require_layout=True)

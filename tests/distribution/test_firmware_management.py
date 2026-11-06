@@ -150,8 +150,10 @@ def test_cache_deletion_rejects_linked_package_directory(tmp_path, monkeypatch):
     packages.mkdir(parents=True)
     target = packages / (digest + ".zip")
     target.write_bytes(data)
+    from watcherobot.firmware.paths import filesystem_path
+
     original = Path.is_symlink
-    monkeypatch.setattr(Path, "is_symlink", lambda p: p == packages or original(p))
+    monkeypatch.setattr(Path, "is_symlink", lambda p: p == filesystem_path(packages) or original(p))
     with pytest.raises(FirmwareError, match="symbolic"):
         operations.execute(
             "remove_download",

@@ -4,6 +4,7 @@ import pytest
 
 from watcherobot.firmware import operations
 from watcherobot.firmware.contract import FirmwareError
+from watcherobot.firmware.paths import filesystem_path
 from watcherobot.firmware.transfer import release_record
 from tests.distribution.test_firmware_transfer import artifact
 
@@ -256,7 +257,7 @@ def test_failed_catalog_veto_falls_back_to_cache_invalidation(tmp_path, monkeypa
         return original_open(path, *args, **kwargs)
 
     def denied_unlink(path, *args, **kwargs):
-        if path == catalog_path and cache_unlink_fails:
+        if filesystem_path(path) == filesystem_path(catalog_path) and cache_unlink_fails:
             raise PermissionError("cache read only")
         return original_unlink(path, *args, **kwargs)
 
@@ -519,3 +520,40 @@ def test_publication_cannot_use_local_cache_as_public_availability_proof(
             )
     assert len(requests) == 1
     assert not list((root / "huggingface/publications").glob("*.json"))
+
+
+@pytest.mark.skipif(operations.os.name != "nt", reason="Windows long-path entrypoint")
+def test_inspect_operation_normalizes_long_cache_root_before_creating_it(tmp_path):
+    import shutil
+    from watcherobot.firmware.paths import filesystem_path
+    from tests.distribution.test_firmware_preparation import build
+
+    source = build(tmp_path / "build")
+    cache = tmp_path / "长路径缓存"
+    for _ in range(7):
+        cache = cache / ("中文缓存目录" * 6)
+    cleanup = filesystem_path(tmp_path / "长路径缓存")
+    try:
+        result = operations.execute(
+            "inspect", {"package_path": str(source)}, provider="huggingface",
+            cache_root=cache, store_root=tmp_path, progress=lambda **_: None,
+        )
+        assert result["mode"] == "full"
+        assert operations.Path(result["package_path"]).is_file()
+        assert operations.execute(
+            "cache_status", {"sha256": result["sha256"]}, provider="huggingface",
+            cache_root=cache, store_root=tmp_path, progress=lambda **_: None,
+        ) == {"cached": False}
+    finally:
+        if cleanup.exists():
+            shutil.rmtree(cleanup)
+
+
+@pytest.mark.skipif(operations.os.name != "nt", reason="Windows extended-path aliases")
+def test_catalog_lock_and_veto_identity_matches_extended_and_native_paths(tmp_path):
+    from watcherobot.firmware.paths import filesystem_path
+
+    cache = tmp_path / "cache"
+    assert operations._catalog_state(cache, "huggingface") == operations._catalog_state(
+        filesystem_path(cache), "huggingface"
+    )

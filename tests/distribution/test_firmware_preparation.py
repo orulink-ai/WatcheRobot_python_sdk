@@ -242,7 +242,9 @@ def test_malformed_package_manifest_is_not_reinterpreted_as_build_metadata(tmp_p
     assert not list((tmp_path / "cache").glob("*.zip"))
 
 
-@pytest.mark.parametrize("field", ["extra_esptool_args", "flash_settings", "flash_files"])
+@pytest.mark.parametrize(
+    "field", ["extra_esptool_args", "flash_settings", "flash_files"]
+)
 def test_build_rejects_non_object_flash_metadata_with_field_name(tmp_path, field):
     source = build(tmp_path / "invalid-metadata")
     metadata = source / "flasher_args.json"
@@ -252,3 +254,38 @@ def test_build_rejects_non_object_flash_metadata_with_field_name(tmp_path, field
     with pytest.raises(FirmwareError, match=field):
         prepare_package(source, tmp_path / "cache")
     assert not list((tmp_path / "cache").glob("*.zip"))
+
+
+@pytest.mark.parametrize("explicit_id", [None, "org.example.desktop-pet"])
+def test_unicode_project_name_keeps_display_name_and_prepares_stable_identity(
+    tmp_path, explicit_id
+):
+    source = build(tmp_path / "中文项目")
+    (source / "project_description.json").write_text(
+        json.dumps({"project_name": "桌宠副屏", "project_version": "0.3.3"}),
+        encoding="utf-8",
+    )
+    if explicit_id:
+        (source / "firmware.json").write_text(
+            json.dumps({"id": explicit_id}), encoding="utf-8"
+        )
+    expected = prepare_package(source, tmp_path / "cache")
+    assert expected["name"] == "桌宠副屏"
+    if explicit_id:
+        assert expected["firmware_id"] == explicit_id
+    else:
+        assert expected["firmware_id"].startswith("local.project-")
+    raw = tmp_path / "中文构建.zip"
+    with ZipFile(raw, "w") as archive:
+        for path in source.iterdir():
+            archive.write(path, path.name)
+    actual = prepare_package(raw, tmp_path / "zip-cache")
+    assert actual["firmware_id"] == expected["firmware_id"]
+    assert actual["sha256"] == expected["sha256"]
+    if not explicit_id:
+        (source / "project_description.json").write_text(
+            json.dumps({"project_name": "桌宠相框", "project_version": "0.3.3"}),
+            encoding="utf-8",
+        )
+        other = prepare_package(source, tmp_path / "cache")
+        assert other["firmware_id"] != expected["firmware_id"]

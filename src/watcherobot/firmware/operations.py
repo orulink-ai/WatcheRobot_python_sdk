@@ -24,6 +24,7 @@ from .catalog import (
     resolve_release,
 )
 from .contract import FirmwareError, FirmwareRequirement, version
+from .paths import filesystem_path
 from .platforms import FirmwarePlatform
 from .transfer import Progress, acquire_package, release_record
 
@@ -65,7 +66,14 @@ _UNSAFE_CATALOGS: set[str] = set()
 
 def _catalog_state(root: Path, provider: str) -> Path:
     path = (root / provider / "catalog.json").resolve()
-    identity = hashlib.sha256(os.path.normcase(str(path)).encode()).hexdigest()
+    # Extended Windows paths are I/O aliases, not a new catalog identity.
+    # Preserve locks and durable invalidation markers created by older clients.
+    canonical = os.path.normcase(str(path))
+    if os.name == "nt" and canonical.startswith("\\\\?\\"):
+        canonical = (
+            "\\\\" + canonical[8:] if canonical[4:8] == "unc\\" else canonical[4:]
+        )
+    identity = hashlib.sha256(canonical.encode()).hexdigest()
     return Path.home() / ".watcherobot" / "catalog-locks" / identity
 
 
@@ -213,7 +221,7 @@ def execute(
     if action not in ACTIONS:
         raise FirmwareError("Unsupported firmware operation")
     get_provider(provider)
-    root = Path(cache_root).resolve()
+    root = filesystem_path(cache_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     if action == "inspect":
         from .preparation import prepare_package

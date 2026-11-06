@@ -145,7 +145,10 @@ def inspect_installation(path: Path, *, require_layout: bool = False) -> Install
         if table_offset is not None and (
             table_offset < 0x1000
             or table_offset % 4096
-            or any(p.offset < table_offset + 4096 for p in partitions)
+            or any(
+                p.offset < table_offset + 4096 and table_offset < p.offset + p.size
+                for p in partitions
+            )
         ):
             raise FirmwareError("Invalid partition table write location")
         boot = [s for s in package.segments if s.offset == 0]
@@ -182,6 +185,9 @@ def inspect_installation(path: Path, *, require_layout: bool = False) -> Install
         if not applications or (mode == "application" and boot):
             raise FirmwareError("Incomplete application installation")
         if boot:
+            boot_end = ((boot[0].size + 4095) // 4096) * 4096
+            if any(p.offset < boot_end for p in partitions):
+                raise FirmwareError("Partition overlaps bootloader write range")
             image = archive.read(boot[0].path)
             _verify_image(image)
         return Installation(package, partitions, mode, table_offset)

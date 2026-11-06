@@ -124,3 +124,16 @@
 - 本轮仅验证和追加档案，没有修改业务代码、测试或 CI，因此不适用新增代码的 Red/Green；以三个实际解释器的完整检查及独立安装 smoke 为替代验证。没有为了通过检查放宽断言、覆盖最低类型目标或改变固件职责边界。
 - 平台边界：未执行 Linux 自托管 runner 的清理/源码下载/setup 基础设施；macOS 上保留 9 项平台跳过，不冒称 Windows 原生验证。当前不是 release 标签流程，未运行 release-only 的 lowest/latest 依赖矩阵。未执行实机写入、目标固件启动、真实 BLE、线上上传或发布。
 - 交付状态：新增本节及机器结果，本轮未 commit、push、合入，由主审查者统一检查提交；用户要求仅更新分支与中文 PR，不合并。
+
+
+## 2026-11-06 Asia/Shanghai｜wugui / Codex｜PR #156 再次审查（进行中）
+
+用户要求在 macOS CI 后继续审查并修复、更新中文 PR，保持不合并。基线10bf0e9；沿用同一任务档案。检查中文项目名称、双平台上传和自定义布局等客观校验边界；仅对实际复现问题追加修复和测试，不扩大启动保证。
+
+### 审查修复与 TDD 证据
+
+- P2 中文项目名：ASCII ID 推导发生在展示 ID 覆盖前，纯中文名会清空；未配置/显式配置 ID 两条测试先报 Missing project name。现非空 Unicode 名采用稳定 SHA-256 摘要生成缺省 ID，保留显示名与合法覆盖；目录、ZIP、重复准备保持同一摘要，不同中文名不会都落入同一固定 ID。准备模块23项通过。
+- P2 自定义表前分区：原先将所有位于 table_offset+4096 前的分区一律拒绝。有效 nvs@0x8000、table@0xA000 的用例先失败；改为真实表扇区与 bootloader 向上取整擦除范围的交集检查。合法前置分区通过，跨表/位于表内/与 bootloader 重叠仍拒绝。不移动任何作者地址，也不认证启动语义。
+- P2 Windows 长缓存路径：真实 execute(inspect) 在进入 prepare_package 前 mkdir 失败（WinError3）；新入口回归先真实失败。现创建前规范化扩展路径，同时所有操作复用该路径。回归发现普通/扩展路径的目录状态摘要不同，新增身份一致性测试先失败后修复：仅在身份摘要时去掉 Windows 扩展别名前缀，保留旧目录锁、跨进程 veto 及 UNC 语义。已有故障注入测试的文件路径比较同步到真实 I/O 表示，未删除或放宽撤销保护断言。首次广回归6失败来自身份差异和测试替身路径比较，修复后重跑通过。
+- Windows Python3.12.13：firmware 全套158 passed/9 skipped；Distribution 全套623 passed/11 skipped；mypy firmware12源码通过，diff空白检查通过。跳过保留Windows无符号链接权限/POSIX专用条件，未修改skip门禁。8条新增回归（2中文、4布局、2Windows路径）包含真实Red/Green证据；macOS新增用例尚未本轮原生执行，历史macOS三版本CI为10bf0e9的基线证据。
+- 配套 Desktop #190 原代码复审无新的独立缺陷，组合Python41通过（另10subtests）、Node82通过；后续桌面来源锁将跟随本提交。未执行线上上传/下架或USB实机写入，不合并两个PR，不改meta gitlink。

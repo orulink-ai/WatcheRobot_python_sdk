@@ -144,9 +144,13 @@ def _build(root: Path, output: Path) -> None:
         raise FirmwareError("Build must contain exactly one partition table")
     segments.sort(key=lambda s: s["offset"])
     name = project.get("project_name", "")
-    identity = re.sub("[^a-z0-9._-]", "-", str(name).lower()).strip("-")[:55]
-    if not identity:
+    if not isinstance(name, str) or not name.strip():
         raise FirmwareError("Missing project name")
+    identity = re.sub("[^a-z0-9._-]", "-", name.lower()).strip("-")[:55]
+    if not identity:
+        # Unicode display names do not need an ASCII spelling. Keep the ID
+        # deterministic across directory/ZIP preparation and cache retries.
+        identity = "project-" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
     manifest = {
         "schema_version": 2,
         "id": "local." + identity,
@@ -235,7 +239,10 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
                         and "flash_args.txt" in archive.namelist()
                     )
                     if prepared:
-                        if archive.getinfo("firmware.json").file_size > MAX_METADATA_BYTES:
+                        if (
+                            archive.getinfo("firmware.json").file_size
+                            > MAX_METADATA_BYTES
+                        ):
                             raise FirmwareError("Firmware metadata exceeds size limit")
                         metadata = json.loads(
                             archive.read("firmware.json").decode("utf-8-sig"),
