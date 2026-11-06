@@ -128,9 +128,16 @@ def inspect_installation(path: Path, *, require_layout: bool = False) -> Install
         reference = package.partition_table
         if not reference:
             # Legacy complete packages can carry their table as a write segment.
-            candidates = [
-                s for s in package.segments if archive.read(s.path)[:2] == b"\xaa\x50"
-            ]
+            candidates = []
+            for segment in package.segments:
+                data = archive.read(segment.path)
+                if data[:2] != b"\xaa\x50":
+                    continue
+                try:
+                    parse_partitions(data, package.flash_size)
+                except FirmwareError:
+                    continue
+                candidates.append(segment)
             reference = candidates[0].path if len(candidates) == 1 else ""
         if not reference:
             if require_layout:

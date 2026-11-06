@@ -425,3 +425,50 @@ def test_growing_build_metadata_is_bounded_before_json_decode(tmp_path, monkeypa
     monkeypatch.setattr(Path, "open", opened)
     with pytest.raises(FirmwareError, match="metadata exceeds size limit"):
         prepare_package(source, tmp_path / "cache")
+
+
+@pytest.mark.parametrize("wrapped_zip", [False, True])
+@pytest.mark.parametrize("candidate", ["ordinary_data", "second_table", "broken_table"])
+def test_partition_magic_is_only_a_candidate_filter(tmp_path, wrapped_zip, candidate):
+    import struct
+    from watcherobot.firmware.installation import inspect_installation
+
+    source = build(tmp_path / "build")
+    data = b"\xaa\x50" + bytes(30)
+    layout = (
+        struct.pack("<HBBII16sI", 0x50AA, 1, 2, 0x9000, 0x1000, b"data", 0) + table()
+    )
+    (source / "partition-table.bin").write_bytes(layout)
+    (source / "data.bin").write_bytes(layout if candidate == "second_table" else data)
+    if candidate == "broken_table":
+        (source / "partition-table.bin").write_bytes(data)
+    args_path = source / "flasher_args.json"
+    args = json.loads(args_path.read_text())
+    args["flash_files"]["0x9000"] = "data.bin"
+    args_path.write_text(json.dumps(args))
+    selected = source
+    if wrapped_zip:
+        selected = tmp_path / "build.zip"
+        with ZipFile(selected, "w") as archive:
+            for path in source.iterdir():
+                archive.write(path, "release/" + path.name)
+    if candidate != "ordinary_data":
+        with pytest.raises(FirmwareError):
+            prepare_package(selected, tmp_path / "cache")
+        return
+    result = prepare_package(selected, tmp_path / "cache")
+    assert result["mode"] == "full"
+    with ZipFile(result["package_path"]) as archive:
+        assert archive.read("images/00009000.bin") == data
+    # Legacy full packages discover their table from write segments too.
+    legacy = tmp_path / "legacy.zip"
+    with ZipFile(result["package_path"]) as source_zip, ZipFile(legacy, "w") as target:
+        for item in source_zip.infolist():
+            payload = source_zip.read(item)
+            if item.filename == "firmware.json":
+                manifest = json.loads(payload)
+                manifest["schema_version"] = 1
+                del manifest["partition_table"]
+                payload = json.dumps(manifest).encode()
+            target.writestr(item, payload)
+    assert inspect_installation(legacy, require_layout=True).mode == "full"

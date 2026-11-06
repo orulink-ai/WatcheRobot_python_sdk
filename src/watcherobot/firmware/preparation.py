@@ -15,7 +15,7 @@ from typing import Any
 from zipfile import ZipFile, ZipInfo, ZIP_STORED, BadZipFile
 
 from .contract import FirmwareError
-from .installation import inspect_installation
+from .installation import inspect_installation, parse_partitions
 from .paths import filesystem_path
 from .package import (
     MAX_PACKAGE_BYTES,
@@ -157,7 +157,12 @@ def _build(root: Path, output: Path) -> None:
             }
         )
         if data[:2] == b"\xaa\x50":
-            tables.append(name)
+            try:
+                parse_partitions(data, int(capacity[:-2]) * 1024**2)
+            except FirmwareError:
+                pass
+            else:
+                tables.append(name)
     if len(tables) != 1:
         raise FirmwareError("Build must contain exactly one partition table")
     segments.sort(key=lambda s: s["offset"])
