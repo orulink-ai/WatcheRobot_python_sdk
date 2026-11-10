@@ -49,6 +49,7 @@ from watcherobot.runtime.daemon.pairing.bindings_store import (
     DeviceBindingsStore,
 )
 from watcherobot.runtime.daemon.pairing.protocol import (
+    LinkReuniteAvailable,
     DeviceSessionEnd,
     HardwareHello,
     build_device_state_event,
@@ -66,6 +67,9 @@ from watcherobot.runtime.daemon.preview.udp_service import (
     FaceTrackingUdpPreviewService,
 )
 from watcherobot.runtime.daemon.routing.raw import RawFrameRouter
+
+
+_REUNITE_SCAN_INTERVAL_SECONDS = 30.0
 
 
 def _utc_now_ms() -> int:
@@ -150,6 +154,8 @@ class DaemonRuntime:
             daemon_instance_id=daemon_instance_id,
         )
         self._clock = clock
+        self._next_reunite_scan_at = 0.0
+        self._availability_suppressed_until = 0.0
         self._instance_group = instance_group
         if instance_id is None and instance_group != "default":
             raise ValueError("isolated DaemonRuntime requires an explicit instance_id")
@@ -181,6 +187,8 @@ class DaemonRuntime:
             clock=clock,
             state_listener=self._publish_device_state,
             event_logger=self.logs.record,
+            idle_listener=self._maybe_start_reunite_scan,
+            availability_listener=self._device_available,
         )
         self.preview_udp = FaceTrackingUdpPreviewService(
             session=self.device_pairing,
@@ -472,6 +480,12 @@ class DaemonRuntime:
     ) -> dict[str, object]:
         """Reserve the single slot and start Daemon-owned UDP discovery."""
 
+        if (
+            self.device_pairing.reuniting
+            and self.device_pairing.state is DevicePairingState.DISCOVERING
+        ):
+            self._next_reunite_scan_at = self._clock() + _REUNITE_SCAN_INTERVAL_SECONDS
+            await self.pairing_udp.cancel_pairing()
         self.device_pairing.start_pairing(
             pairing_code=pairing_code,
             target_mode=target_mode,
@@ -493,6 +507,8 @@ class DaemonRuntime:
         return self.device_status()
 
     async def cancel_device_pairing(self) -> dict[str, object]:
+        self._availability_suppressed_until = self._clock() + _REUNITE_SCAN_INTERVAL_SECONDS
+        self._next_reunite_scan_at = self._clock() + _REUNITE_SCAN_INTERVAL_SECONDS
         await self.pairing_udp.cancel_pairing()
         self.logs.record("Device pairing cancelled")
         return self.device_status()
@@ -501,9 +517,10 @@ class DaemonRuntime:
         """Release the single device session without involving Application."""
 
         state = self.device_pairing.state
+        forgotten = self._forget_device_binding("disconnect requested")
         if state is DevicePairingState.IDLE:
             self.logs.record("Device disconnect ignored (no active session)")
-            return False
+            return forgotten
         if state in {
             DevicePairingState.DISCOVERING,
             DevicePairingState.CONNECTING,
@@ -534,7 +551,6 @@ class DaemonRuntime:
             code=1000,
             reason="device session released",
         )
-        self._forget_device_binding("disconnect requested")
         await self._publish_device_state(self.device_pairing.snapshot())
         self.logs.record("Device disconnected by desktop request")
         return True
@@ -588,16 +604,43 @@ class DaemonRuntime:
         self._save_device_binding(hello, peer_ip)
         await self._publish_device_state(self.device_pairing.snapshot())
 
+    async def _device_available(self, message: LinkReuniteAvailable, peer_ip: str) -> bool:
+        """An availability hint wakes discovery; it never authenticates a device."""
+        if (
+            self._device_bindings is None
+            or self.device_pairing.state is not DevicePairingState.IDLE
+        ):
+            return False
+        if self._clock() < self._availability_suppressed_until:
+            return False
+        binding = self._device_bindings.load().device
+        if (
+            binding is None
+            or message.daemon_instance_id != self.device_pairing.daemon_instance_id
+            or message.target_mode != binding.target_mode
+            or peer_ip != binding.last_peer_ip
+        ):
+            return False
+        self._next_reunite_scan_at = 0.0
+        await self._maybe_start_reunite_scan()
+        if self.device_pairing.state is not DevicePairingState.DISCOVERING:
+            return False
+        await self.pairing_udp.broadcast_once()
+        return True
+
     async def _maybe_start_reunite_scan(self) -> None:
-        """Best-effort automatic reconnect to the remembered device at boot."""
+        """Retry remembered-device discovery using the existing UDP tick."""
 
         if self._device_bindings is None:
             return
         if self.device_pairing.state is not DevicePairingState.IDLE:
             return
+        if self._clock() < self._next_reunite_scan_at:
+            return
         binding = self._device_bindings.load().device
         if binding is None:
             return
+        self._next_reunite_scan_at = self._clock() + _REUNITE_SCAN_INTERVAL_SECONDS
         request = self.device_pairing.start_reunite_scan(
             request_id=secrets.token_hex(16),
             nonce=secrets.token_hex(16),
@@ -682,6 +725,7 @@ class DaemonRuntime:
         self.device_pairing.end_device_session(
             pair_request_id=message.pair_request_id,
         )
+        self._next_reunite_scan_at = 0.0
         self.logs.record(
             "Device session ended "
             f"(request_id={message.pair_request_id}, reason={message.reason})"

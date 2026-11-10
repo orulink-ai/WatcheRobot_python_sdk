@@ -15,6 +15,7 @@ from watcherobot.runtime.daemon.pairing.protocol import (
     LAN_PAIRING_PROTOCOL,
     LAN_PAIRING_REUNITE_VERSION,
     LinkReuniteAccept,
+    LinkReuniteAvailable,
     LinkReuniteRequest,
     PairingProtocolError,
     derive_binding_secret,
@@ -188,3 +189,27 @@ def test_hello_accepts_both_protocol_generations(pairing_version: str) -> None:
 def test_hello_rejects_unknown_protocol_generation() -> None:
     with pytest.raises(PairingProtocolError):
         parse_hardware_hello(_hello_frame("2.0"))
+
+
+@pytest.mark.parametrize("overrides", [
+    {"version": "1.0"}, {"protocol": "other"},
+    {"daemon_instance_id": "invalid"}, {"target_mode": "invalid"},
+    {"request_id": REQUEST_ID}, {"binding_secret": BINDING_SECRET},
+])
+def test_availability_rejects_invalid_contract(overrides) -> None:
+    payload = {
+        "type": "link.reunite.available", "protocol": LAN_PAIRING_PROTOCOL,
+        "version": "1.1", "daemon_instance_id": DAEMON_ID,
+        "target_mode": "desktop_link", **overrides,
+    }
+    with pytest.raises(PairingProtocolError):
+        parse_udp_message(json.dumps(payload).encode())
+
+
+def test_availability_parses_without_request_or_credentials() -> None:
+    payload = {
+        "type": "link.reunite.available", "protocol": LAN_PAIRING_PROTOCOL,
+        "version": "1.1", "daemon_instance_id": DAEMON_ID,
+        "target_mode": "desktop_link",
+    }
+    assert parse_udp_message(json.dumps(payload).encode()) == LinkReuniteAvailable(DAEMON_ID, "desktop_link")

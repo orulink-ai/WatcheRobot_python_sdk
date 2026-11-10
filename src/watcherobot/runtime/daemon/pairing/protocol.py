@@ -93,6 +93,12 @@ _SESSION_END_DATA_FIELDS = frozenset({"pair_request_id", "reason"})
 _SENSITIVE_FIELDS = frozenset({"pairing_code", "session_token"})
 
 
+@dataclass(frozen=True)
+class LinkReuniteAvailable:
+    daemon_instance_id: str
+    target_mode: str
+
+
 class PairingProtocolError(ValueError):
     """Raised when an untrusted pairing payload violates the fixed contract."""
 
@@ -268,11 +274,21 @@ def _require_websocket_port(payload: Mapping[str, object]) -> int:
     return websocket_port
 
 
-def parse_udp_message(payload: RawPayload) -> UdpMessage:
+def parse_udp_message(payload: RawPayload) -> UdpMessage | LinkReuniteAvailable:
     """Parse one strict UDP pairing message without changing runtime state."""
 
     message = _decode_object(payload, max_bytes=MAX_UDP_PAYLOAD_BYTES)
     message_type = _require_string(message, "type")
+    if message_type == "link.reunite.available":
+        _require_exact_fields(message, frozenset({
+            "type", "protocol", "version", "daemon_instance_id", "target_mode",
+        }))
+        _require_literal(message, "protocol", LAN_PAIRING_PROTOCOL)
+        _require_literal(message, "version", LAN_PAIRING_REUNITE_VERSION)
+        return LinkReuniteAvailable(
+            daemon_instance_id=_require_lower_hex(message, "daemon_instance_id", _LOWER_HEX_32),
+            target_mode=_require_target_mode(message, "target_mode"),
+        )
     expected_fields = _UDP_FIELDS.get(message_type)
     if expected_fields is None:
         raise PairingProtocolError(f"type is unsupported: {message_type}")

@@ -15,6 +15,7 @@ from typing import Any, Protocol, cast
 
 from watcherobot.runtime.daemon.pairing.protocol import (
     LinkReuniteAccept,
+    LinkReuniteAvailable,
     PairAccept,
     PairBusy,
     PairCancel,
@@ -286,6 +287,8 @@ class PairingUdpService:
         interface_provider: InterfaceProvider = collect_lan_interfaces,
         channel_factory: ChannelFactory = _open_pairing_udp_channel,
         event_logger: EventLogger | None = None,
+        idle_listener: Callable[[], Awaitable[None]] | None = None,
+        availability_listener: Callable[[LinkReuniteAvailable, str], Awaitable[bool]] | None = None,
     ) -> None:
         self._session = session
         self._requested_port = port
@@ -295,6 +298,8 @@ class PairingUdpService:
         self._interface_provider = interface_provider
         self._channel_factory = channel_factory
         self._event_logger = event_logger
+        self._idle_listener = idle_listener
+        self._availability_listener = availability_listener
         self._channels: dict[
             PairingUdpInterface,
             PairingUdpChannelContract,
@@ -340,6 +345,10 @@ class PairingUdpService:
             self._running = False
             self._close_all_channels()
             raise
+        if self._idle_listener is not None:
+            self._broadcast_task = asyncio.create_task(
+                self._broadcast_loop(), name="daemon-pairing-udp-broadcast"
+            )
 
     async def stop(self) -> None:
         task = self._broadcast_task
@@ -514,6 +523,10 @@ class PairingUdpService:
     ) -> bool:
         try:
             message = parse_udp_message(data)
+            if isinstance(message, LinkReuniteAvailable):
+                if self._availability_listener is None:
+                    return False
+                return await self._availability_listener(message, address[0])
             if isinstance(message, PairAccept):
                 self._session.accept_device(
                     message,
@@ -674,11 +687,19 @@ class PairingUdpService:
         self._channels.clear()
 
     async def _broadcast_loop(self) -> None:
-        while self._session.state in {
-            DevicePairingState.DISCOVERING,
-            DevicePairingState.CONNECTING,
-            DevicePairingState.RECONNECTING,
-        }:
+        while self._running and (
+            self._idle_listener is not None
+            or self._session.state in {
+                DevicePairingState.DISCOVERING,
+                DevicePairingState.CONNECTING,
+                DevicePairingState.RECONNECTING,
+            }
+        ):
+            if (
+                self._session.state is DevicePairingState.IDLE
+                and self._idle_listener is not None
+            ):
+                await self._idle_listener()
             if self._session.state is DevicePairingState.DISCOVERING:
                 await self.broadcast_once()
             await asyncio.sleep(self._broadcast_interval_seconds)
