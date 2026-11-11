@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import os
 import secrets
@@ -569,6 +570,16 @@ class DaemonRuntime:
             "process_id": self.application.process_id,
             "last_exit_code": self.application.last_exit_code,
         }
+
+    def desktop_mcp_bridge_key(self) -> str | None:
+        if self._device_bindings is None:
+            return None
+        binding = self._device_bindings.load().device
+        if binding is None or binding.target_mode != "desktop_link":
+            return None
+        return hmac.digest(
+            bytes.fromhex(binding.binding_secret), b"watcher-desktop-mcp-key-v1", "sha256"
+        ).hex()
 
     def device_status(self) -> dict[str, object]:
         device = self.device_pairing.snapshot()

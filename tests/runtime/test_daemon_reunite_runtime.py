@@ -10,7 +10,7 @@ from pathlib import Path
 
 from websockets.asyncio.client import connect
 
-from watcherobot.runtime.daemon.pairing.bindings_store import DeviceBindingsStore
+from watcherobot.runtime.daemon.pairing.bindings_store import DeviceBinding, DeviceBindingsSnapshot, DeviceBindingsStore
 from watcherobot.runtime.daemon.pairing.protocol import (
     LinkReuniteAccept,
     derive_binding_secret,
@@ -46,6 +46,19 @@ def _bindings_file(tmp_path: Path) -> dict:
     return json.loads(
         (tmp_path / "device-bindings.json").read_text(encoding="utf-8")
     )
+
+
+def test_desktop_mcp_credential_is_derived_from_current_binding(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    store = DeviceBindingsStore(tmp_path)
+    store.write(DeviceBindingsSnapshot("13" * 16, DeviceBinding("11" * 32, "desktop_link", "192.168.1.9", 8765)))
+    assert runtime.desktop_mcp_bridge_key() == "c36d80096350e4e375e9fd03dc7d2b369dcaef939cf36ff9cdddcbd24aa13dc6"
+    store.write(
+        DeviceBindingsSnapshot("13" * 16, DeviceBinding("11" * 32, "python_sdk", "192.168.1.9", 8765))
+    )
+    assert runtime.desktop_mcp_bridge_key() is None
+    store.clear_device()
+    assert runtime.desktop_mcp_bridge_key() is None
 
 
 def _stored_device(tmp_path: Path):
