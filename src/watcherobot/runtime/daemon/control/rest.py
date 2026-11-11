@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import uuid
 from collections.abc import Callable
@@ -12,7 +13,7 @@ from ipaddress import IPv4Address
 from typing import Any, Literal, Protocol, TypedDict
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -148,6 +149,9 @@ class ApplicationController(Protocol):
 
     def device_status(self) -> dict[str, Any]:
         """Return the Daemon-owned single device slot."""
+
+    def desktop_mcp_bridge_key(self) -> str | None:
+        """Derive the Desktop MCP credential from the remembered device binding."""
 
     async def pair_device(
         self,
@@ -572,6 +576,27 @@ class DaemonControlAPI:
                         "message": str(exc),
                     },
                 )
+
+        @app.post("/daemon/devices/desktop-mcp-key", include_in_schema=False)
+        async def desktop_mcp_key(request: Request) -> JSONResponse:
+            no_store = {"Cache-Control": "no-store"}
+            if (
+                request.client is None
+                or request.client.host != "127.0.0.1"
+                or not re.fullmatch(r"127\.0\.0\.1(?::[0-9]+)?", request.headers.get("host", ""))
+                or "origin" in request.headers
+                or "sec-fetch-site" in request.headers
+                or request.headers.get("x-watcher-native") != "desktop-mcp"
+            ):
+                return JSONResponse(
+                    status_code=403, content={"error": "native_loopback_required"}, headers=no_store
+                )
+            key = self._controller.desktop_mcp_bridge_key()
+            if key is None:
+                return JSONResponse(
+                    status_code=404, content={"error": "device_not_paired"}, headers=no_store
+                )
+            return JSONResponse(content={"key": key}, headers=no_store)
 
         @app.post("/daemon/devices/disconnect")
         async def disconnect_device() -> Any:

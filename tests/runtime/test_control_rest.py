@@ -20,6 +20,28 @@ from watcherobot.runtime.daemon.maintenance import MaintenanceError
 from watcherobot.runtime.daemon.pairing.session import PairingSessionError
 
 
+def test_desktop_mcp_bridge_key_requires_native_loopback_and_an_active_binding() -> None:
+    controller = _ControllerStub()
+    app = DaemonControlAPI(controller=controller).create_app()
+    client = TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 12345))
+    path = "/daemon/devices/desktop-mcp-key"
+    native = {"X-Watcher-Native": "desktop-mcp"}
+
+    assert client.post(path, headers=native).status_code == 404
+    controller.bridge_key = "71" * 32
+    assert client.post(path).status_code == 403
+    assert client.post(path, headers={**native, "Origin": "http://localhost"}).status_code == 403
+    assert client.post(path, headers={**native, "Sec-Fetch-Site": "same-origin"}).status_code == 403
+    assert client.post(path, headers={**native, "Host": "public.example"}).status_code == 403
+    remote = TestClient(app, base_url="http://127.0.0.1", client=("192.168.1.10", 12345))
+    assert remote.post(path, headers=native).status_code == 403
+
+    response = client.post(path, headers=native)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == {"key": "71" * 32}
+
+
 class _ControllerStub:
     def __init__(self) -> None:
         self.current_app = "watcher_default"
@@ -91,6 +113,9 @@ class _ControllerStub:
 
     def device_status(self) -> dict:
         return {"device": dict(self.device)}
+
+    def desktop_mcp_bridge_key(self) -> str | None:
+        return getattr(self, "bridge_key", None)
 
     async def pair_device(
         self,
