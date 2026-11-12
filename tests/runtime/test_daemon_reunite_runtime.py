@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import inspect
 import json
 import socket
 from pathlib import Path
 
+import httpx
 from websockets.asyncio.client import connect
 
 from watcherobot.runtime.daemon.pairing.bindings_store import DeviceBinding, DeviceBindingsSnapshot, DeviceBindingsStore
 from watcherobot.runtime.daemon.pairing.protocol import (
     LinkReuniteAccept,
+    PairAccept,
     derive_binding_secret,
     encode_udp_message,
+    parse_udp_message,
     reunite_response_mac,
 )
+from watcherobot.runtime.daemon.pairing.udp import PairingUdpInterface
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
 from tests.runtime.pairing_helpers import (
     SESSION_TOKEN,
@@ -24,6 +29,167 @@ from tests.runtime.pairing_helpers import (
 )
 
 REUNITE_TOKEN = "d" * 64
+ACCOUNT_DEVICE_ID = "WR-0001-0023-4567-89AB"
+OTHER_ACCOUNT_DEVICE_ID = "WR-0002-0023-4567-89AB"
+ACCOUNT_LINK_KEY = "42" * 32
+ACCOUNT_HEADER = {"X-Watcher-Native": "account-device-link"}
+
+
+def test_account_device_lifecycle(tmp_path: Path) -> None:
+    asyncio.run(_scenario_account_device_lifecycle(tmp_path))
+
+
+async def _scenario_account_device_lifecycle(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    interface = _pairing_on_loopback(runtime)
+    binding = DeviceBinding("11" * 32, "desktop_link", "192.168.1.9", 8765)
+    DeviceBindingsStore(tmp_path).write(DeviceBindingsSnapshot(
+        runtime.device_pairing.daemon_instance_id, binding,
+    ))
+    await runtime.start()
+    try:
+        assert runtime.device_pairing.reuniting
+        async with httpx.AsyncClient(base_url=runtime.control_server.base_url, trust_env=False) as client:
+            connect_path = "/daemon/devices/account-connect"
+            disconnect_path = "/daemon/devices/account-disconnect"
+            body = {"device_id": ACCOUNT_DEVICE_ID, "link_key": ACCOUNT_LINK_KEY}
+
+            unauthorized = await client.post(connect_path, json=body)
+            assert unauthorized.status_code == 403
+            for invalid_body in (
+                {"device_id": ACCOUNT_DEVICE_ID},
+                {**body, "link_key": "X" * 64},
+                {**body, "device_id": ACCOUNT_DEVICE_ID.lower()},
+                {**body, "link_key": "AA" * 32},
+                {**body, "link_key": ACCOUNT_LINK_KEY + "\n"},
+                {**body, "other": True},
+            ):
+                invalid = await client.post(connect_path, json=invalid_body, headers=ACCOUNT_HEADER)
+                assert invalid.status_code == 400
+                assert ACCOUNT_LINK_KEY not in invalid.text
+                assert "X" * 64 not in invalid.text
+            browser = await client.post(
+                connect_path, json=body, headers={**ACCOUNT_HEADER, "Origin": "http://localhost"},
+            )
+            assert browser.status_code == 403
+
+            response = await client.post(connect_path, json=body, headers=ACCOUNT_HEADER)
+            assert response.status_code == 202
+            assert response.json()["device"]["account_device_id"] == ACCOUNT_DEVICE_ID
+            assert ACCOUNT_LINK_KEY not in response.text
+            assert (await client.get("/daemon/devices")).json()["device"]["state"] == "discovering"
+            request = runtime.device_pairing.account_request_for_interface(interface.local_ip)
+            request_data = json.loads(encode_udp_message(request))
+            assert parse_udp_message(request_data) == request
+            assert request_data["device_id"] == ACCOUNT_DEVICE_ID
+            assert request_data["daemon_ip"] == interface.local_ip
+            assert request_data["version"] == "1.1"
+            fields = (
+                request_data["request_id"], request_data["nonce"],
+                request_data["daemon_instance_id"], "desktop_link",
+                str(runtime.external_server.bound_port), ACCOUNT_DEVICE_ID,
+            )
+
+            def mac(prefix: str, local_ip: str = interface.local_ip) -> str:
+                return hmac.digest(
+                    bytes.fromhex(ACCOUNT_LINK_KEY),
+                    "|".join((prefix, *fields, local_ip)).encode("ascii"),
+                    "sha256",
+                ).hex()
+
+            assert request_data["request_mac"] == mac("account-request")
+            same = await client.post(connect_path, json=body, headers=ACCOUNT_HEADER)
+            assert same.status_code == 202
+            assert same.json()["device"]["request_id"] == fields[0]
+            changed_key = await client.post(
+                connect_path, json={**body, "link_key": "43" * 32}, headers=ACCOUNT_HEADER,
+            )
+            assert changed_key.status_code == 409
+            other = await client.post(
+                connect_path, json={**body, "device_id": OTHER_ACCOUNT_DEVICE_ID}, headers=ACCOUNT_HEADER,
+            )
+            assert other.status_code == 409
+            unrelated = await client.post(
+                disconnect_path, json={"device_id": OTHER_ACCOUNT_DEVICE_ID}, headers=ACCOUNT_HEADER,
+            )
+            assert unrelated.json()["disconnected"] is False
+            forged_manual_accept = PairAccept(fields[0], fields[2], "desktop_link", REUNITE_TOKEN)
+            assert not await runtime.pairing_udp.handle_datagram(
+                encode_udp_message(forged_manual_accept), ("127.0.0.1", 37021),
+            )
+
+            def accept(session_token: str, response_key: str) -> bytes:
+                return encode_udp_message(LinkReuniteAccept(
+                    request_id=fields[0], daemon_instance_id=fields[2], nonce=fields[1],
+                    target_mode="desktop_link", session_token=session_token,
+                    response_mac=reunite_response_mac(
+                        response_key, request_id=fields[0], daemon_instance_id=fields[2],
+                        nonce=fields[1], target_mode="desktop_link",
+                    ),
+                ))
+
+            token = mac("account-session")
+            accept_proof = mac("account-accept")
+            for forged in (
+                accept(token, ACCOUNT_LINK_KEY),
+                accept(accept_proof, "43" * 32),
+                accept(mac("account-accept", "127.0.0.2"), ACCOUNT_LINK_KEY),
+            ):
+                assert not await runtime.pairing_udp.handle_datagram(
+                    forged, ("127.0.0.1", 37021), interface=interface,
+                )
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+                sender.sendto(
+                    accept(accept_proof, ACCOUNT_LINK_KEY), ("127.0.0.1", runtime.pairing_udp.bound_port),
+                )
+            assert await _wait_until(lambda: runtime.device_pairing.state.value == "connecting")
+            wrong_websocket = await _open_ws(runtime)
+            async with wrong_websocket:
+                await wrong_websocket.send(_hello_frame(
+                    runtime, pairing_version="1.1", pair_request_id=fields[0],
+                    session_token=accept_proof, mode="desktop_link",
+                ))
+                assert json.loads(await wrong_websocket.recv())["type"] == "sys.nack"
+            websocket = await _open_ws(runtime)
+            async with websocket:
+                await websocket.send(_hello_frame(
+                    runtime, pairing_version="1.1", pair_request_id=fields[0],
+                    session_token=token, mode="desktop_link",
+                ))
+                assert json.loads(await websocket.recv())["type"] == "sys.ack"
+                online = (await client.get("/daemon/devices")).json()["device"]
+                assert online["online"] and online["account_device_id"] == ACCOUNT_DEVICE_ID
+                cancelled = await client.post(
+                    disconnect_path, json={"device_id": ACCOUNT_DEVICE_ID}, headers=ACCOUNT_HEADER,
+                )
+                assert cancelled.json()["disconnected"] is True
+                assert cancelled.json()["device"]["account_device_id"] is None
+                assert json.loads(await websocket.recv())["type"] == "sys.device.session.close"
+                await websocket.wait_closed()
+            assert _stored_device(tmp_path)["binding_secret"] == binding.binding_secret
+            assert ACCOUNT_LINK_KEY not in json.dumps(_bindings_file(tmp_path))
+
+            scanning = await client.post(connect_path, json=body, headers=ACCOUNT_HEADER)
+            assert scanning.status_code == 202
+            cancelled = await client.post(
+                disconnect_path, json={"device_id": ACCOUNT_DEVICE_ID}, headers=ACCOUNT_HEADER,
+            )
+            assert cancelled.json()["disconnected"] is True
+            assert cancelled.json()["device"]["state"] == "idle"
+            assert not await runtime.pairing_udp.handle_datagram(
+                accept(accept_proof, ACCOUNT_LINK_KEY), ("127.0.0.1", 37021), interface=interface,
+            )
+            await runtime.pair_device("123456", "desktop_link")
+            blocked = await client.post(connect_path, json=body, headers=ACCOUNT_HEADER)
+            assert blocked.status_code == 409
+            unrelated = await client.post(
+                disconnect_path, json={"device_id": ACCOUNT_DEVICE_ID}, headers=ACCOUNT_HEADER,
+            )
+            assert unrelated.json()["disconnected"] is False
+            assert unrelated.json()["device"]["state"] == "discovering"
+            assert unrelated.json()["device"]["account_device_id"] is None
+    finally:
+        await runtime.stop()
 
 
 def _runtime(tmp_path: Path, **options) -> DaemonRuntime:
@@ -40,6 +206,13 @@ def _runtime(tmp_path: Path, **options) -> DaemonRuntime:
         device_bindings_store=DeviceBindingsStore(tmp_path),
         **options,
     )
+
+
+def _pairing_on_loopback(runtime: DaemonRuntime) -> PairingUdpInterface:
+    # Keep the real UDP transport, but route entirely through loopback on every OS.
+    interface = PairingUdpInterface("test", "127.0.0.1", "255.0.0.0", "127.255.255.255")
+    runtime.pairing_udp._interface_provider = lambda: (interface,)
+    return interface
 
 
 def _bindings_file(tmp_path: Path) -> dict:
@@ -354,6 +527,7 @@ def test_availability_wakes_idle_reconnect(tmp_path: Path) -> None:
         await _seed_binding(tmp_path)
         now = [0.0]
         runtime = _runtime(tmp_path, clock=lambda: now[0])
+        _pairing_on_loopback(runtime)
         await runtime.start()
         try:
             now[0] = 11.0

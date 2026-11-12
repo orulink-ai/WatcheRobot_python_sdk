@@ -7,9 +7,12 @@ import hmac
 import re
 import secrets
 from collections.abc import Callable
+from dataclasses import replace
 from enum import Enum
 
 from watcherobot.runtime.daemon.pairing.protocol import (
+    ACCOUNT_DEVICE_ID_PATTERN,
+    LAN_PAIRING_TARGET_MODE_DESKTOP_LINK,
     LAN_PAIRING_TARGET_MODES,
     HardwareHello,
     LinkReuniteAccept,
@@ -18,6 +21,7 @@ from watcherobot.runtime.daemon.pairing.protocol import (
     PairBusy,
     PairCancel,
     PairRequest,
+    account_reunite_mac,
     reunite_response_mac,
 )
 
@@ -84,6 +88,8 @@ class DevicePairingSession:
         self._reuniting = False
         self._reunite_secret: str | None = None
         self._pending_manual_token: str | None = None
+        self._account_device_id: str | None = None
+        self._account_key_digest: bytes | None = None
 
     @property
     def state(self) -> DevicePairingState:
@@ -98,6 +104,33 @@ class DevicePairingSession:
     @property
     def current_request(self) -> PairRequest | LinkReuniteRequest | None:
         return self._request
+
+    @property
+    def account_device_id(self) -> str | None:
+        return self._account_device_id
+
+    def matches_account_credential(self, device_id: str, link_key: str) -> bool:
+        return (
+            self._account_device_id == device_id
+            and self._account_key_digest is not None
+            and hmac.compare_digest(
+                self._account_key_digest, hashlib.sha256(bytes.fromhex(link_key)).digest(),
+            )
+        )
+
+    def account_request_for_interface(self, local_ip: str) -> LinkReuniteRequest:
+        """Sign the discovery request using the IPv4 source of this UDP channel."""
+
+        request = self._request
+        assert isinstance(request, LinkReuniteRequest)
+        assert self._account_device_id is not None and self._reunite_secret is not None
+        account_request = replace(request, device_id=self._account_device_id, daemon_ip=local_ip)
+        return replace(
+            account_request,
+            request_mac=account_reunite_mac(
+                self._reunite_secret, account_request, purpose="account-request",
+            ),
+        )
 
     @property
     def expected_peer_ip(self) -> str | None:
@@ -177,9 +210,11 @@ class DevicePairingSession:
         peer_ip: str,
         now: float,
     ) -> None:
-        if self._state is not DevicePairingState.DISCOVERING:
+        if (
+            self._state is not DevicePairingState.DISCOVERING
+            or not isinstance(self._request, PairRequest)
+        ):
             raise PairingSessionError("invalid_state_transition")
-        assert self._request is not None
         if (
             not self._matches_response(
                 request_id=response.request_id,
@@ -200,7 +235,10 @@ class DevicePairingSession:
         self._deadline = now + self._connect_timeout_seconds
 
     def reject_busy(self, response: PairBusy) -> None:
-        if self._state is not DevicePairingState.DISCOVERING:
+        if (
+            self._state is not DevicePairingState.DISCOVERING
+            or not isinstance(self._request, PairRequest)
+        ):
             raise PairingSessionError("invalid_state_transition")
         if not self._matches_response(
             request_id=response.request_id,
@@ -246,6 +284,7 @@ class DevicePairingSession:
         websocket_port: int,
         binding_secret: str,
         now: float,
+        device_id: str | None = None,
     ) -> LinkReuniteRequest:
         """Occupy the idle slot with an automatic reunite broadcast scan."""
 
@@ -255,6 +294,11 @@ class DevicePairingSession:
             raise PairingSessionError("unsupported_target_mode")
         if type(websocket_port) is not int or not 1 <= websocket_port <= 65535:
             raise PairingSessionError("invalid_websocket_port")
+        if device_id is not None and (
+            ACCOUNT_DEVICE_ID_PATTERN.fullmatch(device_id) is None
+            or target_mode != LAN_PAIRING_TARGET_MODE_DESKTOP_LINK
+        ):
+            raise PairingSessionError("invalid_account_device")
         if (
             _LOWER_HEX_32.fullmatch(request_id or "") is None
             or _LOWER_HEX_32.fullmatch(nonce or "") is None
@@ -262,13 +306,18 @@ class DevicePairingSession:
         ):
             raise PairingSessionError("internal_error", "invalid reunite credentials")
 
-        self._request = LinkReuniteRequest(
+        request = LinkReuniteRequest(
             request_id=request_id,
             daemon_instance_id=self.daemon_instance_id,
             nonce=nonce,
             target_mode=target_mode,
             websocket_port=websocket_port,
         )
+        self._account_device_id = device_id
+        self._account_key_digest = (
+            hashlib.sha256(bytes.fromhex(binding_secret)).digest() if device_id is not None else None
+        )
+        self._request = request
         self._reuniting = True
         self._reunite_secret = binding_secret
         self._session_token = None
@@ -276,7 +325,7 @@ class DevicePairingSession:
         self._state = DevicePairingState.DISCOVERING
         self._deadline = now + self._discovery_timeout_seconds
         self._last_error = None
-        return self._request
+        return request
 
     def accept_reunite(
         self,
@@ -284,6 +333,7 @@ class DevicePairingSession:
         *,
         peer_ip: str,
         now: float,
+        local_ip: str | None = None,
     ) -> None:
         """Verify the challenge MAC and move a reunite scan into CONNECTING."""
 
@@ -314,12 +364,25 @@ class DevicePairingSession:
         )
         if not hmac.compare_digest(expected_mac, response.response_mac):
             raise PairingSessionError("pairing_credential_invalid")
+        session_token = response.session_token
+        if self._account_device_id is not None:
+            if local_ip is None:
+                raise PairingSessionError("pairing_credential_invalid")
+            account_request = replace(request, device_id=self._account_device_id, daemon_ip=local_ip)
+            accept_proof = account_reunite_mac(
+                self._reunite_secret, account_request, purpose="account-accept",
+            )
+            if not hmac.compare_digest(accept_proof, response.session_token):
+                raise PairingSessionError("pairing_credential_invalid")
+            session_token = account_reunite_mac(
+                self._reunite_secret, account_request, purpose="account-session",
+            )
 
         # The scanner stops broadcasting on accept; reconnects of this session
         # reuse its credentials without reseeding the binding secret.
         self._reuniting = False
         self._reunite_secret = None
-        self._session_token = response.session_token
+        self._session_token = session_token
         self._expected_peer_ip = peer_ip
         self._state = DevicePairingState.CONNECTING
         self._deadline = now + self._connect_timeout_seconds
@@ -359,8 +422,11 @@ class DevicePairingSession:
     def pending_cancel_message(self) -> PairCancel | None:
         """Build the authenticated UDP cancellation before clearing memory."""
 
+        # Account cancellation invalidates the handshake locally. Its WebSocket
+        # credential must never be carried in a legacy UDP cancellation.
         if (
             self._state is not DevicePairingState.CONNECTING
+            or self._account_device_id is not None
             or self._request is None
             or self._session_token is None
         ):
@@ -424,3 +490,5 @@ class DevicePairingSession:
         self._reuniting = False
         self._reunite_secret = None
         self._pending_manual_token = None
+        self._account_device_id = None
+        self._account_key_digest = None
