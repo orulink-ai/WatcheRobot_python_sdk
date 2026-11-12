@@ -7,6 +7,10 @@ import json
 
 from watcherobot.runtime.daemon.pairing.protocol import (
     LinkReuniteAccept,
+    LinkReuniteRequest,
+    account_reunite_mac,
+    encode_udp_message,
+    parse_udp_message,
     reunite_response_mac,
 )
 from watcherobot.runtime.daemon.pairing.session import (
@@ -67,7 +71,7 @@ def make_service(**kwargs) -> tuple[DevicePairingSession, PairingUdpService, Fak
     service = PairingUdpService(
         session=session,
         clock=kwargs.pop("clock", lambda: 100.0),
-        interface_provider=lambda: (ETHERNET,),
+        interface_provider=kwargs.pop("interface_provider", lambda: (ETHERNET,)),
         channel_factory=factory,
         **kwargs,
     )
@@ -139,6 +143,46 @@ def test_scan_unicasts_remembered_device_when_peer_ip_given() -> None:
         assert (json.loads(unicasts[0][0].decode("utf-8"))["type"]) == "link.reunite.request"
         assert unicasts[0][1] == (LAST_PEER_IP, 37021)
         await service.stop()
+
+    asyncio.run(scenario())
+
+
+def test_account_scan_signs_each_interface_and_keeps_session_token_off_udp() -> None:
+    async def scenario() -> None:
+        wifi = PairingUdpInterface("Wi-Fi", "192.168.32.9", "255.255.255.0", "192.168.32.255")
+        session, service, factory = make_service(interface_provider=lambda: (ETHERNET, wifi))
+        session.start_reunite_scan(
+            request_id=REUNITE_REQUEST_ID,
+            nonce=NONCE,
+            target_mode="desktop_link",
+            websocket_port=8765,
+            binding_secret=BINDING_SECRET,
+            now=100.0,
+            device_id="WR-0123-4567-89AB-CDEF",
+        )
+        await service.start()
+        try:
+            assert await service.broadcast_once()
+            ethernet_request = parse_udp_message(factory.channels[ETHERNET].broadcasts[-1])
+            wifi_request = parse_udp_message(factory.channels[wifi].broadcasts[-1])
+            assert isinstance(ethernet_request, LinkReuniteRequest)
+            assert isinstance(wifi_request, LinkReuniteRequest)
+            assert ethernet_request.daemon_ip == ETHERNET.local_ip
+            assert wifi_request.daemon_ip == wifi.local_ip
+            assert ethernet_request.request_mac != wifi_request.request_mac
+
+            response = make_accept(session_token=account_reunite_mac(
+                BINDING_SECRET, ethernet_request, purpose="account-accept",
+            ))
+            data = encode_udp_message(response)
+            peer = (LAST_PEER_IP, 37021)
+            assert not await service.handle_datagram(data, peer, interface=wifi)
+            assert await service.handle_datagram(data, peer, interface=ETHERNET)
+            assert await service.cancel_pairing()
+            assert not factory.channels[ETHERNET].unicasts
+            assert session.account_device_id is None
+        finally:
+            await service.stop()
 
     asyncio.run(scenario())
 

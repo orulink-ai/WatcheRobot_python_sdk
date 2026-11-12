@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import sys
@@ -29,6 +30,7 @@ from watcherobot.runtime.daemon.application.session import (
     ApplicationSelectionChangedError,
     SessionOccupiedError,
 )
+from watcherobot.runtime.daemon.pairing.protocol import ACCOUNT_DEVICE_ID_PATTERN, is_account_link_key
 from watcherobot.runtime.daemon.pairing.session import PairingSessionError
 from watcherobot.runtime.daemon.maintenance import MaintenanceError
 
@@ -81,6 +83,31 @@ class CancelUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     update_token: str
+
+
+def _is_native_loopback(request: Request, purpose: str) -> bool:
+    return (
+        request.client is not None
+        and request.client.host == "127.0.0.1"
+        and re.fullmatch(r"127\.0\.0\.1(?::[0-9]+)?", request.headers.get("host", "")) is not None
+        and "origin" not in request.headers
+        and "sec-fetch-site" not in request.headers
+        and request.headers.get("x-watcher-native") == purpose
+    )
+
+
+async def _account_device_payload(request: Request, fields: set[str]) -> dict[str, Any]:
+    # FastAPI's default validation response can echo input values, including credentials.
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise PairingSessionError("invalid_account_device") from None
+    if not isinstance(payload, dict) or payload.keys() != fields:
+        raise PairingSessionError("invalid_account_device")
+    device_id = payload["device_id"]
+    if not isinstance(device_id, str) or ACCOUNT_DEVICE_ID_PATTERN.fullmatch(device_id) is None:
+        raise PairingSessionError("invalid_account_device")
+    return payload
 
 
 class MaintenanceInstallRequest(BaseModel):
@@ -166,6 +193,12 @@ class ApplicationController(Protocol):
 
     async def disconnect_device(self) -> bool:
         """Explicitly release the Daemon-owned device session."""
+
+    async def connect_account_device(self, device_id: str, link_key: str) -> dict[str, Any]:
+        """Discover the one device identified by the account credential."""
+
+    async def disconnect_account_device(self, device_id: str) -> bool:
+        """Release a session only if it belongs to the given account device."""
 
     def select_application(
         self,
@@ -577,17 +610,45 @@ class DaemonControlAPI:
                     },
                 )
 
+        @app.post("/daemon/devices/account-connect", status_code=202)
+        async def connect_account_device(request: Request) -> JSONResponse:
+            no_store = {"Cache-Control": "no-store"}
+            if not _is_native_loopback(request, "account-device-link"):
+                return JSONResponse(
+                    status_code=403, content={"error": "native_loopback_required"}, headers=no_store,
+                )
+            try:
+                payload = await _account_device_payload(request, {"device_id", "link_key"})
+                link_key = payload["link_key"]
+                if not is_account_link_key(link_key):
+                    raise PairingSessionError("invalid_account_device")
+                status = await self._controller.connect_account_device(payload["device_id"], link_key)
+            except PairingSessionError as exc:
+                status_code = 409 if exc.code == "device_slot_occupied" else 400
+                return JSONResponse(status_code=status_code, content={"error": exc.code}, headers=no_store)
+            return JSONResponse(status_code=202, content=status, headers=no_store)
+
+        @app.post("/daemon/devices/account-disconnect")
+        async def disconnect_account_device(request: Request) -> JSONResponse:
+            no_store = {"Cache-Control": "no-store"}
+            if not _is_native_loopback(request, "account-device-link"):
+                return JSONResponse(
+                    status_code=403, content={"error": "native_loopback_required"}, headers=no_store,
+                )
+            try:
+                payload = await _account_device_payload(request, {"device_id"})
+                disconnected = await self._controller.disconnect_account_device(payload["device_id"])
+            except PairingSessionError as exc:
+                return JSONResponse(status_code=400, content={"error": exc.code}, headers=no_store)
+            return JSONResponse(
+                content={"disconnected": disconnected, **self._controller.device_status()},
+                headers=no_store,
+            )
+
         @app.post("/daemon/devices/desktop-mcp-key", include_in_schema=False)
         async def desktop_mcp_key(request: Request) -> JSONResponse:
             no_store = {"Cache-Control": "no-store"}
-            if (
-                request.client is None
-                or request.client.host != "127.0.0.1"
-                or not re.fullmatch(r"127\.0\.0\.1(?::[0-9]+)?", request.headers.get("host", ""))
-                or "origin" in request.headers
-                or "sec-fetch-site" in request.headers
-                or request.headers.get("x-watcher-native") != "desktop-mcp"
-            ):
+            if not _is_native_loopback(request, "desktop-mcp"):
                 return JSONResponse(
                     status_code=403, content={"error": "native_loopback_required"}, headers=no_store
                 )

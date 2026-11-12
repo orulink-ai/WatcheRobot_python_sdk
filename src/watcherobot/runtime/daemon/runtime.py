@@ -9,8 +9,11 @@ import os
 import secrets
 import time
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
+
+from websockets.exceptions import ConnectionClosed
 
 from watcherobot.runtime.daemon.application.bridge import ChannelNotConnectedError
 from watcherobot.runtime.daemon.application.logging import ApplicationLogService
@@ -50,15 +53,19 @@ from watcherobot.runtime.daemon.pairing.bindings_store import (
     DeviceBindingsStore,
 )
 from watcherobot.runtime.daemon.pairing.protocol import (
+    ACCOUNT_DEVICE_ID_PATTERN,
+    LAN_PAIRING_TARGET_MODE_DESKTOP_LINK,
     LinkReuniteAvailable,
     DeviceSessionEnd,
     HardwareHello,
     build_device_state_event,
     derive_binding_secret,
+    is_account_link_key,
 )
 from watcherobot.runtime.daemon.pairing.session import (
     DevicePairingSession,
     DevicePairingState,
+    PairingSessionError,
 )
 from watcherobot.runtime.daemon.pairing.udp import PairingUdpService
 from watcherobot.runtime.daemon.preview.face_tracking import (
@@ -514,14 +521,59 @@ class DaemonRuntime:
         self.logs.record("Device pairing cancelled")
         return self.device_status()
 
+    async def connect_account_device(self, device_id: str, link_key: str) -> dict[str, object]:
+        """Scan for the account's chosen device without replacing an active session."""
+
+        if ACCOUNT_DEVICE_ID_PATTERN.fullmatch(device_id) is None or not is_account_link_key(link_key):
+            raise PairingSessionError("invalid_account_device")
+        if self.device_pairing.account_device_id == device_id:
+            if self.device_pairing.matches_account_credential(device_id, link_key):
+                return self.device_status()
+            raise PairingSessionError("device_slot_occupied")
+
+        if self.device_pairing.reuniting and self.device_pairing.account_device_id is None:
+            # Publish the replacement scan as the next state. Yielding while
+            # the slot is idle would let a concurrent logout miss the scan.
+            await self.pairing_udp.cancel_pairing(notify=False)
+        self.device_pairing.start_reunite_scan(
+            request_id=secrets.token_hex(16),
+            nonce=secrets.token_hex(16),
+            target_mode=LAN_PAIRING_TARGET_MODE_DESKTOP_LINK,
+            websocket_port=self.external_server.bound_port,
+            binding_secret=link_key,
+            now=self._clock(),
+            device_id=device_id,
+        )
+        try:
+            self.pairing_udp.activate()
+        except Exception:
+            self.device_pairing.release()
+            raise
+        self._availability_suppressed_until = self._clock() + _REUNITE_SCAN_INTERVAL_SECONDS
+        self._next_reunite_scan_at = self._availability_suppressed_until
+        await self._publish_device_state(self.device_pairing.snapshot())
+        return self.device_status()
+
+    async def disconnect_account_device(self, device_id: str) -> bool:
+        """Release the matching account session and preserve any manual binding."""
+
+        if self.device_pairing.account_device_id != device_id:
+            return False
+        self._availability_suppressed_until = self._clock() + _REUNITE_SCAN_INTERVAL_SECONDS
+        self._next_reunite_scan_at = self._availability_suppressed_until
+        return await self._disconnect_device_session()
+
     async def disconnect_device(self) -> bool:
         """Release the single device session without involving Application."""
 
-        state = self.device_pairing.state
         forgotten = self._forget_device_binding("disconnect requested")
+        return await self._disconnect_device_session() or forgotten
+
+    async def _disconnect_device_session(self) -> bool:
+        state = self.device_pairing.state
         if state is DevicePairingState.IDLE:
             self.logs.record("Device disconnect ignored (no active session)")
-            return forgotten
+            return False
         if state in {
             DevicePairingState.DISCOVERING,
             DevicePairingState.CONNECTING,
@@ -532,20 +584,23 @@ class DaemonRuntime:
 
         request = self.device_pairing.current_request
         if state is DevicePairingState.CONNECTED and request is not None:
-            await self.connection_registry.send_to_role(
-                ExternalClientRole.DEVICE,
-                json.dumps(
-                    {
-                        "type": "sys.device.session.close",
-                        "code": 0,
-                        "data": {
-                            "pair_request_id": request.request_id,
-                            "reason": "disconnect_requested",
+            with suppress(ConnectionClosed):
+                await self.connection_registry.send_to_role(
+                    ExternalClientRole.DEVICE,
+                    json.dumps(
+                        {
+                            "type": "sys.device.session.close",
+                            "code": 0,
+                            "data": {
+                                "pair_request_id": request.request_id,
+                                "reason": "disconnect_requested",
+                            },
                         },
-                    },
-                    separators=(",", ":"),
-                ),
-            )
+                        separators=(",", ":"),
+                    ),
+                )
+            if self.device_pairing.current_request is not request:
+                return True
         self.device_pairing.release()
         await self.connection_registry.close_role(
             ExternalClientRole.DEVICE,
@@ -585,6 +640,7 @@ class DaemonRuntime:
         device = self.device_pairing.snapshot()
         peer_ip = self.device_pairing.expected_peer_ip
         device["reuniting"] = self.device_pairing.reuniting
+        device["account_device_id"] = self.device_pairing.account_device_id
         device["preview_websocket_url"] = (
             f"ws://{peer_ip}:81/ws/face-track"
             if device["online"] and peer_ip is not None
@@ -603,6 +659,11 @@ class DaemonRuntime:
         hello: HardwareHello,
         peer_ip: str,
     ) -> None:
+        account_request = (
+            self.device_pairing.current_request
+            if self.device_pairing.account_device_id is not None
+            else None
+        )
         self.device_pairing.connect_device(
             hello,
             peer_ip=peer_ip,
@@ -614,6 +675,8 @@ class DaemonRuntime:
         )
         self._save_device_binding(hello, peer_ip)
         await self._publish_device_state(self.device_pairing.snapshot())
+        if account_request is not None and self.device_pairing.current_request is not account_request:
+            raise PairingSessionError("pairing_session_required")
 
     async def _device_available(self, message: LinkReuniteAvailable, peer_ip: str) -> bool:
         """An availability hint wakes discovery; it never authenticates a device."""
@@ -725,7 +788,13 @@ class DaemonRuntime:
             return
         self.device_pairing.device_disconnected(now=self._clock())
         self.logs.record(f"Device connection lost (peer_ip={_peer_ip})")
-        self.pairing_udp.activate(peer_ip=self.device_pairing.expected_peer_ip)
+        self.pairing_udp.activate(
+            peer_ip=(
+                self.device_pairing.expected_peer_ip
+                if self.device_pairing.account_device_id is None
+                else None
+            ),
+        )
         await self._publish_device_state(self.device_pairing.snapshot())
 
     async def _device_session_ended(
@@ -733,10 +802,12 @@ class DaemonRuntime:
         message: DeviceSessionEnd,
         _peer_ip: str,
     ) -> None:
+        account_session = self.device_pairing.account_device_id is not None
         self.device_pairing.end_device_session(
             pair_request_id=message.pair_request_id,
         )
-        self._next_reunite_scan_at = 0.0
+        if not account_session:
+            self._next_reunite_scan_at = 0.0
         self.logs.record(
             "Device session ended "
             f"(request_id={message.pair_request_id}, reason={message.reason})"
@@ -747,13 +818,14 @@ class DaemonRuntime:
         self,
         snapshot: Mapping[str, object],
     ) -> None:
-        await self.connection_registry.send_to_role(
-            ExternalClientRole.DESKTOP,
-            json.dumps(
-                build_device_state_event(snapshot),
-                separators=(",", ":"),
-            ),
-        )
+        with suppress(ConnectionClosed):
+            await self.connection_registry.send_to_role(
+                ExternalClientRole.DESKTOP,
+                json.dumps(
+                    build_device_state_event(snapshot),
+                    separators=(",", ":"),
+                ),
+            )
 
     async def _route_application_frame(
         self,

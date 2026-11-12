@@ -10,6 +10,24 @@ Daemon 只保存最近一次成功手动配对的设备凭证。启动时立即�
 
 上述行为只管理连接控制与 UDP 身份发现，不修改 Application 业务帧路由；设备固件需实现相应凭证持久化及 watcher-lan-pairing/1.1 应答。
 
+## 账号绑定设备发现
+
+桌面通过原生 HTTP 客户端访问 `http://127.0.0.1:<control-port>`，并发送 `X-Watcher-Native: account-device-link`。这两个端点拒绝非回环来源、非回环 Host 以及带有 `Origin` 或 `Sec-Fetch-Site` 的请求。
+
+- `POST /daemon/devices/account-connect` 接收 `device_id` 和 `link_key`。编号为 `WR-XXXX-XXXX-XXXX-XXXX`（大写十六进制），密钥为 32 字节的小写十六进制编码。HTTP 202 表示已开始或复用该设备的账号会话。手动配对、已接受握手和已有连接占用设备槽时返回 HTTP 409 `device_slot_occupied`。账号发现可以替换尚未应答的旧绑定后台发现。
+- `GET /daemon/devices` 返回的 `device.account_device_id` 标记账号会话目标。只有 `device.online` 为 `true` 时，该账号设备才已完成握手。会话释放后，该字段为 `null`。
+- `POST /daemon/devices/account-disconnect` 只接收 `device_id`，取消或断开与编号匹配的账号会话，返回 `disconnected` 和当前 `device`。没有匹配会话时 `disconnected` 为 `false`。已有手动绑定会保留。
+
+账号发现沿用 `watcher-lan-pairing/1.1` 的 `link.reunite.request`。账号请求必须同时提供 `device_id`、`daemon_ip` 和 `request_mac`，仅使用 `desktop_link`。每个网卡的 `daemon_ip` 为实际发送源的规范 IPv4 字符串，机器人在验证请求时核对来源。手动凭证重连请求沿用原字段。
+
+`request_mac`、账号 UDP 应答的 `session_token` 和 WebSocket hello 的 `session_token` 分别使用 `account-request`、`account-accept`、`account-session` 作为前缀。HMAC-SHA256 使用十六进制解码后的密钥，对下列 ASCII 文本计算，并输出小写十六进制。端口使用十进制数字，文本末尾无换行。
+
+```text
+<prefix>|<request_id>|<nonce>|<daemon_instance_id>|<target_mode>|<websocket_port>|<device_id>|<daemon_ip>
+```
+
+UDP 应答仍须包含既有的 `response_mac`，按原算法使用密钥的 ASCII 十六进制文本计算。Daemon 以收到 UDP 应答的网卡 IPv4 验证 `account-accept`，随后只在 WebSocket 上验证 `account-session`。账号发现取消时在本地使握手失效，WebSocket 凭证不进入 UDP 取消报文。账号密钥只在发现期间保存在内存。
+
 ## 当前身份结构
 
 `GET /daemon/status` 在既有 `application` 字段之外，增加只读的 `runtime` 身份：
