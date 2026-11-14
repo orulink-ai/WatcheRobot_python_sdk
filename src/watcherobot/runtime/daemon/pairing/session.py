@@ -90,6 +90,7 @@ class DevicePairingSession:
         self._pending_manual_token: str | None = None
         self._account_device_id: str | None = None
         self._account_key_digest: bytes | None = None
+        self._account_mcp_key: str | None = None
 
     @property
     def state(self) -> DevicePairingState:
@@ -117,6 +118,15 @@ class DevicePairingSession:
                 self._account_key_digest, hashlib.sha256(bytes.fromhex(link_key)).digest(),
             )
         )
+
+    def account_desktop_mcp_key(self) -> str | None:
+        """Return the MCP credential only for authenticated online account hardware."""
+        if self._state is DevicePairingState.CONNECTED:
+            return self._account_mcp_key
+        return None
+
+    def revoke_account_desktop_mcp_key(self) -> None:
+        self._account_mcp_key = None
 
     def account_request_for_interface(self, local_ip: str) -> LinkReuniteRequest:
         """Sign the discovery request using the IPv4 source of this UDP channel."""
@@ -377,6 +387,10 @@ class DevicePairingSession:
             session_token = account_reunite_mac(
                 self._reunite_secret, account_request, purpose="account-session",
             )
+            self._account_mcp_key = hmac.digest(
+                bytes.fromhex(self._reunite_secret), f"account-desktop-mcp-v1|{session_token}".encode("ascii"),
+                "sha256",
+            ).hex()
 
         # The scanner stops broadcasting on accept; reconnects of this session
         # reuse its credentials without reseeding the binding secret.
@@ -492,3 +506,4 @@ class DevicePairingSession:
         self._pending_manual_token = None
         self._account_device_id = None
         self._account_key_digest = None
+        self.revoke_account_desktop_mcp_key()
