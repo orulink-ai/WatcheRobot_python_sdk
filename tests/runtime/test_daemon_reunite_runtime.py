@@ -121,6 +121,10 @@ async def _scenario_account_device_lifecycle(tmp_path: Path) -> None:
         async with httpx.AsyncClient(base_url=runtime.control_server.base_url, trust_env=False) as client:
             connect_path = "/daemon/devices/account-connect"
             disconnect_path = "/daemon/devices/account-disconnect"
+            mcp_key_path = "/daemon/devices/desktop-mcp-key"
+            mcp_headers = {"X-Watcher-Native": "desktop-mcp"}
+            manual_key = runtime.desktop_mcp_bridge_key()
+            assert manual_key
             body = {"device_id": ACCOUNT_DEVICE_ID, "link_key": ACCOUNT_LINK_KEY}
 
             unauthorized = await client.post(connect_path, json=body)
@@ -212,6 +216,7 @@ async def _scenario_account_device_lifecycle(tmp_path: Path) -> None:
                     accept(accept_proof, ACCOUNT_LINK_KEY), ("127.0.0.1", runtime.pairing_udp.bound_port),
                 )
             assert await _wait_until(lambda: runtime.device_pairing.state.value == "connecting")
+            assert (await client.post(mcp_key_path, headers=mcp_headers)).status_code == 404
             wrong_websocket = await _open_ws(runtime)
             async with wrong_websocket:
                 await wrong_websocket.send(_hello_frame(
@@ -228,6 +233,12 @@ async def _scenario_account_device_lifecycle(tmp_path: Path) -> None:
                 assert json.loads(await websocket.recv())["type"] == "sys.ack"
                 online = (await client.get("/daemon/devices")).json()["device"]
                 assert online["online"] and online["account_device_id"] == ACCOUNT_DEVICE_ID
+                expected_mcp_key = hmac.digest(
+                    bytes.fromhex(ACCOUNT_LINK_KEY), f"account-desktop-mcp-v1|{token}".encode("ascii"), "sha256",
+                ).hex()
+                key_response = await client.post(mcp_key_path, headers=mcp_headers)
+                assert key_response.json() == {"key": expected_mcp_key}
+                assert expected_mcp_key != manual_key
                 cancelled = await client.post(
                     disconnect_path, json={"device_id": ACCOUNT_DEVICE_ID}, headers=ACCOUNT_HEADER,
                 )
@@ -237,6 +248,7 @@ async def _scenario_account_device_lifecycle(tmp_path: Path) -> None:
                 assert close_frame["type"] == "sys.device.session.close"
                 assert close_frame["data"]["reason"] == "account_binding_revoked"
                 await websocket.wait_closed()
+                assert (await client.post(mcp_key_path, headers=mcp_headers)).json() == {"key": manual_key}
             assert _stored_device(tmp_path)["binding_secret"] == binding.binding_secret
             assert ACCOUNT_LINK_KEY not in json.dumps(_bindings_file(tmp_path))
 

@@ -582,6 +582,7 @@ class DaemonRuntime:
             return False
         self._availability_suppressed_until = self._clock() + _REUNITE_SCAN_INTERVAL_SECONDS
         self._next_reunite_scan_at = self._availability_suppressed_until
+        self.device_pairing.revoke_account_desktop_mcp_key()
         return await self._disconnect_device_session(reason="account_binding_revoked")
 
     async def disconnect_device(self) -> bool:
@@ -652,6 +653,8 @@ class DaemonRuntime:
         }
 
     def desktop_mcp_bridge_key(self) -> str | None:
+        if self.device_pairing.account_device_id is not None:
+            return self.device_pairing.account_desktop_mcp_key()
         if self._device_bindings is None:
             return None
         binding = self._device_bindings.load().device
