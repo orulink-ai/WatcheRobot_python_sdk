@@ -16,7 +16,9 @@ Daemon 只保存最近一次成功手动配对的设备凭证。启动时立即�
 
 - `POST /daemon/devices/account-connect` 接收 `device_id` 和 `link_key`。编号为 `WR-XXXX-XXXX-XXXX-XXXX`（大写十六进制），密钥为 32 字节的小写十六进制编码。HTTP 202 表示已开始或复用该设备的账号会话。手动配对、已接受握手和已有连接占用设备槽时返回 HTTP 409 `device_slot_occupied`。账号发现可以替换尚未应答的旧绑定后台发现。
 - `GET /daemon/devices` 返回的 `device.account_device_id` 标记账号会话目标。只有 `device.online` 为 `true` 时，该账号设备才已完成握手。会话释放后，该字段为 `null`。
-- `POST /daemon/devices/account-disconnect` 只接收 `device_id`，取消或断开与编号匹配的账号会话，返回 `disconnected` 和当前 `device`。没有匹配会话时 `disconnected` 为 `false`。已有手动绑定会保留。
+- `POST /daemon/devices/account-disconnect` 接收 `device_id`，可附带原连接的 `link_key`。提供密钥时，只断开仍匹配该凭据的账户扫描或连接；延迟到达的旧凭据清理不得断开同设备的新凭据连接。旧客户端仅传编号仍兼容；新客户端必须携带原凭据。其他设备编号或手工连接返回 `disconnected=false`。
+- 手工与账户的连接管理操作串行执行，等待旧会话清理完成再占用设备槽；不按业务帧内容分支。账户撤销发送连接控制原因 `account_binding_revoked`，区别于用户普通断开的 `disconnect_requested`，保留独立SDK的手工绑定。
+- 独立SDK仍使用配对码和记忆凭据，不依赖账户、Supabase或互联网。Daemon不轮询云账户或设置强制云租约；云端绑定变化由客户端核对后发起账户连接清理。外网中断不等于局域网断开。
 
 账号发现沿用 `watcher-lan-pairing/1.1` 的 `link.reunite.request`。账号请求必须同时提供 `device_id`、`daemon_ip` 和 `request_mac`，仅使用 `desktop_link`。每个网卡的 `daemon_ip` 为实际发送源的规范 IPv4 字符串，机器人在验证请求时核对来源。手动凭证重连请求沿用原字段。
 

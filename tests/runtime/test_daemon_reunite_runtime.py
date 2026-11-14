@@ -35,6 +35,75 @@ ACCOUNT_LINK_KEY = "42" * 32
 ACCOUNT_HEADER = {"X-Watcher-Native": "account-device-link"}
 
 
+def test_stale_account_disconnect_cannot_cancel_new_credential(tmp_path: Path) -> None:
+    asyncio.run(_scenario_stale_account_disconnect(tmp_path))
+
+
+def test_new_account_connect_waits_for_in_flight_disconnect(tmp_path: Path) -> None:
+    asyncio.run(_scenario_serialized_account_replacement(tmp_path))
+
+
+async def _scenario_serialized_account_replacement(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    _pairing_on_loopback(runtime)
+    await runtime.start()
+    release = asyncio.Event()
+    entered = asyncio.Event()
+    cancel = runtime.pairing_udp.cancel_pairing
+
+    async def delayed_cancel(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await cancel(*args, **kwargs)
+
+    closing = opening = None
+    try:
+        await runtime.connect_account_device(ACCOUNT_DEVICE_ID, ACCOUNT_LINK_KEY)
+        runtime.pairing_udp.cancel_pairing = delayed_cancel
+        closing = asyncio.create_task(runtime.disconnect_account_device(ACCOUNT_DEVICE_ID, ACCOUNT_LINK_KEY))
+        await entered.wait()
+        opening = asyncio.create_task(runtime.connect_account_device(ACCOUNT_DEVICE_ID, '43' * 32))
+        await asyncio.sleep(0)
+        assert not opening.done(), 'new connection must wait until old cleanup releases the slot'
+        release.set()
+        assert await closing is True
+        await opening
+        assert runtime.device_pairing.matches_account_credential(ACCOUNT_DEVICE_ID, '43' * 32)
+    finally:
+        release.set()
+        for task in (closing, opening):
+            if task is not None:
+                await asyncio.gather(task, return_exceptions=True)
+        runtime.pairing_udp.cancel_pairing = cancel
+        await runtime.stop()
+
+
+async def _scenario_stale_account_disconnect(tmp_path: Path) -> None:
+    runtime = _runtime(tmp_path)
+    _pairing_on_loopback(runtime)
+    await runtime.start()
+    try:
+        async with httpx.AsyncClient(base_url=runtime.control_server.base_url, trust_env=False) as client:
+            path = "/daemon/devices/account-connect"
+            close = "/daemon/devices/account-disconnect"
+            old = {"device_id": ACCOUNT_DEVICE_ID, "link_key": ACCOUNT_LINK_KEY}
+            new = {**old, "link_key": "43" * 32}
+            assert (await client.post(path, json=old, headers=ACCOUNT_HEADER)).status_code == 202
+            removed = await client.post(close, json=old, headers=ACCOUNT_HEADER)
+            assert removed.status_code == 200
+            assert removed.json()["disconnected"] is True
+            assert (await client.post(path, json=new, headers=ACCOUNT_HEADER)).status_code == 202
+            stale = await client.post(close, json=old, headers=ACCOUNT_HEADER)
+            assert stale.status_code == 200
+            assert stale.json()["disconnected"] is False
+            assert stale.json()["device"]["state"] == "discovering"
+            assert runtime.device_pairing.matches_account_credential(ACCOUNT_DEVICE_ID, new["link_key"])
+            assert new["link_key"] not in stale.text
+            assert (await client.post(close, json=new, headers=ACCOUNT_HEADER)).json()["disconnected"] is True
+    finally:
+        await runtime.stop()
+
+
 def test_account_device_lifecycle(tmp_path: Path) -> None:
     asyncio.run(_scenario_account_device_lifecycle(tmp_path))
 
@@ -164,7 +233,9 @@ async def _scenario_account_device_lifecycle(tmp_path: Path) -> None:
                 )
                 assert cancelled.json()["disconnected"] is True
                 assert cancelled.json()["device"]["account_device_id"] is None
-                assert json.loads(await websocket.recv())["type"] == "sys.device.session.close"
+                close_frame = json.loads(await websocket.recv())
+                assert close_frame["type"] == "sys.device.session.close"
+                assert close_frame["data"]["reason"] == "account_binding_revoked"
                 await websocket.wait_closed()
             assert _stored_device(tmp_path)["binding_secret"] == binding.binding_secret
             assert ACCOUNT_LINK_KEY not in json.dumps(_bindings_file(tmp_path))

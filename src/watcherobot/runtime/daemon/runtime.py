@@ -158,6 +158,7 @@ class DaemonRuntime:
             daemon_instance_id = device_bindings_store.load().daemon_instance_id
         else:
             daemon_instance_id = secrets.token_hex(16)
+        self._device_control_lock = asyncio.Lock()
         self.device_pairing = DevicePairingSession(
             daemon_instance_id=daemon_instance_id,
         )
@@ -486,6 +487,12 @@ class DaemonRuntime:
         target_mode: str,
         device_ip: str | None = None,
     ) -> dict[str, object]:
+        async with self._device_control_lock:
+            return await self._pair_device_control(pairing_code, target_mode, device_ip)
+
+    async def _pair_device_control(
+        self, pairing_code: str, target_mode: str, device_ip: str | None,
+    ) -> dict[str, object]:
         """Reserve the single slot and start Daemon-owned UDP discovery."""
 
         if (
@@ -515,6 +522,10 @@ class DaemonRuntime:
         return self.device_status()
 
     async def cancel_device_pairing(self) -> dict[str, object]:
+        async with self._device_control_lock:
+            return await self._cancel_device_pairing_control()
+
+    async def _cancel_device_pairing_control(self) -> dict[str, object]:
         self._availability_suppressed_until = self._clock() + _REUNITE_SCAN_INTERVAL_SECONDS
         self._next_reunite_scan_at = self._clock() + _REUNITE_SCAN_INTERVAL_SECONDS
         await self.pairing_udp.cancel_pairing()
@@ -522,6 +533,10 @@ class DaemonRuntime:
         return self.device_status()
 
     async def connect_account_device(self, device_id: str, link_key: str) -> dict[str, object]:
+        async with self._device_control_lock:
+            return await self._connect_account_device_control(device_id, link_key)
+
+    async def _connect_account_device_control(self, device_id: str, link_key: str) -> dict[str, object]:
         """Scan for the account's chosen device without replacing an active session."""
 
         if ACCOUNT_DEVICE_ID_PATTERN.fullmatch(device_id) is None or not is_account_link_key(link_key):
@@ -554,22 +569,32 @@ class DaemonRuntime:
         await self._publish_device_state(self.device_pairing.snapshot())
         return self.device_status()
 
-    async def disconnect_account_device(self, device_id: str) -> bool:
+    async def disconnect_account_device(self, device_id: str, link_key: str | None = None) -> bool:
+        async with self._device_control_lock:
+            return await self._disconnect_account_device_control(device_id, link_key)
+
+    async def _disconnect_account_device_control(self, device_id: str, link_key: str | None) -> bool:
         """Release the matching account session and preserve any manual binding."""
 
         if self.device_pairing.account_device_id != device_id:
             return False
+        if link_key is not None and not self.device_pairing.matches_account_credential(device_id, link_key):
+            return False
         self._availability_suppressed_until = self._clock() + _REUNITE_SCAN_INTERVAL_SECONDS
         self._next_reunite_scan_at = self._availability_suppressed_until
-        return await self._disconnect_device_session()
+        return await self._disconnect_device_session(reason="account_binding_revoked")
 
     async def disconnect_device(self) -> bool:
+        async with self._device_control_lock:
+            return await self._disconnect_device_control()
+
+    async def _disconnect_device_control(self) -> bool:
         """Release the single device session without involving Application."""
 
         forgotten = self._forget_device_binding("disconnect requested")
         return await self._disconnect_device_session() or forgotten
 
-    async def _disconnect_device_session(self) -> bool:
+    async def _disconnect_device_session(self, *, reason: str = "disconnect_requested") -> bool:
         state = self.device_pairing.state
         if state is DevicePairingState.IDLE:
             self.logs.record("Device disconnect ignored (no active session)")
@@ -593,7 +618,7 @@ class DaemonRuntime:
                             "code": 0,
                             "data": {
                                 "pair_request_id": request.request_id,
-                                "reason": "disconnect_requested",
+                                "reason": reason,
                             },
                         },
                         separators=(",", ":"),

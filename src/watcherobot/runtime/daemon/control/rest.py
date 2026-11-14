@@ -102,7 +102,8 @@ async def _account_device_payload(request: Request, fields: set[str]) -> dict[st
         payload = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise PairingSessionError("invalid_account_device") from None
-    if not isinstance(payload, dict) or payload.keys() != fields:
+    allowed = (fields, fields | {"link_key"}) if fields == {"device_id"} else (fields,)
+    if not isinstance(payload, dict) or payload.keys() not in allowed:
         raise PairingSessionError("invalid_account_device")
     device_id = payload["device_id"]
     if not isinstance(device_id, str) or ACCOUNT_DEVICE_ID_PATTERN.fullmatch(device_id) is None:
@@ -197,7 +198,7 @@ class ApplicationController(Protocol):
     async def connect_account_device(self, device_id: str, link_key: str) -> dict[str, Any]:
         """Discover the one device identified by the account credential."""
 
-    async def disconnect_account_device(self, device_id: str) -> bool:
+    async def disconnect_account_device(self, device_id: str, link_key: str | None = None) -> bool:
         """Release a session only if it belongs to the given account device."""
 
     def select_application(
@@ -637,7 +638,12 @@ class DaemonControlAPI:
                 )
             try:
                 payload = await _account_device_payload(request, {"device_id"})
-                disconnected = await self._controller.disconnect_account_device(payload["device_id"])
+                if "link_key" in payload:
+                    if not is_account_link_key(payload["link_key"]):
+                        raise PairingSessionError("invalid_account_device")
+                    disconnected = await self._controller.disconnect_account_device(payload["device_id"], payload["link_key"])
+                else:
+                    disconnected = await self._controller.disconnect_account_device(payload["device_id"])
             except PairingSessionError as exc:
                 return JSONResponse(status_code=400, content={"error": exc.code}, headers=no_store)
             return JSONResponse(
