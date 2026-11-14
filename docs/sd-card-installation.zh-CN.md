@@ -1,7 +1,9 @@
-# SD 读卡器官方资源安装与排障
+# SDK 遗留 SD 维护接口的保护与排障
 
-桌面端通过 SDK Daemon 的维护接口安装官方资源。安装器源码位于
-`src/watcherobot/runtime/daemon/maintenance/card_reader.py`，桌面端不维护另一份写卡实现。
+本文仅说明 SDK 中遗留的资源维护接口，安装器源码位于
+`src/watcherobot/runtime/daemon/maintenance/card_reader.py`。
+当前桌面端已使用独立的 `desktop_maintenance` worker，不能将本文的源码测试或
+SDK 旧安装器实机探测当作当前桌面端写卡验收。桌面实际修复应进入桌面仓库。
 
 ## 安装顺序
 
