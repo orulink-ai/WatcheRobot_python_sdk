@@ -269,8 +269,113 @@ def test_card_reader_install_replaces_official_resources_and_preserves_works(tmp
     assert not stale_system.exists()
     assert (card / "watche" / "system" / "layout.json").is_file()
     assert (card / "watche" / "system" / "accepted_official.json").is_file()
+    assert not list(card.glob(".watcher-write-check-*"))
     assert any((card / "watche" / "assets" / "anim").glob("*.animpack"))
     assert updates[-1][0:2] == ("reader_completed", 99)
+
+
+def test_card_reader_checks_atomic_writes_before_removing_existing_resources(tmp_path, monkeypatch):
+    package = tmp_path / "resources.tar.gz"
+    card = tmp_path / "card"
+    old = card / "watche" / "official" / "current" / "old.json"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b"existing official metadata")
+    asset = card / "watche" / "assets" / "actions" / ("1" * 64 + ".json")
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"existing official asset")
+    work = card / "watche" / "works" / "mine" / "work.json"
+    work.parent.mkdir(parents=True)
+    work.write_bytes(b"user work")
+    _write_sd_package(package)
+    replace = card_reader.os.replace
+
+    def reject_atomic_rename(source, destination):
+        if str(source).endswith(".json.part"):
+            raise OSError(22, "Invalid argument", str(source))
+        return replace(source, destination)
+
+    monkeypatch.setattr(card_reader.os, "replace", reject_atomic_rename)
+    with pytest.raises(CardReaderError, match="读卡器.*写入"):
+        _install_to_root(package, card, lambda *_: None)
+
+    assert old.read_bytes() == b"existing official metadata"
+    assert asset.read_bytes() == b"existing official asset"
+    assert work.read_bytes() == b"user work"
+    # Do not issue further delete/write requests against a failed card.
+    assert len(list(card.glob(".watcher-write-check-*"))) == 1
+
+
+def test_card_reader_preserves_primary_io_error_and_stops_touching_failed_card(tmp_path, monkeypatch):
+    package = tmp_path / "resources.tar.gz"
+    card = tmp_path / "card"
+    card.mkdir()
+    _write_sd_package(package)
+    failure = OSError(22, "I/O device error")
+    failure.winerror = 1117
+    cleanup_calls = []
+
+    def fail_rename(*_):
+        raise failure
+
+    def fail_cleanup(*args, **kwargs):
+        cleanup_calls.append(args)
+        denied = PermissionError(13, "cleanup denied")
+        denied.winerror = 5
+        raise denied
+
+    monkeypatch.setattr(card_reader.os, "replace", fail_rename)
+    monkeypatch.setattr(card_reader.shutil, "rmtree", fail_cleanup)
+    with pytest.raises(CardReaderError, match="1117") as raised:
+        _install_to_root(package, card, lambda *_: None)
+
+    assert raised.value.__cause__ is failure
+    assert cleanup_calls == []
+
+
+def test_card_reader_rejects_failed_write_readback_before_cleanup(tmp_path, monkeypatch):
+    package = tmp_path / "resources.tar.gz"
+    card = tmp_path / "card"
+    asset = card / "watche" / "assets" / "actions" / ("1" * 64 + ".json")
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"existing official asset")
+    _write_sd_package(package)
+    read_bytes = Path.read_bytes
+
+    def corrupt_probe(path):
+        if any(part.startswith(".watcher-write-check-") for part in path.parts):
+            return b"unexpected bytes"
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", corrupt_probe)
+    with pytest.raises(CardReaderError, match="读回校验"):
+        _install_to_root(package, card, lambda *_: None)
+
+    assert asset.read_bytes() == b"existing official asset"
+
+
+def test_card_reader_reports_io_failure_without_retrying_or_activating(tmp_path, monkeypatch):
+    package = tmp_path / "resources.tar.gz"
+    card = tmp_path / "card"
+    work = card / "watche" / "works" / "mine" / "work.json"
+    work.parent.mkdir(parents=True)
+    work.write_bytes(b"user work")
+    _write_sd_package(package)
+    calls = []
+    failure = OSError(22, "I/O device error")
+    failure.winerror = 1117
+
+    def fail_extract(*args):
+        calls.append(args)
+        raise failure
+
+    monkeypatch.setattr(card_reader, "_extract", fail_extract)
+    with pytest.raises(CardReaderError, match="1117.*不要反复重试") as raised:
+        _install_to_root(package, card, lambda *_: None)
+
+    assert raised.value.__cause__ is failure
+    assert len(calls) == 1
+    assert work.read_bytes() == b"user work"
+    assert not (card / "watche" / "system" / "accepted_official.json").exists()
 
 
 def test_card_reader_counts_only_missing_assets_when_checking_free_space(

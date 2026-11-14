@@ -278,6 +278,7 @@ watcherobot app uninstall com.example.my_app
 常规排障先执行 `watcherobot daemon status`。产品集成可从发现到的本地控制地址读取
 `GET /daemon/logs`；端点发现和响应合同见 [Runtime 契约（英文）](docs/contracts/runtime-profile-index.md)。
 全部命令见 [CLI 参考](docs/cli-reference.zh-CN.md)。
+桌面端官方 SD 资源安装的校验顺序、用户作品保护和 I/O 失败处理，见 [SD 读卡器安装与排障](docs/sd-card-installation.zh-CN.md)。
 
 ## ✅ 环境要求
 

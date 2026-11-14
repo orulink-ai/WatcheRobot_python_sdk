@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 import tarfile
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -700,8 +701,44 @@ def _required_install_bytes(watche: Path, plan: ArchivePlan) -> int:
     return required
 
 
+def _check_atomic_card_writes(root: Path) -> None:
+    """Exercise the card's write/rename/read path before managed-data cleanup."""
+
+    payload = b"WatcheRobot SD-card write verification\n"
+    stem = hashlib.sha256(payload).hexdigest()
+    probe = Path(tempfile.mkdtemp(prefix=".watcher-write-check-", dir=root))
+    temporary = probe / f"{stem}.json.part"
+    target = probe / f"{stem}.json"
+    temporary.write_bytes(payload)
+    os.replace(temporary, target)
+    if target.read_bytes() != payload:
+        raise CardReaderError(
+            "SD 卡读回校验失败，已停止安装，尚未清理旧官方资源。"
+            "请检查 SD 卡、读卡器和连接，备份数据后再检查磁盘。"
+        )
+    # After an I/O failure, do not write/delete again or mask its primary error.
+    # Only a completely successful probe is removed before installation proceeds.
+    shutil.rmtree(probe)
+
+
 def _install_to_root(path: Path, root: Path, progress: Progress) -> str:
+    try:
+        return _install_to_root_checked(path, root, progress)
+    except OSError as exc:
+        windows_code = getattr(exc, "winerror", None)
+        code = f"Windows 错误 {windows_code}" if windows_code is not None else f"errno {exc.errno}"
+        raise CardReaderError(
+            f"SD 卡／读卡器写入失败（{code}），已停止安装，不要反复重试。"
+            "请安全移除并检查 SD 卡、读卡器和连接，备份作品后再检查磁盘。"
+            "程序不会自动格式化或修复磁盘；仅在安装和校验全部完成后才会显示成功。"
+            f"原始错误：{exc}"
+        ) from exc
+
+
+def _install_to_root_checked(path: Path, root: Path, progress: Progress) -> str:
     plan = inspect_archive(path)
+    progress("reader_preparing", 18, "资源包校验通过，正在检查 SD 卡写入、重命名与读回。")
+    _check_atomic_card_writes(root)
     watche = root / "watche"
     system = watche / "system"
     current = watche / "official" / "current"
