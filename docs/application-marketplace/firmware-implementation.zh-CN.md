@@ -1,6 +1,8 @@
 # 应用与固件广场实施方案（2026-10-30 修订）
 
-本文是当前功能分支的实现与交付边界，替代先前关于 schema 4、application-list-v2.json、SDK 执行烧录的设计。应用、固件独立发布；可通过依赖关联。桌面端负责 USB 烧录，SDK 负责分发和协议元数据。自动化验证不等于真实硬件验收；代码交付与平台状态见末节。
+应用和固件独立发布，通过依赖关联。Python SDK 准备、分发制品；桌面端执行 USB 烧录。本文保留历史实施记录，三种项目的当前用法见[开发项目说明](../development-projects.zh-CN.md)。
+
+电脑端 Application 使用 Daemon 注入的 Device channel 调用 SDK 接口。沿用官方固件无需自行连接设备；自定义固件需兼容 SDK／Daemon 协议，或由作者实现配套通信。下文“应用更新”指设备应用镜像更新，不是更新电脑端 Application。
 
 ## 用户看到什么
 
@@ -230,3 +232,19 @@ v2 新增 `partition_table` 文件引用，其地址不由用户手填。参考�
 
 
 分区 subtype 定义参考 [ESP-IDF ESP32-S3 分区表规范](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-guides/partition-tables.html)：OTA 启动选择由设备及作者的固件策略管理，USB 写入工具不从布局相同推断或承诺当前运行槽已改变。
+
+## 2026-11-17：离线固件准备与开发项目检查
+
+Python SDK 提供 `firmware_preparation_v3` 和 `development_projects_v1` capability。准备无需登录、Provider、Daemon 或设备；桌面继续负责 USB 写入。
+
+```text
+watcherobot firmware prepare SOURCE --cache-root PATH [--id ID --name NAME --version VERSION --description TEXT] [--mode full|application --application LABEL] --jsonl
+```
+
+SOURCE 支持 ESP-IDF 构建目录、构建 ZIP（允许外层目录）或已校验标准包。构建参数支持 `flasher_args.json`、无扩展名 `flash_args` 和 `flash_args.txt`；存在多个独立构建根时拒绝猜测。名称/版本从构建描述或应用 descriptor 预填，作者可补充缺少的展示信息。中文和空格路径使用相同入口。
+
+纯 Python 接口为 `prepare_package(source, cache_root, *, metadata=None, mode=None, application=None)`。metadata 只接受字符串 `id/name/version/description/author/notes`，拒绝未知字段及地址、Flash 容量、哈希等技术字段；原构建 `firmware.json` 的既有兼容信息读取规则保留。标准包可显式编辑展示信息，重新计算最终包摘要，镜像、原地址和 Flash 参数保持。默认不传转换/覆盖参数时，已有有效标准包保留原字节及摘要。
+
+`mode=application` 是显式提取：只写选中的应用镜像，参考分区表仅供检查，不写引导、分区表或数据。`application` 是分区 label，多应用镜像必须明确选一个；SDK 不猜启动槽位、不切换 OTA 状态。安装前仍必须检查设备布局兼容性。`mode=full` 不能把缺少 bootloader 的应用包伪装成完整包。地址由构建及分区表决定，不固定为官方布局；16MB 包允许针对容量足够的 32MB 设备生成完整安装计划。
+
+返回值保留原有字段，新增 `metadata` 展示字段和 `applications: [{label,path,offset,size}]`（实际应用镜像字节长度）。桌面现有 `firmware execute --action inspect` request 支持同名 `metadata/mode/application`。本地 `--action project_inspect` 接收 `{project_directory:string}`，返回 kind/project_root/application_directory/firmware_directory/firmware_metadata；两类本地检查都在 Provider 访问前执行。CLI 的 execute 仍沿用既有 provider/cache-root/store-root 参数协议。

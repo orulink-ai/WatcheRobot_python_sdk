@@ -474,11 +474,22 @@ class PairingUdpService:
             return False
 
         await self.refresh_channels()
-        datagram = encode_udp_message(request)
+        if (
+            self._session.state is not DevicePairingState.DISCOVERING
+            or self._session.current_request is not request
+        ):
+            return False
+        account_scan = self._session.account_device_id is not None
+        datagram = None if account_scan else encode_udp_message(request)
         sent = False
         for interface, channel in tuple(self._channels.items()):
+            interface_datagram = datagram
+            if interface_datagram is None:
+                interface_datagram = encode_udp_message(
+                    self._session.account_request_for_interface(interface.local_ip),
+                )
             try:
-                channel.send_broadcast(datagram)
+                channel.send_broadcast(interface_datagram)
             except (OSError, RuntimeError) as exc:
                 self._channel_errors[interface] = str(exc)
                 channel.close()
@@ -496,7 +507,7 @@ class PairingUdpService:
                 continue
             sent = True
         target_peer_ip = self._target_peer_ip
-        if target_peer_ip is not None:
+        if target_peer_ip is not None and datagram is not None:
             target_channel = self._channel_for_peer(target_peer_ip)
             if target_channel is not None:
                 try:
@@ -543,6 +554,7 @@ class PairingUdpService:
                     message,
                     peer_ip=address[0],
                     now=self._clock(),
+                    local_ip=interface.local_ip if interface is not None else None,
                 )
                 self._selected_interface = interface
                 self._record_receive_context(address[0], interface)
@@ -557,7 +569,7 @@ class PairingUdpService:
         await self._notify_state()
         return True
 
-    async def cancel_pairing(self) -> bool:
+    async def cancel_pairing(self, *, notify: bool = True) -> bool:
         cancel_message = self._session.pending_cancel_message()
         peer_ip = self._session.expected_peer_ip
         cancelled = self._session.cancel()
@@ -570,7 +582,8 @@ class PairingUdpService:
         )
         self._selected_interface = None
         self._target_peer_ip = None
-        await self._notify_state()
+        if notify:
+            await self._notify_state()
         return True
 
     async def expire_once(self) -> bool:

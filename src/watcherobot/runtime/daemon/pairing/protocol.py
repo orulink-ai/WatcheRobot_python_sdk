@@ -19,8 +19,9 @@ import hashlib
 import hmac
 import json
 import re
-from dataclasses import dataclass
-from typing import Any, Mapping
+from dataclasses import dataclass, field
+from ipaddress import IPv4Address
+from typing import Any, Literal, Mapping, TypeGuard
 
 
 LAN_PAIRING_PROTOCOL = "watcher-lan-pairing"
@@ -44,6 +45,8 @@ _REUNITE_MAC_PREFIX = "watcher-link-reunite-v1"
 
 _LOWER_HEX_32 = re.compile(r"^[0-9a-f]{32}$")
 _LOWER_HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+ACCOUNT_DEVICE_ID_PATTERN = re.compile(r"WR(?:-[0-9A-F]{4}){4}")
+_ACCOUNT_REUNITE_FIELDS = frozenset({"device_id", "daemon_ip", "request_mac"})
 _PAIRING_CODE = re.compile(r"^[0-9]{6}$")
 _COMMON_UDP_FIELDS = frozenset(
     {
@@ -143,6 +146,9 @@ class LinkReuniteRequest:
     nonce: str
     target_mode: str
     websocket_port: int
+    device_id: str | None = None
+    daemon_ip: str | None = None
+    request_mac: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -292,6 +298,11 @@ def parse_udp_message(payload: RawPayload) -> UdpMessage | LinkReuniteAvailable:
     expected_fields = _UDP_FIELDS.get(message_type)
     if expected_fields is None:
         raise PairingProtocolError(f"type is unsupported: {message_type}")
+    account_reunite = message_type == "link.reunite.request" and bool(
+        _ACCOUNT_REUNITE_FIELDS.intersection(message)
+    )
+    if account_reunite:
+        expected_fields |= _ACCOUNT_REUNITE_FIELDS
     _require_exact_fields(message, expected_fields)
     request_id, daemon_instance_id = _validate_udp_common(
         message,
@@ -346,12 +357,32 @@ def parse_udp_message(payload: RawPayload) -> UdpMessage | LinkReuniteAvailable:
         )
 
     if message_type == "link.reunite.request":
+        target_mode = _require_target_mode(message, "target_mode")
+        device_id = None
+        daemon_ip = None
+        request_mac = None
+        if account_reunite:
+            device_id = _require_string(message, "device_id")
+            if ACCOUNT_DEVICE_ID_PATTERN.fullmatch(device_id) is None:
+                raise PairingProtocolError("device_id has invalid format")
+            if target_mode != LAN_PAIRING_TARGET_MODE_DESKTOP_LINK:
+                raise PairingProtocolError("account reunite requires desktop_link")
+            daemon_ip = _require_string(message, "daemon_ip")
+            try:
+                if str(IPv4Address(daemon_ip)) != daemon_ip:
+                    raise ValueError
+            except ValueError:
+                raise PairingProtocolError("daemon_ip must be a canonical IPv4 address") from None
+            request_mac = _require_lower_hex(message, "request_mac", _LOWER_HEX_64)
         return LinkReuniteRequest(
             request_id=request_id,
             daemon_instance_id=daemon_instance_id,
             nonce=_require_lower_hex(message, "nonce", _LOWER_HEX_32),
-            target_mode=_require_target_mode(message, "target_mode"),
+            target_mode=target_mode,
             websocket_port=_require_websocket_port(message),
+            device_id=device_id,
+            daemon_ip=daemon_ip,
+            request_mac=request_mac,
         )
 
     return LinkReuniteAccept(
@@ -499,6 +530,12 @@ def encode_udp_message(message: UdpMessage) -> bytes:
             "target_mode": message.target_mode,
             "websocket_port": message.websocket_port,
         }
+        if any(value is not None for value in (message.device_id, message.daemon_ip, message.request_mac)):
+            payload.update(
+                device_id=message.device_id,
+                daemon_ip=message.daemon_ip,
+                request_mac=message.request_mac,
+            )
     elif isinstance(message, LinkReuniteAccept):
         payload = {
             "type": "link.reunite.accept",
@@ -553,6 +590,32 @@ def reunite_response_mac(
         message.encode("ascii"),
         hashlib.sha256,
     ).hexdigest()
+
+
+def account_reunite_mac(
+    link_key: str,
+    request: LinkReuniteRequest,
+    *,
+    purpose: Literal["account-request", "account-accept", "account-session"],
+) -> str:
+    """Sign the account discovery fields with a distinct domain for each handshake step."""
+
+    assert request.device_id is not None and request.daemon_ip is not None
+    message = "|".join((
+        purpose,
+        request.request_id,
+        request.nonce,
+        request.daemon_instance_id,
+        request.target_mode,
+        str(request.websocket_port),
+        request.device_id,
+        request.daemon_ip,
+    ))
+    return hmac.digest(bytes.fromhex(link_key), message.encode("ascii"), "sha256").hex()
+
+
+def is_account_link_key(value: object) -> TypeGuard[str]:
+    return isinstance(value, str) and _LOWER_HEX_64.fullmatch(value) is not None
 
 
 def build_hardware_hello_ack() -> dict[str, object]:

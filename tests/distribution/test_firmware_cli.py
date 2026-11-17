@@ -31,6 +31,8 @@ def test_capabilities_does_not_advertise_unfinished_installation(capsys):
         "firmware_requirement_contract",
         "firmware_operations_v1",
         "firmware_installation_v2",
+        "firmware_preparation_v3",
+        "development_projects_v1",
     ]
 
 
@@ -43,4 +45,6 @@ def test_sdk_entrypoint_exposes_same_local_contract(capsys):
         "firmware_requirement_contract",
         "firmware_operations_v1",
         "firmware_installation_v2",
+        "firmware_preparation_v3",
+        "development_projects_v1",
     ]

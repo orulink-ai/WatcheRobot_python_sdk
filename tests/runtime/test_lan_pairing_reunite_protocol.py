@@ -18,6 +18,7 @@ from watcherobot.runtime.daemon.pairing.protocol import (
     LinkReuniteAvailable,
     LinkReuniteRequest,
     PairingProtocolError,
+    account_reunite_mac,
     derive_binding_secret,
     encode_udp_message,
     parse_hardware_hello,
@@ -101,6 +102,53 @@ def test_reunite_fields_are_exactly_matched() -> None:
     ):
         with pytest.raises(PairingProtocolError):
             parse_udp_message(json.dumps(mutated))
+
+
+def test_account_reunite_fields_are_required_together() -> None:
+    base = json.loads(encode_udp_message(make_request()))
+    target = "WR-0001-0023-4567-89AB"
+    mac = "42" * 32
+    fields = {"device_id": target, "request_mac": mac, "daemon_ip": "192.168.31.99"}
+    parsed = parse_udp_message({**base, **fields})
+    assert isinstance(parsed, LinkReuniteRequest)
+    assert json.loads(encode_udp_message(parsed)) == {
+        **base, **fields,
+    }
+    for invalid_fields in (
+        {key: value for key, value in fields.items() if key != "device_id"},
+        {key: value for key, value in fields.items() if key != "request_mac"},
+        {key: value for key, value in fields.items() if key != "daemon_ip"},
+        {**fields, "device_id": target.lower()},
+        {**fields, "request_mac": "A" * 64},
+        {**fields, "device_id": None},
+        {**fields, "daemon_ip": "192.168.31.099"},
+        {**fields, "daemon_ip": "::1"},
+        {**fields, "target_mode": "python_sdk"},
+    ):
+        with pytest.raises(PairingProtocolError):
+            parse_udp_message({**base, **invalid_fields})
+
+
+def test_account_reunite_golden_vector_matches_firmware() -> None:
+    # Same fixed input and results as ESP32 test_account_reunite.
+    request = make_request(device_id="WR-0123-4567-89AB-CDEF", daemon_ip="192.168.31.99")
+    link_key = bytes(range(32)).hex()
+    assert account_reunite_mac(link_key, request, purpose="account-request") == (
+        "46697f90a775770381a082a1b0df135839d3cec60d2e996db32eff6506821f88"
+    )
+    assert account_reunite_mac(link_key, request, purpose="account-accept") == (
+        "8b13961541ad557827ffc1ef42e38a18bb4d0fcae74337a48c0f8b14a9312298"
+    )
+    assert account_reunite_mac(link_key, request, purpose="account-session") == (
+        "c9e6434a02ea21bac98052243d48d56c162253a6da6b6d1a0c213886f0976303"
+    )
+    assert reunite_response_mac(
+        link_key,
+        request_id=request.request_id,
+        nonce=request.nonce,
+        daemon_instance_id=request.daemon_instance_id,
+        target_mode=request.target_mode,
+    ) == "ba978bfd39c03e3e435108b45da2a3ac098da0018c4ea4bd7f21d03823df5968"
 
 
 def test_reunite_rejects_legacy_version_and_vice_versa() -> None:
