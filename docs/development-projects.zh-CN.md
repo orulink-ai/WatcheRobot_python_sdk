@@ -73,3 +73,5 @@ info = inspect_project(Path("demo"))  # dict，直接 JSON 序列化
 | `firmware_build_directory` | 安全且已存在的构建目录绝对路径，或 null |
 
 `build_path` 不混入展示 metadata，不会被作为固件包地址、哈希或 Flash 参数。越界或链接路径明确拒绝；检查过程中不连接设备或网络。
+
+验收时分别检查项目生成、固件准备、应用托管和桌面 USB 写入。应用安装成功不代表设备已更新；USB 写入成功不代表自定义固件兼容 Daemon。构建产物的镜像数量、文件名和合法分区布局不限定为官方模板。
