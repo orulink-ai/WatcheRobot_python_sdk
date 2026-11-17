@@ -1,5 +1,7 @@
 # 账户换绑连接撤销
 
+后续补充：[2026-11-17 AI Chat 账号连接诊断](../../2026-11-17/2026-11-17_184200_KID_无Issue_AIChat账号连接诊断/index.md)。修复 Windows UDP 故障后的通道恢复；本档案的凭据撤销及 Application 路由边界保持适用。
+
 - 作者：wugui；时区Asia/Shanghai；2026-11-14开始，进行中。
 - 用户要求：从最新远端dev新建分支补充账户连接/撤销；独立SDK不依赖账号，局域网正常时不因互联网断开停止运行。
 - 分支：codex/account-binding-replace-20261114；基线origin/dev 28d4df4ea6977a77abd00271176526d983e57443。

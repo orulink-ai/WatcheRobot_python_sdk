@@ -216,6 +216,12 @@ class PairingUdpChannel(asyncio.DatagramProtocol):
             self.interface.local_ip,
             exc,
         )
+        if isinstance(exc, ConnectionResetError):
+            # Older Windows Proactor loops stop scheduling receives after an
+            # ICMP port-unreachable error. Retire this socket so the existing
+            # discovery retry opens a fresh channel instead of sending forever
+            # through a transport that can no longer receive device responses.
+            self.close()
 
     def datagram_received(
         self,
@@ -309,6 +315,7 @@ class PairingUdpService:
         self._selected_interface: PairingUdpInterface | None = None
         self._target_peer_ip: str | None = None
         self._last_receive_context: dict[str, str] | None = None
+        self._last_rejected_request_id: str | None = None
         self._refresh_lock = asyncio.Lock()
         self._running = False
 
@@ -563,7 +570,24 @@ class PairingUdpService:
                 self._record_receive_context(address[0], interface)
             else:
                 return False
-        except (PairingProtocolError, PairingSessionError):
+        except PairingProtocolError:
+            return False
+        except PairingSessionError as exc:
+            request = self._session.current_request
+            if (
+                isinstance(message, LinkReuniteAccept)
+                and request is not None
+                and message.request_id == request.request_id
+                and message.request_id != self._last_rejected_request_id
+            ):
+                self._last_rejected_request_id = message.request_id
+                self._emit_event(
+                    "Pairing UDP response rejected "
+                    f"(peer={address[0]}, "
+                    f"local={interface.local_ip if interface else 'unknown'}, "
+                    f"reason={exc.code})",
+                    warning=True,
+                )
             return False
 
         await self._notify_state()

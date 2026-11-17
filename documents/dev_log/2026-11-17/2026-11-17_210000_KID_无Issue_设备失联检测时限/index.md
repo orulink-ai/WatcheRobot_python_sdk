@@ -1,0 +1,33 @@
+# 设备失联检测时限
+
+- 作者 KID，实际建档 2026-11-17 20:55:19 Asia/Shanghai（目录时刻为误填的预估值，保留目录以维护链接）；已完成本机验证，进入用户授权的本地提交阶段。
+- [前序 AI Chat 账号连接诊断](../2026-11-17_184200_KID_无Issue_AIChat账号连接诊断/index.md)；本次补充其未覆盖的失联时限。
+- 用户反馈关机后桌面仍显示连接；现有 WebSocket 依赖库默认 20 秒 ping、20 秒 pong 超时，关闭等待另有默认时限。
+- 目标：通过标准 WebSocket ping/pong 缩短失联检测，不增加业务消息分支；保留健康空闲连接。
+- TDD：真实 TCP/WebSocket 对端完成硬件 hello 后不回应 ping，验证注册表清理、断开回调；另验证健康无业务流量连接。
+- 实机验收与原始日志见 workspace 同日“离线重连与重启日志调查”，不将原始日志或凭据纳入 Git。
+
+## 验证（2026-11-17 21:09）
+
+- Red：真实 TCP 对端完成 WebSocket/硬件 hello，不发 pong 或 FIN；原默认配置在 12 秒期限超时，注册表仍为在线。初次用新增参数的接口失败不作为行为根因证据，最终测试直接使用生产默认构造函数。
+- Green：配置标准 ping=5、timeout=5、close=1，同一测试通过；健康空闲对端至少 11 秒保持在线。外部路由、配对 gate、UDP、会话 40 项测试通过。
+- 本机使用 /daemon/stop 正常关闭旧源码 Daemon 后加载当前源码，build ID 8f0bfa743a9a3dc7f1b8d7bebb1bb80ad2aba58f0a57a2cb57836b92ac2d9bb8。没有活跃 Application，未更改业务路由。
+- 实机下载模式断网：21:05:50 只读小分区结束并保持 bootloader，21:05:56.692 记录失联，管理 API online=false，桌面显示设备不在线；21:07:23 重启，21:07:46.365 自动完成账号连接。故障注入非自然重启复现。
+- 21:38:52 再次受控重启，6.1 秒观察到 online=false/reconnecting，44.6 秒恢复账号连接；第一轮 24 秒恢复不代表固定时限。恢复策略见客户端配套档案，SDK 心跳未增加业务类型分支。
+
+## 2026-11-17 · 秒级心跳后续验证
+
+- 用户在机器人局域网设计讨论后授权继续推进；本条部分替代上文 5/5 秒参数，其他配对、路由和恢复边界继续适用。
+- 设计：标准 WebSocket ping_interval=1、ping_timeout=3、close_timeout=1；收到正常 Close/传输关闭立即清理。传输存活与 Application/AI Chat 健康分离，不增加业务消息解析分支。
+- Red：真实静默 TCP 已完成硬件 hello 且保留 TCP，旧 5/5 配置在收紧后的 6 秒期限失败；正常 Close 清理测试通过（已有行为）。
+- Green：新配置同一静默对端回归通过；健康无业务流量连接连续 11 秒在线；补充真实帧测试确认首个 Ping 在 1.5 秒测试容差内出现，Pong 延迟 2 秒仍保持连接。外部 WebSocket 12 项通过。没有把依赖默认值断言当作行为测试。
+- 运行时：通过 SDK 官方 daemon activate 加载 source:86e9541ec889e4f7a0f1b0446f259d31a38295bbee7b171fd24c7aae45757522，本机进程 35696；Application 未运行。此前组合停止/拉起命令被自动审批策略拒绝，改用官方生命周期入口完成，不强杀进程。
+- 实机：项目既有 watche-dual-mcu-bringup 仅重启 ESP32，无编译/刷机/STM32 操作；第二轮以 wrapper 返回为参考，管理 API 4.12 秒后 offline/reconnecting，43.39 秒后自动 connected。轮询采样粒度约 0.2 秒；复位脉冲与 wrapper 返回间仍有小量工具延迟，结果是该次观测，非固定 SLA。桌面画面显示重连再恢复在线，无点击检测。
+- 已恢复 AI Chat page=3、mode=2、chat_connected=1；诊断 INFO 末崩溃序号仍 3387，ELF 27a0e40126f9e942。完整历史文档 show 导出遇到 document length mismatch，INFO 可读；本轮不修改导出协议、不清日志。
+- 配套客户端将管理轮询间隔改为 1 秒，并区分重连显示；细节及全量结果见 workspace 同任务档案。本机修复未提交、未发布安装包，未修改 AWS。
+
+22:23 全量复核：项目 venv 补齐已声明 dulwich==1.2.17；PYTHONUTF8=1 运行完整 pytest，2463通过、27跳过、2个既有警告，耗时339.32秒。未设置UTF-8时Pi示例3项超时，设置后该文件8项及全套通过；未修改Pi示例业务代码。原失败与环境差异保留在workspace验收报告中。
+
+## 2026-11-17 23:21 · KID / Codex · 本地提交
+
+用户明确要求提交 commit。提交前核对本仓库全部代码、测试与档案 diff，diff --check 通过；沿用上述同版本全量测试结果，未再次修改生产代码。配套桌面分支 codex/account-device-recovery-20261117 与 ESP32 分支 codex/ai-chat-account-connection-debug-20261117 分别提交，最终哈希由 workspace 同日离线重连调查档案汇总。本次仅本地提交，不推送、不发布。

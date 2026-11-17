@@ -10,7 +10,11 @@ Daemon 只保存最近一次成功手动配对的设备凭证。启动时立即�
 
 上述行为只管理连接控制与 UDP 身份发现，不修改 Application 业务帧路由；设备固件需实现相应凭证持久化及 watcher-lan-pairing/1.1 应答。
 
+设备在线依据认证后的活动 WebSocket。外部连接使用 1 秒 ping 间隔、3 秒 pong 超时、1 秒关闭等待，设备断电且 TCP 未主动关闭时也会移出在线注册表；健康空闲连接由标准 pong 保持，无需业务数据。正常 Close/传输关闭直接进入清理，不等待心跳期限。突然失联的探测约需 3–4 秒，关闭等待、桌面轮询和系统调度另有延迟，不承诺固定 3 秒内显示离线。账号设备在 Daemon 重连窗口结束后的长期再次发现由桌面账号连接调度负责，不在 Daemon 轮询云账户。Pong 证明传输可响应，不等同于 Application 或 AI Chat 业务健康。
+
 ## 账号绑定设备发现
+
+UDP 发现通道遇到连接重置错误时应淘汰原 socket，并由既有发现重试重建通道。旧版 Windows Python Proactor 在收到端口不可达错误后可能停止继续接收；不能仅保留可发送的旧通道。此恢复只影响连接控制，不改变业务路由或账号凭据。
 
 桌面通过原生 HTTP 客户端访问 `http://127.0.0.1:<control-port>`，并发送 `X-Watcher-Native: account-device-link`。这两个端点拒绝非回环来源、非回环 Host 以及带有 `Origin` 或 `Sec-Fetch-Site` 的请求。
 

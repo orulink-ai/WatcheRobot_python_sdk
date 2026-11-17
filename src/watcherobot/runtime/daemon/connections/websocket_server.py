@@ -123,6 +123,11 @@ class ExternalWebSocketServer:
             self._host,
             self._requested_port,
             max_size=None,
+            # Bound abrupt power-loss detection independently of business
+            # traffic. A dead peer cannot complete the closing handshake.
+            ping_interval=1,
+            ping_timeout=3,
+            close_timeout=1,
         )
         sockets = self._server.sockets
         if not sockets:

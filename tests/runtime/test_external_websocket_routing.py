@@ -1,12 +1,132 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import os
 
 from websockets.asyncio.client import connect
 
 from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, build_wspk
 from watcherobot.runtime.daemon.connections import ExternalClientRole, ExternalWebSocketServer
+
+
+def test_silent_power_loss_removes_device_but_healthy_idle_device_stays_online() -> None:
+    async def scenario() -> None:
+        from websockets.frames import Frame, OP_TEXT
+
+        disconnected = asyncio.Event()
+        server = ExternalWebSocketServer(
+            host="127.0.0.1", port=0, hardware_hello_authorizer=_allow_hardware,
+            device_disconnect_listener=lambda _peer: disconnected.set(),
+        )
+        await server.start()
+        writer = None
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", server.bound_port)
+            key = base64.b64encode(os.urandom(16)).decode()
+            writer.write((f"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n"
+                          f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                          "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+            await writer.drain()
+            assert b"101 Switching Protocols" in await reader.readuntil(b"\r\n\r\n")
+            writer.write(Frame(OP_TEXT, _hello("hardware").encode()).serialize(mask=True))
+            await writer.drain()
+            # A real WebSocket ACK proves this is an authorized device, then the
+            # raw peer deliberately never sends pong or a TCP FIN (power loss).
+            assert b"sys.ack" in await asyncio.wait_for(reader.read(2048), timeout=1)
+            assert server.registry.online_count(ExternalClientRole.DEVICE) == 1
+            # LAN liveness must be cleared within six seconds even when TCP
+            # remains open: 1 s to ping, 3 s for pong, 1 s to close + margin.
+            await asyncio.wait_for(disconnected.wait(), timeout=6)
+            assert server.registry.online_count(ExternalClientRole.DEVICE) == 0
+
+            disconnected.clear()
+            healthy = await _connect_as(server, "hardware")
+            try:
+                await asyncio.sleep(11)
+                assert server.registry.online_count(ExternalClientRole.DEVICE) == 1
+                assert not disconnected.is_set()
+            finally:
+                await healthy.close()
+        finally:
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_orderly_device_close_does_not_wait_for_heartbeat_deadline() -> None:
+    async def scenario() -> None:
+        disconnected = asyncio.Event()
+        server = ExternalWebSocketServer(
+            host="127.0.0.1", port=0, hardware_hello_authorizer=_allow_hardware,
+            device_disconnect_listener=lambda _peer: disconnected.set(),
+        )
+        await server.start()
+        try:
+            device = await _connect_as(server, "hardware")
+            await device.close()
+            await asyncio.wait_for(disconnected.wait(), timeout=0.5)
+            assert server.registry.online_count(ExternalClientRole.DEVICE) == 0
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_lan_ping_starts_within_one_second_and_tolerates_two_second_pong_delay() -> None:
+    async def read_frame(reader):
+        header = await reader.readexactly(2)
+        length = header[1] & 0x7F
+        if length == 126:
+            length = int.from_bytes(await reader.readexactly(2), "big")
+        elif length == 127:
+            length = int.from_bytes(await reader.readexactly(8), "big")
+        assert not header[1] & 0x80, "server frames must not be masked"
+        return header[0] & 0x0F, await reader.readexactly(length)
+
+    async def scenario() -> None:
+        from websockets.frames import Frame, OP_PING, OP_PONG, OP_TEXT
+
+        disconnected = asyncio.Event()
+        server = ExternalWebSocketServer(
+            host="127.0.0.1", port=0, hardware_hello_authorizer=_allow_hardware,
+            device_disconnect_listener=lambda _peer: disconnected.set(),
+        )
+        await server.start()
+        writer = None
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", server.bound_port)
+            key = base64.b64encode(os.urandom(16)).decode()
+            writer.write((f"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n"
+                          f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                          "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+            await writer.drain()
+            assert b"101 Switching Protocols" in await reader.readuntil(b"\r\n\r\n")
+            writer.write(Frame(OP_TEXT, _hello("hardware").encode()).serialize(mask=True))
+            await writer.drain()
+            _, ack = await asyncio.wait_for(read_frame(reader), timeout=1)
+            assert json.loads(ack)["type"] == "sys.ack"
+            opcode, ping = await asyncio.wait_for(read_frame(reader), timeout=1.5)
+            assert opcode == OP_PING
+            await asyncio.sleep(2)
+            assert not disconnected.is_set()
+            writer.write(Frame(OP_PONG, ping).serialize(mask=True))
+            await writer.drain()
+            # Survive the original unanswered-ping deadline after the late pong.
+            await asyncio.sleep(1.5)
+            assert server.registry.online_count(ExternalClientRole.DEVICE) == 1
+            assert not disconnected.is_set()
+        finally:
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()
+            await server.stop()
+
+    asyncio.run(scenario())
 
 
 async def _allow_hardware(_hello, _peer_ip: str) -> None:
