@@ -30,6 +30,7 @@ from .transfer import Progress, acquire_package, release_record
 
 ACTIONS = {
     "inspect",
+    "project_inspect",
     "cache_status",
     "remove_download",
     "withdraw",
@@ -220,12 +221,23 @@ def execute(
 ) -> dict[str, Any]:
     if action not in ACTIONS:
         raise FirmwareError("Unsupported firmware operation")
-    get_provider(provider)
+    if action == "project_inspect":
+        directory = request.get("project_directory")
+        if not isinstance(directory, str) or not directory.strip():
+            raise FirmwareError("project_directory must be a nonempty path string")
+        from watcherobot.project import inspect_project
+
+        return inspect_project(Path(directory))
     root = filesystem_path(cache_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     if action == "inspect":
         from .preparation import prepare_package
-        return prepare_package(Path(request["package_path"]), root / "prepared")
+        return prepare_package(
+            Path(request["package_path"]), root / "prepared",
+            metadata=request.get("metadata"), mode=request.get("mode"),
+            application=request.get("application"),
+        )
+    get_provider(provider)
     if action in {"cache_status", "remove_download"}:
         digest = request.get("sha256")
         if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:

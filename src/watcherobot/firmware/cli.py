@@ -22,6 +22,16 @@ def add_commands(commands: argparse._SubParsersAction[argparse.ArgumentParser]) 
     )
     check.add_argument("package", type=Path)
     check.add_argument("--jsonl", action="store_true")
+    prepare = actions.add_parser(
+        "prepare", help="Prepare an immutable firmware package offline"
+    )
+    prepare.add_argument("source", type=Path)
+    prepare.add_argument("--cache-root", type=Path, required=True)
+    for field in ("name", "version", "description", "id"):
+        prepare.add_argument("--" + field)
+    prepare.add_argument("--mode", choices=("full", "application"))
+    prepare.add_argument("--application")
+    prepare.add_argument("--jsonl", action="store_true")
     capabilities = actions.add_parser(
         "capabilities", help="Report implemented firmware capabilities"
     )
@@ -34,6 +44,7 @@ def add_commands(commands: argparse._SubParsersAction[argparse.ArgumentParser]) 
         required=True,
         choices=(
             "inspect",
+            "project_inspect",
             "cache_status",
             "remove_download",
             "withdraw",
@@ -125,11 +136,29 @@ def run(args: argparse.Namespace) -> int:
                 "firmware_requirement_contract",
                 "firmware_operations_v1",
                 "firmware_installation_v2",
+                "firmware_preparation_v3",
+                "development_projects_v1",
             ]
         }
     else:
         try:
-            data = asdict(inspect_package(args.package))
+            if args.firmware_command == "prepare":
+                from .preparation import prepare_package
+
+                metadata = {
+                    field: getattr(args, field)
+                    for field in ("id", "name", "version", "description")
+                    if getattr(args, field) is not None
+                }
+                data = prepare_package(
+                    args.source,
+                    args.cache_root,
+                    metadata=metadata,
+                    mode=args.mode,
+                    application=args.application,
+                )
+            else:
+                data = asdict(inspect_package(args.package))
         except FirmwareError:
             message = "Firmware package is missing, corrupt, or does not satisfy the supported format"
             if args.jsonl:

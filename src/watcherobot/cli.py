@@ -257,6 +257,9 @@ def build_parser() -> argparse.ArgumentParser:
     from watcherobot.firmware.cli import add_commands as add_firmware_commands
 
     add_firmware_commands(commands)
+    from watcherobot.project.cli import add_commands as add_project_commands
+
+    add_project_commands(commands)
     app_commands.add_parser(
         "start",
         help="Start the Application currently selected by the Daemon",
@@ -373,6 +376,14 @@ def main(argv: list[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     args = build_parser().parse_args(arguments)
     try:
+        if args.command == "project":
+            from watcherobot.project.cli import run_command as run_project_command
+            from watcherobot.project import ProjectError
+
+            try:
+                return run_project_command(args)
+            except ProjectError as exc:
+                raise CliError(str(exc)) from exc
         if args.command == "demo":
             return run_demo(args.name) if args.name else run_demo_menu()
         if args.command == "daemon":
