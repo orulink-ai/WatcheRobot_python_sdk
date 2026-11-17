@@ -1,6 +1,14 @@
 # 开发项目：应用、固件与组合项目
 
-Python SDK 提供离线项目生成与识别，不启动 Daemon、不下载 C SDK、不安装依赖、不操作串口。设备端固件仍使用独立的 C SDK 和对应工具链。
+这里的“应用”指电脑端 Python Application；固件里的应用镜像指设备程序，两者不同。
+
+| 开发内容 | 运行方式 |
+| --- | --- |
+| 仅应用 | 沿用官方固件，调用 SDK 接口，通过 Daemon 注入的 Device channel 通信；无需自行建立设备连接。 |
+| 仅固件 | 用 C SDK／设备工具链构建，Python SDK 准备包，桌面通过 USB 烧录。 |
+| 应用＋固件 | 两个成员独立发布，应用用 `requires_firmware` 关联配套版本。自定义固件须兼容现有 SDK／Daemon 协议，否则由作者实现配套通信。 |
+
+以下 `project` 命令仅生成、识别项目，不启动 Daemon。Application 运行时由 Daemon 托管。项目工具不下载 C SDK、不编译固件、不执行烧录。
 
 ```console
 watcherobot project init "我的项目" --kind application
