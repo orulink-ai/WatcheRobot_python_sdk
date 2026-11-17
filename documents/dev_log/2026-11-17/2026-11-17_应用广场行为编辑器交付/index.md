@@ -19,3 +19,9 @@
 - 配套ESP-IDF6.0.2 AIChat构建exit0，宿主joy_idle_profile测试1/1通过；未烧录。
 - Windows已验证；其他平台未实测，清单不声明支持。未重做物理断电、换机、全槽安装、长时间实机播放；未公开发布或提交审核。
 - 前序记录：[双池概率与串口修复](../../2026-11-14/2026-11-14_154615_YuZhong0212_无Issue_待机双池概率与新版固件适配/index.md)。本轮补足应用交付，保留历史验证边界。
+
+## 2026-11-17 远端交付完成｜Codex
+- 已提交并推送应用实现d3cbb827c1c4b366115aba9e09bfb9b226fffaac，gh API核对远端分支一致。
+- 配套固件d4d5408865f9cfe887dfac6b30182b43faaaf38b已推送并核对；旧Ro-In-AI地址由GitHub重定向到orulink-ai/WatcheRobot_esp32。
+- 发布目录导出ZIP约21.8MB，SHA256：52b117e5c1645b32f68eff544bc7fe6c1dca558c7b422cea27c737b9654b3e0d。生成文件保存在dist，不重复提交源。
+- 状态：适配与远端分支交付完成；未上架、未提交审核、未合入、未烧录。
