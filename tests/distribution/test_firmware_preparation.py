@@ -509,3 +509,289 @@ def test_public_preparation_freezes_zip_before_classification_and_extraction(
     assert len(calls) == 1
     assert actual["sha256"] == expected["sha256"]
     assert actual["version"] == "0.3.3"
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_v3_extensionless_args_and_display_overrides(tmp_path, wrapped):
+    source = build(tmp_path / "中文 build")
+    (source / "flasher_args.json").unlink()
+    (source / "flash_args").write_text(
+        "--flash_size 32MB\n0 bootloader.bin\n0x8000 partition-table.bin\n0x20000 app.bin"
+    )
+    if wrapped:
+        archive_path = tmp_path / "outer.zip"
+        with ZipFile(archive_path, "w") as archive:
+            for path in source.iterdir():
+                archive.write(path, "outer/build/" + path.name)
+        source = archive_path
+    result = prepare_package(
+        source,
+        tmp_path / "cache",
+        metadata={"name": "作者固件", "version": "2.0.0", "description": "说明"},
+    )
+    assert result["metadata"]["name"] == "作者固件"
+    assert result["applications"] == [
+        {
+            "label": "app",
+            "path": "images/00020000.bin",
+            "offset": 0x20000,
+            "size": len(valid_image()),
+        }
+    ]
+    assert result["version"] == "2.0.0"
+
+
+def test_v3_application_conversion_and_standard_package_edit(tmp_path):
+    from watcherobot.firmware.installation import inspect_installation
+
+    source = build(tmp_path / "build")
+    full = prepare_package(source, tmp_path / "cache")
+    app = prepare_package(
+        Path(full["package_path"]),
+        tmp_path / "cache",
+        mode="application",
+        application="app",
+        metadata={"name": "Update"},
+    )
+    info = inspect_installation(Path(app["package_path"]), require_layout=True)
+    assert info.mode == "application"
+    assert [s.offset for s in info.package.segments] == [0x20000]
+    assert app["sha256"] != full["sha256"]
+    again = prepare_package(
+        Path(full["package_path"]),
+        tmp_path / "cache",
+        mode="application",
+        application="app",
+        metadata={"name": "Update"},
+    )
+    assert again["sha256"] == app["sha256"]
+    with pytest.raises(FirmwareError, match="full"):
+        prepare_package(Path(app["package_path"]), tmp_path / "cache", mode="full")
+
+
+@pytest.mark.parametrize(
+    "metadata", [{"offset": "0"}, {"flash_size": "32MB"}, {"unknown": "x"}, {"name": 2}]
+)
+def test_v3_rejects_technical_and_unknown_metadata(tmp_path, metadata):
+    with pytest.raises(FirmwareError, match="metadata"):
+        prepare_package(
+            build(tmp_path / "build"), tmp_path / "cache", metadata=metadata
+        )
+
+
+def test_v3_multi_application_requires_label(tmp_path):
+    import struct
+
+    source = build(tmp_path / "build")
+    (source / "partition-table.bin").write_bytes(
+        struct.pack("<HBBII16sI", 0x50AA, 0, 0x10, 0x20000, 0x10000, b"ota_0", 0)
+        + struct.pack("<HBBII16sI", 0x50AA, 0, 0x11, 0x40000, 0x10000, b"ota_1", 0)
+        + b"\xff" * 32
+    )
+    (source / "second.bin").write_bytes(valid_image())
+    args = json.loads((source / "flasher_args.json").read_text())
+    args["flash_files"]["0x40000"] = "second.bin"
+    (source / "flasher_args.json").write_text(json.dumps(args))
+    with pytest.raises(FirmwareError, match="application"):
+        prepare_package(source, tmp_path / "cache", mode="application")
+    result = prepare_package(
+        source, tmp_path / "cache", mode="application", application="ota_1"
+    )
+    assert [s["offset"] for s in result["segments"]] == [0x40000]
+
+
+def test_v3_cli_prepare_offline(tmp_path, capsys, monkeypatch):
+    from watcherobot.cli import main
+    from watcherobot.firmware import operations
+
+    monkeypatch.setattr(
+        operations,
+        "get_provider",
+        lambda *a: pytest.fail("offline prepare must not access provider"),
+    )
+    source = build(tmp_path / "build")
+    assert (
+        main(
+            [
+                "firmware",
+                "prepare",
+                str(source),
+                "--cache-root",
+                str(tmp_path / "cache"),
+                "--name",
+                "Offline",
+                "--jsonl",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["data"]["name"] == "Offline"
+
+
+def test_v3_inspect_operation_passes_options_without_provider(tmp_path, monkeypatch):
+    from watcherobot.firmware.operations import execute
+    from watcherobot.firmware import operations
+
+    monkeypatch.setattr(
+        operations,
+        "get_provider",
+        lambda *a: pytest.fail("local inspect accessed provider"),
+    )
+    result = execute(
+        "inspect",
+        {
+            "package_path": str(build(tmp_path / "build")),
+            "metadata": {"name": "Local"},
+            "mode": "application",
+            "application": "app",
+        },
+        provider="unused",
+        cache_root=tmp_path / "cache",
+        store_root=tmp_path / "store",
+        progress=lambda **kw: None,
+    )
+    assert result["name"] == "Local"
+    assert result["mode"] == "application"
+
+
+def test_v3_project_inspect_rejects_invalid_request_before_provider(
+    tmp_path, monkeypatch
+):
+    from watcherobot.firmware.operations import execute
+    from watcherobot.firmware import operations
+
+    monkeypatch.setattr(
+        operations,
+        "get_provider",
+        lambda *a: pytest.fail("local project inspect accessed provider"),
+    )
+    with pytest.raises(FirmwareError, match="project_directory"):
+        execute(
+            "project_inspect",
+            {"project_directory": []},
+            provider="unused",
+            cache_root=tmp_path / "cache",
+            store_root=tmp_path / "store",
+            progress=lambda **kw: None,
+        )
+
+
+def test_v3_single_line_standard_flash_args_application_conversion(tmp_path):
+    from tests.distribution.test_firmware_installation import package
+
+    original = package(tmp_path / "source.zip", full=True)
+    inline = tmp_path / "inline.zip"
+    with ZipFile(original) as source, ZipFile(inline, "w") as target:
+        for entry in source.infolist():
+            data = source.read(entry)
+            if entry.filename == "flash_args.txt":
+                data = data.replace(b"\n", b" ")
+            target.writestr(entry, data)
+    result = prepare_package(inline, tmp_path / "cache", mode="application")
+    assert len(result["segments"]) == 1
+
+
+def test_v3_application_build_without_boot_does_not_become_full(tmp_path):
+    source = build(tmp_path / "build")
+    args_path = source / "flasher_args.json"
+    args = json.loads(args_path.read_text())
+    del args["flash_files"]["0x0"]
+    args_path.write_text(json.dumps(args))
+    result = prepare_package(source, tmp_path / "cache", mode="application")
+    assert result["mode"] == "application"
+    with pytest.raises(FirmwareError):
+        prepare_package(source, tmp_path / "cache", mode="full")
+
+
+def test_v3_standard_metadata_edit_keeps_technical_bytes_and_addresses(tmp_path):
+    source = build(tmp_path / "build")
+    original = prepare_package(source, tmp_path / "cache")
+    edited = prepare_package(
+        Path(original["package_path"]),
+        tmp_path / "cache",
+        metadata={"id": "author.custom", "name": "Custom", "description": "Editable"},
+    )
+    assert edited["sha256"] != original["sha256"]
+    assert edited["segments"] == original["segments"]
+    with (
+        ZipFile(original["package_path"]) as before,
+        ZipFile(edited["package_path"]) as after,
+    ):
+        for name in before.namelist():
+            if name != "firmware.json":
+                assert before.read(name) == after.read(name)
+
+
+def test_v3_author_can_fill_missing_build_version(tmp_path):
+    source = build(tmp_path / "build")
+    (source / "project_description.json").write_text(
+        json.dumps({"project_name": "build"})
+    )
+    assert (
+        prepare_package(source, tmp_path / "cache", metadata={"version": "1.2.3"})[
+            "version"
+        ]
+        == "1.2.3"
+    )
+
+
+@pytest.mark.parametrize("description", [None, {}])
+def test_v3_author_fills_missing_project_identity_with_custom_layout(
+    tmp_path, description
+):
+    source = build(tmp_path / "build")
+    if description is None:
+        (source / "project_description.json").unlink()
+    else:
+        (source / "project_description.json").write_text(json.dumps(description))
+    (source / "partition-table.bin").write_bytes(table(offset=0x10000, size=0x100000))
+    args_path = source / "flasher_args.json"
+    args = json.loads(args_path.read_text())
+    args["flash_settings"]["flash_size"] = "16MB"
+    args["flash_files"]["0x10000"] = args["flash_files"].pop("0x20000")
+    args_path.write_text(json.dumps(args))
+    result = prepare_package(
+        source,
+        tmp_path / "cache",
+        metadata={"id": "author.firmware", "name": "C SDK", "version": "1.0.0"},
+    )
+    assert result["flash_size"] == 16 * 1024**2
+    assert result["applications"][0]["offset"] == 0x10000
+    from watcherobot.firmware.installation import (
+        inspect_installation,
+        plan_installation,
+    )
+
+    info = inspect_installation(Path(result["package_path"]))
+    assert (
+        plan_installation(info, table(offset=0x10000, size=0x100000), 32 * 1024**2).mode
+        == "full"
+    )
+
+
+@pytest.mark.parametrize("kind", ["application", "firmware", "combined"])
+def test_v3_project_inspect_operation_is_local_and_serializable(
+    tmp_path, monkeypatch, kind
+):
+    from watcherobot.project import init_project
+    from watcherobot.firmware.operations import execute
+    from watcherobot.firmware import operations
+
+    directory = tmp_path / kind
+    init_project(directory, kind=kind)
+    monkeypatch.setattr(
+        operations,
+        "get_provider",
+        lambda *a: pytest.fail("local inspection accessed provider"),
+    )
+    result = execute(
+        "project_inspect",
+        {"project_directory": str(directory)},
+        provider="unused",
+        cache_root=tmp_path / "cache",
+        store_root=tmp_path / "store",
+        progress=lambda **kw: None,
+    )
+    assert result["kind"] == kind
+    assert json.loads(json.dumps(result))["project_root"] == str(directory.resolve())
