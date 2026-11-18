@@ -473,7 +473,9 @@ class PairingUdpService:
                 parsed_peer.is_loopback
                 or parsed_peer.is_multicast
                 or parsed_peer.is_unspecified
-                or self._channel_for_peer(str(parsed_peer)) is None
+                # A matching interface can be temporarily closed while the
+                # discovery loop is about to rebind its socket.
+                or self._channel_for_peer(str(parsed_peer), allow_closed=True) is None
             ):
                 raise PairingSessionError("invalid_device_ip")
             self._target_peer_ip = str(parsed_peer)
@@ -714,18 +716,20 @@ class PairingUdpService:
     def _channel_for_peer(
         self,
         peer_ip: str,
+        *,
+        allow_closed: bool = False,
     ) -> PairingUdpChannelContract | None:
         selected = self._selected_interface
         if selected is not None:
             selected_channel = self._channels.get(selected)
-            if selected_channel is not None and selected_channel.is_open:
+            if selected_channel is not None and (allow_closed or selected_channel.is_open):
                 return selected_channel
         try:
             peer = ipaddress.IPv4Address(peer_ip)
         except ipaddress.AddressValueError:
             return None
         for interface, channel in self._channels.items():
-            if not channel.is_open:
+            if not allow_closed and not channel.is_open:
                 continue
             network = ipaddress.IPv4Interface(
                 f"{interface.local_ip}/{interface.netmask}"

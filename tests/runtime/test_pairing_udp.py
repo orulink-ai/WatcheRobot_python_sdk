@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from watcherobot.runtime.daemon.pairing.protocol import (
     PairAccept,
     PairBusy,
@@ -129,7 +131,8 @@ def test_udp_service_broadcasts_daemon_owned_pair_request_on_each_interface() ->
     asyncio.run(scenario())
 
 
-def test_udp_service_sends_optional_unicast_probe_on_matching_interface() -> None:
+@pytest.mark.parametrize("reset_before_activation", [False, True])
+def test_udp_service_sends_optional_unicast_probe_on_matching_interface(reset_before_activation: bool) -> None:
     async def scenario() -> None:
         session = make_session()
         session.start_pairing(
@@ -147,9 +150,15 @@ def test_udp_service_sends_optional_unicast_probe_on_matching_interface() -> Non
         )
         await service.start()
 
+        original_channel = factory.channels[WIFI]
+        if reset_before_activation:
+            original_channel.close()
         service.activate(peer_ip="192.168.1.157")
         assert await service.broadcast_once() is True
 
+        if reset_before_activation:
+            assert factory.channels[WIFI] is not original_channel
+            assert original_channel.unicasts == []
         assert factory.channels[ETHERNET].unicasts == []
         assert len(factory.channels[WIFI].unicasts) == 1
         datagram, address = factory.channels[WIFI].unicasts[0]
