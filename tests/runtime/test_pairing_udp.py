@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from watcherobot.runtime.daemon.pairing.protocol import (
     PairAccept,
     PairBusy,
@@ -11,6 +13,7 @@ from watcherobot.runtime.daemon.pairing.protocol import (
 from watcherobot.runtime.daemon.pairing.session import (
     DevicePairingSession,
     DevicePairingState,
+    PairingSessionError,
 )
 from watcherobot.runtime.daemon.pairing.udp import (
     PairingUdpInterface,
@@ -46,6 +49,10 @@ class FakePairingUdpChannel:
         self.unicasts: list[tuple[bytes, tuple[str, int]]] = []
         self.closed = False
         self.unicast_error: OSError | None = None
+
+    @property
+    def is_open(self) -> bool:
+        return not self.closed
 
     def send_broadcast(self, data: bytes) -> None:
         self.broadcasts.append(data)
@@ -125,7 +132,8 @@ def test_udp_service_broadcasts_daemon_owned_pair_request_on_each_interface() ->
     asyncio.run(scenario())
 
 
-def test_udp_service_sends_optional_unicast_probe_on_matching_interface() -> None:
+@pytest.mark.parametrize("rebind_phase", ["none", "closed", "binding", "failed"])
+def test_udp_service_sends_optional_unicast_probe_on_matching_interface(rebind_phase: str) -> None:
     async def scenario() -> None:
         session = make_session()
         session.start_pairing(
@@ -134,7 +142,19 @@ def test_udp_service_sends_optional_unicast_probe_on_matching_interface() -> Non
             websocket_port=8765,
             now=10.0,
         )
-        factory = FakeChannelFactory()
+        class RebindingFactory(FakeChannelFactory):
+            async def __call__(self, interface, port, handler):
+                if interface == WIFI and (old := self.channels.get(WIFI)) is not None and old.closed:
+                    if rebind_phase == "binding":
+                        service.activate(peer_ip="192.168.1.157")
+                    if rebind_phase == "failed" and not self.failed_once:
+                        self.failed_once = True
+                        raise OSError("temporary bind failure")
+                return await super().__call__(interface, port, handler)
+
+            failed_once = False
+
+        factory = RebindingFactory()
         service = PairingUdpService(
             session=session,
             clock=lambda: 10.0,
@@ -143,9 +163,20 @@ def test_udp_service_sends_optional_unicast_probe_on_matching_interface() -> Non
         )
         await service.start()
 
-        service.activate(peer_ip="192.168.1.157")
+        original_channel = factory.channels[WIFI]
+        if rebind_phase != "none":
+            original_channel.close()
+        if rebind_phase in {"binding", "failed"}:
+            await service.refresh_channels()
+        with pytest.raises(PairingSessionError, match="invalid_device_ip"):
+            service.activate(peer_ip="198.51.100.5")
+        if rebind_phase != "binding":
+            service.activate(peer_ip="192.168.1.157")
         assert await service.broadcast_once() is True
 
+        if rebind_phase != "none":
+            assert factory.channels[WIFI] is not original_channel
+            assert original_channel.unicasts == []
         assert factory.channels[ETHERNET].unicasts == []
         assert len(factory.channels[WIFI].unicasts) == 1
         datagram, address = factory.channels[WIFI].unicasts[0]

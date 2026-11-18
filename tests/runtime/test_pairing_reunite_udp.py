@@ -45,6 +45,10 @@ class FakePairingUdpChannel:
         self.unicasts: list[tuple[bytes, tuple[str, int]]] = []
         self.closed = False
 
+    @property
+    def is_open(self) -> bool:
+        return not self.closed
+
     def send_broadcast(self, data: bytes) -> None:
         self.broadcasts.append(data)
 
@@ -232,6 +236,32 @@ def test_bad_mac_is_swallowed_and_scan_continues() -> None:
 
         assert accepted is False
         assert still_scanning is True
+        assert session.state is DevicePairingState.DISCOVERING
+        await service.stop()
+
+    asyncio.run(scenario())
+
+
+def test_rejected_response_reports_safe_context_once_per_scan() -> None:
+    async def scenario() -> None:
+        events: list[str] = []
+        session, service, _factory = make_service(event_logger=events.append)
+        start_scan(session)
+        await service.start()
+        for _ in range(2):
+            assert await service.handle_datagram(
+                encode_accept(response_mac="e" * 64),
+                (LAST_PEER_IP, 40000),
+                interface=ETHERNET,
+            ) is False
+        rejected = [event for event in events if "response rejected" in event]
+        assert len(rejected) == 1
+        assert "pairing_credential_invalid" in rejected[0]
+        assert LAST_PEER_IP in rejected[0]
+        assert ETHERNET.local_ip in rejected[0]
+        assert REUNITE_TOKEN not in rejected[0]
+        assert "e" * 64 not in rejected[0]
+        assert BINDING_SECRET not in rejected[0]
         assert session.state is DevicePairingState.DISCOVERING
         await service.stop()
 

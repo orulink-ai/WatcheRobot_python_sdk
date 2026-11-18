@@ -123,6 +123,11 @@ class ExternalWebSocketServer:
             self._host,
             self._requested_port,
             max_size=None,
+            # Bound abrupt power-loss detection independently of business
+            # traffic. A dead peer cannot complete the closing handshake.
+            ping_interval=1,
+            ping_timeout=3,
+            close_timeout=1,
         )
         sockets = self._server.sockets
         if not sockets:
@@ -144,6 +149,7 @@ class ExternalWebSocketServer:
 
     async def _handle_connection(self, websocket: ServerConnection) -> None:
         connection = self.registry.add(websocket)
+        tasks: tuple[asyncio.Task[None], ...] = ()
         self._record_connection_event(f"WebSocket connection opened (peer_ip={self._peer_ip(websocket)})")
         try:
             try:
@@ -176,62 +182,70 @@ class ExternalWebSocketServer:
                     )
                     return
 
-                async for frame in websocket:
-                    if self._is_control_message(frame, "sys.client.hello"):
-                        await websocket.close(
-                            code=self.CLOSE_ROLE_LOCKED,
-                            reason="client role is already locked",
-                        )
-                        return
-                    if self._is_control_message(frame, "sys.ping"):
-                        await websocket.send(
-                            json.dumps(
-                                {
-                                    "type": "sys.pong",
-                                    "code": 0,
-                                    "data": {},
-                                },
-                                separators=(",", ":"),
-                            )
-                        )
-                        continue
-                    if (
-                        connection.role is ExternalClientRole.DEVICE
-                        and self._is_control_message(
-                            frame,
-                            "sys.device.session.end",
-                        )
-                    ):
-                        await self._handle_device_session_end(connection, frame)
-                        return
-
-                    if self._business_frame_listener is not None:
-                        result = self._business_frame_listener(
-                            connection,
-                            frame,
-                        )
-                        if inspect.isawaitable(result):
-                            await result
-                    await self.router.route_external(connection, frame)
+                processing = asyncio.create_task(self._process_frames(connection))
+                closing = asyncio.create_task(websocket.wait_closed())
+                tasks = (processing, closing)
+                done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                if processing in done:
+                    await processing
             except ConnectionClosed:
                 pass
         finally:
-            removed = self.registry.remove(websocket)
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            # Retire the socket before awaiting cancellation of downstream work.
+            try:
+                await self._unregister_connection(websocket)
+            finally:
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _process_frames(self, connection: ExternalConnection) -> None:
+        websocket = connection.websocket
+        async for frame in websocket:
+            if self._is_control_message(frame, "sys.client.hello"):
+                await websocket.close(
+                    code=self.CLOSE_ROLE_LOCKED,
+                    reason="client role is already locked",
+                )
+                return
+            if self._is_control_message(frame, "sys.ping"):
+                await websocket.send(
+                    json.dumps(
+                        {"type": "sys.pong", "code": 0, "data": {}},
+                        separators=(",", ":"),
+                    )
+                )
+                continue
             if (
-                removed is not None
-                and self._external_disconnect_listener is not None
+                connection.role is ExternalClientRole.DEVICE
+                and self._is_control_message(frame, "sys.device.session.end")
             ):
-                result = self._external_disconnect_listener(removed)
+                await self._handle_device_session_end(connection, frame)
+                return
+
+            if self._business_frame_listener is not None:
+                result = self._business_frame_listener(connection, frame)
                 if inspect.isawaitable(result):
                     await result
+            await self.router.route_external(connection, frame)
+
+    async def _unregister_connection(self, websocket: ServerConnection) -> None:
+        removed = self.registry.remove(websocket)
+        if removed is None:
+            return
+        try:
             if (
-                removed is not None
-                and removed.role is ExternalClientRole.DEVICE
+                removed.role is ExternalClientRole.DEVICE
                 and self._device_disconnect_listener is not None
             ):
-                result = self._device_disconnect_listener(
-                    self._peer_ip(websocket),
-                )
+                result = self._device_disconnect_listener(self._peer_ip(websocket))
+                if inspect.isawaitable(result):
+                    await result
+        finally:
+            if self._external_disconnect_listener is not None:
+                result = self._external_disconnect_listener(removed)
                 if inspect.isawaitable(result):
                     await result
 

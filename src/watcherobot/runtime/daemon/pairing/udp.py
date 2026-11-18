@@ -33,6 +33,7 @@ from watcherobot.runtime.daemon.pairing.session import (
 PAIRING_UDP_PORT = 37021
 PAIRING_BROADCAST_ADDRESS = "255.255.255.255"
 DEFAULT_BROADCAST_INTERVAL_SECONDS = 1.0
+IDLE_INTERFACE_REFRESH_SECONDS = 5.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +52,10 @@ class PairingUdpInterface:
     netmask: str
     broadcast_ip: str
 
+    @property
+    def network(self) -> ipaddress.IPv4Network:
+        return ipaddress.IPv4Interface(f"{self.local_ip}/{self.netmask}").network
+
 
 DatagramHandler = Callable[
     [bytes, tuple[str, int]],
@@ -62,6 +67,9 @@ class PairingUdpChannelContract(Protocol):
     """Transport boundary used to test channel reconciliation without real NICs."""
 
     interface: PairingUdpInterface
+
+    @property
+    def is_open(self) -> bool: ...
 
     @property
     def bound_port(self) -> int: ...
@@ -194,6 +202,10 @@ class PairingUdpChannel(asyncio.DatagramProtocol):
         return protocol
 
     @property
+    def is_open(self) -> bool:
+        return self._transport is not None
+
+    @property
     def bound_port(self) -> int:
         transport = self._transport
         if transport is None:
@@ -216,6 +228,12 @@ class PairingUdpChannel(asyncio.DatagramProtocol):
             self.interface.local_ip,
             exc,
         )
+        if isinstance(exc, ConnectionResetError):
+            # Older Windows Proactor loops stop scheduling receives after an
+            # ICMP port-unreachable error. Retire this socket so the existing
+            # service loop opens a fresh channel instead of sending forever
+            # through a transport that can no longer receive device responses.
+            self.close()
 
     def datagram_received(
         self,
@@ -305,10 +323,12 @@ class PairingUdpService:
             PairingUdpChannelContract,
         ] = {}
         self._channel_errors: dict[PairingUdpInterface, str] = {}
+        self._known_interfaces: tuple[PairingUdpInterface, ...] = ()
         self._broadcast_task: asyncio.Task[None] | None = None
         self._selected_interface: PairingUdpInterface | None = None
         self._target_peer_ip: str | None = None
         self._last_receive_context: dict[str, str] | None = None
+        self._last_rejected_request_id: str | None = None
         self._refresh_lock = asyncio.Lock()
         self._running = False
 
@@ -316,14 +336,14 @@ class PairingUdpService:
     def bound_port(self) -> int:
         if not self._running:
             raise RuntimeError("pairing UDP service is not running")
-        first_channel = next(iter(self._channels.values()), None)
-        if first_channel is not None:
-            return first_channel.bound_port
+        for channel in self._channels.values():
+            if channel.is_open:
+                return channel.bound_port
         return self._requested_port
 
     @property
     def active_interfaces(self) -> tuple[PairingUdpInterface, ...]:
-        return tuple(self._channels)
+        return tuple(interface for interface, channel in self._channels.items() if channel.is_open)
 
     @property
     def channel_errors(self) -> Mapping[PairingUdpInterface, str]:
@@ -372,13 +392,20 @@ class PairingUdpService:
         if not self._running:
             raise RuntimeError("pairing UDP service is not running")
         async with self._refresh_lock:
-            desired = tuple(dict.fromkeys(self._interface_provider()))
+            try:
+                desired = tuple(dict.fromkeys(self._interface_provider()))
+            except OSError as exc:
+                if require_channel:
+                    raise
+                self._emit_event(f"Unable to enumerate pairing UDP interfaces (error={exc})", warning=True)
+                return self.active_interfaces
+            self._known_interfaces = desired
             desired_set = set(desired)
 
             stale = [
                 interface
-                for interface in self._channels
-                if interface not in desired_set
+                for interface, channel in self._channels.items()
+                if interface not in desired_set or not channel.is_open
             ]
             for interface in stale:
                 channel = self._channels.pop(interface)
@@ -427,7 +454,7 @@ class PairingUdpService:
                 if interface not in desired_set:
                     self._channel_errors.pop(interface, None)
 
-            if require_channel and desired and not self._channels:
+            if require_channel and desired and not self.active_interfaces:
                 raise RuntimeError(
                     "no pairing UDP interface could be bound"
                 )
@@ -452,7 +479,7 @@ class PairingUdpService:
                 parsed_peer.is_loopback
                 or parsed_peer.is_multicast
                 or parsed_peer.is_unspecified
-                or self._channel_for_peer(str(parsed_peer)) is None
+                or not any(parsed_peer in interface.network for interface in self._known_interfaces)
             ):
                 raise PairingSessionError("invalid_device_ip")
             self._target_peer_ip = str(parsed_peer)
@@ -563,7 +590,24 @@ class PairingUdpService:
                 self._record_receive_context(address[0], interface)
             else:
                 return False
-        except (PairingProtocolError, PairingSessionError):
+        except PairingProtocolError:
+            return False
+        except PairingSessionError as exc:
+            request = self._session.current_request
+            if (
+                isinstance(message, LinkReuniteAccept)
+                and request is not None
+                and message.request_id == request.request_id
+                and message.request_id != self._last_rejected_request_id
+            ):
+                self._last_rejected_request_id = message.request_id
+                self._emit_event(
+                    "Pairing UDP response rejected "
+                    f"(peer={address[0]}, "
+                    f"local={interface.local_ip if interface else 'unknown'}, "
+                    f"reason={exc.code})",
+                    warning=True,
+                )
             return False
 
         await self._notify_state()
@@ -680,17 +724,14 @@ class PairingUdpService:
         selected = self._selected_interface
         if selected is not None:
             selected_channel = self._channels.get(selected)
-            if selected_channel is not None:
+            if selected_channel is not None and selected_channel.is_open:
                 return selected_channel
         try:
             peer = ipaddress.IPv4Address(peer_ip)
         except ipaddress.AddressValueError:
             return None
         for interface, channel in self._channels.items():
-            network = ipaddress.IPv4Interface(
-                f"{interface.local_ip}/{interface.netmask}"
-            ).network
-            if peer in network:
+            if channel.is_open and peer in interface.network:
                 return channel
         return None
 
@@ -698,8 +739,11 @@ class PairingUdpService:
         for channel in self._channels.values():
             channel.close()
         self._channels.clear()
+        self._known_interfaces = ()
 
     async def _broadcast_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        next_interface_refresh = loop.time() + IDLE_INTERFACE_REFRESH_SECONDS
         while self._running and (
             self._idle_listener is not None
             or self._session.state in {
@@ -708,6 +752,13 @@ class PairingUdpService:
                 DevicePairingState.RECONNECTING,
             }
         ):
+            if self._session.state is not DevicePairingState.DISCOVERING and (
+                loop.time() >= next_interface_refresh
+                or self._channel_errors
+                or any(not channel.is_open for channel in self._channels.values())
+            ):
+                next_interface_refresh = loop.time() + IDLE_INTERFACE_REFRESH_SECONDS
+                await self.refresh_channels()
             if (
                 self._session.state is DevicePairingState.IDLE
                 and self._idle_listener is not None

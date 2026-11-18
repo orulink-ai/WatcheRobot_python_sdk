@@ -816,14 +816,20 @@ class DaemonRuntime:
             return
         self.device_pairing.device_disconnected(now=self._clock())
         self.logs.record(f"Device connection lost (peer_ip={_peer_ip})")
-        self.pairing_udp.activate(
-            peer_ip=(
-                self.device_pairing.expected_peer_ip
-                if self.device_pairing.account_device_id is None
-                else None
-            ),
+        peer_ip = (
+            self.device_pairing.expected_peer_ip
+            if self.device_pairing.account_device_id is None
+            else None
         )
-        await self._publish_device_state(self.device_pairing.snapshot())
+        try:
+            self.pairing_udp.activate(peer_ip=peer_ip)
+        except PairingSessionError as exc:
+            if exc.code != "invalid_device_ip":
+                raise
+            self.logs.record(f"Reconnect unicast probe unavailable (peer_ip={peer_ip}, error={exc})")
+            self.pairing_udp.activate()
+        finally:
+            await self._publish_device_state(self.device_pairing.snapshot())
 
     async def _device_session_ended(
         self,

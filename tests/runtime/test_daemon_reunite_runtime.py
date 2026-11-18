@@ -10,6 +10,7 @@ import socket
 from pathlib import Path
 
 import httpx
+import pytest
 from websockets.asyncio.client import connect
 
 from watcherobot.runtime.daemon.pairing.bindings_store import DeviceBinding, DeviceBindingsSnapshot, DeviceBindingsStore
@@ -21,12 +22,17 @@ from watcherobot.runtime.daemon.pairing.protocol import (
     parse_udp_message,
     reunite_response_mac,
 )
+from watcherobot.runtime.daemon.pairing.session import (
+    DEFAULT_RECONNECT_TIMEOUT_SECONDS,
+    PairingSessionError,
+)
 from watcherobot.runtime.daemon.pairing.udp import PairingUdpInterface
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
 from tests.runtime.pairing_helpers import (
     SESSION_TOKEN,
     connect_runtime_hardware,
 )
+from tests.runtime.test_pairing_reunite_udp import FakeChannelFactory
 
 REUNITE_TOKEN = "d" * 64
 ACCOUNT_DEVICE_ID = "WR-0001-0023-4567-89AB"
@@ -468,6 +474,107 @@ async def _scenario_desktop_disconnect_clears_the_binding(tmp_path: Path) -> Non
 
 def test_manual_pairing_seeds_durable_binding(tmp_path: Path) -> None:
     asyncio.run(_scenario_manual_pairing_seeds_durable_binding(tmp_path))
+
+
+def test_device_disconnect_preserves_reconnect_then_rediscovers_when_interface_returns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        now = [0.0]
+        runtime = _runtime(tmp_path, clock=lambda: now[0])
+        interface = PairingUdpInterface("test", "192.0.2.2", "255.255.255.0", "192.0.2.255")
+        device_ip = "192.0.2.3"
+        factory = FakeChannelFactory()
+        runtime.pairing_udp._interface_provider = lambda: (interface,)
+        runtime.pairing_udp._channel_factory = factory
+        await runtime.start()
+        try:
+            async with await _open_ws(runtime) as desktop:
+                async def read_connected():
+                    while True:
+                        event = json.loads(await desktop.recv())
+                        if event["data"]["state"] == "connected":
+                            return event
+
+                await desktop.send(json.dumps({
+                    "type": "sys.client.hello", "data": {"role": "desktop"},
+                }))
+                assert json.loads(await asyncio.wait_for(desktop.recv(), 2))["type"] == "sys.ack"
+                # Use real WebSocket frames while modeling a LAN peer without
+                # requiring test hosts to configure a specific interface.
+                monkeypatch.setattr(runtime.external_server, "_peer_ip", lambda _: device_ip)
+                await runtime.pair_device("123456", "python_sdk", device_ip=device_ip)
+                original_request = runtime.device_pairing.current_request
+                assert await runtime.pairing_udp.broadcast_once()
+                assert any(address[0] == device_ip for _, address in factory.channels[interface].unicasts)
+                accepted = PairAccept(
+                    request_id=original_request.request_id,
+                    daemon_instance_id=original_request.daemon_instance_id,
+                    target_mode="python_sdk",
+                    session_token=SESSION_TOKEN,
+                )
+                assert await runtime.pairing_udp.handle_datagram(
+                    encode_udp_message(accepted), (device_ip, 40000), interface=interface,
+                )
+                async with await _open_ws(runtime) as device:
+                    await device.send(_hello_frame(
+                        runtime, pairing_version="1.0",
+                        pair_request_id=original_request.request_id, session_token=SESSION_TOKEN,
+                    ))
+                    assert json.loads(await asyncio.wait_for(device.recv(), 2))["type"] == "sys.ack"
+                    connected = await asyncio.wait_for(read_connected(), 2)
+                    assert connected["data"]["online"] is True
+                    runtime.pairing_udp._interface_provider = tuple
+                    assert await runtime.pairing_udp.refresh_channels() == ()
+
+                reconnecting = json.loads(await asyncio.wait_for(desktop.recv(), 2))
+                assert reconnecting["type"] == "daemon.device.state"
+                assert reconnecting["data"]["state"] == "reconnecting"
+                assert reconnecting["data"]["online"] is False
+                with pytest.raises(PairingSessionError, match="invalid_device_ip"):
+                    runtime.pairing_udp.activate(peer_ip=device_ip)
+
+                runtime.pairing_udp._interface_provider = lambda: (interface,)
+                assert await runtime.pairing_udp.refresh_channels() == (interface,)
+                assert not await runtime.pairing_udp.broadcast_once()
+                assert not factory.channels[interface].broadcasts
+                assert runtime.device_pairing.current_request is original_request
+
+                now[0] = DEFAULT_RECONNECT_TIMEOUT_SECONDS + 1.0
+                assert await _wait_until(lambda: runtime.device_pairing.reuniting)
+                request = runtime.device_pairing.current_request
+                assert request.request_id != original_request.request_id
+                assert await _wait_until(lambda: bool(factory.channels[interface].broadcasts))
+                assert parse_udp_message(factory.channels[interface].broadcasts[0]) == request
+                accept = LinkReuniteAccept(
+                    request_id=request.request_id,
+                    daemon_instance_id=request.daemon_instance_id,
+                    nonce=request.nonce,
+                    target_mode="python_sdk",
+                    response_mac=reunite_response_mac(
+                        _stored_device(tmp_path)["binding_secret"],
+                        request_id=request.request_id,
+                        nonce=request.nonce,
+                        daemon_instance_id=request.daemon_instance_id,
+                        target_mode="python_sdk",
+                    ),
+                    session_token=REUNITE_TOKEN,
+                )
+                assert await runtime.pairing_udp.handle_datagram(
+                    encode_udp_message(accept), (device_ip, 40000), interface=interface,
+                )
+                async with await _open_ws(runtime) as returned:
+                    await returned.send(_hello_frame(
+                        runtime, pairing_version="1.1",
+                        pair_request_id=request.request_id, session_token=REUNITE_TOKEN,
+                    ))
+                    acknowledgement = json.loads(await asyncio.wait_for(returned.recv(), 2))
+                    assert acknowledgement["data"]["session_state"] == "connected"
+                    assert (await asyncio.wait_for(read_connected(), 2))["data"]["online"] is True
+        finally:
+            await runtime.stop()
+
+    asyncio.run(scenario())
 
 
 def test_restart_autoreunites_without_pairing_code(tmp_path: Path) -> None:
