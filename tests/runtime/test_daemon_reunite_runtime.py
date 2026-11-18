@@ -21,6 +21,7 @@ from watcherobot.runtime.daemon.pairing.protocol import (
     parse_udp_message,
     reunite_response_mac,
 )
+from watcherobot.runtime.daemon.pairing.session import DEFAULT_RECONNECT_TIMEOUT_SECONDS
 from watcherobot.runtime.daemon.pairing.udp import PairingUdpInterface
 from watcherobot.runtime.daemon.runtime import DaemonRuntime
 from tests.runtime.pairing_helpers import (
@@ -470,25 +471,31 @@ def test_manual_pairing_seeds_durable_binding(tmp_path: Path) -> None:
     asyncio.run(_scenario_manual_pairing_seeds_durable_binding(tmp_path))
 
 
-def test_device_disconnect_publishes_reconnect_when_interface_disappears(
+def test_device_disconnect_preserves_reconnect_then_rediscovers_when_interface_returns(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
-        runtime = _runtime(tmp_path)
-        _pairing_on_loopback(runtime)
+        now = [0.0]
+        runtime = _runtime(tmp_path, clock=lambda: now[0])
+        interface = _pairing_on_loopback(runtime)
         await runtime.start()
         try:
             async with await _open_ws(runtime) as desktop:
+                async def read_connected():
+                    while True:
+                        event = json.loads(await desktop.recv())
+                        if event["data"]["state"] == "connected":
+                            return event
+
                 await desktop.send(json.dumps({
                     "type": "sys.client.hello", "data": {"role": "desktop"},
                 }))
                 assert json.loads(await asyncio.wait_for(desktop.recv(), 2))["type"] == "sys.ack"
                 device = await connect_runtime_hardware(runtime)
                 try:
-                    connected = json.loads(await asyncio.wait_for(desktop.recv(), 2))
-                    while connected["data"]["state"] != "connected":
-                        connected = json.loads(await asyncio.wait_for(desktop.recv(), 2))
+                    connected = await asyncio.wait_for(read_connected(), 2)
                     assert connected["data"]["online"] is True
+                    original_request = runtime.device_pairing.current_request
                     runtime.pairing_udp._interface_provider = tuple
                     assert await runtime.pairing_udp.refresh_channels() == ()
                 finally:
@@ -498,6 +505,42 @@ def test_device_disconnect_publishes_reconnect_when_interface_disappears(
                 assert reconnecting["type"] == "daemon.device.state"
                 assert reconnecting["data"]["state"] == "reconnecting"
                 assert reconnecting["data"]["online"] is False
+
+                runtime.pairing_udp._interface_provider = lambda: (interface,)
+                assert await runtime.pairing_udp.refresh_channels() == (interface,)
+                assert not await runtime.pairing_udp.broadcast_once()
+                assert runtime.device_pairing.current_request is original_request
+
+                now[0] = DEFAULT_RECONNECT_TIMEOUT_SECONDS + 1.0
+                assert await _wait_until(lambda: runtime.device_pairing.reuniting)
+                request = runtime.device_pairing.current_request
+                assert request.request_id != original_request.request_id
+                assert await runtime.pairing_udp.broadcast_once()
+                accept = LinkReuniteAccept(
+                    request_id=request.request_id,
+                    daemon_instance_id=request.daemon_instance_id,
+                    nonce=request.nonce,
+                    target_mode="python_sdk",
+                    response_mac=reunite_response_mac(
+                        _stored_device(tmp_path)["binding_secret"],
+                        request_id=request.request_id,
+                        nonce=request.nonce,
+                        daemon_instance_id=request.daemon_instance_id,
+                        target_mode="python_sdk",
+                    ),
+                    session_token=REUNITE_TOKEN,
+                )
+                assert await runtime.pairing_udp.handle_datagram(
+                    encode_udp_message(accept), ("127.0.0.1", 40000),
+                )
+                async with await _open_ws(runtime) as returned:
+                    await returned.send(_hello_frame(
+                        runtime, pairing_version="1.1",
+                        pair_request_id=request.request_id, session_token=REUNITE_TOKEN,
+                    ))
+                    acknowledgement = json.loads(await asyncio.wait_for(returned.recv(), 2))
+                    assert acknowledgement["data"]["session_state"] == "connected"
+                    assert (await asyncio.wait_for(read_connected(), 2))["data"]["online"] is True
         finally:
             await runtime.stop()
 
