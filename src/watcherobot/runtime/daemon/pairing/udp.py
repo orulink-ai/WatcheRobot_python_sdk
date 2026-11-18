@@ -52,6 +52,10 @@ class PairingUdpInterface:
     netmask: str
     broadcast_ip: str
 
+    @property
+    def network(self) -> ipaddress.IPv4Network:
+        return ipaddress.IPv4Interface(f"{self.local_ip}/{self.netmask}").network
+
 
 DatagramHandler = Callable[
     [bytes, tuple[str, int]],
@@ -319,6 +323,7 @@ class PairingUdpService:
             PairingUdpChannelContract,
         ] = {}
         self._channel_errors: dict[PairingUdpInterface, str] = {}
+        self._known_interfaces: tuple[PairingUdpInterface, ...] = ()
         self._broadcast_task: asyncio.Task[None] | None = None
         self._selected_interface: PairingUdpInterface | None = None
         self._target_peer_ip: str | None = None
@@ -394,6 +399,7 @@ class PairingUdpService:
                     raise
                 self._emit_event(f"Unable to enumerate pairing UDP interfaces (error={exc})", warning=True)
                 return self.active_interfaces
+            self._known_interfaces = desired
             desired_set = set(desired)
 
             stale = [
@@ -473,9 +479,7 @@ class PairingUdpService:
                 parsed_peer.is_loopback
                 or parsed_peer.is_multicast
                 or parsed_peer.is_unspecified
-                # A matching interface can be temporarily closed while the
-                # discovery loop is about to rebind its socket.
-                or self._channel_for_peer(str(parsed_peer), allow_closed=True) is None
+                or not any(parsed_peer in interface.network for interface in self._known_interfaces)
             ):
                 raise PairingSessionError("invalid_device_ip")
             self._target_peer_ip = str(parsed_peer)
@@ -716,25 +720,18 @@ class PairingUdpService:
     def _channel_for_peer(
         self,
         peer_ip: str,
-        *,
-        allow_closed: bool = False,
     ) -> PairingUdpChannelContract | None:
         selected = self._selected_interface
         if selected is not None:
             selected_channel = self._channels.get(selected)
-            if selected_channel is not None and (allow_closed or selected_channel.is_open):
+            if selected_channel is not None and selected_channel.is_open:
                 return selected_channel
         try:
             peer = ipaddress.IPv4Address(peer_ip)
         except ipaddress.AddressValueError:
             return None
         for interface, channel in self._channels.items():
-            if not allow_closed and not channel.is_open:
-                continue
-            network = ipaddress.IPv4Interface(
-                f"{interface.local_ip}/{interface.netmask}"
-            ).network
-            if peer in network:
+            if channel.is_open and peer in interface.network:
                 return channel
         return None
 
@@ -742,6 +739,7 @@ class PairingUdpService:
         for channel in self._channels.values():
             channel.close()
         self._channels.clear()
+        self._known_interfaces = ()
 
     async def _broadcast_loop(self) -> None:
         loop = asyncio.get_running_loop()
