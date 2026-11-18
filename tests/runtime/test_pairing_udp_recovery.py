@@ -130,6 +130,8 @@ def test_idle_listener_receives_availability_after_connection_reset() -> None:
         await service.start()
         try:
             channels[0].error_received(ConnectionResetError(10054, "port unreachable"))
+            assert service.bound_port == fixed_port
+            assert service.active_interfaces == ()
             await asyncio.wait_for(replacement_ready.wait(), timeout=8.0)
             assert open_attempts >= 3
             assert service.bound_port == fixed_port

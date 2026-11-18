@@ -331,14 +331,14 @@ class PairingUdpService:
     def bound_port(self) -> int:
         if not self._running:
             raise RuntimeError("pairing UDP service is not running")
-        first_channel = next(iter(self._channels.values()), None)
-        if first_channel is not None:
-            return first_channel.bound_port
+        for channel in self._channels.values():
+            if channel.is_open:
+                return channel.bound_port
         return self._requested_port
 
     @property
     def active_interfaces(self) -> tuple[PairingUdpInterface, ...]:
-        return tuple(self._channels)
+        return tuple(interface for interface, channel in self._channels.items() if channel.is_open)
 
     @property
     def channel_errors(self) -> Mapping[PairingUdpInterface, str]:
@@ -448,7 +448,7 @@ class PairingUdpService:
                 if interface not in desired_set:
                     self._channel_errors.pop(interface, None)
 
-            if require_channel and desired and not self._channels:
+            if require_channel and desired and not self.active_interfaces:
                 raise RuntimeError(
                     "no pairing UDP interface could be bound"
                 )
@@ -718,13 +718,15 @@ class PairingUdpService:
         selected = self._selected_interface
         if selected is not None:
             selected_channel = self._channels.get(selected)
-            if selected_channel is not None:
+            if selected_channel is not None and selected_channel.is_open:
                 return selected_channel
         try:
             peer = ipaddress.IPv4Address(peer_ip)
         except ipaddress.AddressValueError:
             return None
         for interface, channel in self._channels.items():
+            if not channel.is_open:
+                continue
             network = ipaddress.IPv4Interface(
                 f"{interface.local_ip}/{interface.netmask}"
             ).network
