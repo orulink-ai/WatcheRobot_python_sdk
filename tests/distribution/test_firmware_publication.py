@@ -1,6 +1,7 @@
 """Marketplace publication needs a self-contained layout; local updates do not."""
 
 from dataclasses import replace
+from functools import partial
 
 import httpx
 import pytest
@@ -11,6 +12,7 @@ from watcherobot.firmware.contract import FirmwareError
 from watcherobot.firmware.installation import inspect_installation
 from watcherobot.firmware.platforms import FirmwarePlatform
 from watcherobot.firmware.preparation import prepare_package
+from watcherobot.firmware.transfer import acquire_package, validate_release
 from tests.distribution.test_firmware_installation import package, release_artifact
 
 
@@ -44,14 +46,32 @@ def test_execute_rejects_update_before_credentials(tmp_path, monkeypatch, provid
 
 @pytest.mark.parametrize("provider", ["gitee", "huggingface"])
 def test_submit_rechecks_historical_update_before_catalog_access(tmp_path, monkeypatch, provider):
-    release, _ = release_artifact(tmp_path)
-    monkeypatch.setattr(platforms, "acquire_package", lambda *a, **kw: tmp_path / "source.zip")
+    release, data = release_artifact(tmp_path)
+    if provider == "gitee":
+        release = replace(
+            release, provider=provider, path="", asset_id=29,
+            download_url="https://gitee.com/api/v5/repos/author/fw/releases/17/attach_files/29/download",
+        )
+    validate_release(release)
     monkeypatch.setattr(platforms, "HuggingFacePublishHubClient", no_remote)
     monkeypatch.setattr(platforms, "GiteeRepository", no_remote)
-    with pytest.raises(FirmwareError, match="complete installation"):
-        FirmwarePlatform(provider).submit(
-            replace(release, provider=provider), AccessToken("unused"), cache_root=tmp_path,
-        )
+    requests = []
+
+    def download(request):
+        requests.append(request)
+        assert request.url.host == ("gitee.com" if provider == "gitee" else "huggingface.co")
+        assert "authorization" not in request.headers
+        assert "cookie" not in request.headers
+        return httpx.Response(200, content=data)
+
+    with httpx.Client(transport=httpx.MockTransport(download)) as client:
+        # Keep release validation, anonymous transfer and hash/identity checks real.
+        monkeypatch.setattr(platforms, "acquire_package", partial(acquire_package, client=client))
+        with pytest.raises(FirmwareError, match="complete installation"):
+            FirmwarePlatform(provider).submit(
+                release, AccessToken("unused"), cache_root=tmp_path,
+            )
+    assert len(requests) == 1
 
 
 def test_update_remains_available_for_local_preparation_and_inspection(tmp_path):

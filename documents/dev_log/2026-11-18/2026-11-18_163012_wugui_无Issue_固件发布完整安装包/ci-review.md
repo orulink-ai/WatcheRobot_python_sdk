@@ -30,3 +30,13 @@
 ## 远端验收
 
 创建 PR 后等待 SDK CI 的 Development checks、Python 兼容矩阵及仓库审查流程；全部完成并核对反馈后，按用户授权以普通 merge 合入 main，不绕过失败或待完成检查。此记录提交时 PR 尚未创建，不预写远端成功或合入结果。
+
+## PR #166 自动审查反馈与测试补强
+
+- 中文 PR：https://github.com/orulink-ai/WatcheRobot_python_sdk/pull/166；目标 main。
+- 远端 SDK CI 首轮全部成功（Development checks、Python 3.10、Python 3.12）：https://github.com/orulink-ai/WatcheRobot_python_sdk/actions/runs/44270365208 。
+- Luxiao 自动审查前两次因服务调用失败（exit 1）未生成有效报告；第三次恢复后确认无阻断生产缺陷，但指出 Gitee 拒绝测试的 release fixture 不完整且绕过真实回读。报告已在 PR 留存。
+- 反馈核验 Red：在原 fixture 增加 `validate_release`，执行 `pytest tests/distribution/test_firmware_publication.py -k submit -o addopts= -q --tb=short`，Gitee 报 `Firmware integer is out of bounds`，1 failed / 1 passed，证实覆盖缺口。
+- 补齐 Gitee asset_id 和合法仓库附件 URL，使用真实 acquire_package，通过 MockTransport 仅替代 HTTP；真实验证记录、大小、哈希和包身份，再被完整安装要求拦截。断言单次匿名下载和审核目录不被访问。
+- Green：`pytest tests/distribution/test_firmware_publication.py tests/distribution/test_firmware_platform.py tests/distribution/test_firmware_transfer.py -o addopts= -q --tb=short`，62 passed，6.30 秒；diff 检查通过。
+- 本次仅测试与档案修正，产品代码及已通过 18 项本地 CI 的生产实现一致。追加提交后重新等待同一 PR 最新 head 的全部远端检查，不使用旧 head 的成功状态合入。
