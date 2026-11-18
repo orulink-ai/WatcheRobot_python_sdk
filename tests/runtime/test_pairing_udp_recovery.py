@@ -85,6 +85,14 @@ def test_idle_listener_receives_availability_after_connection_reset() -> None:
             port_probe.bind(("127.0.0.1", 0))
             fixed_port = port_probe.getsockname()[1]
         open_attempts = 0
+        interface_reads = 0
+
+        def interfaces():
+            nonlocal interface_reads
+            interface_reads += 1
+            if interface_reads == 2:
+                return ()
+            return (interface,)
         message = LinkReuniteAvailable("a" * 32, "desktop_link")
         datagram = json.dumps({
             "type": "link.reunite.available",
@@ -113,15 +121,15 @@ def test_idle_listener_receives_availability_after_connection_reset() -> None:
 
         session = DevicePairingSession(daemon_instance_id="a" * 32)
         service = PairingUdpService(
-            session=session, port=fixed_port, interface_provider=lambda: (interface,),
+            session=session, port=fixed_port, interface_provider=interfaces,
             channel_factory=factory, broadcast_interval_seconds=0.02,
             idle_listener=lambda: asyncio.sleep(0), availability_listener=on_available,
         )
         await service.start()
         try:
             channels[0].error_received(ConnectionResetError(10054, "port unreachable"))
-            await asyncio.wait_for(replacement_ready.wait(), timeout=2.0)
-            assert open_attempts == 3
+            await asyncio.wait_for(replacement_ready.wait(), timeout=8.0)
+            assert open_attempts >= 3
             assert service.bound_port == fixed_port
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as peer:
                 peer.sendto(datagram, ("127.0.0.1", fixed_port))

@@ -33,6 +33,7 @@ from watcherobot.runtime.daemon.pairing.session import (
 PAIRING_UDP_PORT = 37021
 PAIRING_BROADCAST_ADDRESS = "255.255.255.255"
 DEFAULT_BROADCAST_INTERVAL_SECONDS = 1.0
+IDLE_INTERFACE_REFRESH_SECONDS = 5.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -731,6 +732,8 @@ class PairingUdpService:
         self._channels.clear()
 
     async def _broadcast_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        next_interface_refresh = loop.time() + IDLE_INTERFACE_REFRESH_SECONDS
         while self._running and (
             self._idle_listener is not None
             or self._session.state in {
@@ -740,8 +743,11 @@ class PairingUdpService:
             }
         ):
             if self._session.state is not DevicePairingState.DISCOVERING and (
-                self._channel_errors or any(not channel.is_open for channel in self._channels.values())
+                loop.time() >= next_interface_refresh
+                or self._channel_errors
+                or any(not channel.is_open for channel in self._channels.values())
             ):
+                next_interface_refresh = loop.time() + IDLE_INTERFACE_REFRESH_SECONDS
                 await self.refresh_channels()
             if (
                 self._session.state is DevicePairingState.IDLE
