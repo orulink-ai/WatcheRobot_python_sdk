@@ -15,9 +15,10 @@ from typing import Any
 from zipfile import ZipFile, ZipInfo, ZIP_STORED, BadZipFile
 
 from .contract import FirmwareError
-from .installation import inspect_installation, parse_partitions
+from .installation import Partition, inspect_installation, parse_partitions
 from .paths import filesystem_path
 from .package import (
+    FirmwarePackage,
     MAX_PACKAGE_BYTES,
     MAX_EXPANDED_BYTES,
     MAX_METADATA_BYTES,
@@ -64,7 +65,7 @@ def _file(root: Path, name: str) -> Path:
     return candidate
 
 
-def _build(root: Path, output: Path) -> None:
+def _build(root: Path, output: Path, overrides: dict[str, str] | None = None) -> None:
     metadata = {}
     if (root / "firmware.json").is_file():
         metadata = _json(_file(root, "firmware.json"))
@@ -75,7 +76,9 @@ def _build(root: Path, output: Path) -> None:
     if (root / "flasher_args.json").is_file():
         args = _json(_file(root, "flasher_args.json"))
     else:
-        raw_args = _file(root, "flash_args.txt")
+        raw_args = _file(
+            root, "flash_args" if (root / "flash_args").is_file() else "flash_args.txt"
+        )
         tokens = shlex.split(
             _read_bounded(
                 raw_args, MAX_METADATA_BYTES, "Flash arguments exceed size limit"
@@ -124,7 +127,11 @@ def _build(root: Path, output: Path) -> None:
                     "project_version": header[48:80].split(b"\0", 1)[0].decode("utf-8"),
                 }
                 break
-        if not project:
+        if (
+            not project
+            and not (overrides or {}).get("name")
+            and not metadata.get("name")
+        ):
             raise FirmwareError("Missing project description or application descriptor")
     if args.get("extra_esptool_args", {}).get("chip") != "esp32s3":
         raise FirmwareError("Only ESP32-S3 builds are supported")
@@ -168,6 +175,8 @@ def _build(root: Path, output: Path) -> None:
     segments.sort(key=lambda s: s["offset"])
     name = project.get("project_name", "")
     if not isinstance(name, str) or not name.strip():
+        name = (overrides or {}).get("name", metadata.get("name", ""))
+    if not isinstance(name, str) or not name.strip():
         raise FirmwareError("Missing project name")
     identity = re.sub("[^a-z0-9._-]", "-", name.lower()).strip("-")[:55]
     if not identity:
@@ -200,6 +209,7 @@ def _build(root: Path, output: Path) -> None:
         ):
             if field in metadata:
                 manifest[field] = metadata[field]
+    manifest.update(overrides or {})
     text = f"--flash_size {capacity} --flash_mode {flash.get('flash_mode','dio')} --flash_freq {flash.get('flash_freq','80m')}\n"
     text += "\n".join(f"{s['offset']:#x} {s['path']}" for s in segments)
     with ZipFile(output, "w", compression=ZIP_STORED) as archive:
@@ -215,6 +225,96 @@ def _build(root: Path, output: Path) -> None:
             entry.create_system = 3
             entry.external_attr = 0o100644 << 16
             archive.writestr(entry, payloads[name])
+
+
+DISPLAY_FIELDS = frozenset({"id", "name", "version", "description", "author", "notes"})
+
+
+def _display_metadata(value: dict[str, str] | None) -> dict[str, str]:
+    if value is None:
+        return {}
+    if (
+        not isinstance(value, dict)
+        or set(value) - DISPLAY_FIELDS
+        or any(not isinstance(item, str) for item in value.values())
+    ):
+        raise FirmwareError("Invalid display metadata fields or values")
+    return dict(value)
+
+
+def _applications(
+    package: FirmwarePackage, partitions: tuple[Partition, ...]
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "label": partition.label,
+            "path": segment.path,
+            "offset": segment.offset,
+            "size": segment.size,
+        }
+        for segment in package.segments
+        for partition in partitions
+        if partition.type == 0 and segment.offset == partition.offset
+    ]
+
+
+def _rewrite_package(
+    output: Path, metadata: dict[str, str], mode: str | None, application: str | None
+) -> None:
+    from .package import inspect_package
+
+    package = inspect_package(output)
+    with ZipFile(output) as archive:
+        manifest = json.loads(archive.read("firmware.json"))
+        payloads = {item.filename: archive.read(item) for item in archive.infolist()}
+    reference = package.partition_table
+    if not reference:
+        info = inspect_installation(output, require_layout=True)
+        reference = next(
+            s.path for s in package.segments if s.offset == info.table_offset
+        )
+    partitions = parse_partitions(payloads[reference], package.flash_size)
+    if mode == "full":
+        if inspect_installation(output, require_layout=True).mode != "full":
+            raise FirmwareError(
+                "Cannot prepare full installation without bootloader and table writes"
+            )
+    if mode == "application":
+        applications = _applications(package, partitions)
+        selected = [
+            item
+            for item in applications
+            if application is None or item["label"] == application
+        ]
+        if len(selected) != 1:
+            raise FirmwareError("Select exactly one application partition label")
+        selected_path = selected[0]["path"]
+        manifest["schema_version"] = 2
+        manifest["partition_table"] = reference
+        manifest["segments"] = [
+            s for s in manifest["segments"] if s["path"] == selected_path
+        ]
+        payloads = {
+            key: value
+            for key, value in payloads.items()
+            if key in ("firmware.json", "flash_args.txt", reference, selected_path)
+        }
+        options = " ".join(f"--{key} {value}" for key, value in package.flash_options)
+        payloads["flash_args.txt"] = (
+            options + "\n" + f"{selected[0]['offset']:#x} {selected_path}\n"
+        ).encode()
+    manifest.update(metadata)
+    payloads["firmware.json"] = json.dumps(
+        manifest, ensure_ascii=True, sort_keys=True
+    ).encode()
+    replacement = output.with_name("edited.zip")
+    with ZipFile(replacement, "w", compression=ZIP_STORED) as archive:
+        for name in sorted(payloads):
+            entry = ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.create_system = 3
+            entry.external_attr = 0o100644 << 16
+            archive.writestr(entry, payloads[name])
+    os.replace(replacement, output)
 
 
 def _extract_build(source: Path, root: Path) -> None:
@@ -241,8 +341,22 @@ def _extract_build(source: Path, root: Path) -> None:
                 dest.write_bytes(archive.read(item))
 
 
-def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
+def prepare_package(
+    source: Path,
+    cache_root: Path,
+    *,
+    metadata: dict[str, str] | None = None,
+    mode: str | None = None,
+    application: str | None = None,
+) -> dict[str, Any]:
     """No credentials or device required. Publication rechecks this snapshot."""
+    overrides = _display_metadata(metadata)
+    if mode not in (None, "full", "application"):
+        raise FirmwareError("Invalid preparation mode")
+    if application is not None and (
+        mode != "application" or not isinstance(application, str) or not application
+    ):
+        raise FirmwareError("An application label requires application mode")
     source = filesystem_path(source)
     cache_root = filesystem_path(cache_root)
     cache_root.mkdir(parents=True, exist_ok=True)
@@ -253,7 +367,7 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
             root = Path(temporary)
             output = root / "prepared.zip"
             if source.is_dir():
-                _build(source, output)
+                _build(source, output, overrides)
             elif source.is_file() and source.stat().st_size <= MAX_PACKAGE_BYTES:
                 # Classification and extraction observe one private ZIP, even
                 # when the selected build output is replaced concurrently.
@@ -271,19 +385,21 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
                             > MAX_METADATA_BYTES
                         ):
                             raise FirmwareError("Firmware metadata exceeds size limit")
-                        metadata = json.loads(
+                        package_metadata = json.loads(
                             archive.read("firmware.json").decode("utf-8-sig"),
                             object_pairs_hook=_pairs,
                         )
-                        if not isinstance(metadata, dict):
+                        if not isinstance(package_metadata, dict):
                             raise FirmwareError("Firmware metadata must be an object")
                         # IDF builds may carry optional display metadata too.
                         # A package-format marker keeps malformed packages on the
                         # strict inspection path rather than rebuilding them.
                         prepared = (
-                            "schema_version" in metadata or "segments" in metadata
+                            "schema_version" in package_metadata
+                            or "segments" in package_metadata
                         )
                 if prepared:
+                    inspect_installation(snapshot, require_layout=True)
                     os.replace(snapshot, output)
                 else:
                     build = root / "build"
@@ -291,7 +407,11 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
                     _extract_build(snapshot, build)
                     roots = {
                         item.parent
-                        for pattern in ("flasher_args.json", "flash_args.txt")
+                        for pattern in (
+                            "flasher_args.json",
+                            "flash_args.txt",
+                            "flash_args",
+                        )
                         for item in build.rglob(pattern)
                         if item.is_file()
                     }
@@ -314,18 +434,30 @@ def prepare_package(source: Path, cache_root: Path) -> dict[str, Any]:
                             raise FirmwareError(
                                 "Firmware package metadata must be at ZIP root"
                             )
-                    _build(selected, output)
+                    _build(selected, output, overrides)
             else:
                 raise FirmwareError(
                     "Select a build directory or a bounded firmware ZIP"
                 )
+            if overrides or mode is not None:
+                _rewrite_package(output, overrides, mode, application)
             info = inspect_installation(output, require_layout=True)
+            applications = _applications(info.package, info.partitions)
             destination = cache_root / (info.package.sha256 + ".zip")
             os.replace(output, destination)
             return {
                 "package_path": str(destination),
                 "mode": info.mode,
                 "partitions": [asdict(p) for p in info.partitions],
+                "applications": applications,
+                "metadata": {
+                    "id": info.package.firmware_id,
+                    **{
+                        key: getattr(info.package, key)
+                        for key in DISPLAY_FIELDS
+                        if key != "id"
+                    },
+                },
                 **asdict(info.package),
             }
     except (OSError, ValueError, TypeError, KeyError, BadZipFile) as exc:

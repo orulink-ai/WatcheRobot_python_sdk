@@ -319,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def is_distribution_command(args: argparse.Namespace) -> bool:
     if getattr(args, "command", None) == "firmware":
-        return getattr(args, "firmware_command", None) in {"check", "capabilities", "execute"}
+        return getattr(args, "firmware_command", None) in {"check", "capabilities", "execute", "prepare"}
     return (
         getattr(args, "command", None) == "app"
         and getattr(args, "app_command", None) in DISTRIBUTION_COMMANDS
