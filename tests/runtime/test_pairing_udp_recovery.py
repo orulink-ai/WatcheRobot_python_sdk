@@ -81,6 +81,10 @@ def test_idle_listener_receives_availability_after_connection_reset() -> None:
         channels: list[PairingUdpChannel] = []
         replacement_ready = asyncio.Event()
         availability_received = asyncio.Event()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as port_probe:
+            port_probe.bind(("127.0.0.1", 0))
+            fixed_port = port_probe.getsockname()[1]
+        open_attempts = 0
         message = LinkReuniteAvailable("a" * 32, "desktop_link")
         datagram = json.dumps({
             "type": "link.reunite.available",
@@ -91,6 +95,10 @@ def test_idle_listener_receives_availability_after_connection_reset() -> None:
         }).encode()
 
         async def factory(interface, port, handler):
+            nonlocal open_attempts
+            open_attempts += 1
+            if open_attempts == 2:
+                raise OSError("simulated port still closing")
             channel = await PairingUdpChannel.open(interface, port, handler)
             channels.append(channel)
             if len(channels) == 2:
@@ -105,7 +113,7 @@ def test_idle_listener_receives_availability_after_connection_reset() -> None:
 
         session = DevicePairingSession(daemon_instance_id="a" * 32)
         service = PairingUdpService(
-            session=session, port=0, interface_provider=lambda: (interface,),
+            session=session, port=fixed_port, interface_provider=lambda: (interface,),
             channel_factory=factory, broadcast_interval_seconds=0.02,
             idle_listener=lambda: asyncio.sleep(0), availability_listener=on_available,
         )
@@ -113,8 +121,10 @@ def test_idle_listener_receives_availability_after_connection_reset() -> None:
         try:
             channels[0].error_received(ConnectionResetError(10054, "port unreachable"))
             await asyncio.wait_for(replacement_ready.wait(), timeout=2.0)
+            assert open_attempts == 3
+            assert service.bound_port == fixed_port
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as peer:
-                peer.sendto(datagram, ("127.0.0.1", channels[1].bound_port))
+                peer.sendto(datagram, ("127.0.0.1", fixed_port))
             await asyncio.wait_for(availability_received.wait(), timeout=1.0)
             assert session.state is DevicePairingState.IDLE
         finally:

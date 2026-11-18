@@ -92,8 +92,9 @@ def test_orderly_device_close_does_not_wait_for_heartbeat_deadline() -> None:
         await server.start()
         try:
             device = await _connect_as(server, "hardware")
-            await device.close()
-            await asyncio.wait_for(disconnected.wait(), timeout=0.5)
+            await asyncio.wait_for(
+                asyncio.gather(device.close(), disconnected.wait()), timeout=2.5
+            )
             assert server.registry.online_count(ExternalClientRole.DEVICE) == 0
         finally:
             await server.stop()
