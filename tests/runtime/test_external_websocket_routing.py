@@ -11,6 +11,17 @@ from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, build_w
 from watcherobot.runtime.daemon.connections import ExternalClientRole, ExternalWebSocketServer
 
 
+async def _read_server_frame(reader: asyncio.StreamReader) -> tuple[int, bytes]:
+    header = await reader.readexactly(2)
+    length = header[1] & 0x7F
+    if length == 126:
+        length = int.from_bytes(await reader.readexactly(2), "big")
+    elif length == 127:
+        length = int.from_bytes(await reader.readexactly(8), "big")
+    assert not header[1] & 0x80, "server frames must not be masked"
+    return header[0] & 0x0F, await reader.readexactly(length)
+
+
 def test_silent_power_loss_removes_device_but_healthy_idle_device_stays_online() -> None:
     async def scenario() -> None:
         from websockets.frames import Frame, OP_TEXT
@@ -29,12 +40,15 @@ def test_silent_power_loss_removes_device_but_healthy_idle_device_stays_online()
                           f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
                           "Sec-WebSocket-Version: 13\r\n\r\n").encode())
             await writer.drain()
-            assert b"101 Switching Protocols" in await reader.readuntil(b"\r\n\r\n")
+            headers = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=1)
+            assert b"101 Switching Protocols" in headers
             writer.write(Frame(OP_TEXT, _hello("hardware").encode()).serialize(mask=True))
             await writer.drain()
             # A real WebSocket ACK proves this is an authorized device, then the
             # raw peer deliberately never sends pong or a TCP FIN (power loss).
-            assert b"sys.ack" in await asyncio.wait_for(reader.read(2048), timeout=1)
+            opcode, ack = await asyncio.wait_for(_read_server_frame(reader), timeout=1)
+            assert opcode == OP_TEXT
+            assert json.loads(ack)["type"] == "sys.ack"
             assert server.registry.online_count(ExternalClientRole.DEVICE) == 1
             # LAN liveness must be cleared within six seconds even when TCP
             # remains open: 1 s to ping, 3 s for pong, 1 s to close + margin.
@@ -88,16 +102,6 @@ def test_orderly_device_close_does_not_wait_for_heartbeat_deadline() -> None:
 
 
 def test_lan_ping_starts_within_one_second_and_tolerates_two_second_pong_delay() -> None:
-    async def read_frame(reader):
-        header = await reader.readexactly(2)
-        length = header[1] & 0x7F
-        if length == 126:
-            length = int.from_bytes(await reader.readexactly(2), "big")
-        elif length == 127:
-            length = int.from_bytes(await reader.readexactly(8), "big")
-        assert not header[1] & 0x80, "server frames must not be masked"
-        return header[0] & 0x0F, await reader.readexactly(length)
-
     async def scenario() -> None:
         from websockets.frames import Frame, OP_PING, OP_PONG, OP_TEXT
 
@@ -115,12 +119,13 @@ def test_lan_ping_starts_within_one_second_and_tolerates_two_second_pong_delay()
                           f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
                           "Sec-WebSocket-Version: 13\r\n\r\n").encode())
             await writer.drain()
-            assert b"101 Switching Protocols" in await reader.readuntil(b"\r\n\r\n")
+            headers = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=1)
+            assert b"101 Switching Protocols" in headers
             writer.write(Frame(OP_TEXT, _hello("hardware").encode()).serialize(mask=True))
             await writer.drain()
-            _, ack = await asyncio.wait_for(read_frame(reader), timeout=1)
+            _, ack = await asyncio.wait_for(_read_server_frame(reader), timeout=1)
             assert json.loads(ack)["type"] == "sys.ack"
-            opcode, ping = await asyncio.wait_for(read_frame(reader), timeout=1.5)
+            opcode, ping = await asyncio.wait_for(_read_server_frame(reader), timeout=1.5)
             assert opcode == OP_PING
             await asyncio.sleep(2)
             assert not disconnected.is_set()
