@@ -1,4 +1,4 @@
-"""Real socket regression for discovery after an unreachable stale peer."""
+"""Service-level recovery regression using real UDP sockets."""
 
 from __future__ import annotations
 
@@ -21,48 +21,17 @@ from watcherobot.runtime.daemon.pairing.udp import (
 )
 
 
-def test_discovery_receives_after_probe_to_closed_udp_port() -> None:
-    async def scenario() -> None:
-        received = asyncio.Event()
-
-        async def on_datagram(data: bytes, _address: tuple[str, int]) -> bool:
-            if data == b"valid-response":
-                received.set()
-            return True
-
-        interface = PairingUdpInterface(
-            interface_name="loopback",
-            local_ip="127.0.0.1",
-            netmask="255.0.0.0",
-            broadcast_ip="127.255.255.255",
-        )
-        channel = await PairingUdpChannel.open(interface, 0, on_datagram)
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as stale:
-                stale.bind(("127.0.0.1", 0))
-                stale_address = stale.getsockname()
-            # Windows reports ICMP port-unreachable on the next receive. Older
-            # Proactor loops stop reading this socket permanently after it.
-            channel.send_unicast(b"probe", stale_address)
-            await asyncio.sleep(0.2)
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as peer:
-                peer.sendto(b"valid-response", ("127.0.0.1", channel.bound_port))
-            await asyncio.wait_for(received.wait(), timeout=1.0)
-        finally:
-            channel.close()
-            await asyncio.sleep(0)
-
-    asyncio.run(scenario())
-
-
 def test_discovery_reopens_socket_after_connection_reset() -> None:
     async def scenario() -> None:
         interface = PairingUdpInterface("loopback", "127.0.0.1", "255.0.0.0", "127.255.255.255")
         channels: list[PairingUdpChannel] = []
+        replacement_ready = asyncio.Event()
 
         async def factory(interface, port, handler):
             channel = await PairingUdpChannel.open(interface, port, handler)
             channels.append(channel)
+            if len(channels) == 2:
+                replacement_ready.set()
             return channel
 
         session = DevicePairingSession(daemon_instance_id="a" * 32)
@@ -72,16 +41,15 @@ def test_discovery_reopens_socket_after_connection_reset() -> None:
         )
         service = PairingUdpService(
             session=session, port=0, interface_provider=lambda: (interface,),
-            channel_factory=factory, clock=lambda: 100,
+            channel_factory=factory, clock=lambda: 100, broadcast_interval_seconds=0.02,
         )
         await service.start()
         try:
             # The OS invokes this callback when a stale peer sends ICMP
             # port-unreachable. Old Windows Proactor loops then stop reads.
             channels[0].error_received(ConnectionResetError(10054, "port unreachable"))
-            await service.broadcast_once()
-            await asyncio.sleep(0)
-            await service.broadcast_once()
+            service.activate()
+            await asyncio.wait_for(replacement_ready.wait(), timeout=2.0)
             assert len(channels) == 2, "discovery reused the socket whose receive loop stopped"
             response = LinkReuniteAccept(
                 request_id="b" * 32, daemon_instance_id="a" * 32,

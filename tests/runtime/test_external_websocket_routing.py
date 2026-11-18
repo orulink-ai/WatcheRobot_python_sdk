@@ -43,11 +43,21 @@ def test_silent_power_loss_removes_device_but_healthy_idle_device_stays_online()
 
             disconnected.clear()
             healthy = await _connect_as(server, "hardware")
+            desktop = await _connect_as(server, "desktop")
             try:
                 await asyncio.sleep(11)
                 assert server.registry.online_count(ExternalClientRole.DEVICE) == 1
+                assert server.registry.online_count(ExternalClientRole.DESKTOP) == 1
                 assert not disconnected.is_set()
+                for _ in range(20):
+                    payload = b"\x00\x01" * 1024
+                    await desktop.send(payload)
+                    assert await asyncio.wait_for(healthy.recv(), timeout=1) == payload
+                await desktop.close()
+                replacement = await _connect_as(server, "desktop")
+                await replacement.close()
             finally:
+                await desktop.close()
                 await healthy.close()
         finally:
             if writer is not None:
