@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 
 from watcherobot.runtime.daemon.pairing.protocol import (
+    LAN_PAIRING_PROTOCOL,
     LinkReuniteAccept,
+    LinkReuniteAvailable,
     encode_udp_message,
     reunite_response_mac,
 )
@@ -66,6 +69,54 @@ def test_discovery_reopens_socket_after_connection_reset() -> None:
                     await asyncio.sleep(0.01)
             await asyncio.wait_for(wait_for_accept(), timeout=1.0)
             assert session.state is DevicePairingState.CONNECTING
+        finally:
+            await service.stop()
+
+    asyncio.run(scenario())
+
+
+def test_idle_listener_receives_availability_after_connection_reset() -> None:
+    async def scenario() -> None:
+        interface = PairingUdpInterface("loopback", "127.0.0.1", "255.0.0.0", "127.255.255.255")
+        channels: list[PairingUdpChannel] = []
+        replacement_ready = asyncio.Event()
+        availability_received = asyncio.Event()
+        message = LinkReuniteAvailable("a" * 32, "desktop_link")
+        datagram = json.dumps({
+            "type": "link.reunite.available",
+            "protocol": LAN_PAIRING_PROTOCOL,
+            "version": "1.1",
+            "daemon_instance_id": message.daemon_instance_id,
+            "target_mode": message.target_mode,
+        }).encode()
+
+        async def factory(interface, port, handler):
+            channel = await PairingUdpChannel.open(interface, port, handler)
+            channels.append(channel)
+            if len(channels) == 2:
+                replacement_ready.set()
+            return channel
+
+        async def on_available(hint, peer_ip):
+            assert hint == message
+            assert peer_ip == "127.0.0.1"
+            availability_received.set()
+            return True
+
+        session = DevicePairingSession(daemon_instance_id="a" * 32)
+        service = PairingUdpService(
+            session=session, port=0, interface_provider=lambda: (interface,),
+            channel_factory=factory, broadcast_interval_seconds=0.02,
+            idle_listener=lambda: asyncio.sleep(0), availability_listener=on_available,
+        )
+        await service.start()
+        try:
+            channels[0].error_received(ConnectionResetError(10054, "port unreachable"))
+            await asyncio.wait_for(replacement_ready.wait(), timeout=2.0)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as peer:
+                peer.sendto(datagram, ("127.0.0.1", channels[1].bound_port))
+            await asyncio.wait_for(availability_received.wait(), timeout=1.0)
+            assert session.state is DevicePairingState.IDLE
         finally:
             await service.stop()
 

@@ -14,7 +14,7 @@ Daemon 只保存最近一次成功手动配对的设备凭证。启动时立即�
 
 ## 账号绑定设备发现
 
-UDP 发现通道遇到连接重置错误时应淘汰原 socket，并由既有发现重试重建通道。旧版 Windows Python Proactor 在收到端口不可达错误后可能停止继续接收；不能仅保留可发送的旧通道。此恢复只影响连接控制，不改变业务路由或账号凭据。
+UDP 发现通道遇到连接重置错误时应淘汰原 socket，并由既有服务循环重建通道，包括空闲监听设备主动重连提示时。旧版 Windows Python Proactor 在收到端口不可达错误后可能停止继续接收；不能仅保留可发送的旧通道。此恢复只影响连接控制，不改变业务路由或账号凭据。
 
 桌面通过原生 HTTP 客户端访问 `http://127.0.0.1:<control-port>`，并发送 `X-Watcher-Native: account-device-link`。这两个端点拒绝非回环来源、非回环 Host 以及带有 `Origin` 或 `Sec-Fetch-Site` 的请求。
 

@@ -64,6 +64,9 @@ class PairingUdpChannelContract(Protocol):
     interface: PairingUdpInterface
 
     @property
+    def is_open(self) -> bool: ...
+
+    @property
     def bound_port(self) -> int: ...
 
     def send_broadcast(self, data: bytes) -> None: ...
@@ -194,6 +197,10 @@ class PairingUdpChannel(asyncio.DatagramProtocol):
         return protocol
 
     @property
+    def is_open(self) -> bool:
+        return self._transport is not None
+
+    @property
     def bound_port(self) -> int:
         transport = self._transport
         if transport is None:
@@ -219,7 +226,7 @@ class PairingUdpChannel(asyncio.DatagramProtocol):
         if isinstance(exc, ConnectionResetError):
             # Older Windows Proactor loops stop scheduling receives after an
             # ICMP port-unreachable error. Retire this socket so the existing
-            # discovery retry opens a fresh channel instead of sending forever
+            # service loop opens a fresh channel instead of sending forever
             # through a transport that can no longer receive device responses.
             self.close()
 
@@ -384,8 +391,8 @@ class PairingUdpService:
 
             stale = [
                 interface
-                for interface in self._channels
-                if interface not in desired_set
+                for interface, channel in self._channels.items()
+                if interface not in desired_set or not channel.is_open
             ]
             for interface in stale:
                 channel = self._channels.pop(interface)
@@ -732,6 +739,10 @@ class PairingUdpService:
                 DevicePairingState.RECONNECTING,
             }
         ):
+            if self._session.state is not DevicePairingState.DISCOVERING and (
+                self._channel_errors or any(not channel.is_open for channel in self._channels.values())
+            ):
+                await self.refresh_channels()
             if (
                 self._session.state is DevicePairingState.IDLE
                 and self._idle_listener is not None

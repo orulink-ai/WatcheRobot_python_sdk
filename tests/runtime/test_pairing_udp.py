@@ -47,6 +47,10 @@ class FakePairingUdpChannel:
         self.closed = False
         self.unicast_error: OSError | None = None
 
+    @property
+    def is_open(self) -> bool:
+        return not self.closed
+
     def send_broadcast(self, data: bytes) -> None:
         self.broadcasts.append(data)
 

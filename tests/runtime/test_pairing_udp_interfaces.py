@@ -47,6 +47,10 @@ class FakePairingUdpChannel:
         self.unicasts: list[tuple[bytes, tuple[str, int]]] = []
         self.closed = False
 
+    @property
+    def is_open(self) -> bool:
+        return not self.closed
+
     def send_broadcast(self, data: bytes) -> None:
         self.broadcasts.append(data)
 
