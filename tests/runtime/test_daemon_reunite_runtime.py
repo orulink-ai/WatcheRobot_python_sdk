@@ -470,6 +470,40 @@ def test_manual_pairing_seeds_durable_binding(tmp_path: Path) -> None:
     asyncio.run(_scenario_manual_pairing_seeds_durable_binding(tmp_path))
 
 
+def test_device_disconnect_publishes_reconnect_when_interface_disappears(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        runtime = _runtime(tmp_path)
+        _pairing_on_loopback(runtime)
+        await runtime.start()
+        try:
+            async with await _open_ws(runtime) as desktop:
+                await desktop.send(json.dumps({
+                    "type": "sys.client.hello", "data": {"role": "desktop"},
+                }))
+                assert json.loads(await asyncio.wait_for(desktop.recv(), 2))["type"] == "sys.ack"
+                device = await connect_runtime_hardware(runtime)
+                try:
+                    connected = json.loads(await asyncio.wait_for(desktop.recv(), 2))
+                    while connected["data"]["state"] != "connected":
+                        connected = json.loads(await asyncio.wait_for(desktop.recv(), 2))
+                    assert connected["data"]["online"] is True
+                    runtime.pairing_udp._interface_provider = tuple
+                    assert await runtime.pairing_udp.refresh_channels() == ()
+                finally:
+                    await device.close()
+
+                reconnecting = json.loads(await asyncio.wait_for(desktop.recv(), 2))
+                assert reconnecting["type"] == "daemon.device.state"
+                assert reconnecting["data"]["state"] == "reconnecting"
+                assert reconnecting["data"]["online"] is False
+        finally:
+            await runtime.stop()
+
+    asyncio.run(scenario())
+
+
 def test_restart_autoreunites_without_pairing_code(tmp_path: Path) -> None:
     asyncio.run(_scenario_restart_autoreunites_without_pairing_code(tmp_path))
 
