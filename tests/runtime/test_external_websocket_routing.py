@@ -5,6 +5,7 @@ import base64
 import json
 import os
 
+import pytest
 from websockets.asyncio.client import connect
 
 from watcherobot.protocol import FLAG_FIRST, FLAG_LAST, FRAME_RECORDING, build_wspk
@@ -97,6 +98,75 @@ def test_orderly_device_close_does_not_wait_for_heartbeat_deadline() -> None:
             )
             assert server.registry.online_count(ExternalClientRole.DEVICE) == 0
         finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("orderly", [True, False], ids=["close", "missed-pong"])
+def test_device_disconnect_does_not_wait_for_business_forwarding(orderly: bool) -> None:
+    async def scenario() -> None:
+        from websockets.frames import Close, Frame, OP_BINARY, OP_CLOSE, OP_TEXT
+
+        entered = asyncio.Event()
+        release_forwarding = asyncio.Event()
+        cancelled = asyncio.Event()
+        disconnected = asyncio.Event()
+        disconnects: list[str] = []
+
+        async def hold_forwarding(_connection, _frame):
+            entered.set()
+            try:
+                await release_forwarding.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                await release_forwarding.wait()
+                raise
+
+        def record_disconnect(peer: str) -> None:
+            disconnects.append(peer)
+            disconnected.set()
+
+        server = ExternalWebSocketServer(
+            host="127.0.0.1", port=0, hardware_hello_authorizer=_allow_hardware,
+            business_frame_listener=hold_forwarding,
+            device_disconnect_listener=record_disconnect,
+        )
+        await server.start()
+        writer = None
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", server.bound_port)
+            key = base64.b64encode(os.urandom(16)).decode()
+            writer.write((f"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\n"
+                          f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                          "Sec-WebSocket-Version: 13\r\n\r\n").encode())
+            assert b"101 Switching Protocols" in await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 1)
+            writer.write(Frame(OP_TEXT, _hello("hardware").encode()).serialize(mask=True))
+            _, ack = await asyncio.wait_for(_read_server_frame(reader), 1)
+            assert json.loads(ack)["type"] == "sys.ack"
+            writer.write(Frame(OP_BINARY, b"pending business frame").serialize(mask=True))
+            await asyncio.wait_for(entered.wait(), 1)
+            assert server.registry.online_count(ExternalClientRole.DEVICE) == 1
+
+            if orderly:
+                writer.write(Frame(OP_CLOSE, Close(1000, "").serialize()).serialize(mask=True))
+            await asyncio.wait_for(disconnected.wait(), 2 if orderly else 6)
+            await asyncio.wait_for(cancelled.wait(), 1)
+            assert server.registry.online_count(ExternalClientRole.DEVICE) == 0
+
+            replacement = await _connect_as(server, "hardware")
+            try:
+                release_forwarding.set()
+                await asyncio.sleep(0)
+                assert disconnects == ["127.0.0.1"]
+                assert server.registry.online_count(ExternalClientRole.DEVICE) == 1
+            finally:
+                await replacement.close()
+        finally:
+            release_forwarding.set()
+            if writer is not None:
+                writer.close()
+                await writer.wait_closed()
             await server.stop()
 
     asyncio.run(scenario())
