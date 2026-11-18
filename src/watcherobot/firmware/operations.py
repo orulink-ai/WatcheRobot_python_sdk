@@ -361,11 +361,13 @@ def execute(
         return {"jobs": records}
     if action == "publish":
         from .preparation import prepare_package
+        from .publication import inspect_publication
 
         with tempfile.TemporaryDirectory(
             prefix="publish-prepare-", dir=root
         ) as temporary:
             prepared = prepare_package(Path(request["package_path"]), Path(temporary))
+            inspect_publication(Path(prepared["package_path"]))
             token = SystemCredentialStore(provider=provider).load()
             if token is None:
                 raise FirmwareError("Sign in to the selected provider before publishing")

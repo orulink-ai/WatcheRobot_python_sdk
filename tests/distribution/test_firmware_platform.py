@@ -38,7 +38,7 @@ class Hf:
 
 def test_hf_firmware_is_append_only_dataset_not_application_space(tmp_path):
     package = tmp_path / "fw.zip"
-    make_package(package)
+    make_package(package, full=True)
     api = Hf()
     backend = FirmwarePlatform("huggingface", hf_factory=lambda token: api)
     release = backend.publish(package, AccessToken("secret"))
@@ -53,7 +53,7 @@ def test_hf_firmware_is_append_only_dataset_not_application_space(tmp_path):
 
 def test_hf_existing_version_is_never_overwritten(tmp_path):
     package = tmp_path / "fw.zip"
-    make_package(package)
+    make_package(package, full=True)
     api = Hf()
     api.get_paths_info = lambda **kwargs: [
         SimpleNamespace(path="existing", last_commit=SimpleNamespace(oid="a" * 40))
@@ -67,7 +67,7 @@ def test_hf_existing_version_is_never_overwritten(tmp_path):
 
 def test_hf_retries_same_content_without_reupload(tmp_path):
     package = tmp_path / "fw.zip"
-    make_package(package)
+    make_package(package, full=True)
     metadata = tmp_path / "release.json"
     metadata.write_text(json.dumps(asdict(inspect_package(package))))
     api = Hf()
@@ -167,7 +167,7 @@ def test_gitee_publishes_release_attachment_without_replacing_old_files(
     tmp_path, retry_metadata, missing_status
 ):
     package = tmp_path / "fw.zip"
-    make_package(package)
+    make_package(package, full=True)
     calls = []
     repo = "author/WatcherRobot-Firmware-com.example.firmware"
 
@@ -221,7 +221,7 @@ def test_gitee_publishes_release_attachment_without_replacing_old_files(
 
 def test_gitee_retry_reuses_published_release_and_asset_without_mutation(tmp_path):
     package = tmp_path / "fw.zip"
-    make_package(package)
+    make_package(package, full=True)
     metadata = inspect_package(package)
     repo = "author/WatcherRobot-Firmware-com.example.firmware"
     calls = []
@@ -251,8 +251,9 @@ def test_gitee_retry_reuses_published_release_and_asset_without_mutation(tmp_pat
     assert len(calls) == 4
 
 
+@pytest.mark.parametrize("provider", ["huggingface", "gitee"])
 def test_firmware_submission_only_changes_separate_catalog_and_detects_version_conflict(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, provider
 ):
     from dataclasses import replace
     from watcherobot.firmware import platforms
@@ -263,17 +264,25 @@ def test_firmware_submission_only_changes_separate_catalog_and_detects_version_c
     from tests.distribution._publishing_fakes import FakePublishHub
     from watcherobot.distribution.ports import CatalogDocument
 
-    release, _ = artifact(tmp_path)
+    release, _ = artifact(tmp_path, full=True)
+    release = replace(release, provider=provider)
+    if provider == "gitee":
+        release = replace(
+            release, path="", asset_id=29,
+            download_url="https://gitee.com/api/v5/repos/author/fw/releases/17/attach_files/29/download",
+        )
     hub = FakePublishHub(
         catalog=CatalogDocument(
             commit="a" * 40, content=b'{"schema_version":1,"firmwares":[]}'
         )
     )
     monkeypatch.setattr(platforms, "HuggingFacePublishHubClient", lambda: hub)
+    monkeypatch.setattr(platforms, "GiteeRepository", lambda: hub)
     monkeypatch.setattr(
         platforms, "acquire_package", lambda *a, **kw: tmp_path / "source.zip"
     )
-    backend = FirmwarePlatform("huggingface", hf_factory=lambda token: Hf())
+    backend = FirmwarePlatform(provider, hf_factory=lambda token: Hf())
+    monkeypatch.setattr(backend, "_gitee", lambda *a, **kw: {"login": "author"})
     assert (
         backend.submit(release, AccessToken("secret"), cache_root=tmp_path)["status"]
         == "pending"
@@ -314,7 +323,7 @@ def test_reviewed_metadata_is_preserved_on_publication_resubmission(
     from tests.distribution._publishing_fakes import FakePublishHub
     from watcherobot.distribution.ports import CatalogDocument
 
-    release, _ = artifact(tmp_path)
+    release, _ = artifact(tmp_path, full=True)
     reviewed = replace(
         release,
         notes="Maintainer-reviewed notes",
@@ -352,19 +361,37 @@ def test_reviewed_metadata_is_preserved_on_publication_resubmission(
 
 
 @pytest.mark.parametrize("provider", ["huggingface", "gitee"])
-def test_direct_publish_accepts_wrapped_build_zip_and_uploads_prepared_segments(
-    tmp_path, provider
+@pytest.mark.parametrize("source_kind", ["directory", "wrapped_zip", "standard_zip"])
+@pytest.mark.parametrize("subtype", [0, 0x10, 0x20])
+def test_direct_publish_preserves_custom_build_layout(
+    tmp_path, provider, source_kind, subtype
 ):
     from zipfile import ZipFile
     from tests.distribution.test_firmware_preparation import build
     from watcherobot.firmware.preparation import prepare_package
 
     source = build(tmp_path / "build")
+    import struct
+
+    # A custom table address, larger app region, arbitrary labels and data type.
+    layout = (
+        struct.pack("<HBBII16sI", 0x50AA, 0x40, 2, 0x10000, 0x1000, b"user_data", 0)
+        + struct.pack("<HBBII16sI", 0x50AA, 0, subtype, 0x30000, 0xC00000, b"custom_app", 0)
+        + b"\xff" * 32
+    )
+    (source / "partition-table.bin").write_bytes(layout)
+    args_path = source / "flasher_args.json"
+    args = json.loads(args_path.read_text())
+    args["flash_files"]["0xC000"] = args["flash_files"].pop("0x8000")
+    args["flash_files"]["0x30000"] = args["flash_files"].pop("0x20000")
+    args_path.write_text(json.dumps(args))
     raw = tmp_path / "官方构建.zip"
     with ZipFile(raw, "w") as archive:
         for path in source.iterdir():
             archive.write(path, "release/" + path.name)
     expected = prepare_package(raw, tmp_path / "expected")
+    selected = {"directory": source, "wrapped_zip": raw,
+                "standard_zip": Path(expected["package_path"])}[source_kind]
     calls = []
     api = Hf()
 
@@ -402,11 +429,17 @@ def test_direct_publish_accepts_wrapped_build_zip_and_uploads_prepared_segments(
     with httpx.Client(transport=httpx.MockTransport(response)) as client:
         release = FirmwarePlatform(
             provider, hf_factory=lambda _: api, client=client
-        ).publish(raw, AccessToken("test-token"))
+        ).publish(selected, AccessToken("test-token"))
     assert release.sha256 == expected["sha256"]
     assert release.firmware_id == "local.desktop_pet"
     assert release.version == "0.3.3"
-    assert [item["offset"] for item in expected["segments"]] == [0, 0x8000, 0x20000]
+    assert [item["offset"] for item in expected["segments"]] == [0, 0xC000, 0x30000]
+    from watcherobot.firmware.installation import inspect_installation
+    info = inspect_installation(Path(expected["package_path"]))
+    assert [(p.label, p.size) for p in info.partitions] == [
+        ("user_data", 0x1000), ("custom_app", 0xC00000),
+    ]
+    assert info.partitions[1].subtype == subtype
     assert api.calls if provider == "huggingface" else calls
 
 

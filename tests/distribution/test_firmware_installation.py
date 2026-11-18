@@ -152,10 +152,10 @@ def test_partition_table_checksum_is_checked():
         parse_partitions(entry + b"\xeb\xeb" + b"\xff" * 14 + bytes(16), 0x2000000)
 
 
-def release_artifact(tmp_path):
+def release_artifact(tmp_path, *, full=False):
     from watcherobot.firmware.catalog import FirmwareRelease
 
-    path = package(tmp_path / "source.zip")
+    path = package(tmp_path / "source.zip", full=full)
     data = path.read_bytes()
     return (
         FirmwareRelease(

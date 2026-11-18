@@ -48,6 +48,8 @@ watcherobot project inspect "配套项目" --jsonl
 
 固件 ID 和版本遵循既有固件发布合同。`build_path` 可省略，默认 `build`，相对于固件成员目录；尚未编译、目录不存在时仍是有效项目。构建后可使用 `watcherobot firmware prepare` 准备产物。项目描述不是可烧录包，也不代表固件已发布。
 
+发布固件（独立或与应用配套）必须提供完整构建目录或 ZIP，含生成的烧录映射、bootloader、二进制分区表、应用及必要启动/数据镜像。SDK 自动提取分区和烧录信息，作者只补充名称、版本、说明等展示信息；自定义分区名称、数量和大小不受官方布局限制。仅含应用镜像的更新包仍可本地使用，但不能新发布或提交上架。作者须验证完整安装后的重启与运行；桌面直接使用包内信息烧录，不要求用户选择分区或安装模式。详见[固件发布要求](application-marketplace/firmware-implementation.zh-CN.md#新发布与上架要求)。
+
 组合模板不自动填写 `requires_firmware`。实际固件发布后，再按既有 Application 配套合同填写真实 `firmware_id`、版本范围、推荐版本与测试版本；组合安装仅关联相同来源的固件版本。不要用占位版本冒充已发布依赖。
 
 Python 公开接口：

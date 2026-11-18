@@ -489,7 +489,7 @@ def test_publication_cannot_use_local_cache_as_public_availability_proof(
     from watcherobot.firmware.transfer import acquire_package
     from tests.distribution.test_firmware_installation import package
 
-    source = package(tmp_path / "publication.zip")
+    source = package(tmp_path / "publication.zip", full=True)
     release, root = setup_catalog(tmp_path)
     monkeypatch.setattr(
         operations.SystemCredentialStore, "load", lambda self: AccessToken("secret")

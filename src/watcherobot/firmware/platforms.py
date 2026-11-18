@@ -149,9 +149,9 @@ class FirmwarePlatform:
         self, path: Path, token: AccessToken, *, progress: Progress | None = None
     ) -> FirmwareRelease:
         emit = progress or (lambda **_: None)
-        from .installation import inspect_installation
+        from .publication import inspect_publication
 
-        package = inspect_installation(path, require_layout=True).package
+        package = inspect_publication(path).package
         release_version = ".".join(map(str, version(package.version)))
         metadata = json.dumps(asdict(package), ensure_ascii=True).encode()
         emit(stage="preparing_upload", total_bytes=package.size)
@@ -491,9 +491,9 @@ class FirmwarePlatform:
         # Always anonymously re-download and inspect before offering the version to users.
         with tempfile.TemporaryDirectory(prefix="firmware-public-check-") as temporary:
             verified = acquire_package(release, Path(temporary), progress=progress)
-            from .installation import inspect_installation
+            from .publication import inspect_publication
 
-            inspect_installation(verified, require_layout=True)
+            inspect_publication(verified)
         repository = (
             HuggingFacePublishHubClient()
             if self.provider == "huggingface"

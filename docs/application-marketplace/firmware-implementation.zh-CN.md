@@ -214,13 +214,24 @@ flowchart TD
 
 `firmware execute --action publish` 接受相同的输入，可直接传入原始构建 ZIP。SDK 在读取平台凭证前生成并校验本次上传专用的临时包，分段错误会在认证和联网之前返回。上传后仍会匿名回读，核对公开可访问性与内容摘要。
 
+### 新发布与上架要求
+
+新发布及提交应用广场审核必须提供**完整安装包**，不能只提供依赖设备旧布局的应用更新包。输入为完整构建目录、构建 ZIP 或已准备好的完整 ZIP：
+
+- 构建产物包含生成的烧录文件映射（如 `flasher_args.json` 或 `flash_args`）、bootloader、二进制分区表、应用镜像，以及固件启动所需的数据镜像。
+- SDK 自动提取地址、Flash 参数、完整分区表、分段大小和 SHA-256；作者只补充名称、版本、说明等展示信息。分区表必须实际列入 `segments` 写入清单，仅附参考表不能更换设备布局。
+- 支持自定义分区名称、数量、大小和合法地址，不限定官方布局，也不自动合并、移动或生成分区。
+- 作者须验证从声明支持的原厂设备完整安装、重启及运行；如使用 OTA 启动选择或预置资源，构建包须提供必要初始化数据。SDK 不补造文件，也不从旧设备状态猜测启动配置。
+
+国内 Gitee 与海外 Hugging Face 使用同一规则。桌面按包内信息烧录，不增加分区或安装模式选择项。历史包读取、本地准备和兼容布局上的应用更新能力保留；应用更新包不再接受新发布或提交上架。
+
 v2 新增 `partition_table` 文件引用，其地址不由用户手填。参考分区表不列入 `segments` 时仅作布局依据；完整刷机包将其列入写入分段，并必须有合法 bootloader、应用镜像。分区表魔数只用于候选初筛，还须通过完整结构、校验和及容量检查，普通数据同魔数不误判为第二表。支持自定义分区标签、数据类型和合法地址，不以某个官方版本的布局作为全局要求。Flash 容量、文件大小、擦除重叠和芯片镜像合法性仍接受检查。自定义表地址前也可声明分区，只要不与 bootloader 和分区表的实际擦除范围重叠；不以分区先后顺序替代重叠检查。
 
-`FirmwarePlatform.publish(path, token)` 与 `execute("publish", ...)` 均可直接接收构建 ZIP 或目录，无需调用方先执行 inspect；ZIP 先复制到有界私有快照再自动准备，平台上传使用准备后固定文件。execute 在读取凭据前即完成准备和校验，非法包不要求先登录、不触发网络上传。`inspect_installation` 为共享纯函数，发布与提交目录审核之前执行包结构、镜像完整性和声明布局检查；旧包可读，缺布局不允许新发布。`plan_installation` 接受 Desktop 读取的真实设备表和容量：应用分段写入要求设备与包参考布局一致，分段必须位于对应应用分区内并从该分区起点开始，不得写数据分区或 bootloader；分区表写入属于完整刷机，必须带地址零的 bootloader 镜像并额外确认覆盖风险。factory、OTA、test 及多应用布局中的合法声明应用分段均可通过 USB 原样写入，不因未读取运行槽而拒绝，不按当前启动槽重定位地址。
+`FirmwarePlatform.publish(path, token)` 与 `execute("publish", ...)` 均可直接接收构建 ZIP 或目录，无需调用方先执行 inspect；ZIP 先复制到有界私有快照再自动准备，平台上传使用准备后固定文件。execute 在读取凭据前即完成准备和校验，非法包不要求先登录、不触发网络上传。`inspect_publication` 复用 `inspect_installation` 的包结构、镜像完整性和布局检查，并要求完整安装模式；平台上传及提交目录审核均执行该检查，execute 发布在读取凭证前执行。旧包可读，应用更新包或缺布局的包不能新发布。`plan_installation` 接受 Desktop 读取的真实设备表和容量：应用分段写入要求设备与包参考布局一致，分段必须位于对应应用分区内并从该分区起点开始，不得写数据分区或 bootloader；分区表写入属于完整刷机，必须带地址零的 bootloader 镜像并额外确认覆盖风险。factory、OTA、test 及多应用布局中的合法声明应用分段均可通过 USB 原样写入，不因未读取运行槽而拒绝，不按当前启动槽重定位地址。
 
 ### 作者、SDK 与 Desktop 的职责
 
-- 作者负责构建正确的固件、bootloader 与编译配置，声明各分段地址、参考布局和版本，并验证其启动与业务行为。SDK 检查 bootloader 的 ESP32-S3 镜像结构/校验和，不能由通用镜像头证明其编译时分区表地址；声明自定义地址且结构一致的包仍可使用，不引入可信摘要白名单或编译证明系统。
+- 作者负责构建正确的固件、bootloader 与编译配置，提供完整构建产物及版本，并验证其启动与业务行为；地址和布局由 SDK 从构建产物读取。SDK 检查 bootloader 的 ESP32-S3 镜像结构/校验和，不能由通用镜像头证明其编译时分区表地址；声明自定义地址且结构一致的包仍可使用，不引入可信摘要白名单或编译证明系统。
 - SDK 负责声明间可核对的一致性：manifest 与 `flash_args.txt` 的分段地址/路径逐项一致，文件大小/摘要一致，参数受限，擦除扇区不重叠，容量和分区边界合法。结构矛盾必须拒绝；通过检查不代表已证明作者的构建语义或任意固件可启动。
 - Desktop 负责 USB 目标核验、风险确认、设备锁、按同一快照原样写入与 esptool 校验。不会推断当前/下次启动槽，不自动切换 OTA 槽，不为补全作者包而新增或改写 OTA 选择数据；application 模式仅写声明的应用分段，完整包中的数据也仅按作者显式声明执行。SDK 不负责打开 USB、停止应用或更改 Daemon 业务路由。
 
@@ -245,6 +256,6 @@ SOURCE 支持 ESP-IDF 构建目录、构建 ZIP（允许外层目录）或已校
 
 纯 Python 接口为 `prepare_package(source, cache_root, *, metadata=None, mode=None, application=None)`。metadata 只接受字符串 `id/name/version/description/author/notes`，拒绝未知字段及地址、Flash 容量、哈希等技术字段；原构建 `firmware.json` 的既有兼容信息读取规则保留。标准包可显式编辑展示信息，重新计算最终包摘要，镜像、原地址和 Flash 参数保持。默认不传转换/覆盖参数时，已有有效标准包保留原字节及摘要。
 
-`mode=application` 是显式提取：只写选中的应用镜像，参考分区表仅供检查，不写引导、分区表或数据。`application` 是分区 label，多应用镜像必须明确选一个；SDK 不猜启动槽位、不切换 OTA 状态。安装前仍必须检查设备布局兼容性。`mode=full` 不能把缺少 bootloader 的应用包伪装成完整包。地址由构建及分区表决定，不固定为官方布局；16MB 包允许针对容量足够的 32MB 设备生成完整安装计划。
+`mode=application` 是显式提取：只写选中的应用镜像，参考分区表仅供检查，不写引导、分区表或数据。`application` 是分区 label，多应用镜像必须明确选一个；SDK 不猜启动槽位、不切换 OTA 状态。安装前仍必须检查设备布局兼容性。这是本地更新能力，提取的应用更新包不能用于新发布或提交应用广场。`mode=full` 不能把缺少 bootloader 的应用包伪装成完整包。地址由构建及分区表决定，不固定为官方布局；16MB 包允许针对容量足够的 32MB 设备生成完整安装计划。
 
 返回值保留原有字段，新增 `metadata` 展示字段和 `applications: [{label,path,offset,size}]`（实际应用镜像字节长度）。桌面现有 `firmware execute --action inspect` request 支持同名 `metadata/mode/application`。本地 `--action project_inspect` 接收 `{project_directory:string}`，返回 kind/project_root/application_directory/firmware_directory/firmware_metadata；两类本地检查都在 Provider 访问前执行。CLI 的 execute 仍沿用既有 provider/cache-root/store-root 参数协议。
