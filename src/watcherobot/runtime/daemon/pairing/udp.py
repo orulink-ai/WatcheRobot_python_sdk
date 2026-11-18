@@ -387,7 +387,13 @@ class PairingUdpService:
         if not self._running:
             raise RuntimeError("pairing UDP service is not running")
         async with self._refresh_lock:
-            desired = tuple(dict.fromkeys(self._interface_provider()))
+            try:
+                desired = tuple(dict.fromkeys(self._interface_provider()))
+            except OSError as exc:
+                if require_channel:
+                    raise
+                self._emit_event(f"Unable to enumerate pairing UDP interfaces (error={exc})", warning=True)
+                return self.active_interfaces
             desired_set = set(desired)
 
             stale = [

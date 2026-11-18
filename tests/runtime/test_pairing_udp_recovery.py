@@ -91,6 +91,8 @@ def test_idle_listener_receives_availability_after_connection_reset() -> None:
             nonlocal interface_reads
             interface_reads += 1
             if interface_reads == 2:
+                raise OSError("simulated temporary interface enumeration failure")
+            if interface_reads == 3:
                 return ()
             return (interface,)
         message = LinkReuniteAvailable("a" * 32, "desktop_link")
