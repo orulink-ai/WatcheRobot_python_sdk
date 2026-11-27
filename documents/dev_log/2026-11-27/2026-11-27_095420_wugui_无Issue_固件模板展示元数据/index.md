@@ -17,3 +17,7 @@ Codex。更正上一条关于硬件料号的解释。作者为 WatcheRobot 编�
 ## 提交验收
 
 2026-11-27，Codex。用户确认 inference_model 指芯片上运行的推理模型，由作者选填，可留空。与桌面端 codex/marketplace-discovery-dev-20261127 配套交付。已核对待提交差异，重跑 pytest -o addopts= -q tests/application/test_development_projects.py tests/distribution -k "firmware or development_projects"，287 项通过、10 项跳过。正式发布前需升级读取共享目录的 SDK 与桌面端。
+
+## PR 复测与 Python 3.10 资源接口兼容性
+
+2026-11-27，Codex。PR #168 首轮 Linux 全量测试通过 2558 项，跳过 13 项，开发检查随后在默认固件图标的多参数 Traversable.joinpath 调用处报告类型错误。改用逐段资源路径访问。按仓库 Python 3.10 配置执行 python -m mypy src/watcherobot，145 个源文件通过；工程、固件准备和发布平台测试 148 项通过、1 项跳过。另按默认模板不填模型，从模拟构建产物准备 ZIP，序列化目录时省略空字段，再解析能恢复空值、名称、版本和图标。

@@ -44,7 +44,7 @@ def _make_member(target: Path, kind: str, *, project_name: str) -> None:
         )
     else:
         target.mkdir()
-        icon = files("watcherobot").joinpath("templates", "base", "icon.svg")
+        icon = files("watcherobot") / "templates" / "base" / "icon.svg"
         (target / "icon.svg").write_bytes(icon.read_bytes())
         _write_json(
             target / FIRMWARE_MANIFEST,
