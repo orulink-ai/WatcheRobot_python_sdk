@@ -12,7 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import IO
 from zipfile import BadZipFile, ZipFile
 
-from .contract import FirmwareError, firmware_id, version
+from .contract import FirmwareError, firmware_icon, firmware_id, version
 
 MAX_PACKAGE_BYTES = 100 * 1024 * 1024
 MAX_EXPANDED_BYTES = 128 * 1024 * 1024
@@ -46,6 +46,8 @@ class FirmwarePackage:
     author: str = ""
     notes: str = ""
     partition_table: str = ""
+    inference_model: str = ""
+    icon_data_url: str = ""
 
 
 def _pairs(items: list[tuple[str, object]]) -> dict[str, object]:
@@ -193,7 +195,7 @@ def inspect_package(path: Path) -> FirmwarePackage:
                 if (
                     not isinstance(manifest, dict)
                     or not required.issubset(manifest)
-                    or set(manifest) - required - {"description", "author", "notes", "partition_table"}
+                    or set(manifest) - required - {"description", "author", "notes", "partition_table", "inference_model", "icon_data_url"}
                 ):
                     raise FirmwareError("Invalid firmware manifest fields")
                 if (
@@ -296,6 +298,8 @@ def inspect_package(path: Path) -> FirmwarePackage:
                     _text(manifest.get("author", ""), 128),
                     _text(manifest.get("notes", ""), 4000),
                     reference,
+                    _text(manifest.get("inference_model", ""), 128),
+                    firmware_icon(manifest.get("icon_data_url", "")),
                 )
     except (
         OSError,

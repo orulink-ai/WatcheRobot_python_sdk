@@ -26,6 +26,8 @@ def release_record(release: FirmwareRelease) -> dict[str, object]:
     value = asdict(release)
     value.pop("provider")
     for field in (
+        "inference_model",
+        "icon_data_url",
         "name",
         "description",
         "author",

@@ -385,6 +385,11 @@ def test_direct_publish_preserves_custom_build_layout(
     args["flash_files"]["0xC000"] = args["flash_files"].pop("0x8000")
     args["flash_files"]["0x30000"] = args["flash_files"].pop("0x20000")
     args_path.write_text(json.dumps(args))
+    icon = "data:image/png;base64,iVBORw0KGgo="
+    (source / "firmware.json").write_text(json.dumps({
+        "description": "Firmware for the demo unit", "icon_data_url": icon,
+        "inference_model": "face-detection-v2",
+    }))
     raw = tmp_path / "官方构建.zip"
     with ZipFile(raw, "w") as archive:
         for path in source.iterdir():
@@ -430,6 +435,9 @@ def test_direct_publish_preserves_custom_build_layout(
         release = FirmwarePlatform(
             provider, hf_factory=lambda _: api, client=client
         ).publish(selected, AccessToken("test-token"))
+    assert release.inference_model == "face-detection-v2"
+    assert release.icon_data_url == icon
+    assert release.description == "Firmware for the demo unit"
     assert release.sha256 == expected["sha256"]
     assert release.firmware_id == "local.desktop_pet"
     assert release.version == "0.3.3"

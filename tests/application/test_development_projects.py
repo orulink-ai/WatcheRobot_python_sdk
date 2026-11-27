@@ -45,7 +45,13 @@ def test_three_kinds(tmp_path: Path, kind: str) -> None:
             "name",
             "version",
             "description",
+            "inference_model",
+            "icon_data_url",
         }
+        manifest = json.loads((target / "firmware/firmware.project.json").read_text("utf-8"))
+        assert manifest["inference_model"] == ""
+        assert (target / "firmware" / manifest["icon"]).is_file()
+        assert data["firmware_metadata"]["icon_data_url"].startswith("data:image/svg+xml;base64,")
     assert api().inspect_project(target) == result.to_dict()
 
 
@@ -348,3 +354,17 @@ def test_firmware_identity_contract(tmp_path: Path, field: str, value: str) -> N
     manifest.write_text(json.dumps(data))
     with pytest.raises(ValueError):
         api().inspect_project(target)
+
+
+def test_old_firmware_project_and_invalid_thumbnail(tmp_path):
+    root = tmp_path / "robot"
+    api().init_project(root, kind="firmware")
+    path = root / "firmware/firmware.project.json"
+    metadata = json.loads(path.read_text())
+    del metadata["icon"], metadata["inference_model"]
+    path.write_text(json.dumps(metadata))
+    assert "icon_data_url" not in api().inspect_project(root)["firmware_metadata"]
+    for icon in ("../outside.svg", "/outside.svg", "missing.png"):
+        path.write_text(json.dumps({**metadata, "icon": icon}))
+        with pytest.raises(ValueError):
+            api().inspect_project(root)

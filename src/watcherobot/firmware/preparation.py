@@ -204,6 +204,8 @@ def _build(root: Path, output: Path, overrides: dict[str, str] | None = None) ->
             "skus",
             "hardware_revisions",
             "description",
+            "inference_model",
+            "icon_data_url",
             "author",
             "notes",
         ):
@@ -227,7 +229,7 @@ def _build(root: Path, output: Path, overrides: dict[str, str] | None = None) ->
             archive.writestr(entry, payloads[name])
 
 
-DISPLAY_FIELDS = frozenset({"id", "name", "version", "description", "author", "notes"})
+DISPLAY_FIELDS = frozenset({"id", "name", "version", "description", "author", "notes", "inference_model", "icon_data_url"})
 
 
 def _display_metadata(value: dict[str, str] | None) -> dict[str, str]:
@@ -358,6 +360,14 @@ def prepare_package(
     ):
         raise FirmwareError("An application label requires application mode")
     source = filesystem_path(source)
+    if source.is_dir() and (source / "watcherobot.project.json").exists():
+        from watcherobot.project.model import load_project
+
+        project = load_project(source)
+        if project.firmware_build_directory is None:
+            raise FirmwareError("Firmware project requires a compiled build directory")
+        source = project.firmware_build_directory
+        overrides = {**(project.firmware_metadata or {}), **overrides}
     cache_root = filesystem_path(cache_root)
     cache_root.mkdir(parents=True, exist_ok=True)
     try:

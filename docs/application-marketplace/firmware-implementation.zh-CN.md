@@ -259,3 +259,21 @@ SOURCE 支持 ESP-IDF 构建目录、构建 ZIP（允许外层目录）或已校
 `mode=application` 是显式提取：只写选中的应用镜像，参考分区表仅供检查，不写引导、分区表或数据。`application` 是分区 label，多应用镜像必须明确选一个；SDK 不猜启动槽位、不切换 OTA 状态。安装前仍必须检查设备布局兼容性。这是本地更新能力，提取的应用更新包不能用于新发布或提交应用广场。`mode=full` 不能把缺少 bootloader 的应用包伪装成完整包。地址由构建及分区表决定，不固定为官方布局；16MB 包允许针对容量足够的 32MB 设备生成完整安装计划。
 
 返回值保留原有字段，新增 `metadata` 展示字段和 `applications: [{label,path,offset,size}]`（实际应用镜像字节长度）。桌面现有 `firmware execute --action inspect` request 支持同名 `metadata/mode/application`。本地 `--action project_inspect` 接收 `{project_directory:string}`，返回 kind/project_root/application_directory/firmware_directory/firmware_metadata；两类本地检查都在 Provider 访问前执行。CLI 的 execute 仍沿用既有 provider/cache-root/store-root 参数协议。
+
+
+## 固件工程的展示信息
+
+作者编写设备端固件，编译后上传完整安装包。独立固件和组合工程都在 `firmware/firmware.project.json` 描述各自的固件。
+
+| 内容 | 来源与修改方式 |
+| --- | --- |
+| 固件 ID、名称、版本、描述、图标 | 作者填写。版本使用三段数字，例如 1.2.0。图标默认使用 icon.svg，可替换或在工程内指定相对路径。支持 SVG、PNG、JPEG、GIF、WebP，最大 16 KiB。 |
+| 片上推理模型 `inference_model` | 作者选填固件所用或配套的模型名称，例如 `face-detection-v2`。模板默认留空；该字段仅用于展示和搜索。 |
+| 构建目录 `build_path` | 作者指定相对路径，默认 build。 |
+| 作者署名、更新说明、适用机型与硬件版本 | 可在构建目录的 firmware.json 中声明 author、notes、skus、hardware_revisions。适用范围是作者的兼容声明，应在相应硬件上验证。 |
+| 设备行为、应用镜像、分区布局 | 作者在源码、构建配置和分区表中设计。SDK 从构建产物提取布局、镜像偏移和大小，计算校验值。 |
+| 烧录目标、发布身份、OTA 和收录状态 | 当前安装器校验 ESP32-S3 目标。社区/官方标识、OTA 资格及目录状态由发布平台和客户端规则决定。 |
+
+编译后，在桌面发布器选择工程，或运行 `watcherobot firmware prepare <工程根目录> --cache-root <缓存目录>`。SDK 根据 build_path 找到真实构建产物，并将展示信息写入 ZIP。填写模型名称只声明该版本的配套关系；模型文件的部署取决于作者的固件和硬件方案。旧版正式工程或包可省略新增字段。
+
+新版本发布目录可包含 inference_model、icon_data_url。旧 SDK 严格校验目录字段，正式收录带新字段的记录前，应先升级消费该目录的桌面端及 SDK。

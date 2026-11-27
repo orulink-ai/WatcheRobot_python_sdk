@@ -26,6 +26,10 @@ def read_marketplace_icon(
         data = hub.read_repository_file(repo_id=repo_id, commit=commit, path=path)
     except HubError:
         return None
+    return image_data_url(data)
+
+
+def image_data_url(data: bytes) -> str | None:
     if not data or len(data) > MAX_ICON_BYTES:
         return None
     mime = None

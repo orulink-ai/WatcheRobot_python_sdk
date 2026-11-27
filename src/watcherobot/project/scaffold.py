@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import tempfile
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,8 @@ def _make_member(target: Path, kind: str, *, project_name: str) -> None:
         )
     else:
         target.mkdir()
+        icon = files("watcherobot").joinpath("templates", "base", "icon.svg")
+        (target / "icon.svg").write_bytes(icon.read_bytes())
         _write_json(
             target / FIRMWARE_MANIFEST,
             {
@@ -50,6 +53,8 @@ def _make_member(target: Path, kind: str, *, project_name: str) -> None:
                 "name": defaults.name + " Firmware",
                 "version": "0.1.0",
                 "description": defaults.name + " device firmware project.",
+                "icon": "icon.svg",
+                "inference_model": "",
                 "build_path": "build",
             },
         )
@@ -60,6 +65,11 @@ def _make_member(target: Path, kind: str, *, project_name: str) -> None:
             "`watcherobot firmware prepare`. Optional `build_path` in `firmware.project.json` "
             "is relative to this directory (default: `build`). A missing build directory is valid before "
             "compilation. Firmware metadata does not imply a published release.\n\n"
+            "Set your firmware ID, display name, version and description in firmware.project.json. "
+            "Optionally fill inference_model with the name of the model your firmware uses on-device, "
+            "for example face-detection-v2. Leave it empty if no model is used. "
+            "Replace icon.svg or set icon to a project-relative image (16 KiB maximum). "
+            "Run watcherobot firmware prepare on the project root to include these fields.\n\n"
             "## Marketplace publication\n\n"
             "Publish a complete installation build directory or ZIP, including the generated "
             "flash file mapping, bootloader, partition-table binary, application images and "
