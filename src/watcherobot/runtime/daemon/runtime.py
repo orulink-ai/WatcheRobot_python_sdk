@@ -696,21 +696,36 @@ class DaemonRuntime:
 
     async def _device_available(self, message: LinkReuniteAvailable, peer_ip: str) -> bool:
         """An availability hint wakes discovery; it never authenticates a device."""
-        if (
-            self._device_bindings is None
-            or self.device_pairing.state is not DevicePairingState.IDLE
-        ):
+        if self._device_bindings is None:
+            return False
+        state = self.device_pairing.state
+        waking_reconnecting = (
+            state is DevicePairingState.RECONNECTING
+            and self.device_pairing.account_device_id is None
+        )
+        if state is not DevicePairingState.IDLE and not waking_reconnecting:
             return False
         if self._clock() < self._availability_suppressed_until:
             return False
         binding = self._device_bindings.load().device
+        allowed_peer_ips = {
+            ip
+            for ip in (binding.last_peer_ip if binding is not None else None, self.device_pairing.expected_peer_ip)
+            if ip
+        }
         if (
             binding is None
             or message.daemon_instance_id != self.device_pairing.daemon_instance_id
             or message.target_mode != binding.target_mode
-            or peer_ip != binding.last_peer_ip
+            or peer_ip not in allowed_peer_ips
         ):
             return False
+        if waking_reconnecting:
+            self.device_pairing.release()
+            self.logs.record(
+                "Device availability hint woke reconnect grace window "
+                f"(peer_ip={peer_ip}, mode={binding.target_mode})"
+            )
         self._next_reunite_scan_at = 0.0
         await self._maybe_start_reunite_scan()
         if self.device_pairing.state is not DevicePairingState.DISCOVERING:
@@ -758,15 +773,42 @@ class DaemonRuntime:
         )
 
     def _save_device_binding(self, hello: HardwareHello, peer_ip: str) -> None:
-        """Seed/refresh the durable binding after a manual pairing connect."""
+        """Seed/refresh the durable binding after manual pairing or reunite connect."""
 
-        token = self.device_pairing.take_manual_binding_token()
-        if token is None or self._device_bindings is None:
+        if self._device_bindings is None:
             return
+        token = self.device_pairing.take_manual_binding_token()
         now_ms = _utc_now_ms()
         snapshot = self._device_bindings.load()
+        existing = snapshot.device
+        if token is None:
+            if (
+                self.device_pairing.account_device_id is not None
+                or existing is None
+                or (
+                    existing.last_peer_ip == peer_ip
+                    and existing.last_ws_port == self.external_server.bound_port
+                )
+            ):
+                return
+            try:
+                self._device_bindings.write(
+                    replace(
+                        snapshot,
+                        device=replace(
+                            existing,
+                            last_peer_ip=peer_ip,
+                            last_ws_port=self.external_server.bound_port,
+                            last_connected_at_ms=now_ms,
+                        ),
+                    )
+                )
+            except (OSError, ValueError) as exc:
+                self.logs.record(f"Device binding peer IP refresh failed ({exc})")
+                return
+            self.logs.record(f"Device binding peer IP refreshed (peer_ip={peer_ip})")
+            return
         try:
-            existing = snapshot.device
             self._device_bindings.write(
                 replace(
                     snapshot,
