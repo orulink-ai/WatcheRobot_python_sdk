@@ -650,3 +650,101 @@ def test_availability_wakes_idle_reconnect(tmp_path: Path) -> None:
         finally:
             await runtime.stop()
     asyncio.run(scenario())
+
+
+def test_availability_wakes_reconnecting_slot_after_device_reboot(tmp_path: Path) -> None:
+    async def scenario():
+        now = [0.0]
+        runtime = _runtime(tmp_path, clock=lambda: now[0])
+        _pairing_on_loopback(runtime)
+        await runtime.start()
+        try:
+            websocket = await connect_runtime_hardware(runtime)
+            def available(**overrides):
+                return json.dumps({
+                    "type": "link.reunite.available",
+                    "protocol": "watcher-lan-pairing", "version": "1.1",
+                    "daemon_instance_id": runtime.device_pairing.daemon_instance_id,
+                    "target_mode": "python_sdk", **overrides,
+                }).encode()
+            # Live CONNECTED session must remain immune to availability hints.
+            assert not await runtime.pairing_udp.handle_datagram(available(), ("127.0.0.1", 37021))
+            assert runtime.device_pairing.state.value == "connected"
+
+            # Simulate device rebooting into another firmware slot -> enters RECONNECTING (30s grace).
+            await websocket.close()
+            assert await _wait_until(lambda: runtime.device_pairing.state.value == "reconnecting")
+
+            # Unknown IP must still be rejected during RECONNECTING.
+            assert not await runtime.pairing_udp.handle_datagram(available(), ("192.0.2.99", 37021))
+            assert runtime.device_pairing.state.value == "reconnecting"
+
+            # Valid availability hint from the remembered device IP wakes reunite immediately
+            # without waiting for the 30s reconnect grace timeout.
+            assert await runtime.pairing_udp.handle_datagram(available(), ("127.0.0.1", 37021))
+            assert runtime.device_pairing.state.value == "discovering"
+            assert runtime.device_pairing.reuniting is True
+        finally:
+            await runtime.stop()
+    asyncio.run(scenario())
+
+
+def test_reunite_connect_refreshes_stale_last_peer_ip(tmp_path: Path) -> None:
+    async def scenario():
+        runtime = _runtime(tmp_path)
+        seeded_secret = derive_binding_secret(SESSION_TOKEN)
+        stale_binding = DeviceBinding(
+            binding_secret=seeded_secret,
+            target_mode="python_sdk",
+            last_peer_ip="192.168.1.160",
+            last_ws_port=8765,
+            paired_at_ms=1_700_000_000_000,
+            last_connected_at_ms=1_700_000_000_000,
+        )
+        DeviceBindingsStore(tmp_path).write(
+            DeviceBindingsSnapshot(runtime.device_pairing.daemon_instance_id, stale_binding)
+        )
+        await runtime.start()
+        try:
+            assert runtime.device_pairing.state.value == "discovering"
+            request = runtime.device_pairing.current_request
+            accept = LinkReuniteAccept(
+                request_id=request.request_id,
+                daemon_instance_id=runtime.device_pairing.daemon_instance_id,
+                nonce=request.nonce,
+                target_mode="python_sdk",
+                response_mac=reunite_response_mac(
+                    seeded_secret,
+                    request_id=request.request_id,
+                    nonce=request.nonce,
+                    daemon_instance_id=runtime.device_pairing.daemon_instance_id,
+                    target_mode="python_sdk",
+                ),
+                session_token=REUNITE_TOKEN,
+            )
+            assert await runtime.pairing_udp.handle_datagram(
+                encode_udp_message(accept),
+                ("127.0.0.1", 40000),
+            )
+            ws = await _open_ws(runtime)
+            try:
+                await ws.send(
+                    _hello_frame(
+                        runtime,
+                        pairing_version="1.1",
+                        pair_request_id=request.request_id,
+                        session_token=REUNITE_TOKEN,
+                        mode="python_sdk",
+                    )
+                )
+                assert json.loads(await ws.recv())["type"] == "sys.ack"
+                stored = _stored_device(tmp_path)
+                assert stored["last_peer_ip"] == "127.0.0.1"
+                assert stored["last_ws_port"] == runtime.external_server.bound_port
+                assert stored["binding_secret"] == seeded_secret
+                assert stored["paired_at_ms"] == 1_700_000_000_000
+            finally:
+                await ws.close()
+        finally:
+            await runtime.stop()
+    asyncio.run(scenario())
