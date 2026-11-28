@@ -570,7 +570,7 @@ def test_v3_application_conversion_and_standard_package_edit(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "metadata", [{"offset": "0"}, {"flash_size": "32MB"}, {"unknown": "x"}, {"name": 2}]
+    "metadata", [{"chip": "other"}, {"publisher_kind": "official"}, {"ota_supported": "true"}, {"offset": "0"}, {"flash_size": "32MB"}, {"unknown": "x"}, {"name": 2}]
 )
 def test_v3_rejects_technical_and_unknown_metadata(tmp_path, metadata):
     with pytest.raises(FirmwareError, match="metadata"):
@@ -795,3 +795,22 @@ def test_v3_project_inspect_operation_is_local_and_serializable(
     )
     assert result["kind"] == kind
     assert json.loads(json.dumps(result))["project_root"] == str(directory.resolve())
+
+
+def test_prepare_scaffold_with_author_display_metadata(tmp_path):
+    from watcherobot.project import init_project
+
+    root = tmp_path / "rover"
+    init_project(root, kind="firmware")
+    path = root / "firmware/firmware.project.json"
+    manifest = json.loads(path.read_text())
+    manifest.update(version="2.1.0", description="Rover display", inference_model="face-detection-v2")
+    path.write_text(json.dumps(manifest))
+    build(root / "firmware/build")
+    result = prepare_package(root, tmp_path / "cache")
+    assert result["version"] == "2.1.0"
+    assert result["description"] == "Rover display"
+    assert result["inference_model"] == "face-detection-v2"
+    assert result["chip"] == "esp32s3"
+    assert result["icon_data_url"].startswith("data:image/svg+xml;base64,")
+    assert result["partitions"]

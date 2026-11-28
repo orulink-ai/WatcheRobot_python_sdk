@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 from dataclasses import dataclass
 
@@ -14,6 +16,29 @@ _COMPARISON = re.compile(
 
 class FirmwareError(ValueError):
     """Invalid firmware metadata; no hardware operation may follow."""
+
+
+# Inline thumbnails travel in bounded firmware manifests and Tauri requests.
+MAX_FIRMWARE_ICON_BYTES = 16 * 1024
+
+
+def firmware_icon(value: object) -> str:
+    if value == "":
+        return ""
+    if not isinstance(value, str) or len(value) > 4 * ((MAX_FIRMWARE_ICON_BYTES + 2) // 3) + 32:
+        raise FirmwareError("Invalid firmware thumbnail")
+    prefix, separator, encoded = value.partition(",")
+    if not separator or not prefix.startswith("data:image/") or not prefix.endswith(";base64"):
+        raise FirmwareError("Expected an embedded firmware thumbnail")
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise FirmwareError("Invalid firmware thumbnail encoding") from exc
+    from watcherobot.distribution.marketplace_icons import image_data_url
+
+    if len(data) > MAX_FIRMWARE_ICON_BYTES or image_data_url(data) != value:
+        raise FirmwareError("Invalid firmware thumbnail format or size")
+    return value
 
 
 def firmware_id(value: object) -> str:

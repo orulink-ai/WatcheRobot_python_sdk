@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
-from .contract import FirmwareError, FirmwareRequirement, firmware_id, version
+from .contract import FirmwareError, firmware_icon, FirmwareRequirement, firmware_id, version
 from .package import MAX_PACKAGE_BYTES, _integer, _pairs, _path
 
 CATALOG_PATH = "firmware-list.json"
@@ -37,6 +37,8 @@ class FirmwareRelease:
     hardware_revisions: tuple[str, ...] = ()
     publisher_kind: str = "community"
     ota_supported: bool = False
+    inference_model: str = ""
+    icon_data_url: str = ""
 
 
 def parse_catalog(document: bytes, *, provider: str) -> tuple[FirmwareRelease, ...]:
@@ -79,6 +81,8 @@ def parse_catalog(document: bytes, *, provider: str) -> tuple[FirmwareRelease, .
             "notes",
             "skus",
             "hardware_revisions",
+            "inference_model",
+            "icon_data_url",
             "publisher_kind",
             "ota_supported",
         }
@@ -94,6 +98,11 @@ def parse_catalog(document: bytes, *, provider: str) -> tuple[FirmwareRelease, .
         if kind not in {"official", "community"} or type(ota) is not bool:
             raise FirmwareError("Invalid firmware publisher or OTA policy")
         display.update(publisher_kind=kind, ota_supported=ota)
+        display["icon_data_url"] = firmware_icon(entry.get("icon_data_url", ""))
+        inference_model = entry.get("inference_model", "")
+        if not isinstance(inference_model, str) or len(inference_model) > 128:
+            raise FirmwareError("Invalid firmware inference_model")
+        display["inference_model"] = inference_model
         for field in ("name", "description", "author", "notes"):
             value = entry.get(field, "")
             if not isinstance(value, str) or len(value) > 4000:

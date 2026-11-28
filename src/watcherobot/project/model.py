@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
-from watcherobot.firmware.contract import firmware_id, version
+from watcherobot.distribution.marketplace_icons import image_data_url
+from watcherobot.firmware.contract import MAX_FIRMWARE_ICON_BYTES, firmware_id, version
 from watcherobot.runtime.daemon.application.manifest import (
     ApplicationManifest,
     ApplicationManifestError,
@@ -135,7 +136,7 @@ def load_project(directory: Path) -> DevelopmentProject:
     build_directory = None
     if firmware is not None:
         raw = read_document(firmware / FIRMWARE_MANIFEST)
-        if set(raw) - {"id", "name", "version", "description", "build_path"}:
+        if set(raw) - {"id", "name", "version", "description", "build_path", "inference_model", "icon"}:
             raise ProjectError("Unsupported firmware metadata fields")
         if any(
             not isinstance(raw.get(key), str) or not raw[key].strip()
@@ -151,6 +152,21 @@ def load_project(directory: Path) -> DevelopmentProject:
         metadata = {
             key: str(raw[key]) for key in ("id", "name", "version", "description")
         }
+        inference_model = raw.get("inference_model", "")
+        if not isinstance(inference_model, str) or len(inference_model) > 128:
+            raise ProjectError("Invalid firmware inference_model")
+        if "inference_model" in raw:
+            metadata["inference_model"] = inference_model.strip()
+        if raw.get("icon", "") != "":
+            icon = safe_relative(firmware, raw["icon"])
+            if not icon.is_file():
+                raise ProjectError("Firmware icon must be an image file")
+            with icon.open("rb") as stream:
+                content = stream.read(MAX_FIRMWARE_ICON_BYTES + 1)
+            url = image_data_url(content) if len(content) <= MAX_FIRMWARE_ICON_BYTES else None
+            if not url:
+                raise ProjectError("Firmware icon must be a supported image up to 16 KiB")
+            metadata["icon_data_url"] = url
     return DevelopmentProject(
         str(kind), root, application, firmware, metadata, build_directory
     )

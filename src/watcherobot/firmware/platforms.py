@@ -56,6 +56,10 @@ def _same_publication_metadata(saved: bytes, current: bytes) -> bool:
         and "partition_table" not in previous
     ):
         previous["partition_table"] = ""
+    if isinstance(previous, dict):
+        for field in ("inference_model", "icon_data_url"):
+            if expected.get(field) == "":
+                previous.setdefault(field, "")
     return previous == expected
 
 
@@ -228,6 +232,8 @@ class FirmwarePlatform:
                         prefix + "firmware.zip",
                         name=package.name,
                         description=package.description,
+                        inference_model=package.inference_model,
+                        icon_data_url=package.icon_data_url,
                         author=package.author,
                         notes=package.notes,
                         skus=package.skus,
@@ -402,6 +408,8 @@ class FirmwarePlatform:
                 release,
                 name=package.name,
                 description=package.description,
+                inference_model=package.inference_model,
+                icon_data_url=package.icon_data_url,
                 author=package.author,
                 notes=package.notes,
                 skus=package.skus,
@@ -539,6 +547,8 @@ class FirmwarePlatform:
             ensure_ascii=True,
             indent=2,
         ).encode()
+        # Validate the full candidate, including the total catalog byte budget.
+        parse_catalog(content, provider=self.provider)
         title = f"WatcherRobot firmware: {release.firmware_id}@{release.version} {release.sha256[:12]}"
         identity = (
             self.hf_factory(token.value).whoami()["name"]
