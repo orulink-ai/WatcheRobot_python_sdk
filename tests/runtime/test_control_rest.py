@@ -208,9 +208,8 @@ class _ControllerStub:
         port: str,
         *,
         transport: str = "serial",
-        volume_id: str = "",
     ) -> dict:
-        self.work_requests.append((composition, package_path, port, transport, volume_id))
+        self.work_requests.append((composition, package_path, port, transport))
         return {"id": "work-job", "kind": "work", "status": "queued"}
 
     def maintenance_ports(self) -> list[dict]:
@@ -218,9 +217,6 @@ class _ControllerStub:
 
     def maintenance_releases(self, kind: str) -> list[dict]:
         return [{"version": "v0.0.8", "name": kind, "published_at": "", "prerelease": False, "assets": []}]
-
-    def maintenance_volumes(self) -> list[dict]:
-        return [{"id": "E:\\|1234", "root": "E:\\", "current_version": "v0.0.7"}]
 
     def validate_maintenance_package(self, kind: str, package_path: str) -> dict:
         if package_path == "invalid.zip":
@@ -236,13 +232,11 @@ class _ControllerStub:
         transport: str,
         work_id: str,
         port: str = "",
-        volume_id: str = "",
     ) -> dict:
         self.work_read_requests.append({
             "transport": transport,
             "work_id": work_id,
             "port": port,
-            "volume_id": volume_id,
         })
         return {
             "id": work_id,
@@ -434,27 +428,26 @@ def test_control_rest_starts_creator_work_install() -> None:
     assert response.status_code == 202
     assert response.json()["job"]["id"] == "work-job"
     assert controller.work_requests == [(
-        {"name": "Demo", "clips": []}, "", "COM29", "serial", "",
+        {"name": "Demo", "clips": []}, "", "COM29", "serial",
     )]
 
 
-def test_control_rest_reads_an_editable_work_from_sd() -> None:
+def test_control_rest_reads_an_editable_work_over_serial() -> None:
     controller = _ControllerStub()
     client = TestClient(DaemonControlAPI(controller=controller).create_app())
 
     response = client.post("/daemon/maintenance/works/read", json={
-        "transport": "card_reader",
-        "volume_id": "E:\\|1234",
+        "transport": "serial",
+        "port": "COM29",
         "work_id": "demo_work",
     })
 
     assert response.status_code == 200
     assert response.json()["work"]["id"] == "demo_work"
     assert controller.work_read_requests == [{
-        "transport": "card_reader",
+        "transport": "serial",
         "work_id": "demo_work",
-        "port": "",
-        "volume_id": "E:\\|1234",
+        "port": "COM29",
     }]
 
 
@@ -471,25 +464,18 @@ def test_control_rest_returns_active_maintenance_job() -> None:
     assert client.get("/daemon/maintenance/jobs/active").json() == {"job": None}
 
 
-def test_control_rest_adds_release_reader_and_device_info_without_breaking_local_install() -> None:
+def test_control_rest_exposes_firmware_maintenance_and_omits_sd_flashing() -> None:
     controller = _ControllerStub()
     client = TestClient(DaemonControlAPI(controller=controller).create_app())
 
     assert client.get("/daemon/maintenance/releases/firmware").status_code == 200
-    assert client.get("/daemon/maintenance/volumes").json()["volumes"][0]["current_version"] == "v0.0.7"
+    assert client.get("/daemon/maintenance/volumes").status_code == 404
+    assert client.post("/daemon/maintenance/sd-resources", json={"package_path": "resources.tar.gz"}).status_code == 404
     assert client.post("/daemon/maintenance/device-info", json={"port": "COM29"}).json()["device"]["firmware_version"] == "V2.4.1"
 
     legacy = client.post("/daemon/maintenance/firmware", json={"package_path": "firmware.zip", "port": "COM29"})
     assert legacy.status_code == 202
     assert controller.maintenance_requests[-1]["transport"] == "serial"
-
-    reader = client.post("/daemon/maintenance/sd-resources", json={
-        "package_path": "resources.tar.gz",
-        "transport": "card_reader",
-        "volume_id": "E:\\|1234",
-    })
-    assert reader.status_code == 202
-    assert controller.maintenance_requests[-1]["volume_id"] == "E:\\|1234"
 
 
 def test_control_rest_validates_local_package_before_install() -> None:
@@ -594,7 +580,7 @@ def test_slow_maintenance_io_does_not_block_daemon_status() -> None:
                 started = time.monotonic()
                 works_request = asyncio.create_task(client.post(
                     f"{server.base_url}/daemon/maintenance/works/list",
-                    json={"transport": "card_reader", "volume_id": "E:\\\\|1234"},
+                    json={"transport": "serial", "port": "COM29"},
                 ))
                 await asyncio.sleep(0.05)
                 status = await client.get(f"{server.base_url}/daemon/status")

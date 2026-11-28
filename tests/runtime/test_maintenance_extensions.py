@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
-import shutil
 import struct
 import tarfile
 import threading
-import base64
 import wave
 import zlib
 from pathlib import Path
@@ -16,103 +15,20 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 import pytest
 from PIL import Image
 
-from watcherobot.runtime.daemon.maintenance import card_reader
-from watcherobot.runtime.daemon.maintenance import service as maintenance_service
-from watcherobot.runtime.daemon.maintenance.card_reader import (
-    _delete_work_from_root,
-    CardReaderError,
-    _install_to_root,
-    _install_work_to_root,
-    _installed_version,
-)
 from watcherobot.runtime.daemon.maintenance import releases as maintenance_releases
+from watcherobot.runtime.daemon.maintenance import service as maintenance_service
 from watcherobot.runtime.daemon.maintenance.releases import ReleaseError, _asset_is_supported, _parse_release
 from watcherobot.runtime.daemon.maintenance.service import (
     MaintenanceService,
     _parse_ready_device_info,
-    _serial_resource_install_plan,
 )
 from watcherobot.runtime.daemon.maintenance.works import (
     WorkDocumentError,
     build_portable_work_package,
     normalize_work_document,
     read_portable_work_package,
+    validate_package_dependencies,
 )
-
-
-def test_card_reader_reports_missing_windows_volume_api(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delattr(card_reader.ctypes, "windll", raising=False)
-
-    with pytest.raises(CardReaderError, match="Windows volume APIs"):
-        card_reader._windows_kernel32()
-
-
-def _bundle_hash(entries: dict[str, str]) -> str:
-    digest = hashlib.sha256()
-    for relative, sha256 in sorted(entries.items()):
-        digest.update(relative.encode())
-        digest.update(b"\0")
-        digest.update(sha256.encode())
-        digest.update(b"\0")
-    return digest.hexdigest()
-
-
-def _write_sd_package(
-    path: Path,
-    version: str = "v0.0.8",
-    animation: bytes = b"animation",
-) -> None:
-    animation_hash = hashlib.sha256(animation).hexdigest()
-    animation_path = f"assets/anim/{animation_hash}.animpack"
-    catalog = {
-        "schema_version": 2,
-        "format": "watche-official-catalog",
-        "expressions": [{
-            "id": "demo",
-            "order": 0,
-            "display_name": "Demo",
-            "source_record_id": "record-demo",
-            "loop": False,
-            "assets": {
-                "animation": {
-                    "kind": "anim",
-                    "format": "animpack-v2",
-                    "sha256": animation_hash,
-                    "size": len(animation),
-                }
-            },
-        }],
-    }
-    fixed_states = {
-        "schema_version": 1,
-        "states": {
-            state: "demo"
-            for state in ("boot", "standby", "listening", "thinking", "speaking", "processing", "error", "upgrade")
-        },
-    }
-    payloads = {
-        "official_catalog.json": json.dumps(catalog).encode(),
-        "fixed_states.json": json.dumps(fixed_states).encode(),
-        animation_path: animation,
-    }
-    hashes = {name: hashlib.sha256(payload).hexdigest() for name, payload in payloads.items()}
-    manifest = {
-        "schema_version": 2,
-        "product": "WatcheRobot-S3",
-        "layout_revision": 2,
-        "bundle_version": version,
-        "files": [
-            {"path": name, "size": len(payloads[name]), "sha256": hashes[name]}
-            for name in sorted(payloads)
-        ],
-        "bundle_sha256": _bundle_hash(hashes),
-    }
-    payloads["resource_manifest.json"] = json.dumps(manifest).encode()
-    with tarfile.open(path, "w:gz") as archive:
-        for name, payload in payloads.items():
-            info = tarfile.TarInfo(name)
-            info.size = len(payload)
-            archive.addfile(info, io.BytesIO(payload))
 
 
 def test_ready_device_info_keeps_old_firmware_compatible() -> None:
@@ -126,36 +42,14 @@ def test_ready_device_info_keeps_old_firmware_compatible() -> None:
     assert new["firmware_version"] == "V2.4.1"
 
 
-def test_ready_device_info_reports_deferred_replacement_capability() -> None:
-    info = _parse_ready_device_info([
-        "WRSD/2", "READY", "v0.0.8", "mounted", "48000000", "120000000", "ESP_OK",
-        "fw=V3.1", "caps=deferred_replace",
-    ])
-
-    assert info["capabilities"] == ["deferred_replace"]
-    plan = _serial_resource_install_plan(info, archive_size=6_000_000, expanded_size=60_000_000)
-    assert plan.deferred_replace is True
-    assert plan.required_before_upload == 6_000_000 + 4 * 1024 * 1024
-
-
-def test_old_firmware_is_not_allowed_to_predelete_resources_on_tight_cards() -> None:
-    info = _parse_ready_device_info([
-        "WRSD/2", "READY", "v0.0.8", "mounted", "48000000", "120000000", "ESP_OK",
-    ])
-
-    try:
-        _serial_resource_install_plan(info, archive_size=6_000_000, expanded_size=60_000_000)
-    except Exception as error:
-        assert "兼容固件" in str(error)
-    else:
-        raise AssertionError("旧固件在空间不足时不应提前删除官方资源")
-
-
-def test_release_filter_only_exposes_burnable_assets() -> None:
+def test_release_filter_only_exposes_burnable_firmware_assets() -> None:
     assert _asset_is_supported("firmware", "WatcheRobot-S3-v0.3.2-esp32s3.zip")
     assert not _asset_is_supported("firmware", "WatcheRobot-S3-v0.3.2-release.zip")
     assert not _asset_is_supported("firmware", "WatcheRobot-S3-v0.3.2-sdcard-anim.zip")
-    assert _asset_is_supported("sd_resources", "watche-sd-resources-v0.0.8.tar.gz")
+    assert not _asset_is_supported("sd_resources", "watche-sd-resources-v0.1.0.tar.gz")
+
+    with pytest.raises(ReleaseError, match="不支持的发布资源类型"):
+        maintenance_releases.list_releases("sd_resources")
 
     parsed = _parse_release("firmware", {
         "tag_name": "v0.3.2",
@@ -170,6 +64,36 @@ def test_release_filter_only_exposes_burnable_assets() -> None:
     })
     assert parsed is not None
     assert [asset.name for asset in parsed.assets] == ["WatcheRobot-S3-v0.3.2-esp32s3.zip"]
+
+
+def test_validate_package_dependencies_accepts_v3_root_catalog() -> None:
+    package = build_portable_work_package({
+        "workId": "v3_dep_work",
+        "revision": 1,
+        "name": "v3 依赖测试",
+        "clips": [{"kind": "expression", "resourceId": "happy", "startMs": 0, "durationMs": 500}],
+    })
+    catalog_v3 = {
+        "schema_version": 3,
+        "format": "watche-official-catalog",
+        "expressions": [{
+            "id": "happy",
+            "assets": {
+                "animation": {
+                    "kind": "anim",
+                    "path": "anim/happy.animpack",
+                    "format": "animpack-v3",
+                    "sha256": "0" * 64,
+                    "size": 1024,
+                },
+            },
+        }],
+    }
+
+    validate_package_dependencies(package, catalog_v3)
+
+    with pytest.raises(WorkDocumentError, match="catalog.json"):
+        validate_package_dependencies(package, {"invalid": True})
 
 
 def test_firmware_release_list_falls_back_to_public_atom_when_github_api_is_rate_limited(monkeypatch) -> None:
@@ -225,112 +149,6 @@ def test_release_job_is_additive_and_does_not_require_a_local_path(monkeypatch) 
     assert job["source_type"] == "release"
     assert job["package_path"] == ""
     assert job["transport"] == "serial"
-
-
-def test_card_reader_install_replaces_official_resources_and_preserves_works(tmp_path: Path) -> None:
-    package = tmp_path / "resources.tar.gz"
-    card = tmp_path / "card"
-    card.mkdir()
-    work = card / "watche" / "works" / "my-work" / "work.json"
-    work.parent.mkdir(parents=True)
-    stale_author_hash = "1" * 64
-    work.write_text(json.dumps({
-        "name": "mine",
-        "legacy_asset_reference": {"sha256": stale_author_hash},
-    }), encoding="utf-8")
-    stale_author_linked_asset = card / "watche" / "assets" / "anim" / f"{stale_author_hash}.animpack"
-    stale_author_linked_asset.parent.mkdir(parents=True)
-    stale_author_linked_asset.write_bytes(b"legacy")
-    old = card / "watche" / "official" / "current" / "old.json"
-    old.parent.mkdir(parents=True)
-    old.write_text("old", encoding="utf-8")
-    stale_runtime = card / "watche" / "runtime" / "old-runtime.json"
-    stale_runtime.parent.mkdir(parents=True)
-    stale_runtime.write_text("old", encoding="utf-8")
-    stale_staging = card / "watche" / "staging" / "abandoned.part"
-    stale_staging.parent.mkdir(parents=True)
-    stale_staging.write_text("old", encoding="utf-8")
-    stale_system = card / "watche" / "system" / "transaction.invalid.json"
-    stale_system.parent.mkdir(parents=True, exist_ok=True)
-    stale_system.write_text("old", encoding="utf-8")
-    _write_sd_package(package)
-    updates: list[tuple[str, int, str]] = []
-
-    version = _install_to_root(package, card, lambda phase, value, line: updates.append((phase, value, line)))
-
-    assert version == "v0.0.8"
-    assert _installed_version(card) == "v0.0.8"
-    assert json.loads(work.read_text(encoding="utf-8"))["name"] == "mine"
-    # 官方安装不读取或修改作者作品；旧的全局官方素材仍按新官方清单清理。
-    assert not stale_author_linked_asset.exists()
-    assert not old.exists()
-    assert not stale_runtime.exists()
-    assert not stale_staging.exists()
-    assert not stale_system.exists()
-    assert (card / "watche" / "system" / "layout.json").is_file()
-    assert (card / "watche" / "system" / "accepted_official.json").is_file()
-    assert any((card / "watche" / "assets" / "anim").glob("*.animpack"))
-    assert updates[-1][0:2] == ("reader_completed", 99)
-
-
-def test_card_reader_counts_only_missing_assets_when_checking_free_space(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    package = tmp_path / "resources.tar.gz"
-    card = tmp_path / "card"
-    card.mkdir()
-    animation = b"a" * (5 * 1024 * 1024)
-    animation_hash = hashlib.sha256(animation).hexdigest()
-    existing = card / "watche" / "assets" / "anim" / f"{animation_hash}.animpack"
-    existing.parent.mkdir(parents=True)
-    existing.write_bytes(animation)
-    work = card / "watche" / "works" / "my-work" / "work.json"
-    work.parent.mkdir(parents=True)
-    work.write_text(json.dumps({"animation": {"sha256": animation_hash}}), encoding="utf-8")
-    _write_sd_package(package, animation=animation)
-    actual_usage = shutil.disk_usage(card)
-    available = 5 * 1024 * 1024
-    monkeypatch.setattr(
-        "watcherobot.runtime.daemon.maintenance.card_reader.shutil.disk_usage",
-        lambda _: shutil._ntuple_diskusage(actual_usage.total, actual_usage.total - available, available),
-    )
-
-    version = _install_to_root(package, card, lambda *_: None)
-
-    assert version == "v0.0.8"
-    assert existing.is_file()
-    assert work.is_file()
-
-
-def test_card_reader_recovers_interrupted_rollback_before_managed_cleanup(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    package = tmp_path / "resources.tar.gz"
-    card = tmp_path / "card"
-    card.mkdir()
-    watche = card / "watche"
-    rollback = watche / "official" / "rollback.reader"
-    rollback.mkdir(parents=True)
-    last_known_good = rollback / "last-known-good.json"
-    last_known_good.write_text("old", encoding="utf-8")
-    transaction = watche / "system" / "reader_transaction.json"
-    transaction.parent.mkdir(parents=True)
-    transaction.write_text('{"phase":"switching"}', encoding="utf-8")
-    _write_sd_package(package)
-    monkeypatch.setattr(
-        card_reader,
-        "_extract",
-        lambda *_: (_ for _ in ()).throw(card_reader.CardReaderError("模拟写入中断")),
-    )
-
-    with pytest.raises(card_reader.CardReaderError, match="模拟写入中断"):
-        _install_to_root(package, card, lambda *_: None)
-
-    restored = watche / "official" / "current" / "last-known-good.json"
-    assert restored.read_text(encoding="utf-8") == "old"
-    assert not rollback.exists()
 
 
 def _work_document(work_id: str = "demo_work") -> dict[str, object]:
@@ -389,50 +207,6 @@ def _work_frames(document: dict[str, object]) -> list[str]:
         frames.append(f"WRSD/2 WORK_DATA {sequence} {encoded}")
     frames.append(f"WRSD/2 WORK_DONE {len(payload)} {zlib.crc32(payload) & 0xffffffff:08x}")
     return frames
-
-
-def test_card_reader_lists_only_sd_work_documents(monkeypatch, tmp_path: Path) -> None:
-    card = tmp_path / "card"
-    work_path = card / "watche" / "works" / "demo_work" / "work.json"
-    work_path.parent.mkdir(parents=True)
-    work_path.write_text(json.dumps(_work_document(), ensure_ascii=False), encoding="utf-8")
-    (card / "watche" / "works" / "works_catalog.json").write_text('{"works":[]}', encoding="utf-8")
-    monkeypatch.setattr(
-        card_reader,
-        "_resolve_volume",
-        lambda _: card_reader.VolumeInfo("mock", card, "", "FAT32", 1, 2, 3, "v0.0.8"),
-    )
-
-    works = card_reader.list_works("mock")
-
-    assert len(works) == 1
-    assert works[0]["id"] == "demo_work"
-    assert works[0]["source"] == "card_reader"
-    assert works[0]["preview_expression_id"] == "happy"
-    assert works[0]["track_counts"] == {"animation": 1, "action": 0, "sound": 0}
-
-
-def test_invalid_sd_directories_do_not_hide_valid_works_after_the_list_limit(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    card = tmp_path / "card"
-    works_root = card / "watche" / "works"
-    works_root.mkdir(parents=True)
-    for index in range(64):
-        (works_root / f"0-invalid-{index:02d}").mkdir()
-    valid = works_root / "valid_work" / "work.json"
-    valid.parent.mkdir()
-    valid.write_text(json.dumps(_work_document("valid_work"), ensure_ascii=False), encoding="utf-8")
-    monkeypatch.setattr(
-        card_reader,
-        "_resolve_volume",
-        lambda _: card_reader.VolumeInfo("mock", card, "", "FAT32", 1, 2, 3, "v0.0.8"),
-    )
-
-    works = card_reader.list_works("mock")
-
-    assert [item["id"] for item in works] == ["valid_work"]
 
 
 def test_serial_work_library_reassembles_chunked_documents(monkeypatch) -> None:
@@ -540,100 +314,12 @@ def test_serial_work_library_rejects_overlapping_reads_before_opening_the_port(m
     assert not worker.is_alive()
 
 
-def test_card_reader_v2_work_round_trips_exact_creator_source(monkeypatch, tmp_path: Path) -> None:
-    card = tmp_path / "card"
-    work_path = card / "watche" / "works" / "demo_work" / "work.json"
-    work_path.parent.mkdir(parents=True)
-    work_path.write_text(json.dumps(_work_document_v2(), ensure_ascii=False), encoding="utf-8")
-    monkeypatch.setattr(
-        card_reader,
-        "_resolve_volume",
-        lambda _: card_reader.VolumeInfo("mock", card, "", "FAT32", 1, 2, 3, "v0.0.8"),
-    )
-
-    work = card_reader.list_works("mock")[0]
-
-    assert work["revision"] == 4
-    assert work["creator"]["clips"][0]["label"] == "开心"
-    assert work["creator"]["workId"] == "demo_work"
-
-
 def test_work_document_rejects_obsolete_creator_composition() -> None:
     document = _work_document_v2()
     document["creator"]["version"] = 2
 
     with pytest.raises(WorkDocumentError):
         normalize_work_document(document, expected_id="demo_work", source="test")
-
-
-def test_reader_installs_and_updates_only_one_work_without_touching_official_or_other_works(tmp_path: Path) -> None:
-    card = tmp_path / "card"
-    official = card / "watche" / "official" / "current" / "official_catalog.json"
-    official.parent.mkdir(parents=True)
-    official_payload = {
-        "schema_version": 2,
-        "format": "watche-official-catalog",
-        "expressions": [{"id": "happy", "assets": {"animation": {"kind": "anim"}}}],
-    }
-    official.write_text(json.dumps(official_payload), encoding="utf-8")
-    other = card / "watche" / "works" / "other_work" / "work.json"
-    other.parent.mkdir(parents=True)
-    other.write_text(json.dumps(_work_document("other_work")), encoding="utf-8")
-    package = build_portable_work_package({
-        "workId": "demo_work",
-        "revision": 1,
-        "name": "第一版",
-        "clips": [{"kind": "expression", "resourceId": "happy", "startMs": 0, "durationMs": 500}],
-    })
-
-    _install_work_to_root(package, card, lambda *_: None)
-    updated = build_portable_work_package({
-        "workId": "demo_work",
-        "revision": 2,
-        "name": "第二版",
-        "clips": [{"kind": "expression", "resourceId": "happy", "startMs": 0, "durationMs": 800}],
-    })
-    _install_work_to_root(updated, card, lambda *_: None)
-
-    installed = json.loads((card / "watche" / "works" / "demo_work" / "work.json").read_text(encoding="utf-8"))
-    assert installed["revision"] == 2
-    assert installed["name"] == "第二版"
-    assert other.is_file()
-    assert json.loads(official.read_text(encoding="utf-8")) == official_payload
-
-
-def test_reader_installs_bundled_work_assets_inside_only_that_work(tmp_path: Path) -> None:
-    card = tmp_path / "card"
-    official = card / "watche" / "official" / "current" / "official_catalog.json"
-    official.parent.mkdir(parents=True)
-    official.write_text(json.dumps({
-        "schema_version": 2,
-        "format": "watche-official-catalog",
-        "expressions": [{"id": "happy", "assets": {"animation": {"kind": "anim"}}}],
-    }), encoding="utf-8")
-    package = build_portable_work_package({
-        "workId": "action_work",
-        "revision": 1,
-        "name": "动作作品",
-        "clips": [{
-            "kind": "action",
-            "resourceId": "custom-action-1",
-            "startMs": 0,
-            "durationMs": 500,
-            "actionTracks": {
-                "xDeg": [{"timeMs": 0, "angleDeg": 90}],
-                "yDeg": [{"timeMs": 0, "angleDeg": 100}],
-            },
-        }],
-    })
-
-    _install_work_to_root(package, card, lambda *_: None)
-
-    installed = card / "watche" / "works" / "action_work"
-    action_files = list((installed / "actions").glob("*.json"))
-    assert (installed / "resource_catalog.json").is_file()
-    assert len(action_files) == 1
-    assert json.loads(action_files[0].read_text(encoding="utf-8"))["animated_objects"]
 
 
 def _data_url(mime_type: str, payload: bytes) -> str:
@@ -735,115 +421,6 @@ def test_portable_work_converts_custom_media_without_changing_the_timeline(tmp_p
     imported = read_portable_work_package(path)
     assert imported.work["creator"]["clips"] == package.work["creator"]["clips"]
     assert {entry["kind"] for entry in imported.work["creator"]["assets"]} == {"expression", "sound"}
-
-
-def test_reader_import_restores_custom_media_and_exact_creator_timeline(monkeypatch, tmp_path: Path) -> None:
-    card = tmp_path / "card"
-    official = card / "watche" / "official" / "current" / "official_catalog.json"
-    official.parent.mkdir(parents=True)
-    official.write_text(json.dumps({"expressions": []}), encoding="utf-8")
-    clips = [
-        {"id": "sound-last", "kind": "sound", "resourceId": "custom-sound-1", "label": "声音", "startMs": 600, "durationMs": 200},
-        {"id": "face-first", "kind": "expression", "resourceId": "custom-expression-1", "label": "表情", "startMs": 120, "durationMs": 900},
-    ]
-    package = build_portable_work_package({
-        "workId": "reader_media",
-        "revision": 2,
-        "name": "读卡器媒体作品",
-        "clips": clips,
-        "assets": [
-            {"id": "custom-expression-1", "kind": "expression", "name": "表情", "fileName": "face.gif", "mimeType": "image/gif", "dataUrl": _data_url("image/gif", _gif_payload())},
-            {"id": "custom-sound-1", "kind": "sound", "name": "声音", "fileName": "tone.wav", "mimeType": "audio/wav", "dataUrl": _data_url("audio/wav", _wav_payload())},
-        ],
-    })
-    _install_work_to_root(package, card, lambda *_: None)
-    monkeypatch.setattr(
-        card_reader,
-        "_resolve_volume",
-        lambda _: card_reader.VolumeInfo("mock", card, "", "FAT32", 1, 2, 3, "v0.0.8"),
-    )
-
-    imported = card_reader.read_work("mock", "reader_media")
-
-    assert imported["creator"]["clips"] == clips
-    assert {asset["kind"] for asset in imported["creator"]["assets"]} == {"expression", "sound"}
-    assert all(asset["dataUrl"].startswith(f"data:{asset['mimeType']};base64,") for asset in imported["creator"]["assets"])
-
-
-def test_reader_reports_a_corrupted_work_local_action_without_blocking_edit_import(monkeypatch, tmp_path: Path) -> None:
-    card = tmp_path / "card"
-    official = card / "watche" / "official" / "current" / "official_catalog.json"
-    official.parent.mkdir(parents=True)
-    official.write_text(json.dumps({"expressions": []}), encoding="utf-8")
-    package = build_portable_work_package({
-        "workId": "broken_action",
-        "revision": 1,
-        "name": "可修复作品",
-        "clips": [{
-            "kind": "action",
-            "resourceId": "custom-action-broken",
-            "startMs": 0,
-            "durationMs": 500,
-            "actionTracks": {"xDeg": [{"timeMs": 0, "angleDeg": 90}]},
-        }],
-    })
-    _install_work_to_root(package, card, lambda *_: None)
-    action_path = next((card / "watche" / "works" / "broken_action" / "actions").glob("*.json"))
-    payload = action_path.read_bytes()
-    action_path.write_bytes(bytes([payload[0] ^ 1]) + payload[1:])
-    monkeypatch.setattr(
-        card_reader,
-        "_resolve_volume",
-        lambda _: card_reader.VolumeInfo("mock", card, "", "FAT32", 1, 2, 3, "v0.0.8"),
-    )
-
-    work = card_reader.list_works("mock")[0]
-
-    assert work["is_valid"] is True
-    assert work["creator"]["workId"] == "broken_action"
-    assert work["missing_assets"] == [f"{package.work['tracks'][0]['asset']['resource_id']}/action"]
-
-
-def test_reader_delete_removes_only_selected_user_work(tmp_path: Path) -> None:
-    card = tmp_path / "card"
-    for work_id in ("first_work", "second_work"):
-        path = card / "watche" / "works" / work_id / "work.json"
-        path.parent.mkdir(parents=True)
-        path.write_text(json.dumps(_work_document(work_id)), encoding="utf-8")
-    official = card / "watche" / "official" / "current" / "keep.txt"
-    official.parent.mkdir(parents=True)
-    official.write_text("keep", encoding="utf-8")
-
-    _delete_work_from_root(card, "first_work")
-
-    assert not (card / "watche" / "works" / "first_work").exists()
-    assert (card / "watche" / "works" / "second_work" / "work.json").is_file()
-    assert official.read_text(encoding="utf-8") == "keep"
-
-
-def test_reader_rejects_a_new_work_after_the_64_work_limit(tmp_path: Path) -> None:
-    card = tmp_path / "card"
-    official = card / "watche" / "official" / "current" / "official_catalog.json"
-    official.parent.mkdir(parents=True)
-    official.write_text(json.dumps({"expressions": []}), encoding="utf-8")
-    works_root = card / "watche" / "works"
-    for index in range(64):
-        (works_root / f"work_{index:02d}").mkdir(parents=True)
-    package = build_portable_work_package({
-        "workId": "new_work",
-        "revision": 1,
-        "name": "new",
-        "clips": [{
-            "kind": "action",
-            "resourceId": "custom-action-limit",
-            "startMs": 0,
-            "durationMs": 100,
-            "actionTracks": {"xDeg": [{"timeMs": 0, "angleDeg": 90}]},
-        }],
-    })
-
-    with pytest.raises(CardReaderError, match="64"):
-        _install_work_to_root(package, card, lambda *_: None)
 
 
 def test_portable_work_import_rejects_duplicate_zip_entries(tmp_path: Path) -> None:

@@ -115,7 +115,6 @@ class MaintenanceInstallRequest(BaseModel):
     package_path: str = ""
     port: str = ""
     transport: str = "serial"
-    volume_id: str = ""
     release_version: str = ""
     release_asset: str = ""
 
@@ -134,7 +133,6 @@ class MaintenanceWorkRequest(BaseModel):
     package_path: str = ""
     port: str = ""
     transport: str = "serial"
-    volume_id: str = ""
 
 
 class MaintenanceWorkPackageRequest(BaseModel):
@@ -149,13 +147,11 @@ class MaintenanceWorkDeleteRequest(BaseModel):
     transport: str = "serial"
     work_id: str
     port: str = ""
-    volume_id: str = ""
 
 
 class MaintenanceWorksQuery(BaseModel):
     transport: str = "serial"
     port: str = ""
-    volume_id: str = ""
 
 
 class MaintenanceWorkReadRequest(MaintenanceWorksQuery):
@@ -233,13 +229,10 @@ class ApplicationController(Protocol):
         """List local serial ports available for maintenance."""
 
     def maintenance_releases(self, kind: str) -> list[dict[str, Any]]:
-        """List compatible official Release packages."""
-
-    def maintenance_volumes(self) -> list[dict[str, Any]]:
-        """List writable Windows SD-card reader volumes."""
+        """List compatible official firmware Release packages."""
 
     def validate_maintenance_package(self, kind: str, package_path: str) -> dict[str, Any]:
-        """Validate a local firmware or SD resource package."""
+        """Validate a local firmware package."""
 
     def maintenance_device_info(self, port: str) -> dict[str, Any]:
         """Read firmware and SD resource versions from one serial device."""
@@ -249,9 +242,8 @@ class ApplicationController(Protocol):
         *,
         transport: str,
         port: str = "",
-        volume_id: str = "",
     ) -> list[dict[str, Any]]:
-        """Read user works from a device SD card or card reader."""
+        """Read user works from a serial device."""
 
     def read_maintenance_work(
         self,
@@ -259,7 +251,6 @@ class ApplicationController(Protocol):
         transport: str,
         work_id: str,
         port: str = "",
-        volume_id: str = "",
     ) -> dict[str, Any]:
         """Read one work together with its editable source media."""
 
@@ -270,11 +261,10 @@ class ApplicationController(Protocol):
         port: str,
         *,
         transport: str = "serial",
-        volume_id: str = "",
         release_version: str = "",
         release_asset: str = "",
     ) -> dict[str, Any]:
-        """Start a non-blocking firmware or SD resource job."""
+        """Start a non-blocking serial firmware maintenance job."""
 
     def maintenance_job(self, job_id: str) -> dict[str, Any]:
         """Return a maintenance job snapshot."""
@@ -289,9 +279,8 @@ class ApplicationController(Protocol):
         port: str,
         *,
         transport: str = "serial",
-        volume_id: str = "",
     ) -> dict[str, Any]:
-        """Build and install the current Creator Mode work."""
+        """Build and install a serial work package."""
 
     def export_maintenance_work(self, composition: dict[str, Any]) -> dict[str, Any]:
         """Build a portable work ZIP in the local daemon cache."""
@@ -305,9 +294,8 @@ class ApplicationController(Protocol):
         transport: str,
         work_id: str,
         port: str = "",
-        volume_id: str = "",
     ) -> None:
-        """Delete one user work without touching official resources."""
+        """Delete one user work over serial without touching official resources."""
 
 class DaemonControlAPI:
     """Expose lifecycle management without carrying business traffic."""
@@ -694,11 +682,6 @@ class DaemonControlAPI:
             except MaintenanceError as exc:
                 return JSONResponse(status_code=400, content={"error": "release_unavailable", "message": str(exc)})
 
-        @app.get("/daemon/maintenance/volumes")
-        async def maintenance_volumes() -> dict[str, Any]:
-            volumes = await asyncio.to_thread(self._controller.maintenance_volumes)
-            return {"volumes": volumes}
-
         @app.post("/daemon/maintenance/packages/validate")
         async def validate_maintenance_package(request: MaintenancePackageValidationRequest) -> Any:
             try:
@@ -726,10 +709,6 @@ class DaemonControlAPI:
         async def install_firmware(request: MaintenanceInstallRequest) -> Any:
             return self._start_maintenance("firmware", request)
 
-        @app.post("/daemon/maintenance/sd-resources", status_code=202)
-        async def install_sd_resources(request: MaintenanceInstallRequest) -> Any:
-            return self._start_maintenance("sd_resources", request)
-
         @app.post("/daemon/maintenance/work", status_code=202)
         async def install_work(request: MaintenanceWorkRequest) -> Any:
             try:
@@ -738,7 +717,6 @@ class DaemonControlAPI:
                     request.package_path,
                     request.port,
                     transport=request.transport,
-                    volume_id=request.volume_id,
                 )
             except MaintenanceError as exc:
                 return JSONResponse(status_code=409, content={"error": "maintenance_unavailable", "message": str(exc)})
@@ -751,7 +729,6 @@ class DaemonControlAPI:
                     self._controller.maintenance_works,
                     transport=request.transport,
                     port=request.port,
-                    volume_id=request.volume_id,
                 )
             except MaintenanceError as exc:
                 return JSONResponse(status_code=409, content={"error": "work_library_unavailable", "message": str(exc)})
@@ -765,7 +742,6 @@ class DaemonControlAPI:
                     transport=request.transport,
                     work_id=request.work_id,
                     port=request.port,
-                    volume_id=request.volume_id,
                 )
             except MaintenanceError as exc:
                 return JSONResponse(status_code=409, content={"error": "work_read_failed", "message": str(exc)})
@@ -801,7 +777,6 @@ class DaemonControlAPI:
                     transport=request.transport,
                     work_id=request.work_id,
                     port=request.port,
-                    volume_id=request.volume_id,
                 )
             except MaintenanceError as exc:
                 return JSONResponse(status_code=409, content={"error": "work_delete_failed", "message": str(exc)})
@@ -827,7 +802,6 @@ class DaemonControlAPI:
                 request.package_path,
                 request.port,
                 transport=request.transport,
-                volume_id=request.volume_id,
                 release_version=request.release_version,
                 release_asset=request.release_asset,
             )

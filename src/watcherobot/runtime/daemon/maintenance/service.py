@@ -1,4 +1,4 @@
-"""ESP32 firmware and SD resource maintenance over a local serial port."""
+"""ESP32 firmware and serial work maintenance over a local serial port."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import re
 import shlex
 import subprocess
 import sys
-import tarfile
 import tempfile
 import threading
 import time
@@ -24,14 +23,6 @@ from zipfile import BadZipFile, ZipFile
 import serial
 from serial.tools import list_ports
 
-from .card_reader import (
-    delete_work as delete_card_work,
-    install_package as install_card_package,
-    install_work_package as install_card_work_package,
-    list_volumes,
-    list_works as list_card_works,
-    read_work as read_card_work,
-)
 from .releases import acquire_release_package, list_releases
 from .work_assets import MAX_SOURCE_BYTES_BY_KIND
 from .works import (
@@ -55,7 +46,6 @@ FLASH_BAUD_CANDIDATES = (921600, 460800)
 FLASH_BAUD = FLASH_BAUD_CANDIDATES[0]
 CHUNK_BYTES = 4096
 SPACE_RESERVE_BYTES = 4 * 1024 * 1024
-REPLACEMENT_TIMEOUT_SECONDS = 300
 FIRMWARE_READY_TIMEOUT_SECONDS = 45
 SD_ACTIVATION_TIMEOUT_SECONDS = 1800
 SD_ACTIVATION_STALL_TIMEOUT_SECONDS = 120
@@ -78,7 +68,6 @@ class MaintenanceJob:
     port: str
     package_path: str
     transport: str = "serial"
-    volume_id: str = ""
     source_type: str = "local"
     release_version: str = ""
     release_asset: str = ""
@@ -97,7 +86,6 @@ class MaintenanceJob:
             "port": self.port,
             "package_path": self.package_path,
             "transport": self.transport,
-            "volume_id": self.volume_id,
             "source_type": self.source_type,
             "release_version": self.release_version,
             "release_asset": self.release_asset,
@@ -161,35 +149,19 @@ class MaintenanceService:
                 raise MaintenanceError("ESP32 固件必须上传 ZIP，且包内需要包含 flash_args.txt 和完整烧录分段。")
             _, segments = _parse_flash_zip(package)
             return {"kind": kind, "segment_count": len(segments)}
-        if kind == "sd_resources":
-            lowered_name = package.name.lower()
-            if not (lowered_name.endswith(".tar.gz") or lowered_name.endswith(".tgz")):
-                raise MaintenanceError("SD 官方资源必须上传 tar.gz，且包内需要包含有效的 resource_manifest.json。")
-            inspected = _inspect_sd_package(package)
-            return {"kind": kind, "version": inspected.version, "file_count": inspected.file_count}
-        raise MaintenanceError(f"不支持校验此安装包类型：{kind}")
+        raise MaintenanceError(f"SDK Daemon 不支持校验此安装包类型：{kind}")
 
     def releases(self, kind: str) -> list[dict[str, Any]]:
         return list_releases(kind)
 
-    def volumes(self) -> list[dict[str, Any]]:
-        return list_volumes()
-
-    def works(self, *, transport: str, port: str = "", volume_id: str = "") -> list[dict[str, Any]]:
-        if transport not in {"serial", "card_reader"}:
-            raise MaintenanceError("请选择设备端口或 SD 读卡器。")
+    def works(self, *, transport: str, port: str = "") -> list[dict[str, Any]]:
+        if transport != "serial":
+            raise MaintenanceError("SDK Daemon 仅支持串口维护，不提供 SD 读卡器功能。")
         with self._lock:
             if self._active_job_id is not None:
                 active = self._jobs.get(self._active_job_id)
                 if active is not None and active.status in {"queued", "running"}:
                     raise MaintenanceError("设备维护操作进行中，暂时无法读取作品。")
-        if transport == "card_reader":
-            if not volume_id:
-                raise MaintenanceError("请先选择 SD 读卡器。")
-            try:
-                return list_card_works(volume_id)
-            except Exception as exc:
-                raise MaintenanceError(str(exc)) from exc
         normalized_port = port.strip()
         if not normalized_port:
             raise MaintenanceError("请先选择设备端口。")
@@ -200,7 +172,7 @@ class MaintenanceService:
         finally:
             self._serial_work_list_lock.release()
 
-    def read_work(self, *, transport: str, work_id: str, port: str = "", volume_id: str = "") -> dict[str, Any]:
+    def read_work(self, *, transport: str, work_id: str, port: str = "") -> dict[str, Any]:
         if not WORK_ID_PATTERN.fullmatch(work_id):
             raise MaintenanceError("作品标识无效。")
         with self._lock:
@@ -208,14 +180,9 @@ class MaintenanceService:
                 active = self._jobs.get(self._active_job_id)
                 if active is not None and active.status in {"queued", "running"}:
                     raise MaintenanceError("设备维护操作进行中，暂时无法导入作品。")
-        if transport == "card_reader":
-            if not volume_id:
-                raise MaintenanceError("请先选择 SD 读卡器。")
-            try:
-                return read_card_work(volume_id, work_id)
-            except Exception as exc:
-                raise MaintenanceError(str(exc)) from exc
-        if transport != "serial" or not port.strip():
+        if transport != "serial":
+            raise MaintenanceError("SDK Daemon 仅支持串口维护，不提供 SD 读卡器功能。")
+        if not port.strip():
             raise MaintenanceError("请先选择设备端口。")
         return _read_serial_work(port.strip(), work_id)
 
@@ -255,16 +222,13 @@ class MaintenanceService:
         port: str,
         *,
         transport: str = "serial",
-        volume_id: str = "",
         release_version: str = "",
         release_asset: str = "",
     ) -> dict[str, Any]:
-        if kind not in {"firmware", "sd_resources"}:
-            raise MaintenanceError(f"Unsupported maintenance job: {kind}")
-        if transport not in {"serial", "card_reader"}:
-            raise MaintenanceError(f"Unsupported maintenance transport: {transport}")
-        if transport == "card_reader" and kind != "sd_resources":
-            raise MaintenanceError("Only SD resources can be installed through a card reader.")
+        if kind != "firmware":
+            raise MaintenanceError(f"Unsupported maintenance job (SDK does not flash SD cards): {kind}")
+        if transport != "serial":
+            raise MaintenanceError(f"Unsupported maintenance transport (serial only): {transport}")
         source_type = "release" if release_version or release_asset else "local"
         if source_type == "release":
             if not release_version or not release_asset:
@@ -276,10 +240,8 @@ class MaintenanceService:
                 raise MaintenanceError(f"Selected package does not exist: {package}")
             self.validate_package(kind, str(package))
         normalized_port = port.strip()
-        if transport == "serial" and not normalized_port:
+        if not normalized_port:
             raise MaintenanceError("Select a serial port first.")
-        if transport == "card_reader" and not volume_id:
-            raise MaintenanceError("Select an SD-card reader first.")
         with self._lock:
             if self._active_job_id is not None:
                 active = self._jobs[self._active_job_id]
@@ -291,7 +253,6 @@ class MaintenanceService:
                 port=normalized_port,
                 package_path=str(package) if package is not None else "",
                 transport=transport,
-                volume_id=volume_id,
                 source_type=source_type,
                 release_version=release_version,
                 release_asset=release_asset,
@@ -308,22 +269,19 @@ class MaintenanceService:
         port: str,
         *,
         transport: str = "serial",
-        volume_id: str = "",
     ) -> dict[str, Any]:
-        if transport not in {"serial", "card_reader"}:
-            raise MaintenanceError("请选择设备端口或 SD 读卡器。")
+        if transport != "serial":
+            raise MaintenanceError("SDK Daemon 仅支持串口维护，不提供 SD 读卡器功能。")
         package = Path(package_path).expanduser().resolve() if package_path.strip() else None
         if package is not None and not package.is_file():
             raise MaintenanceError("选择的作品 ZIP 不存在。")
         if package is None and not isinstance(composition, dict):
-            raise MaintenanceError("请选择作品 ZIP，或先在创作模式保存作品。")
+            raise MaintenanceError("请选择作品 ZIP，或提供作品定义。")
         if package is not None and composition is not None:
             raise MaintenanceError("作品 ZIP 与当前作品不能同时作为烧录来源。")
         normalized_port = port.strip()
-        if transport == "serial" and not normalized_port:
+        if not normalized_port:
             raise MaintenanceError("Select a serial port first.")
-        if transport == "card_reader" and not volume_id:
-            raise MaintenanceError("请先选择 SD 读卡器。")
         with self._lock:
             if self._active_job_id is not None:
                 active = self._jobs[self._active_job_id]
@@ -335,7 +293,6 @@ class MaintenanceService:
                 port=normalized_port,
                 package_path=str(package) if package is not None else "",
                 transport=transport,
-                volume_id=volume_id,
             )
             self._jobs[job.id] = job
             self._work_requests[job.id] = (composition, package)
@@ -371,7 +328,7 @@ class MaintenanceService:
         except (OSError, WorkDocumentError) as exc:
             raise MaintenanceError(str(exc)) from exc
 
-    def delete_work(self, *, transport: str, work_id: str, port: str = "", volume_id: str = "") -> None:
+    def delete_work(self, *, transport: str, work_id: str, port: str = "") -> None:
         if not WORK_ID_PATTERN.fullmatch(work_id):
             raise MaintenanceError("作品标识无效。")
         with self._lock:
@@ -379,15 +336,9 @@ class MaintenanceService:
                 active = self._jobs.get(self._active_job_id)
                 if active is not None and active.status in {"queued", "running"}:
                     raise MaintenanceError("设备维护操作进行中，暂时无法删除作品。")
-        if transport == "card_reader":
-            if not volume_id:
-                raise MaintenanceError("请先选择 SD 读卡器。")
-            try:
-                delete_card_work(volume_id, work_id)
-            except Exception as exc:
-                raise MaintenanceError(str(exc)) from exc
-            return
-        if transport != "serial" or not port.strip():
+        if transport != "serial":
+            raise MaintenanceError("SDK Daemon 仅支持串口维护，不提供 SD 读卡器功能。")
+        if not port.strip():
             raise MaintenanceError("请先选择设备端口。")
         _delete_serial_work(port.strip(), work_id)
 
@@ -410,7 +361,7 @@ class MaintenanceService:
     def _run(self, job_id: str) -> None:
         with self._lock:
             job = self._jobs[job_id]
-            kind, port, transport, volume_id = job.kind, job.port, job.transport, job.volume_id
+            kind, port = job.kind, job.port
         self._update(
             job_id,
             status="running",
@@ -450,14 +401,9 @@ class MaintenanceService:
                     )
                 except WorkDocumentError as exc:
                     raise MaintenanceError(str(exc)) from exc
-                if transport == "card_reader":
-                    install_card_work_package(work_package, volume_id, callback)
-                else:
-                    _install_work(work_package, port, callback)
-            elif transport == "card_reader":
-                install_card_package(package_path, volume_id, callback)
-            elif kind == "sd_resources":
-                _install_sd_resources(package_path, port, callback)
+                _install_work(work_package, port, callback)
+            else:
+                raise MaintenanceError(f"Unsupported maintenance job: {kind}")
             self._update(
                 job_id,
                 status="succeeded",
@@ -466,8 +412,6 @@ class MaintenanceService:
                 message=(
                     "作品写入完成，可在设备或 SDK 中按作品 ID 运行。"
                     if kind == "work"
-                    else "SD 卡写入完成，可安全移除读卡器并装回设备。"
-                    if transport == "card_reader"
                     else "操作完成，设备已重新启动。"
                 ),
             )
@@ -536,35 +480,6 @@ def _parse_ready_device_info(parts: list[str]) -> dict[str, Any]:
         "total_bytes": int(parts[5]) if parts[5].isdigit() else 0,
         "capabilities": capabilities,
     }
-
-
-@dataclass(frozen=True)
-class _SerialResourceInstallPlan:
-    deferred_replace: bool
-    required_before_upload: int
-
-
-def _serial_resource_install_plan(
-    device_info: dict[str, Any],
-    *,
-    archive_size: int,
-    expanded_size: int,
-) -> _SerialResourceInstallPlan:
-    free_bytes = int(device_info.get("free_bytes") or 0)
-    upload_required = archive_size + SPACE_RESERVE_BYTES
-    full_required = upload_required + expanded_size
-    capabilities = device_info.get("capabilities")
-    if isinstance(capabilities, list) and "deferred_replace" in capabilities:
-        if free_bytes < upload_required:
-            raise MaintenanceError(
-                f"SD 卡可用空间仅 {free_bytes} 字节，接收压缩包至少需要 {upload_required} 字节。"
-            )
-        return _SerialResourceInstallPlan(True, upload_required)
-    if free_bytes < full_required:
-        raise MaintenanceError(
-            "当前固件不支持先校验压缩包再清理旧资源，且 SD 卡空间不足。请先烧录兼容固件后再安装资源。"
-        )
-    return _SerialResourceInstallPlan(False, full_required)
 
 
 def _parse_flash_zip(path: Path) -> tuple[dict[str, str], list[tuple[int, str, bytes]]]:
@@ -833,36 +748,6 @@ class _EsptoolProgress:
         value = min(95, max(self._last_value, value))
         self._last_value = value
         self._progress("flashing", value, text)
-
-
-@dataclass(frozen=True)
-class _SdPackage:
-    version: str
-    size: int
-    sha256: str
-    expanded_size: int
-    file_count: int
-    object_count: int
-
-
-def _inspect_sd_package(path: Path) -> _SdPackage:
-    try:
-        with tarfile.open(path, "r:gz") as archive:
-            handle = archive.extractfile(archive.getmember("resource_manifest.json"))
-            if handle is None:
-                raise MaintenanceError("SD 包缺少 resource_manifest.json。")
-            manifest = json.load(handle)
-            members = [item for item in archive.getmembers() if item.isfile()]
-    except (KeyError, OSError, tarfile.TarError, json.JSONDecodeError) as exc:
-        raise MaintenanceError(f"无效的 SD tar.gz：{exc}") from exc
-    version = manifest.get("bundle_version")
-    if not isinstance(version, str) or not VERSION_PATTERN.fullmatch(version):
-        raise MaintenanceError("SD 包的版本字段无效。")
-    if manifest.get("schema_version") != 2 or manifest.get("layout_revision") != 2:
-        raise MaintenanceError("SD 包不是当前设备支持的资源布局。")
-    return _SdPackage(version, path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest(),
-                      sum(item.size for item in members), len(members),
-                      sum(item.name.startswith("assets/") for item in members))
 
 
 def _build_work_package(composition: dict[str, Any]) -> PortableWorkPackage:
@@ -1348,68 +1233,6 @@ def _wait_for_sd_activation(
         f"资源已上传，但设备未在 {timeout_seconds:g} 秒内确认启用 {expected_version}；"
         f"最后阶段 {last_phase}（{last_progress}%）：{last_detail}"
     )
-
-
-def _install_sd_resources(path: Path, port: str, progress: Progress) -> None:
-    package = _inspect_sd_package(path)
-    progress("validating", 5, f"SD 资源包 {package.version} 校验通过，SHA-256 {package.sha256}。")
-    try:
-        protocol = _SerialProtocol(port)
-    except serial.SerialException as exc:
-        raise MaintenanceError(f"无法打开串口 {port}：{exc}") from exc
-    try:
-        progress("connecting", 8, f"正在通过 {port} 连接设备。")
-        ready = protocol.handshake()
-        if len(ready) < 6 or ready[3] != "mounted":
-            raise MaintenanceError("设备 SD 卡未挂载，请检查卡片并重启设备。")
-        device_info = _parse_ready_device_info(ready)
-        install_plan = _serial_resource_install_plan(
-            device_info,
-            archive_size=package.size,
-            expanded_size=package.expanded_size,
-        )
-        if install_plan.deferred_replace:
-            progress("preparing", 10, "设备将先接收并校验压缩包，再清理旧官方资源；用户作品会保留。")
-            protocol.send("REPLACE")
-            replaced = protocol.receive(REPLACEMENT_TIMEOUT_SECONDS, ("OK",))
-            if len(replaced) < 6 or replaced[2] != "REPLACE" or replaced[5] != "ESP_OK":
-                raise MaintenanceError("设备未能进入安全资源替换模式。")
-            if int(replaced[3]) < install_plan.required_before_upload:
-                raise MaintenanceError("SD 卡剩余空间不足，无法先接收并校验所选资源包。")
-        else:
-            progress("preparing", 10, "当前设备空间可同时容纳旧资源和新资源，开始安全写入。")
-        protocol.send(f"BEGIN {package.version} {package.size} {package.expanded_size} "
-                      f"{package.file_count} {package.object_count} {package.sha256}")
-        begin = protocol.receive(10, ("OK",))
-        chunk_size = _negotiate_chunk_size(begin)
-        sent = 0
-        last_reported_percent = -2
-        with path.open("rb") as handle:
-            for sequence, payload in enumerate(iter(lambda: handle.read(chunk_size), b"")):
-                command = f"DATA {sequence} {zlib.crc32(payload) & 0xffffffff:08x} " + base64.b64encode(payload).decode("ascii")
-                for attempt in range(3):
-                    protocol.send(command)
-                    try:
-                        ack = protocol.receive(8, ("ACK",))
-                        if int(ack[2]) != sequence:
-                            raise MaintenanceError("设备返回了错误的数据块序号。")
-                        break
-                    except MaintenanceError:
-                        if attempt == 2:
-                            protocol.send("ABORT")
-                            raise
-                sent += len(payload)
-                percent = int(sent * 100 / package.size)
-                if percent == 100 or percent >= last_reported_percent + 2:
-                    progress("uploading", 10 + percent * 70 // 100,
-                             f"正在上传资源：{percent}%（{sent}/{package.size} 字节）")
-                    last_reported_percent = percent
-        progress("installing", 82, "上传完成，设备正在校验、解压并启用资源。")
-        protocol.send("COMMIT")
-        _wait_for_sd_activation(protocol, package.version, progress)
-        progress("restarting", 98, f"SD 官方资源 {package.version} 已安装，设备正在重启。")
-    finally:
-        protocol.close()
 
 
 def _install_work(
