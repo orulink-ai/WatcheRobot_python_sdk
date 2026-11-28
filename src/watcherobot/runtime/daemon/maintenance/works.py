@@ -543,7 +543,7 @@ def hydrate_creator_assets(work: dict[str, Any], files: dict[str, bytes]) -> dic
 
 def resource_inventory_from_catalog(catalog: Any) -> dict[str, set[str]]:
     if not isinstance(catalog, dict) or not isinstance(catalog.get("expressions"), list):
-        raise WorkDocumentError("目标 SD 的 official_catalog.json 格式无效。")
+        raise WorkDocumentError("目标 SD 的 catalog.json 格式无效。")
     inventory: dict[str, set[str]] = {}
     for entry in catalog["expressions"]:
         if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):

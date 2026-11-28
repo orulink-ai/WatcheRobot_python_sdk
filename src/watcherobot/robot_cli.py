@@ -152,9 +152,7 @@ def _light_options(parser: argparse.ArgumentParser) -> None:
 
 
 def _maintenance_options(parser: argparse.ArgumentParser) -> None:
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--port")
-    group.add_argument("--volume-id")
+    parser.add_argument("--port")
 
 
 def handles(args: argparse.Namespace) -> bool:
@@ -490,13 +488,13 @@ def _effective_recording_fps(args: argparse.Namespace) -> int:
 
 
 def _run_maintenance(args: argparse.Namespace, control_url: str, request_json: Callable[..., dict[str, Any]]) -> int:
-    transport, port, volume_id = _maintenance_target(args, control_url, request_json)
+    transport, port = _maintenance_target(args, control_url, request_json)
     if args.screen_command == "delete-work":
         request_json(
             control_url,
             "/daemon/maintenance/works/delete",
             method="POST",
-            payload={"transport": transport, "port": port, "volume_id": volume_id, "work_id": args.work_id},
+            payload={"transport": transport, "port": port, "work_id": args.work_id},
             timeout=75.0,
         )
         return _emit(args, {"work_id": args.work_id, "deleted": True}, f"Work deleted: {args.work_id}")
@@ -517,7 +515,7 @@ def _run_maintenance(args: argparse.Namespace, control_url: str, request_json: C
         ],
         "assets": [{"id": "custom-expression-main", "kind": "expression", "name": source.stem, "fileName": source.name, "mimeType": mime, "dataUrl": f"data:{mime};base64,{base64.b64encode(payload).decode('ascii')}"}],
     }
-    response = request_json(control_url, "/daemon/maintenance/work", method="POST", payload={"composition": composition, "port": port, "transport": transport, "volume_id": volume_id}, timeout=30.0)
+    response = request_json(control_url, "/daemon/maintenance/work", method="POST", payload={"composition": composition, "port": port, "transport": transport}, timeout=30.0)
     job = response.get("job", {})
     job_id = job.get("id")
     job_state = _maintenance_job_state(job)
@@ -535,18 +533,16 @@ def _run_maintenance(args: argparse.Namespace, control_url: str, request_json: C
     return _emit(args, {"work_id": work_id, "state": "completed", "job_id": job_id}, f"Work installed: {work_id}")
 
 
-def _maintenance_target(args: argparse.Namespace, control_url: str, request_json: Callable[..., dict[str, Any]]) -> tuple[str, str, str]:
-    if args.volume_id:
-        return "card_reader", "", args.volume_id
+def _maintenance_target(args: argparse.Namespace, control_url: str, request_json: Callable[..., dict[str, Any]]) -> tuple[str, str]:
     if args.port:
-        return "serial", args.port, ""
+        return "serial", args.port
     ports = request_json(control_url, "/daemon/maintenance/ports").get("ports", [])
     if len(ports) != 1:
         raise RobotCliError("Specify --port when zero or multiple maintenance serial ports are available")
     value = ports[0].get("device") if isinstance(ports[0], dict) else None
     if not isinstance(value, str) or not value:
         raise RobotCliError("The maintenance serial port could not be identified")
-    return "serial", value, ""
+    return "serial", value
 
 
 def _maintenance_job_state(job: dict[str, Any]) -> str:

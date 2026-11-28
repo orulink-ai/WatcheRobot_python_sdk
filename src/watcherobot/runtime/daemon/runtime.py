@@ -380,9 +380,6 @@ class DaemonRuntime:
         except Exception as exc:
             raise MaintenanceError(str(exc)) from exc
 
-    def maintenance_volumes(self) -> list[dict[str, object]]:
-        return self.maintenance.volumes()
-
     def validate_maintenance_package(self, kind: str, package_path: str) -> dict[str, object]:
         return self.maintenance.validate_package(kind, package_path)
 
@@ -394,9 +391,8 @@ class DaemonRuntime:
         *,
         transport: str,
         port: str = "",
-        volume_id: str = "",
     ) -> list[dict[str, object]]:
-        return self.maintenance.works(transport=transport, port=port, volume_id=volume_id)
+        return self.maintenance.works(transport=transport, port=port)
 
     def read_maintenance_work(
         self,
@@ -404,13 +400,11 @@ class DaemonRuntime:
         transport: str,
         work_id: str,
         port: str = "",
-        volume_id: str = "",
     ) -> dict[str, object]:
         return self.maintenance.read_work(
             transport=transport,
             work_id=work_id,
             port=port,
-            volume_id=volume_id,
         )
 
     def start_maintenance_job(
@@ -420,7 +414,6 @@ class DaemonRuntime:
         port: str,
         *,
         transport: str = "serial",
-        volume_id: str = "",
         release_version: str = "",
         release_asset: str = "",
     ) -> dict[str, object]:
@@ -429,7 +422,6 @@ class DaemonRuntime:
             package_path,
             port,
             transport=transport,
-            volume_id=volume_id,
             release_version=release_version,
             release_asset=release_asset,
         )
@@ -447,14 +439,12 @@ class DaemonRuntime:
         port: str,
         *,
         transport: str = "serial",
-        volume_id: str = "",
     ) -> dict[str, object]:
         return self.maintenance.start_work(
             composition,
             package_path,
             port,
             transport=transport,
-            volume_id=volume_id,
         )
 
     def export_maintenance_work(self, composition: dict[str, object]) -> dict[str, object]:
@@ -469,13 +459,11 @@ class DaemonRuntime:
         transport: str,
         work_id: str,
         port: str = "",
-        volume_id: str = "",
     ) -> None:
         self.maintenance.delete_work(
             transport=transport,
             work_id=work_id,
             port=port,
-            volume_id=volume_id,
         )
 
     async def wait_for_shutdown(self) -> None:

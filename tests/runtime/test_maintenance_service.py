@@ -13,7 +13,6 @@ from watcherobot.runtime.daemon.maintenance import service as maintenance_servic
 from watcherobot.runtime.daemon.maintenance.service import (
     CHUNK_BYTES,
     FLASH_BAUD_CANDIDATES,
-    REPLACEMENT_TIMEOUT_SECONDS,
     _EsptoolProgress,
     _FirmwareBootProbe,
     MaintenanceError,
@@ -23,7 +22,6 @@ from watcherobot.runtime.daemon.maintenance.service import (
     _flash_firmware,
     _request_automatic_download_mode,
     _build_work_package,
-    _inspect_sd_package,
     _negotiate_chunk_size,
     _parse_sd_install_status,
     _parse_flash_zip,
@@ -261,10 +259,6 @@ def test_sd_transfer_negotiates_larger_chunks_without_exceeding_host_limit() -> 
     assert _negotiate_chunk_size(["WRSD/2", "OK", "BEGIN", "0"]) == 4096
 
 
-def test_slow_sd_replacement_waits_for_device_cleanup() -> None:
-    assert REPLACEMENT_TIMEOUT_SECONDS >= 300
-
-
 def test_sd_activation_keeps_transfer_baud_until_device_sends_done() -> None:
     class FakeProtocol:
         def __init__(self) -> None:
@@ -359,23 +353,22 @@ def test_flash_zip_accepts_esptool_hyphenated_flash_options(tmp_path: Path) -> N
     assert [item[0] for item in segments] == [0, 0x8000, 0x20000]
 
 
-def test_sd_package_is_inspected_without_extracting_to_disk(tmp_path: Path) -> None:
+def test_service_rejects_sd_resource_flashing_and_card_reader_transport(tmp_path: Path) -> None:
     package = tmp_path / "resources.tar.gz"
-    manifest = json.dumps({"schema_version": 2, "layout_revision": 2, "bundle_version": "v0.0.2"}).encode()
-    with tarfile.open(package, "w:gz") as archive:
-        info = tarfile.TarInfo("resource_manifest.json")
-        info.size = len(manifest)
-        archive.addfile(info, BytesIO(manifest))
-        asset = tarfile.TarInfo("assets/animations/demo.riv")
-        asset.size = 4
-        archive.addfile(asset, BytesIO(b"rive"))
+    package.write_bytes(b"unused")
+    service = MaintenanceService()
 
-    inspected = _inspect_sd_package(package)
-
-    assert inspected.version == "v0.0.2"
-    assert inspected.file_count == 2
-    assert inspected.object_count == 1
-    assert list(tmp_path.iterdir()) == [package]
+    with pytest.raises(MaintenanceError, match="不支持校验此安装包类型"):
+        service.validate_package("sd_resources", str(package))
+    with pytest.raises(MaintenanceError, match="SDK does not flash SD cards"):
+        service.start("sd_resources", str(package), "COM29")
+    with pytest.raises(MaintenanceError, match="仅支持串口"):
+        service.works(transport="card_reader")
+    with pytest.raises(MaintenanceError, match="仅支持串口"):
+        service.read_work(transport="card_reader", work_id="demo_work")
+    with pytest.raises(MaintenanceError, match="仅支持串口"):
+        service.delete_work(transport="card_reader", work_id="demo_work")
+    assert service.active() is None
 
 
 def test_service_rejects_missing_local_package() -> None:
@@ -398,14 +391,10 @@ def test_maintenance_ports_only_expose_watcher_ch342_channel_b(monkeypatch) -> N
 def test_local_package_is_validated_before_job_is_queued(tmp_path: Path) -> None:
     invalid_firmware = tmp_path / "not-firmware.zip"
     invalid_firmware.write_bytes(b"not a zip")
-    invalid_resources = tmp_path / "not-resources.tar.gz"
-    invalid_resources.write_bytes(b"not a tar gzip")
     service = MaintenanceService()
 
     with pytest.raises(MaintenanceError, match="无效的固件 ZIP"):
         service.start("firmware", str(invalid_firmware), "COM29")
-    with pytest.raises(MaintenanceError, match="无效的 SD tar.gz"):
-        service.start("sd_resources", str(invalid_resources), "COM29")
 
     assert service.active() is None
 

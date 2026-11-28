@@ -36,7 +36,7 @@ path. Official expressions and work-owned expression clips use separate,
 source-scoped calls:
 
 ```python
-# An expression from /watche/official/current.
+# An official expression installed on the device SD card (/sdcard/catalog.json).
 await asyncio.to_thread(app.robot.expressions.play_official, "happy")
 
 # One expression clip authored inside an installed work.
@@ -82,44 +82,36 @@ Firmware still accepts the legacy `resource.expression.play` payload containing
 only `resource_id`, but new SDK code always sends `source`. Explicit source
 requests never fall back to the other source when an ID is missing.
 
-### Portable work packages and SD lifecycle
+### Portable work packages and SD boundary
 
-The Daemon owns the maintenance implementation used by Watcher Desktop. A
-portable work uses the `.watcher-work.zip` suffix and contains a versioned
+The Python SDK and Daemon do **not** provide official SD card resource flashing
+or direct card-reader access; official SD card image flashing belongs to Watcher
+Desktop Settings or workspace SD flashing tools (`yarn sd:flash`).
+
+A portable work uses the `.watcher-work.zip` suffix and contains a versioned
 `work.json`, `work_manifest.json`, and any work-local assets. The stable
-`work_id` identifies the work across computers and SD cards; editing and
+`work_id` identifies the work across computers and devices; editing and
 installing it again increments `revision` and replaces only that work.
 
-The maintenance REST surface is deliberately transport-neutral:
+The Daemon maintenance REST surface only supports serial transport (`serial`):
 
 - `POST /daemon/maintenance/works/export` builds a portable ZIP from a Creator
   composition.
 - `POST /daemon/maintenance/works/import` validates a local ZIP and returns the
   exact editable Creator timeline.
-- `POST /daemon/maintenance/works/list` reads works through either `serial` or
-  `card_reader` and reports missing animation, action, or sound assets.
+- `POST /daemon/maintenance/works/list` reads works over `serial` and reports
+  missing animation, action, or sound assets.
 - `POST /daemon/maintenance/works/read` reads one selected work plus its
-  declared Creator source media so another desktop can continue editing it.
-- `POST /daemon/maintenance/works/delete` removes one work without changing
-  official resources or other works.
+  declared Creator source media over `serial`.
+- `POST /daemon/maintenance/works/delete` removes one work over `serial` without
+  changing official resources or other works.
 - `POST /daemon/maintenance/work` writes one composition or portable package
-  through the selected transport.
+  over `serial` using the firmware `WRSD/2` work transaction and validates
+  official dependencies against the device's `/sdcard/catalog.json`.
 
-Reader writes are atomic at `/watche/works/<work_id>` and preserve
-`/watche/official`, `/watche/assets`, and every other work. Serial writes use the
-firmware `WRSD/2` work transaction and require the advertised work capabilities.
-
-### Serial official-resource activation timeouts
-
-Official SD resources remain reinstallable when the selected version equals the
-device version. After upload, the Daemon accepts backward-compatible `WRSD/2
-STATUS` frames as heartbeats. A valid status refreshes the 120-second stall
-deadline, while an independent 30-minute total deadline bounds a device that is
-alive but never completes. Timeout errors include the last device phase,
-percentage, file and byte/speed detail when the firmware provides them; the
-Daemon never treats an equal version as a reason to skip installation.
 Neither path opens a second device business channel: application playback still
-uses `robot.works.play()` through the Daemon-managed Device channel.
+uses `robot.works.play()` and `robot.expressions.play_official()` through the
+Daemon-managed Device channel.
 
 Official assets are referenced by resource ID. Work-local servo actions are
 bundled into the portable package and registered in the work-local resource

@@ -19,14 +19,11 @@ from typing import Any, Callable
 
 GITHUB_API = "https://api.github.com"
 GITHUB_WEB = "https://github.com"
-SD_TOS_BASE = "https://erroright.tos-cn-guangzhou.volces.com/WatcherRobot/sd"
 REPOSITORIES = {
     "firmware": "orulink-ai/WatcheRobot_esp32",
-    "sd_resources": "orulink-ai/WatcheRobot_sd",
 }
 SEMVER_PATTERN = re.compile(r"^[vV]\d+\.\d+\.\d+$")
 FIRMWARE_ASSET_PATTERN = re.compile(r"esp32s3\.zip$", re.IGNORECASE)
-SD_ASSET_PATTERN = re.compile(r"^watche-sd-resources-[vV]\d+\.\d+\.\d+\.tar\.gz$")
 Progress = Callable[[str, int, str], None]
 _CACHE_SECONDS = 300.0
 _PUBLIC_FALLBACK_LIMIT = 5
@@ -89,8 +86,6 @@ def _request_bytes(url: str, timeout: int = 30) -> bytes:
 def _asset_is_supported(kind: str, name: str) -> bool:
     if kind == "firmware":
         return bool(FIRMWARE_ASSET_PATTERN.search(name)) and "release.zip" not in name.lower()
-    if kind == "sd_resources":
-        return bool(SD_ASSET_PATTERN.fullmatch(name))
     return False
 
 
@@ -299,33 +294,6 @@ def _firmware_checksum(document: dict[str, Any], asset_name: str) -> str | None:
     raise ReleaseError(f"SHA256SUMS.txt 中没有找到 {asset_name}。")
 
 
-def _sd_manifest(document: dict[str, Any], version: str, asset_name: str) -> tuple[int, str]:
-    manifest_asset = next(
-        (
-            item
-            for item in document.get("assets", [])
-            if isinstance(item, dict) and item.get("name") == "ota-manifest.json"
-        ),
-        None,
-    )
-    if not manifest_asset or not isinstance(manifest_asset.get("browser_download_url"), str):
-        raise ReleaseError("SD Release 缺少 ota-manifest.json。")
-    try:
-        manifest = json.loads(_request_bytes(manifest_asset["browser_download_url"]).decode("utf-8-sig"))
-    except (UnicodeError, json.JSONDecodeError) as exc:
-        raise ReleaseError(f"SD OTA manifest 无效：{exc}") from exc
-    archive = manifest.get("archive") if isinstance(manifest, dict) else None
-    if (
-        not isinstance(archive, dict)
-        or manifest.get("version") != version
-        or archive.get("name") != asset_name
-        or not isinstance(archive.get("size"), int)
-        or not re.fullmatch(r"[a-f0-9]{64}", str(archive.get("sha256", "")).lower())
-    ):
-        raise ReleaseError("SD OTA manifest 与所选版本或附件不一致。")
-    return int(archive["size"]), str(archive["sha256"]).lower()
-
-
 def _download(
     url: str,
     destination: Path,
@@ -386,14 +354,9 @@ def acquire_release_package(
 
     expected_size = size
     size_is_estimated = bool(asset.get("size_estimated"))
-    if kind == "firmware":
-        expected_sha256 = _firmware_checksum(document, asset_name)
-    else:
-        expected_size, expected_sha256 = _sd_manifest(document, version, asset_name)
-        was_estimated = size_is_estimated
-        size_is_estimated = False
-        if not was_estimated and expected_size != size:
-            raise ReleaseError("GitHub 附件大小与 SD OTA manifest 不一致。")
+    if kind != "firmware":
+        raise ReleaseError(f"不支持的发布资源类型：{kind}")
+    expected_sha256 = _firmware_checksum(document, asset_name)
 
     cache_root = Path(tempfile.gettempdir()) / "watcher-maintenance-cache" / kind / version
     destination = cache_root / asset_name
@@ -407,20 +370,5 @@ def acquire_release_package(
     try:
         _download(url, destination, expected_size, expected_sha256, progress, verify_size=not size_is_estimated)
     except (OSError, urllib.error.URLError, ReleaseError) as github_error:
-        if kind != "sd_resources":
-            raise ReleaseError(f"GitHub 固件下载失败：{github_error}") from github_error
-        progress("downloading", 2, "GitHub 下载失败，正在切换到官方 TOS 镜像。")
-        manifest_url = f"{SD_TOS_BASE}/{version}/ota-manifest.json"
-        try:
-            manifest = json.loads(_request_bytes(manifest_url).decode("utf-8-sig"))
-            archive = manifest["archive"]
-            if manifest.get("version") != version or archive.get("name") != asset_name:
-                raise ReleaseError("TOS manifest 与所选 SD 版本不一致。")
-            tos_size = int(archive["size"])
-            tos_sha256 = str(archive["sha256"]).lower()
-            if tos_size != expected_size or tos_sha256 != expected_sha256:
-                raise ReleaseError("TOS 与 GitHub 发布清单不一致。")
-            _download(f"{SD_TOS_BASE}/{version}/{asset_name}", destination, tos_size, tos_sha256, progress)
-        except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError, ReleaseError) as tos_error:
-            raise ReleaseError(f"GitHub 与 TOS 均下载失败：{github_error}；{tos_error}") from tos_error
+        raise ReleaseError(f"GitHub 固件下载失败：{github_error}") from github_error
     return destination

@@ -53,7 +53,7 @@ watcherobot robot recording delete rec_123
 
 音频播放接受 WAV、MP3、OGG，由电脑转换为 24 kHz、16-bit、mono PCM，并继续遵守 4 MiB PCM 上限。灯区为 `side`、`bottom`、`all`，`head` 是 `side` 的兼容别名；摄像头和麦克风隐私指示灯由固件自动控制，`light status` 只读展示，任何 CLI 命令都不能覆盖。
 
-屏幕安装接受 GIF、PNG、JPEG、WebP，复用 Creator Work 构建与维护传输，生成 `main` clip。动画遵守 206×206、最多 120 帧和 AnimPack v2 约束。一个串口候选时自动选择；多个候选时必须传 `--port`，读卡器安装可传 `--volume-id`。
+屏幕安装接受 GIF、PNG、JPEG、WebP，复用串口维护传输，生成 `main` clip。动画遵守 206×206、最多 120 帧约束。一个串口候选时自动选择；多个候选时必须传 `--port`。SDK 与 Daemon 不提供读卡器或官方 SD 卡资源烧录功能（官方 SD 卡烧录请使用 Watcher 桌面端设置页或仓库 `yarn sd:flash`）。
 
 ## 机器输出和退出行为
 
